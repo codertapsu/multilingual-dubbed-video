@@ -47,10 +47,18 @@ function roundMs(ms: number): number {
  * Align a single segment. Pure function — given the same inputs it always
  * yields the same {@link AlignedSegment}.
  */
-export function alignSegment(seg: AlignInputSegment, settings: AlignSettings): AlignedSegment {
+export function alignSegment(
+  seg: AlignInputSegment,
+  settings: AlignSettings,
+  availableWindowMs?: number,
+): AlignedSegment {
   const startMs = roundMs(seg.startMs);
   const endMs = roundMs(seg.endMs);
-  const availableMs = Math.max(0, endMs - startMs);
+  // Window the segment may occupy. Defaults to the subtitle's own duration, but
+  // alignSegments passes a GAP-AWARE window (the slot until the next segment
+  // starts) so a longer translation can spill into the natural pause after the
+  // line instead of being flagged as a conflict.
+  const availableMs = Math.max(0, availableWindowMs ?? endMs - startMs);
   const generatedMs = roundMs(seg.generatedDurationMs);
 
   // Guard against a degenerate / zero-length window: nothing to fit into.
@@ -127,12 +135,34 @@ export function alignSegment(seg: AlignInputSegment, settings: AlignSettings): A
   };
 }
 
-/** Align a list of segments in order. Pure. */
+/**
+ * Align a list of segments in order. Pure.
+ *
+ * Each segment's available window is GAP-AWARE: the larger of (a) the subtitle's
+ * own duration and (b) the time until the next segment starts (or, for the last
+ * segment, until `totalDurationMs` if given). This lets a longer translation use
+ * the silence between lines, which dramatically reduces timing-conflicts on real
+ * content (where speech has natural pauses) without overlapping the next line.
+ */
 export function alignSegments(
   segments: readonly AlignInputSegment[],
   settings: AlignSettings,
+  totalDurationMs?: number,
 ): AlignedSegment[] {
-  return segments.map((s) => alignSegment(s, settings));
+  return segments.map((s, i) => {
+    const startMs = roundMs(s.startMs);
+    const ownWindow = Math.max(0, roundMs(s.endMs) - startMs);
+    const next = segments[i + 1];
+    let slot: number;
+    if (next) {
+      slot = roundMs(next.startMs) - startMs;
+    } else if (totalDurationMs != null) {
+      slot = roundMs(totalDurationMs) - startMs;
+    } else {
+      slot = ownWindow;
+    }
+    return alignSegment(s, settings, Math.max(ownWindow, slot));
+  });
 }
 
 /** Summary counts useful for logging/UI badges. */

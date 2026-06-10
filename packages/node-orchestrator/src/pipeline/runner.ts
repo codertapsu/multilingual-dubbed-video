@@ -477,10 +477,18 @@ export class PipelineRunner {
       });
     }
 
-    const aligned = alignSegments(alignInputs, {
-      maxSpeedRatio: project.settings.maxSpeedRatio,
-      allowedOverflowMs: project.settings.allowedOverflowMs,
-    });
+    // Pass the total media duration so alignment is gap-aware (a long
+    // translation can use the silence until the next line — or until the end of
+    // the video for the last segment — instead of being flagged as a conflict).
+    const totalDurationMs = (await this.deps.store.getProject(project.id)).mediaInfo?.durationMs;
+    const aligned = alignSegments(
+      alignInputs,
+      {
+        maxSpeedRatio: project.settings.maxSpeedRatio,
+        allowedOverflowMs: project.settings.allowedOverflowMs,
+      },
+      totalDurationMs,
+    );
 
     await fsp.writeFile(paths.translatedAlignedJson, `${JSON.stringify(aligned, null, 2)}\n`, 'utf8');
 

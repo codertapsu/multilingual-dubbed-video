@@ -1,0 +1,34 @@
+{
+  // Shared TypeScript compiler options for all VideoDubber TS packages.
+  // Each package extends this file and may override `module` /
+  // `moduleResolution` (e.g. "Bundler" for bundled libs, "NodeNext" for
+  // node services). Do not put package-specific paths here.
+  "compilerOptions": {
+    // Language / output target.
+    "target": "ES2022",
+    "lib": ["ES2022"],
+
+    // Sensible default module system; packages override as needed.
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+
+    // Strictness — no implicit any anywhere.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    // Kept off intentionally for practicality with optional fields.
+    "exactOptionalPropertyTypes": false,
+
+    // Interop / portability.
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    // Project references / build outputs.
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  }
+}

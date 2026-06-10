@@ -1,0 +1,101 @@
+<section class="page stack">
+  <div class="row row-between">
+    <div>
+      <h1>Export</h1>
+      <p class="muted">
+        @if (store.current(); as proj) {
+          {{ proj.name }}
+        }
+      </p>
+    </div>
+    <button
+      type="button"
+      class="btn"
+      (click)="openFolder()"
+      [disabled]="opening()"
+    >
+      {{ opening() ? 'Opening…' : 'Open output folder' }}
+    </button>
+  </div>
+
+  <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
+
+  <!-- Output summary -->
+  <div class="card stack">
+    <h2>Final video</h2>
+    @if (outputPath(); as path) {
+      <p>
+        <span class="label">Output:</span>
+        <span class="mono">{{ path }}</span>
+      </p>
+    } @else {
+      <p class="muted">No output yet — render the project to produce a video.</p>
+    }
+
+    @if (result(); as r) {
+      <p><span class="label">Duration:</span> {{ formatDuration(r.durationMs) }}</p>
+      @if (r.sidecarSubtitlePaths.length) {
+        <div>
+          <span class="label">Sidecar subtitles:</span>
+          <ul class="sidecar-list">
+            @for (sp of r.sidecarSubtitlePaths; track sp) {
+              <li class="mono">{{ sp }}</li>
+            }
+          </ul>
+        </div>
+      }
+    }
+
+    <!-- Best-effort preview -->
+    @if (previewUrl(); as url) {
+      @if (!previewFailed()) {
+        <video
+          class="video-preview"
+          controls
+          preload="metadata"
+          [src]="url"
+          (error)="onPreviewError()"
+        ></video>
+      } @else {
+        <div class="badge badge-pending preview-note">
+          In-app preview is unavailable here (the browser cannot load local
+          files directly). Use "Open output folder" to play the video.
+        </div>
+      }
+    }
+  </div>
+
+  <!-- Re-render with a different subtitle mode -->
+  <div class="card stack">
+    <h2>Re-render</h2>
+    <p class="muted">
+      Produce the final video again with a different subtitle treatment. The
+      dubbed audio is reused; only muxing/burn-in changes.
+    </p>
+
+    <div class="field">
+      <label for="exportMode">Subtitle mode</label>
+      <select
+        id="exportMode"
+        name="exportMode"
+        [ngModel]="chosenMode()"
+        (ngModelChange)="setMode($event)"
+      >
+        @for (mode of subtitleModes; track mode) {
+          <option [value]="mode">{{ subtitleLabels[mode] }}</option>
+        }
+      </select>
+    </div>
+
+    <div>
+      <button
+        type="button"
+        class="btn btn-primary"
+        (click)="rerender()"
+        [disabled]="rendering()"
+      >
+        {{ rendering() ? 'Rendering…' : 'Re-render video' }}
+      </button>
+    </div>
+  </div>
+</section>

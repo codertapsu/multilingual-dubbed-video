@@ -1,0 +1,108 @@
+:host {
+  display: block;
+}
+
+.step-list {
+  list-style: none;
+  counter-reset: step;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-2);
+}
+
+.step-item {
+  counter-increment: step;
+  background: var(--vd-surface);
+  border: 1px solid var(--vd-border);
+  border-left: 3px solid var(--vd-border);
+  border-radius: var(--vd-radius-sm);
+  padding: var(--vd-sp-3) var(--vd-sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-2);
+}
+.step-item[data-status='running'] {
+  border-left-color: var(--vd-running);
+}
+.step-item[data-status='completed'] {
+  border-left-color: var(--vd-success);
+}
+.step-item[data-status='failed'] {
+  border-left-color: var(--vd-danger);
+}
+.step-item[data-status='skipped'] {
+  opacity: 0.7;
+}
+
+.step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vd-sp-3);
+}
+.step-label::before {
+  content: counter(step) '. ';
+  color: var(--vd-text-subtle);
+  font-weight: 600;
+}
+.step-label {
+  font-weight: 600;
+}
+.step-progress {
+  height: 6px;
+}
+.step-error {
+  color: var(--vd-danger);
+  background: var(--vd-danger-bg);
+  border-radius: var(--vd-radius-sm);
+  padding: var(--vd-sp-2) var(--vd-sp-3);
+  margin: 0;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+/* Log panel ------------------------------------------------------------ */
+.log-panel {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: var(--vd-radius-sm);
+  padding: var(--vd-sp-3);
+  max-height: 280px;
+  overflow-y: auto;
+  font-family: var(--vd-font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.log-line {
+  display: flex;
+  gap: var(--vd-sp-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.log-ts {
+  color: #64748b;
+  flex-shrink: 0;
+}
+.log-level {
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  width: 3.5em;
+}
+.log-line[data-level='warn'] .log-level,
+.log-line[data-level='warn'] .log-msg {
+  color: #fbbf24;
+}
+.log-line[data-level='error'] .log-level,
+.log-line[data-level='error'] .log-msg {
+  color: #f87171;
+}
+.log-line[data-level='debug'] {
+  color: #94a3b8;
+}
+.log-empty {
+  color: #94a3b8;
+}

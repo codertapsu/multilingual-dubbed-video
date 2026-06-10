@@ -1,0 +1,9 @@
+# Runtime dependencies for the VideoDubber translation worker (port 5102).
+# Local/offline-first: Argos Translate provides on-device neural translation.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+argostranslate>=1.9
+pydantic>=2.5
+
+# --- Dev / test extras (not required to run the service) ---
+# Install with:  pip install -r requirements-dev.txt   (or: pip install ".[dev]")

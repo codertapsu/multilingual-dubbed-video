@@ -1,0 +1,35 @@
+{
+  "name": "videodubber",
+  "version": "0.1.0",
+  "private": true,
+  "description": "VideoDubber — a local/offline-first desktop app that dubs videos into another language.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "dev:desktop": "pnpm --filter videodubber-desktop dev",
+    "dev:orchestrator": "pnpm --filter @videodubber/node-orchestrator dev",
+    "dev:workers": "bash scripts/dev-workers.sh",
+    "build": "pnpm -r --filter \"./packages/**\" --filter \"./workers/media-worker\" build",
+    "lint": "eslint . --ext .ts",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "verify": "tsx scripts/verify-environment.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.2",
+    "@typescript-eslint/eslint-plugin": "^8.18.1",
+    "@typescript-eslint/parser": "^8.18.1",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "~5.6.3",
+    "typescript-eslint": "^8.18.1",
+    "vitest": "^2.1.8"
+  }
+}

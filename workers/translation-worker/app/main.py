@@ -1,0 +1,122 @@
+"""FastAPI application for the VideoDubber translation worker (port 5102).
+
+Routes
+------
+GET  /health              -> { "status": "ok", "installed_pairs": int, "backend": str }
+GET  /languages           -> { "installed": [{from,to}], "available": [{from,to}] }
+POST /translate-segments  -> { "segments": [{id, translatedText}] }
+
+Run locally::
+
+    uvicorn app.main:app --port 5102
+
+All failures are rendered as the structured ``{ "error": {...} }`` envelope by
+the exception handlers in :mod:`app.errors`.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from . import __version__
+from .config import get_settings
+from .errors import (
+    AppErrorException,
+    app_error_exception_handler,
+    unhandled_exception_handler,
+)
+from .schemas import HealthResponse, LanguagesResponse, TranslateRequest, TranslateResponse
+from .translation_service import (
+    get_backend,
+    installed_pair_count,
+    list_languages,
+    translate_segments,
+)
+
+
+def _configure_logging(level: str) -> None:
+    """Configure structured-ish stdlib logging once at startup."""
+    logging.basicConfig(
+        level=getattr(logging, level, logging.INFO),
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+
+
+def create_app() -> FastAPI:
+    """Application factory — builds and wires the FastAPI app."""
+    settings = get_settings()
+    settings.apply_to_environment()  # propagate ARGOS_PACKAGES_DIR etc.
+    _configure_logging(settings.log_level)
+
+    log = logging.getLogger("translation_worker")
+
+    app = FastAPI(
+        title="VideoDubber Translation Worker",
+        version=__version__,
+        description="Local/offline-first translation via Argos Translate.",
+    )
+
+    # CORS: allow the localhost desktop/dev origins.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allow_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Structured error handlers.
+    app.add_exception_handler(AppErrorException, app_error_exception_handler)
+    app.add_exception_handler(Exception, unhandled_exception_handler)
+
+    @app.get("/health", response_model=HealthResponse)
+    def health() -> HealthResponse:
+        """Liveness + installed package count. Never raises (best-effort count)."""
+        backend = get_backend()
+        return HealthResponse(
+            status="ok",
+            installed_pairs=installed_pair_count(),
+            backend=getattr(backend, "id", "argos"),
+        )
+
+    @app.get("/languages", response_model=LanguagesResponse)
+    def languages() -> LanguagesResponse:
+        """List installed (and, if known, available) language pairs."""
+        return list_languages()
+
+    @app.post("/translate-segments", response_model=TranslateResponse)
+    def translate(req: TranslateRequest) -> TranslateResponse:
+        """Translate each segment separately, preserving ids/order + glossary."""
+        return translate_segments(
+            source_language=req.sourceLanguage,
+            target_language=req.targetLanguage,
+            segments=req.segments,
+            glossary=req.glossary,
+        )
+
+    log.info("Translation worker initialized (v%s) on %s:%d", __version__, settings.host, settings.port)
+    return app
+
+
+# Module-level ASGI app for `uvicorn app.main:app`.
+app = create_app()
+
+
+def main() -> None:
+    """Console entry point: run uvicorn with resolved host/port."""
+    import uvicorn
+
+    settings = get_settings()
+    uvicorn.run(
+        "app.main:app",
+        host=settings.host,
+        port=settings.port,
+        log_level=settings.log_level.lower(),
+    )
+
+
+if __name__ == "__main__":
+    main()

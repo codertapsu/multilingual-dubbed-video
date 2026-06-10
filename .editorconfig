@@ -1,0 +1,32 @@
+# EditorConfig — https://editorconfig.org
+# Top-most EditorConfig file for the VideoDubber monorepo.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 2
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 100
+
+# Python workers use 4-space indentation (PEP 8).
+[*.py]
+indent_size = 4
+
+# Rust (Tauri backend).
+[*.rs]
+indent_size = 4
+
+# Go-style / Makefiles require real tabs.
+[Makefile]
+indent_style = tab
+
+# Markdown: keep trailing whitespace (used for hard line breaks).
+[*.md]
+trim_trailing_whitespace = false
+
+# YAML is whitespace-sensitive; keep 2 spaces explicit.
+[*.{yml,yaml}]
+indent_size = 2

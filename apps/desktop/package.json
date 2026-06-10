@@ -1,0 +1,37 @@
+{
+  "name": "videodubber-desktop",
+  "version": "0.1.0",
+  "description": "VideoDubber desktop UI (Angular 18 standalone) running inside a Tauri 2 shell.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "ng serve --port 1420",
+    "start": "ng serve --port 1420",
+    "build": "ng build",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "test": "echo \"(ui tests optional in MVP)\"",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@angular/animations": "^18.2.0",
+    "@angular/common": "^18.2.0",
+    "@angular/compiler": "^18.2.0",
+    "@angular/core": "^18.2.0",
+    "@angular/forms": "^18.2.0",
+    "@angular/platform-browser": "^18.2.0",
+    "@angular/platform-browser-dynamic": "^18.2.0",
+    "@angular/router": "^18.2.0",
+    "@tauri-apps/api": "^2.0.0",
+    "@videodubber/shared": "workspace:*",
+    "rxjs": "^7.8.1",
+    "tslib": "^2.7.0",
+    "zone.js": "^0.14.10"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "^18.2.0",
+    "@angular/cli": "^18.2.0",
+    "@angular/compiler-cli": "^18.2.0",
+    "@tauri-apps/cli": "^2.0.0",
+    "typescript": "~5.5.4"
+  }
+}

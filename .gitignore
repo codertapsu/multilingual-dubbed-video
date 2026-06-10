@@ -1,0 +1,74 @@
+# ===== Node / pnpm =====
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+
+# ===== Build / compile output =====
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# ===== TypeScript / JS tooling caches =====
+.eslintcache
+coverage/
+.vitest/
+
+# ===== Angular (apps/desktop) =====
+.angular/
+.angular/cache/
+
+# ===== Rust / Tauri (apps/desktop/src-tauri) =====
+target/
+
+# ===== Python workers =====
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ===== Local model & data caches =====
+# Downloaded faster-whisper / Argos / Piper models and other large assets.
+models/
+.cache/
+*.onnx
+*.bin
+
+# NOTE: VideoDubber project workspaces live OUTSIDE the repo by default
+# (VIDEODUBBER_PROJECTS_DIR, default ~/VideoDubber/projects). If a developer
+# points it at a folder inside the repo, ignore the generated artifacts:
+VideoDubber/
+projects-local/
+
+# ===== Environment / secrets =====
+# Never commit real env files or API keys. .env.example IS committed.
+.env
+.env.*
+!.env.example
+*.local
+
+# ===== Logs =====
+*.log
+logs/
+.dev-logs/
+
+# ===== OS / editor cruft =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+*.swp
+*~
+
+# ===== Claude Code =====
+# Commit team-wide .claude/settings.json; keep personal overrides local.
+.claude/settings.local.json

@@ -1,0 +1,119 @@
+<section class="page stack">
+  <div class="row row-between">
+    <div>
+      <h1>Processing</h1>
+      <p class="muted">
+        @if (store.current(); as proj) {
+          {{ proj.name }} ·
+          <span class="mono"
+            >{{ proj.settings.sourceLanguage }} →
+            {{ proj.settings.targetLanguage }}</span
+          >
+        }
+      </p>
+    </div>
+    <div class="row">
+      <vd-status-badge [status]="overallStatus()" />
+      @if (events.status() === 'error') {
+        <span class="badge badge-warning" title="The live event stream is disconnected"
+          >Stream offline</span
+        >
+      }
+    </div>
+  </div>
+
+  <vd-error-banner [error]="displayError()" (dismiss)="dismissError()" />
+
+  <!-- Overall progress -->
+  <div class="card stack">
+    <div class="row row-between">
+      <strong>Overall progress</strong>
+      <span class="mono">{{ overallPercent() }}%</span>
+    </div>
+    <div
+      class="progress"
+      role="progressbar"
+      [attr.aria-valuenow]="overallPercent()"
+      aria-valuemin="0"
+      aria-valuemax="100"
+    >
+      <span [style.width.%]="overallPercent()"></span>
+    </div>
+
+    <div class="row">
+      @if (isRunning()) {
+        <button
+          type="button"
+          class="btn btn-danger"
+          (click)="cancel()"
+          [disabled]="cancelling()"
+        >
+          {{ cancelling() ? 'Cancelling…' : 'Cancel' }}
+        </button>
+      }
+      @if (isComplete()) {
+        <button type="button" class="btn btn-primary" (click)="goToEditor()">
+          Open editor
+        </button>
+        <button type="button" class="btn" (click)="goToExport()">Go to export</button>
+      }
+    </div>
+  </div>
+
+  <!-- Step list -->
+  <ol class="step-list" aria-label="Pipeline steps">
+    @for (step of steps(); track step.id) {
+      <li class="step-item" [attr.data-status]="step.status">
+        <div class="step-head">
+          <span class="step-label">{{ stepLabels[step.id] }}</span>
+          <vd-status-badge [status]="step.status" />
+        </div>
+
+        @if (step.status === 'running' || step.progressPercent > 0) {
+          <div
+            class="progress step-progress"
+            role="progressbar"
+            [attr.aria-valuenow]="stepPercent(step)"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          >
+            <span [style.width.%]="stepPercent(step)"></span>
+          </div>
+        }
+
+        @if (step.error) {
+          <p class="step-error mono">{{ step.error }}</p>
+        }
+
+        @if (step.status === 'failed') {
+          <div>
+            <button type="button" class="btn btn-sm" (click)="retry(step.id)">
+              Retry from this step
+            </button>
+          </div>
+        }
+      </li>
+    } @empty {
+      <li class="muted">Waiting for the pipeline to report its steps…</li>
+    }
+  </ol>
+
+  <!-- Live log panel -->
+  <div class="card stack">
+    <div class="row row-between">
+      <strong>Logs</strong>
+      <span class="muted">{{ events.logs().length }} lines</span>
+    </div>
+    <div class="log-panel" role="log" aria-live="polite" aria-label="Pipeline logs">
+      @for (line of events.logs(); track $index) {
+        <div class="log-line" [attr.data-level]="line.level">
+          <span class="log-ts mono">{{ line.ts }}</span>
+          <span class="log-level">{{ line.level }}</span>
+          <span class="log-msg">{{ line.message }}</span>
+        </div>
+      } @empty {
+        <div class="muted log-empty">No log output yet.</div>
+      }
+    </div>
+  </div>
+</section>

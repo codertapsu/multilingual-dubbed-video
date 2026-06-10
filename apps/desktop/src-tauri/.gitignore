@@ -1,0 +1,11 @@
+# Rust / Cargo build output
+/target/
+
+# Tauri 2 generated artifacts (schemas, etc.) — regenerated on build.
+/gen/
+
+# Generated bundle icons are committed normally; uncomment the next lines if you
+# decide to generate them in CI instead of committing them.
+# /icons/*.png
+# /icons/*.icns
+# /icons/*.ico

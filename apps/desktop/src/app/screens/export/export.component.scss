@@ -1,0 +1,30 @@
+:host {
+  display: block;
+}
+
+.label {
+  font-weight: 650;
+  color: var(--vd-text-muted);
+}
+
+.sidecar-list {
+  margin: var(--vd-sp-1) 0 0;
+  padding-left: var(--vd-sp-5);
+}
+
+.video-preview {
+  width: 100%;
+  max-height: 60vh;
+  background: #000;
+  border-radius: var(--vd-radius-sm);
+}
+
+.preview-note {
+  align-self: flex-start;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.field {
+  max-width: 420px;
+}

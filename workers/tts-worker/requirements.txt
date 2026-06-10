@@ -1,0 +1,17 @@
+# VideoDubber TTS worker runtime dependencies.
+#
+# The fallback (silent/sine WAV) TTS engine works with the Python standard
+# library alone, so the whole pipeline is testable with just these packages.
+#
+# piper-tts is intentionally OMITTED — the Piper *binary* is invoked via
+# subprocess (see app/engines.py). Install the binary separately and point
+# PIPER_BINARY_PATH / PIPER_VOICE_MODEL_PATH at it. See README.md.
+
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+
+# Test-only (install with: pip install -r requirements.txt -r requirements-dev.txt)
+# kept here as a comment so the runtime image stays slim:
+#   pytest>=8.0
+#   httpx>=0.27

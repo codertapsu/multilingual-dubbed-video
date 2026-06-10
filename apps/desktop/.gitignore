@@ -1,0 +1,8 @@
+# Angular / build output
+/dist
+/.angular
+/node_modules
+*.tsbuildinfo
+
+# Tauri (owned by the src-tauri agent, ignored here for safety)
+/src-tauri/target

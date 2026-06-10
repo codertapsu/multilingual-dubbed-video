@@ -1,0 +1,4 @@
+# Development / testing dependencies for the translation worker.
+-r requirements.txt
+pytest>=8.0
+httpx>=0.27   # used by fastapi.testclient (Starlette TestClient)

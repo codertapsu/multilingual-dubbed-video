@@ -1,0 +1,237 @@
+<section class="page stack">
+  <header>
+    <h1>New project</h1>
+    <ol class="steps" aria-label="Wizard progress">
+      <li [class.active]="step() === 1" [class.done]="step() === 2">
+        1. Source &amp; options
+      </li>
+      <li [class.active]="step() === 2">2. Review media &amp; start</li>
+    </ol>
+  </header>
+
+  <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
+
+  <!-- ============================ STEP 1 ============================ -->
+  @if (step() === 1) {
+    <form class="card stack" (ngSubmit)="goToStep2()">
+      <div class="field">
+        <label for="projName">Project name</label>
+        <input
+          id="projName"
+          type="text"
+          [ngModel]="name()"
+          (ngModelChange)="name.set($event)"
+          name="projName"
+          placeholder="My dubbing project"
+          autocomplete="off"
+        />
+      </div>
+
+      <fieldset>
+        <legend>Source video</legend>
+        <div class="row">
+          <div class="grow">
+            <label for="videoPath">Video file path</label>
+            <input
+              id="videoPath"
+              type="text"
+              [ngModel]="inputVideoPath()"
+              (ngModelChange)="onPathInput($event)"
+              name="videoPath"
+              placeholder="/path/to/video.mp4"
+              aria-describedby="videoPathHint"
+            />
+          </div>
+          <div class="pick-btn">
+            <button
+              type="button"
+              class="btn"
+              (click)="pickVideo()"
+              [disabled]="!inTauri"
+              [title]="
+                inTauri
+                  ? 'Open a native file picker'
+                  : 'Native picker is only available in the desktop app — paste a path instead'
+              "
+            >
+              Browse…
+            </button>
+          </div>
+        </div>
+        <p id="videoPathHint" class="hint">
+          @if (inTauri) {
+            Use Browse to pick a file, or paste an absolute path.
+          } @else {
+            Running in the browser: paste an absolute path the orchestrator can
+            read (the native picker is desktop-only).
+          }
+        </p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Languages</legend>
+        <div class="lang-grid">
+          <div class="field">
+            <label for="srcLang">Source language</label>
+            <select
+              id="srcLang"
+              name="srcLang"
+              [ngModel]="settings().sourceLanguage"
+              (ngModelChange)="patchSettings('sourceLanguage', $event)"
+            >
+              @for (lang of languages(); track lang.code) {
+                <option [value]="lang.code">{{ lang.label }}</option>
+              }
+            </select>
+          </div>
+          <div class="field">
+            <label for="tgtLang">Target language</label>
+            <select
+              id="tgtLang"
+              name="tgtLang"
+              [ngModel]="settings().targetLanguage"
+              (ngModelChange)="patchSettings('targetLanguage', $event)"
+            >
+              @for (lang of languages(); track lang.code) {
+                <option [value]="lang.code">{{ lang.label }}</option>
+              }
+            </select>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Subtitles</legend>
+        <div class="radio-list" role="radiogroup" aria-label="Subtitle export mode">
+          @for (mode of subtitleModes; track mode) {
+            <label class="radio-row">
+              <input
+                type="radio"
+                name="subtitleMode"
+                [value]="mode"
+                [checked]="settings().subtitleExportMode === mode"
+                (change)="setSubtitleMode(mode)"
+              />
+              <span class="radio-body">
+                <span class="radio-title">{{ subtitleLabels[mode] }}</span>
+                <span class="hint">{{ subtitleHints[mode] }}</span>
+              </span>
+            </label>
+          }
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Processing mode</legend>
+        <div class="radio-list" role="radiogroup" aria-label="Processing mode">
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="processingMode"
+              value="local"
+              [checked]="settings().processingMode === 'local'"
+              (change)="setProcessingMode('local')"
+            />
+            <span class="radio-body">
+              <span class="radio-title">{{ processingLabels['local'] }}</span>
+              <span class="hint">Everything runs on this machine. No network.</span>
+            </span>
+          </label>
+          <label class="radio-row disabled">
+            <input type="radio" name="processingMode" value="cloud-enhanced" disabled />
+            <span class="radio-body">
+              <span class="radio-title">
+                {{ processingLabels['cloud-enhanced'] }}
+                <span class="badge badge-pending">Future</span>
+              </span>
+              <span class="hint"
+                >Optional cloud providers (OpenAI, DeepL, ElevenLabs…). Not in
+                this build.</span
+              >
+            </span>
+          </label>
+        </div>
+      </fieldset>
+
+      <div class="row row-between">
+        <span class="hint">A workspace is created when you continue.</span>
+        <button
+          type="submit"
+          class="btn btn-primary"
+          [disabled]="!step1Valid() || busy()"
+        >
+          {{ busy() ? 'Creating…' : 'Continue →' }}
+        </button>
+      </div>
+    </form>
+  }
+
+  <!-- ============================ STEP 2 ============================ -->
+  @if (step() === 2) {
+    <div class="card stack">
+      <h2>Review media</h2>
+
+      @if (mediaInfo(); as info) {
+        @if (noAudioWarning()) {
+          <div class="badge badge-warning audio-warn" role="alert">
+            ⚠ This file has no audio stream — there is nothing to transcribe or
+            dub. Pick a different source.
+          </div>
+        }
+        <dl class="media-grid">
+          <dt>Duration</dt>
+          <dd>{{ formatDuration(info.durationMs) }}</dd>
+
+          <dt>Container</dt>
+          <dd>{{ info.container }}</dd>
+
+          <dt>Size</dt>
+          <dd>{{ formatBytes(info.sizeBytes) }}</dd>
+
+          <dt>Resolution</dt>
+          <dd>{{ resolutionLabel(info) }}</dd>
+
+          <dt>Video codec</dt>
+          <dd class="mono">{{ videoCodecLabel(info) }}</dd>
+
+          <dt>Audio</dt>
+          <dd class="mono">{{ audioCodecLabel(info) }}</dd>
+        </dl>
+      } @else {
+        <p class="muted">
+          Media could not be probed automatically. You can still start — the
+          pipeline probes the file as its first step.
+        </p>
+      }
+
+      <fieldset>
+        <legend>Output folder</legend>
+        <input
+          type="text"
+          [ngModel]="outputDir()"
+          (ngModelChange)="outputDir.set($event)"
+          name="outputDir"
+          aria-label="Output folder"
+          placeholder="(defaults to the project workspace render/ folder)"
+        />
+        <p class="hint">
+          Final video and any sidecar subtitles are written here.
+        </p>
+      </fieldset>
+
+      <div class="row row-between">
+        <button type="button" class="btn" (click)="backToStep1()" [disabled]="busy()">
+          ← Back
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          (click)="start()"
+          [disabled]="busy()"
+        >
+          {{ busy() ? 'Starting…' : 'Start dubbing ▶' }}
+        </button>
+      </div>
+    </div>
+  }
+</section>

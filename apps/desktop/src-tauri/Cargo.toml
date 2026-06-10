@@ -1,0 +1,78 @@
+[package]
+name = "videodubber-desktop"
+version = "0.1.0"
+description = "VideoDubber — local/offline-first desktop app that dubs videos into another language."
+authors = ["VideoDubber"]
+edition = "2021"
+# Tauri 2 requires a reasonably recent stable toolchain.
+rust-version = "1.77.2"
+
+# ---------------------------------------------------------------------------
+# Tauri 2 standard crate layout.
+#
+# Tauri 2 desktop projects use BOTH a library crate and a thin binary:
+#   * `src/lib.rs`  — exposes `pub fn run()` and is compiled as `cdylib`
+#                     (so mobile targets can link it) + `rlib` (so the
+#                     desktop binary can call it).
+#   * `src/main.rs` — a tiny shim that calls `videodubber_desktop_lib::run()`.
+#
+# The library crate name MUST differ from the binary crate name on Windows,
+# hence the `_lib` suffix that Tauri's own templates use.
+# ---------------------------------------------------------------------------
+[lib]
+name = "videodubber_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+# Generates the Tauri context (reads tauri.conf.json, embeds capabilities, etc.).
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Core Tauri runtime. The `protocol-asset` feature lets the webview load local
+# files via the asset protocol if ever needed; otherwise default features are
+# sufficient for a single-window desktop shell.
+tauri = { version = "2", features = [] }
+
+# Official Tauri 2 plugins used by this shell:
+#   * dialog  -> native open-file dialog for picking a video.
+#   * opener  -> open a path/URL with the OS default handler.
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+
+# Serialization for command params / responses.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client used by `orchestrator_client.rs` to proxy commands to the
+# Node orchestrator (default http://127.0.0.1:5100). `json` feature gives us
+# `.json()` (de)serialization helpers.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+
+# Async runtime. Tauri re-exports `tauri::async_runtime` (a tokio wrapper), but
+# we depend on tokio directly for the sidecar scaffold (process management).
+tokio = { version = "1", features = ["full"] }
+
+# ---------------------------------------------------------------------------
+# Cargo features.
+#
+# `spawn-sidecars` is OFF by default. When enabled, `sidecar.rs` will attempt to
+# launch the Node orchestrator + Python workers as managed child processes on
+# startup. In normal development you instead run `pnpm dev` (see scripts/),
+# which starts those services separately, so the desktop shell should NOT try
+# to spawn them. See sidecar.rs for the production-packaging TODOs.
+# ---------------------------------------------------------------------------
+[features]
+default = []
+spawn-sidecars = []
+
+# Custom protocol is the production transport; this is the standard Tauri 2
+# release profile tweak to keep binaries small.
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

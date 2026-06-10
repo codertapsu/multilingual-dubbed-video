@@ -1,0 +1,15 @@
+# Runtime dependencies for the VideoDubber STT worker.
+# Mirrors the [project].dependencies in pyproject.toml for pip/venv users.
+#
+#   python -m venv .venv
+#   source .venv/bin/activate          # Windows: .venv\Scripts\activate
+#   pip install -r requirements.txt
+#
+fastapi>=0.110
+uvicorn[standard]>=0.29
+faster-whisper>=1.0
+pydantic>=2
+
+# --- Dev / test only (uncomment or `pip install -r requirements-dev.txt`) ---
+# pytest>=8
+# httpx>=0.27

@@ -1,0 +1,48 @@
+{
+  "name": "@videodubber/node-orchestrator",
+  "version": "0.1.0",
+  "description": "VideoDubber orchestration engine: HTTP service implementing the resumable dubbing pipeline, provider registry, workspace management, SSE progress, and worker health checks.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    }
+  },
+  "bin": {
+    "videodubber-orchestrator": "./dist/server.js"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@videodubber/media-worker": "workspace:*",
+    "@videodubber/shared": "workspace:*",
+    "fastify": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "~5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

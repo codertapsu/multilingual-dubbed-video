@@ -1,0 +1,70 @@
+<section class="page stack">
+  <div class="row row-between">
+    <div>
+      <h1>Projects</h1>
+      <p class="muted">Dub a video into another language, fully offline.</p>
+    </div>
+    <div class="row">
+      <button
+        type="button"
+        class="btn"
+        (click)="refresh()"
+        [disabled]="store.loading()"
+      >
+        Refresh
+      </button>
+      <button type="button" class="btn btn-primary" (click)="newProject()">
+        + New project
+      </button>
+    </div>
+  </div>
+
+  <vd-error-banner
+    [error]="store.lastError()"
+    (dismiss)="store.clearError()"
+  />
+
+  @if (store.loading() && store.recentProjects().length === 0) {
+    <div class="card muted">Loading projects…</div>
+  } @else if (store.recentProjects().length === 0) {
+    <div class="card empty-state stack">
+      <h2>No projects yet</h2>
+      <p class="muted">
+        Create your first dubbing project. Pick a video, choose source and
+        target languages, and let the local pipeline do the rest.
+      </p>
+      <div>
+        <button type="button" class="btn btn-primary" (click)="newProject()">
+          + Create your first project
+        </button>
+      </div>
+    </div>
+  } @else {
+    <ul class="project-list" role="list">
+      @for (project of store.recentProjects(); track project.id) {
+        <li class="project-card">
+          <button
+            type="button"
+            class="project-open"
+            (click)="open(project)"
+            [attr.aria-label]="'Open project ' + project.name"
+          >
+            <div class="project-main">
+              <span class="project-name">{{ project.name }}</span>
+              <span class="project-path mono">{{ project.inputVideoPath }}</span>
+            </div>
+            <div class="project-meta">
+              <span class="badge badge-pending">{{ dubLabel(project) }}</span>
+              @if (project.mediaInfo) {
+                <span class="muted">{{
+                  formatDuration(project.mediaInfo.durationMs)
+                }}</span>
+              }
+              <vd-status-badge [status]="badgeStatus(project)" />
+            </div>
+          </button>
+        </li>
+      }
+    </ul>
+  }
+</section>

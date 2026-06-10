@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "videodubber-tts-worker"
+version = "0.1.0"
+description = "VideoDubber TTS worker — local/offline-first text-to-speech (Piper -> system TTS -> dev fallback)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "VideoDubber" }]
+
+# Hard dependencies. NOTE: piper-tts is intentionally NOT here — the Piper
+# *binary* is invoked via subprocess so the Python package is not required.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+# Optional helpers. None are required for the fallback path to work.
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",          # required by fastapi.testclient
+]
+# Optional: if you prefer to drive Piper through the Python package instead of
+# the binary you may install this, but the worker does not depend on it.
+piper = [
+    "piper-tts>=1.2",
+]
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,116 @@
+<section class="page stack">
+  <div class="row row-between">
+    <div>
+      <h1>Editor</h1>
+      <p class="muted">
+        Review and refine the translation. Long lines and timing conflicts are
+        flagged below.
+      </p>
+    </div>
+    <div class="row">
+      <button type="button" class="btn" (click)="reload()" [disabled]="loading()">
+        Reload
+      </button>
+      <button
+        type="button"
+        class="btn btn-primary"
+        (click)="save()"
+        [disabled]="saving() || !dirty()"
+      >
+        {{ saving() ? 'Saving…' : dirty() ? 'Save changes' : 'Saved' }}
+      </button>
+    </div>
+  </div>
+
+  <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
+
+  @if (anyWarnings()) {
+    <div class="badge badge-warning warnings-hint">
+      ⚠ Some segments have warnings — over-long subtitles or timing conflicts.
+    </div>
+  }
+
+  @if (loading() && rows().length === 0) {
+    <div class="card muted">Loading segments…</div>
+  } @else if (rows().length === 0) {
+    <div class="card muted">
+      No segments yet. Run the pipeline through the transcription and translation
+      steps first.
+    </div>
+  } @else {
+    <div class="seg-table" role="table" aria-label="Transcript segments">
+      <div class="seg-row seg-header" role="row">
+        <span role="columnheader">#</span>
+        <span role="columnheader">Timing</span>
+        <span role="columnheader">Source</span>
+        <span role="columnheader">Translation</span>
+        <span role="columnheader">Actions</span>
+      </div>
+
+      @for (row of rows(); track row.segment.id) {
+        <div class="seg-row" role="row" [class.has-warning]="row.longSubtitle || row.timingConflict">
+          <span class="seg-index mono" role="cell">{{ row.segment.index + 1 }}</span>
+
+          <span class="seg-timing mono" role="cell">
+            {{ formatTimecode(row.segment.startMs) }}<br />
+            <span class="muted">{{ formatTimecode(row.segment.endMs) }}</span>
+          </span>
+
+          <span class="seg-source" role="cell">{{ row.segment.sourceText }}</span>
+
+          <span class="seg-translation" role="cell">
+            <label class="visually-hidden" [attr.for]="'tr-' + row.segment.id">
+              Translation for segment {{ row.segment.index + 1 }}
+            </label>
+            <textarea
+              [id]="'tr-' + row.segment.id"
+              [ngModel]="draft(row.segment.id)"
+              (ngModelChange)="onTranslationChange(row.segment.id, $event)"
+              rows="2"
+              spellcheck="true"
+            ></textarea>
+
+            <div class="seg-badges">
+              @if (row.longSubtitle) {
+                <span class="badge badge-warning" title="Exceeds 2 lines / ~84 chars"
+                  >Long subtitle</span
+                >
+              }
+              @if (row.needsReview) {
+                <span class="badge badge-warning">Needs review</span>
+              }
+              @if (row.timingConflict) {
+                <span class="badge badge-failed">Timing conflict</span>
+              }
+              @if (row.alignmentNote) {
+                <span class="hint">{{ row.alignmentNote }}</span>
+              }
+            </div>
+          </span>
+
+          <span class="seg-actions" role="cell">
+            @if (previewUrl(row.segment); as url) {
+              <audio
+                class="seg-audio"
+                controls
+                preload="none"
+                [src]="url"
+                [attr.aria-label]="'Preview audio for segment ' + (row.segment.index + 1)"
+              ></audio>
+            } @else {
+              <span class="hint">No audio yet</span>
+            }
+            <button
+              type="button"
+              class="btn btn-sm"
+              (click)="regenerate(row.segment)"
+              [disabled]="isSynthesizing(row.segment.id)"
+            >
+              {{ isSynthesizing(row.segment.id) ? 'Synthesizing…' : 'Regenerate TTS' }}
+            </button>
+          </span>
+        </div>
+      }
+    </div>
+  }
+</section>

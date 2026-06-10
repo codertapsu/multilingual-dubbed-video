@@ -1,0 +1,10 @@
+# Dev/test dependencies for the VideoDubber STT worker.
+# Install on top of requirements.txt:
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# NOTE: The unit tests monkeypatch the whisper service, so they do NOT require
+# faster-whisper, a model download, or any network access.
+-r requirements.txt
+pytest>=8
+httpx>=0.27

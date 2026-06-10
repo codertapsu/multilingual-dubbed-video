@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VideoDubber",
+  "version": "0.1.0",
+  "identifier": "com.videodubber.app",
+  "build": {
+    "//": "Angular dev server (see apps/desktop/package.json `start`) must serve on 1420 for `tauri dev`. The Angular project should set `ng serve --port 1420`.",
+    "devUrl": "http://localhost:1420",
+    "//frontendDist": "angular.json sets outputPath=dist (no project subfolder), so the application builder emits assets to apps/desktop/dist/browser. Relative to this file (src-tauri/).",
+    "frontendDist": "../dist/browser",
+    "//beforeDevCommand": "Started separately via scripts/dev.sh (pnpm dev). Leave empty so `tauri dev` does not also try to boot the Angular server.",
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "VideoDubber",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 940,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "//csp": "Permissive enough for the Angular UI to talk to localhost HTTP services and open an EventSource (SSE) to the orchestrator. connect-src must list both http and ws origins for 127.0.0.1 / localhost on the worker ports (5100-5103). ipc:/tauri: are required for Tauri 2 IPC.",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:5100 http://127.0.0.1:5101 http://127.0.0.1:5102 http://127.0.0.1:5103 http://localhost:5100 http://localhost:5101 http://localhost:5102 http://localhost:5103 ws://127.0.0.1:5100 ws://localhost:5100"
+    }
+  },
+  "plugins": {
+    "//": "Plugin runtime config. Permissions are granted via capabilities/default.json, not here.",
+    "dialog": {},
+    "opener": {}
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "//icon": "Tauri requires at least these icon files to build a bundle. Generate them with `pnpm tauri icon path/to/source.png` (see icons/README.md). Placeholders are referenced here; the dev build (`tauri dev`) does NOT strictly require all of them, but a release bundle does.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Dub videos into another language, locally.",
+    "longDescription": "VideoDubber is an offline-first desktop app that transcribes, translates, and re-voices videos into a target language using local STT/MT/TTS engines."
+  }
+}

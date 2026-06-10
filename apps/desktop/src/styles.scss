@@ -1,0 +1,323 @@
+/* =========================================================================
+   VideoDubber — global design system (light theme)
+   Small, clean, accessible. CSS custom properties drive everything so
+   component scss stays terse. Single-window desktop layout.
+   ========================================================================= */
+
+:root {
+  /* Color palette */
+  --vd-bg: #f6f7f9;
+  --vd-surface: #ffffff;
+  --vd-surface-2: #f0f2f5;
+  --vd-border: #d8dde3;
+  --vd-border-strong: #b9c1cc;
+
+  --vd-text: #1b2430;
+  --vd-text-muted: #5b6675;
+  --vd-text-subtle: #8a93a0;
+
+  --vd-primary: #2563eb;
+  --vd-primary-hover: #1d4ed8;
+  --vd-primary-contrast: #ffffff;
+
+  --vd-success: #16a34a;
+  --vd-success-bg: #e7f6ec;
+  --vd-warning: #b45309;
+  --vd-warning-bg: #fdf0db;
+  --vd-danger: #dc2626;
+  --vd-danger-bg: #fbe7e7;
+  --vd-info: #0369a1;
+  --vd-info-bg: #e3f0f7;
+
+  /* Status badge accents */
+  --vd-pending: #8a93a0;
+  --vd-running: #2563eb;
+
+  /* Spacing scale */
+  --vd-sp-1: 4px;
+  --vd-sp-2: 8px;
+  --vd-sp-3: 12px;
+  --vd-sp-4: 16px;
+  --vd-sp-5: 24px;
+  --vd-sp-6: 32px;
+
+  /* Radii + shadows */
+  --vd-radius: 8px;
+  --vd-radius-sm: 5px;
+  --vd-radius-lg: 14px;
+  --vd-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --vd-shadow: 0 4px 14px rgba(16, 24, 40, 0.1);
+
+  --vd-font: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  --vd-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    monospace;
+
+  --vd-focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.4);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--vd-bg);
+  color: var(--vd-text);
+  font-family: var(--vd-font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+vd-root {
+  display: block;
+  min-height: 100%;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 var(--vd-sp-3);
+  line-height: 1.25;
+  font-weight: 650;
+}
+h1 {
+  font-size: 1.5rem;
+}
+h2 {
+  font-size: 1.2rem;
+}
+h3 {
+  font-size: 1rem;
+}
+
+p {
+  margin: 0 0 var(--vd-sp-3);
+}
+
+a {
+  color: var(--vd-primary);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* --- Universal accessible focus state --- */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--vd-focus-ring);
+  border-radius: var(--vd-radius-sm);
+}
+
+/* ---------------------------- Buttons ---------------------------- */
+.btn {
+  appearance: none;
+  border: 1px solid var(--vd-border-strong);
+  background: var(--vd-surface);
+  color: var(--vd-text);
+  font: inherit;
+  font-weight: 550;
+  padding: var(--vd-sp-2) var(--vd-sp-4);
+  border-radius: var(--vd-radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    color 0.12s ease;
+}
+.btn:hover:not(:disabled) {
+  background: var(--vd-surface-2);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--vd-primary);
+  border-color: var(--vd-primary);
+  color: var(--vd-primary-contrast);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--vd-primary-hover);
+  border-color: var(--vd-primary-hover);
+}
+.btn-danger {
+  background: var(--vd-danger);
+  border-color: var(--vd-danger);
+  color: #fff;
+}
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--vd-surface-2);
+}
+.btn-sm {
+  padding: var(--vd-sp-1) var(--vd-sp-3);
+  font-size: 0.85rem;
+}
+
+/* ---------------------------- Forms ---------------------------- */
+label {
+  display: block;
+  font-weight: 550;
+  margin-bottom: var(--vd-sp-1);
+  color: var(--vd-text);
+}
+.hint {
+  color: var(--vd-text-muted);
+  font-size: 0.85rem;
+}
+
+input[type='text'],
+input[type='number'],
+select,
+textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--vd-text);
+  background: var(--vd-surface);
+  border: 1px solid var(--vd-border-strong);
+  border-radius: var(--vd-radius-sm);
+  padding: var(--vd-sp-2) var(--vd-sp-3);
+}
+textarea {
+  resize: vertical;
+  min-height: 64px;
+  line-height: 1.45;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--vd-primary);
+}
+
+fieldset {
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+  padding: var(--vd-sp-4);
+  margin: 0 0 var(--vd-sp-4);
+}
+legend {
+  font-weight: 600;
+  padding: 0 var(--vd-sp-2);
+}
+
+/* ---------------------------- Surfaces ---------------------------- */
+.card {
+  background: var(--vd-surface);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+  box-shadow: var(--vd-shadow-sm);
+  padding: var(--vd-sp-5);
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-4);
+}
+.row {
+  display: flex;
+  gap: var(--vd-sp-3);
+  align-items: center;
+}
+.row-between {
+  justify-content: space-between;
+}
+.grow {
+  flex: 1;
+}
+.muted {
+  color: var(--vd-text-muted);
+}
+.mono {
+  font-family: var(--vd-font-mono);
+  font-size: 0.85em;
+}
+
+/* ---------------------------- Badges ---------------------------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vd-sp-1);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge-pending {
+  color: var(--vd-text-muted);
+  background: var(--vd-surface-2);
+  border-color: var(--vd-border);
+}
+.badge-running {
+  color: var(--vd-running);
+  background: var(--vd-info-bg);
+}
+.badge-completed {
+  color: var(--vd-success);
+  background: var(--vd-success-bg);
+}
+.badge-failed {
+  color: var(--vd-danger);
+  background: var(--vd-danger-bg);
+}
+.badge-skipped {
+  color: var(--vd-text-subtle);
+  background: var(--vd-surface-2);
+}
+.badge-warning {
+  color: var(--vd-warning);
+  background: var(--vd-warning-bg);
+}
+
+/* ---------------------------- Progress ---------------------------- */
+.progress {
+  width: 100%;
+  height: 8px;
+  background: var(--vd-surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  background: var(--vd-primary);
+  transition: width 0.25s ease;
+}
+
+/* ---------------------------- Layout helpers ---------------------------- */
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--vd-sp-5);
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

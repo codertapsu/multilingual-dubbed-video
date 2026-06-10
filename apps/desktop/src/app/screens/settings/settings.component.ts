@@ -1,4 +1,4 @@
-import type { OnInit } from '@angular/core';
+import type { OnDestroy, OnInit } from '@angular/core';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -11,7 +11,8 @@ import { FormsModule } from '@angular/forms';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
-import type { AppError } from '../../core/models';
+import { environment } from '../../core/environment';
+import type { AppError, EnginePackInfo, InstalledEnginePack } from '../../core/models';
 import type {
   CloudCredentialInfo,
   CloudServiceId,
@@ -50,7 +51,7 @@ const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> =
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
 })
-export class SettingsComponent implements OnInit {
+export class SettingsComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
 
   protected readonly inTauri = this.ipc.inTauri;
@@ -70,16 +71,27 @@ export class SettingsComponent implements OnInit {
   /** Whisper model choices for the default-model picker. */
   protected readonly whisperModels: ReadonlyArray<{ id: string; label: string }> = [
     { id: 'tiny', label: 'Tiny — fastest, lowest accuracy (~75 MB)' },
-    { id: 'base', label: 'Base — balanced starter (~145 MB)' },
+    { id: 'base', label: 'Base — balanced; good on 8 GB (~145 MB)' },
     { id: 'small', label: 'Small — better accuracy (~480 MB)' },
+    { id: 'large-v3-turbo', label: 'Large v3 Turbo — recommended: near-best, 6-8x faster (~1.6 GB)' },
+    { id: 'distil-large-v3.5', label: 'Distil Large v3.5 — English only, fastest large (~760 MB)' },
     { id: 'medium', label: 'Medium — high accuracy (~1.5 GB)' },
     { id: 'large-v3', label: 'Large v3 — best accuracy, slow on CPU (~3 GB)' },
+    { id: 'phowhisper-medium', label: 'PhoWhisper Medium — best for Vietnamese-source audio' },
+    { id: 'phowhisper-large', label: 'PhoWhisper Large — Vietnamese-source, highest accuracy' },
   ];
 
   // Per-service key editing state.
   protected readonly keyInputs = signal<Partial<Record<CloudServiceId, string>>>({});
   protected readonly credBusy = signal<CloudServiceId | null>(null);
   protected readonly testResults = signal<Partial<Record<CloudServiceId, CredentialTestResult>>>({});
+
+  // -------- engine packs --------
+  protected readonly enginePacks = signal<EnginePackInfo[]>([]);
+  protected readonly installedEngines = signal<InstalledEnginePack[]>([]);
+  protected readonly recommendedEngineIds = signal<Set<string>>(new Set());
+  protected readonly engineProgress = signal<Record<string, { percent: number | null; message: string }>>({});
+  private engineEvents: EventSource | null = null;
 
   protected readonly ramLabel = computed(() => {
     const profile = this.system()?.profile;
@@ -107,6 +119,105 @@ export class SettingsComponent implements OnInit {
     void this.loadPreference();
     void this.loadVersion();
     void this.loadProcessingSetup();
+    void this.loadEngines();
+  }
+
+  ngOnDestroy(): void {
+    this.engineEvents?.close();
+    this.engineEvents = null;
+  }
+
+  // ----------------------------- engine packs -----------------------------
+
+  private async loadEngines(): Promise<void> {
+    await Promise.all([
+      this.ipc
+        .getEngines()
+        .then((e) => {
+          this.enginePacks.set(e.available);
+          this.installedEngines.set(e.installed);
+        })
+        .catch(() => undefined),
+      this.ipc
+        .getRecommendedEngines()
+        .then((r) => this.recommendedEngineIds.set(new Set(r.recommendations.map((x) => x.packId))))
+        .catch(() => undefined),
+    ]);
+  }
+
+  protected isEngineInstalled(packId: string): boolean {
+    return this.installedEngines().some((i) => i.id === packId);
+  }
+
+  protected isEngineRecommended(packId: string): boolean {
+    return this.recommendedEngineIds().has(packId);
+  }
+
+  protected engineProgressFor(packId: string): { percent: number | null; message: string } | undefined {
+    return this.engineProgress()[packId];
+  }
+
+  /** Subscribe to /engines/events once; updates progress + refreshes on done. */
+  private ensureEngineEvents(): void {
+    if (this.engineEvents || !environment.orchestratorUrl) return;
+    const es = new EventSource(`${environment.orchestratorUrl}/engines/events`);
+    es.onmessage = (ev) => {
+      try {
+        const event = JSON.parse(ev.data) as
+          | { type: 'progress'; packId: string; percent: number | null; message: string }
+          | { type: 'done'; packId: string }
+          | { type: 'error'; packId: string; error: AppError }
+          | { type: 'log' };
+        if (event.type === 'progress') {
+          this.engineProgress.update((m) => ({ ...m, [event.packId]: { percent: event.percent, message: event.message } }));
+        } else if (event.type === 'done') {
+          this.engineProgress.update((m) => {
+            const next = { ...m };
+            delete next[event.packId];
+            return next;
+          });
+          void this.loadEngines();
+          void this.loadProcessingSetup(); // availability flips once a pack lands
+        } else if (event.type === 'error') {
+          this.engineProgress.update((m) => {
+            const next = { ...m };
+            delete next[event.packId];
+            return next;
+          });
+          this.error.set(event.error);
+        }
+      } catch {
+        /* ignore malformed frame */
+      }
+    };
+    this.engineEvents = es;
+  }
+
+  protected async installEngine(packId: string): Promise<void> {
+    this.error.set(null);
+    this.ensureEngineEvents();
+    this.engineProgress.update((m) => ({ ...m, [packId]: { percent: 0, message: 'Starting…' } }));
+    try {
+      await this.ipc.installEngine(packId);
+    } catch (err) {
+      this.engineProgress.update((m) => {
+        const next = { ...m };
+        delete next[packId];
+        return next;
+      });
+      this.error.set(toAppError(err));
+    }
+  }
+
+  protected async uninstallEngine(packId: string): Promise<void> {
+    this.error.set(null);
+    try {
+      await this.ipc.uninstallEngine(packId);
+      await this.loadEngines();
+      await this.loadProcessingSetup();
+    } catch (err) {
+      this.error.set(toAppError(err));
+    }
   }
 
   // ----------------------------- processing setup -----------------------------

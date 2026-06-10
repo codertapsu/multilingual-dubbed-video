@@ -209,6 +209,57 @@
     }
   </div>
 
+  <!-- ============================ Engines ============================ -->
+  <div class="card stack">
+    <h2>Engines</h2>
+    <p class="muted">
+      Optional high-quality engines for capable machines — accelerated
+      transcription, local LLM translation, neural voices, vocal separation, and
+      forced alignment. They download on demand and run only when a project uses
+      them, so the base app stays small. Packs marked “recommended” suit this
+      computer.
+    </p>
+
+    @if (enginePacks().length === 0) {
+      <p class="hint">No engine packs are available for this platform, or the backend is offline.</p>
+    }
+
+    @for (pack of enginePacks(); track pack.id) {
+      <div class="cred-row stack-sm">
+        <div class="cred-head">
+          <span class="cred-name">{{ pack.displayName }}</span>
+          @if (isEngineRecommended(pack.id)) {
+            <span class="badge badge-running">recommended</span>
+          }
+          @if (isEngineInstalled(pack.id)) {
+            <span class="badge badge-completed">installed</span>
+          }
+          <span class="chip">{{ pack.approxSizeMb >= 1000 ? (pack.approxSizeMb / 1000).toFixed(1) + ' GB' : pack.approxSizeMb + ' MB' }}</span>
+        </div>
+        <span class="hint">{{ pack.description }}</span>
+        @if (pack.licenseNote) {
+          <span class="hint mono">{{ pack.licenseNote }}</span>
+        }
+        @if (engineProgressFor(pack.id); as prog) {
+          <div class="install-progress">
+            <span class="hint">{{ prog.message }}</span>
+            @if (prog.percent !== null) {
+              <progress [value]="prog.percent" max="100"></progress>
+            }
+          </div>
+        } @else {
+          <div class="cred-controls">
+            @if (isEngineInstalled(pack.id)) {
+              <button type="button" class="btn btn-ghost btn-sm" (click)="uninstallEngine(pack.id)">Remove</button>
+            } @else {
+              <button type="button" class="btn btn-sm" (click)="installEngine(pack.id)">Install</button>
+            }
+          </div>
+        }
+      </div>
+    }
+  </div>
+
   <!-- ============================ Updates ============================ -->
   <div class="card stack">
     <h2>Updates</h2>

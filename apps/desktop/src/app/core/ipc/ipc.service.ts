@@ -32,6 +32,7 @@ import type {
   UpdateInfo,
   UpdatePreferences,
 } from '../models/setup';
+import type { EnginesResponse } from '../models';
 
 /** HTTP verbs the fetch fallback understands. */
 type HttpMethod = 'GET' | 'POST' | 'PUT';
@@ -335,6 +336,28 @@ export class IpcService {
   /** GET /credentials — masked per-service credential status. */
   getCredentials(): Promise<{ services: CloudCredentialInfo[] }> {
     return this.http<{ services: CloudCredentialInfo[] }>('GET', '/credentials');
+  }
+
+  // ----- Engine packs (optional accelerated/heavy local engines) -----
+
+  /** GET /engines — packs runnable on this machine + installed set. */
+  getEngines(): Promise<EnginesResponse> {
+    return this.http<EnginesResponse>('GET', '/engines');
+  }
+
+  /** GET /engines/recommended — hardware-aware suggested packs. */
+  getRecommendedEngines(): Promise<{ recommendations: { packId: string; reason: string }[] }> {
+    return this.http<{ recommendations: { packId: string; reason: string }[] }>('GET', '/engines/recommended');
+  }
+
+  /** POST /engines/install — start a pack download (progress via SSE). */
+  installEngine(packId: string): Promise<{ started: boolean }> {
+    return this.http<{ started: boolean }>('POST', '/engines/install', { packId });
+  }
+
+  /** POST /engines/uninstall — remove an installed pack. */
+  uninstallEngine(packId: string): Promise<{ ok: boolean }> {
+    return this.http<{ ok: boolean }>('POST', '/engines/uninstall', { packId });
   }
 
   /** PUT /credentials — set/replace/clear one service's key. */

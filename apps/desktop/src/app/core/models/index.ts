@@ -17,10 +17,19 @@ export type {
   LanguageCode,
   SubtitleExportMode,
   ProcessingMode,
+  OriginalAudioMode,
+  RenderQuality,
+  TimeStretchEngine,
+  SpeakerVoiceAssignment,
   PipelineStepId,
   // Settings / style
   SubtitleStyle,
   ProjectSettings,
+  // Engine packs
+  EnginePackInfo,
+  InstalledEnginePack,
+  EnginesResponse,
+  EngineInstallEvent,
   // Media
   MediaInfo,
   VideoStreamInfo,

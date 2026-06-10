@@ -154,3 +154,14 @@
 .test-fail {
   color: var(--error, #f7768e);
 }
+
+.install-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+
+  progress {
+    width: 100%;
+    height: 6px;
+  }
+}

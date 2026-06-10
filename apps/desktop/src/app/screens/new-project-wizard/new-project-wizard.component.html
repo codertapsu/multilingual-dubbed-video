@@ -129,8 +129,8 @@
               type="radio"
               name="originalAudio"
               value="keep"
-              [checked]="settings().includeOriginalBackgroundAudio"
-              (change)="setOriginalAudio(true)"
+              [checked]="(settings().originalAudioMode ?? 'keep') === 'keep'"
+              (change)="setOriginalAudioMode('keep')"
             />
             <span class="radio-body">
               <span class="radio-title">Keep it in the background (recommended)</span>
@@ -144,9 +144,27 @@
             <input
               type="radio"
               name="originalAudio"
+              value="replace-vocals"
+              [checked]="settings().originalAudioMode === 'replace-vocals'"
+              (change)="setOriginalAudioMode('replace-vocals')"
+            />
+            <span class="radio-body">
+              <span class="radio-title">Replace voices, keep music &amp; effects</span>
+              <span class="hint"
+                >Studio-style: the original voices are separated out and replaced
+                by the dub, while the music &amp; effects play at full volume.
+                Requires the “Vocal separation” engine (Settings → Engines); falls
+                back to ducking if it isn’t installed.</span
+              >
+            </span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="originalAudio"
               value="remove"
-              [checked]="!settings().includeOriginalBackgroundAudio"
-              (change)="setOriginalAudio(false)"
+              [checked]="settings().originalAudioMode === 'remove'"
+              (change)="setOriginalAudioMode('remove')"
             />
             <span class="radio-body">
               <span class="radio-title">Remove it completely</span>
@@ -157,7 +175,7 @@
             </span>
           </label>
         </div>
-        @if (settings().includeOriginalBackgroundAudio) {
+        @if ((settings().originalAudioMode ?? 'keep') === 'keep') {
           <div class="field">
             <label for="duckLevel">Background volume while the dub speaks</label>
             <select
@@ -172,6 +190,72 @@
             </select>
           </div>
         }
+      </fieldset>
+
+      <fieldset>
+        <legend>Timing accuracy</legend>
+        <label class="radio-row">
+          <input
+            type="checkbox"
+            name="forcedAlignment"
+            [ngModel]="settings().forcedAlignment ?? false"
+            (ngModelChange)="toggleForcedAlignment($event)"
+          />
+          <span class="radio-body">
+            <span class="radio-title">Word-accurate timing (forced alignment)</span>
+            <span class="hint"
+              >Tightens subtitle/dub sync to ~50 ms using the “Forced alignment +
+              diarization” engine. Skipped if that engine isn’t installed.</span
+            >
+          </span>
+        </label>
+        <label class="radio-row">
+          <input
+            type="checkbox"
+            name="diarize"
+            [ngModel]="settings().diarize ?? false"
+            (ngModelChange)="toggleDiarize($event)"
+          />
+          <span class="radio-body">
+            <span class="radio-title">Detect speakers (diarization)</span>
+            <span class="hint"
+              >Splits the transcript per speaker so multi-speaker videos can use a
+              distinct voice per person. Uses the same engine pack.</span
+            >
+          </span>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Render quality</legend>
+        <div class="radio-list" role="radiogroup" aria-label="Render quality">
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="renderQuality"
+              value="quality"
+              [checked]="(settings().renderQuality ?? 'quality') === 'quality'"
+              (change)="setRenderQuality('quality')"
+            />
+            <span class="radio-body">
+              <span class="radio-title">Best quality (recommended)</span>
+              <span class="hint">Software H.264 encoding — best size/quality. Only matters when subtitles are burned in.</span>
+            </span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="renderQuality"
+              value="fast"
+              [checked]="settings().renderQuality === 'fast'"
+              (change)="setRenderQuality('fast')"
+            />
+            <span class="radio-body">
+              <span class="radio-title">Fast (hardware encode)</span>
+              <span class="hint">Uses the GPU video encoder (VideoToolbox / NVENC) when available — much faster, slightly larger files.</span>
+            </span>
+          </label>
+        </div>
       </fieldset>
 
       <fieldset>

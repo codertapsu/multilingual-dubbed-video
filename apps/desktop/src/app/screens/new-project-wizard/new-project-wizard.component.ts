@@ -28,7 +28,9 @@ import type {
   AppError,
   CreateProjectInput,
   MediaInfo,
+  OriginalAudioMode,
   ProjectSettings,
+  RenderQuality,
   SubtitleExportMode,
 } from '../../core/models';
 import type { ProviderInfo, ProvidersResponse } from '../../core/models/setup';
@@ -49,10 +51,13 @@ function defaultSettings(): ProjectSettings {
     sttProviderId: 'faster-whisper',
     translationProviderId: 'argos',
     ttsProviderId: 'piper-local',
-    sttModel: 'small',
+    sttModel: 'large-v3-turbo',
     includeOriginalBackgroundAudio: true,
     duckOriginalAudio: true,
     duckingLevelDb: -12,
+    originalAudioMode: 'keep',
+    renderQuality: 'quality',
+    timeStretchEngine: 'auto',
     ttsGainDb: 0,
     // Translations (esp. EN->VI) are usually longer than the source. Combined
     // with gap-aware alignment (a line can use the pause until the next line),
@@ -220,19 +225,33 @@ export class NewProjectWizardComponent implements OnInit {
   }
 
   /**
-   * What happens to the original soundtrack in the final mix.
-   * "Keep" = the original stays as background, side-chain ducked while the
-   * dubbed voice speaks (includeOriginalBackgroundAudio + duckOriginalAudio).
-   * "Remove" = the dub fully replaces the original audio track.
+   * What happens to the original soundtrack in the final mix:
+   *  - keep           — kept as background, ducked under the dubbed voice.
+   *  - remove         — dub fully replaces the original audio.
+   *  - replace-vocals — separate vocals from music/effects, drop the original
+   *                     vocals, mix the dub over the full-volume M&E bed
+   *                     (needs the Vocal separation engine pack).
    */
-  protected setOriginalAudio(keep: boolean): void {
+  protected setOriginalAudioMode(mode: OriginalAudioMode): void {
     this.settings.update((s) => ({
       ...s,
-      includeOriginalBackgroundAudio: keep,
-      // Dynamic ducking is the only "keep" flavor the wizard exposes; the
-      // ducking level below tunes how far the background drops.
-      duckOriginalAudio: keep ? true : s.duckOriginalAudio,
+      originalAudioMode: mode,
+      // Keep the legacy booleans coherent for any older consumer.
+      includeOriginalBackgroundAudio: mode !== 'remove',
+      duckOriginalAudio: mode === 'keep' ? true : s.duckOriginalAudio,
     }));
+  }
+
+  protected setRenderQuality(quality: RenderQuality): void {
+    this.patchSettings('renderQuality', quality);
+  }
+
+  protected toggleForcedAlignment(on: boolean): void {
+    this.patchSettings('forcedAlignment', on);
+  }
+
+  protected toggleDiarize(on: boolean): void {
+    this.patchSettings('diarize', on);
   }
 
   /** Background attenuation choices while the dubbed voice speaks. */

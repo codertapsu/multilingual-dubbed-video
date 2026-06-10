@@ -121,24 +121,19 @@ export function recommendSetup(profile: SystemProfile): HardwareRecommendation {
     );
   } else if (ramGb < 16) {
     tier = 'balanced';
-    whisperModel = 'base';
+    whisperModel = 'large-v3-turbo';
     reasons.push(
-      `${ramGb.toFixed(0)} GB RAM runs the "base" model well — a good speed/accuracy balance for offline use.`,
-    );
-  } else if (ramGb < 32) {
-    tier = 'performance';
-    whisperModel = profile.appleSilicon ? 'medium' : 'small';
-    reasons.push(
-      profile.appleSilicon
-        ? `Apple Silicon with ${ramGb.toFixed(0)} GB unified memory handles the "medium" model — near-best accuracy fully offline.`
-        : `${ramGb.toFixed(0)} GB RAM comfortably runs the "small" model offline.`,
+      `${ramGb.toFixed(0)} GB RAM runs "large-v3-turbo" — near-best accuracy at 6-8x the speed of large-v3, a great offline balance.`,
     );
   } else {
     tier = 'performance';
-    whisperModel = 'medium';
+    whisperModel = 'large-v3-turbo';
     reasons.push(
-      `${ramGb.toFixed(0)} GB RAM runs the "medium" model easily ("large-v3" also fits, but is slow without GPU acceleration).`,
+      `${ramGb.toFixed(0)} GB RAM easily runs "large-v3-turbo"; "large-v3" also fits for maximum accuracy if you accept the extra time.`,
     );
+    if (profile.appleSilicon) {
+      reasons.push('On Apple Silicon, install the whisper.cpp (Metal) engine pack for a large speed-up over the CPU build.');
+    }
   }
 
   const slowCpu = profile.cpuCores < 4;

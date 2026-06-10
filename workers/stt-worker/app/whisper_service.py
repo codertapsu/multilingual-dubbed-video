@@ -50,6 +50,17 @@ _SYSTRAN_REPOS: dict[str, str] = {
     "medium": "Systran/faster-whisper-medium",
     "large-v2": "Systran/faster-whisper-large-v2",
     "large-v3": "Systran/faster-whisper-large-v3",
+    # large-v3-turbo: ~6-8x faster than large-v3 at ~large-v2 accuracy. The new
+    # recommended default for capable machines (see docs/TECH_STACK_RESEARCH.md).
+    "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+    "turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+    # distil-large-v3.5: English-only, ~1.5x faster than turbo.
+    "distil-large-v3.5": "distil-whisper/distil-large-v3.5-ct2",
+    # PhoWhisper: VinAI Vietnamese-specialist (BSD-3); pre-converted CT2 builds.
+    # Pin to a Vietnamese-source video for best results.
+    "phowhisper-small": "kiendt/PhoWhisper-small-ct2",
+    "phowhisper-medium": "kiendt/PhoWhisper-medium-ct2",
+    "phowhisper-large": "kiendt/PhoWhisper-large-ct2",
 }
 
 
@@ -372,13 +383,35 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
 
     model = _load_model(model_name, settings)
 
+    # Decide whether to use batched inference. faster-whisper's
+    # BatchedInferencePipeline is markedly faster (esp. on GPU); we enable it
+    # when STT_BATCH_SIZE > 1, or automatically on CUDA. Falls back gracefully
+    # if the installed faster-whisper version lacks the pipeline.
+    effective_batch = settings.batch_size
+    if effective_batch <= 0 and settings.device == "cuda":
+        effective_batch = 8
+
+    transcribe_kwargs: dict[str, Any] = {
+        "language": whisper_language,  # None => auto-detect
+        "word_timestamps": request.wordTimestamps,
+        "vad_filter": settings.vad_filter,
+    }
+
     try:
-        segments_iter, info = model.transcribe(
-            request.audioPath,
-            language=whisper_language,  # None => auto-detect
-            word_timestamps=request.wordTimestamps,
-            vad_filter=True,
-        )
+        runner = model
+        if effective_batch and effective_batch > 1:
+            try:
+                from faster_whisper import BatchedInferencePipeline  # type: ignore
+
+                runner = BatchedInferencePipeline(model=model)
+                transcribe_kwargs["batch_size"] = effective_batch
+                logger.info("Using batched inference (batch_size=%d).", effective_batch)
+            except Exception:  # noqa: BLE001 — older faster-whisper or import issue
+                logger.info("Batched inference unavailable; using sequential transcription.")
+                transcribe_kwargs.pop("batch_size", None)
+                runner = model
+
+        segments_iter, info = runner.transcribe(request.audioPath, **transcribe_kwargs)
     except Exception as exc:
         raise AppError(
             ERROR_UNSUPPORTED_MEDIA,

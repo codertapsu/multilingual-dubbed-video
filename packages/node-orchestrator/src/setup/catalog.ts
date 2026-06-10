@@ -19,13 +19,24 @@ import { COMMON_LANGUAGES, type ArgosPair, type PiperVoiceInfo, type SetupCatalo
 /** Base URL for raw file downloads from the rhasspy/piper-voices repo. */
 const PIPER_VOICES_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
 
-/** Curated faster-whisper models (smallest -> largest), with `base` recommended. */
+/** Curated faster-whisper models (smallest -> largest). `large-v3-turbo` is the
+ * recommended default on capable machines: ~large-v2 accuracy at 6-8x speed. */
 export const WHISPER_MODELS: readonly WhisperModelInfo[] = [
   { id: 'tiny', label: 'Tiny (fastest, lowest accuracy)', approxSizeMb: 75 },
-  { id: 'base', label: 'Base (recommended balance)', approxSizeMb: 145, recommended: true },
+  { id: 'base', label: 'Base (balanced; good on 8 GB)', approxSizeMb: 145 },
   { id: 'small', label: 'Small (better accuracy)', approxSizeMb: 484 },
+  {
+    id: 'large-v3-turbo',
+    label: 'Large v3 Turbo (recommended: near-best accuracy, 6-8x faster)',
+    approxSizeMb: 1620,
+    recommended: true,
+  },
+  { id: 'distil-large-v3.5', label: 'Distil Large v3.5 (English only, fastest large)', approxSizeMb: 760 },
   { id: 'medium', label: 'Medium (high accuracy, slower)', approxSizeMb: 1530 },
   { id: 'large-v3', label: 'Large v3 (best accuracy, slowest)', approxSizeMb: 3090 },
+  // Vietnamese-specialist (VinAI PhoWhisper); pin when the SOURCE video is vi.
+  { id: 'phowhisper-medium', label: 'PhoWhisper Medium (best for Vietnamese-source audio)', approxSizeMb: 1530 },
+  { id: 'phowhisper-large', label: 'PhoWhisper Large (Vietnamese-source, highest accuracy)', approxSizeMb: 3090 },
 ] as const;
 
 /**

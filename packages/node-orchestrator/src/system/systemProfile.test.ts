@@ -26,25 +26,27 @@ describe('recommendSetup', () => {
     expect(rec.suggestCloud.tts).toBe(false);
   });
 
-  it('8-16 GB machines get the balanced "base" model', () => {
+  it('8-16 GB machines get the balanced turbo model', () => {
     const rec = recommendSetup(profile({ totalRamMb: 8 * 1024 }));
     expect(rec.tier).toBe('balanced');
-    expect(rec.whisperModel).toBe('base');
+    expect(rec.whisperModel).toBe('large-v3-turbo');
     expect(rec.suggestCloud.stt).toBe(false);
   });
 
-  it('16-32 GB x64 machines get "small"; Apple Silicon gets "medium"', () => {
-    expect(recommendSetup(profile({ totalRamMb: 24 * 1024 })).whisperModel).toBe('small');
+  it('16-32 GB machines get the performance turbo model', () => {
+    expect(recommendSetup(profile({ totalRamMb: 24 * 1024 })).whisperModel).toBe('large-v3-turbo');
     const apple = recommendSetup(
       profile({ totalRamMb: 24 * 1024, platform: 'darwin', arch: 'arm64', appleSilicon: true }),
     );
-    expect(apple.whisperModel).toBe('medium');
+    expect(apple.whisperModel).toBe('large-v3-turbo');
     expect(apple.tier).toBe('performance');
+    // Apple Silicon should be nudged toward the Metal engine pack.
+    expect(apple.reasons.join(' ')).toMatch(/whisper\.cpp|Metal/);
   });
 
-  it('32+ GB machines get "medium"', () => {
+  it('32+ GB machines get the performance turbo model', () => {
     const rec = recommendSetup(profile({ totalRamMb: 64 * 1024 }));
-    expect(rec.whisperModel).toBe('medium');
+    expect(rec.whisperModel).toBe('large-v3-turbo');
     expect(rec.tier).toBe('performance');
   });
 

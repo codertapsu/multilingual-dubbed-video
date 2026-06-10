@@ -76,6 +76,12 @@ class Settings:
     download_root: Optional[str]
     local_files_only: bool
     log_level: str
+    # Batched inference: when >1, use faster-whisper's BatchedInferencePipeline
+    # (~4x faster, esp. on GPU). 0/1 => sequential. Default 0 (auto: on for CUDA).
+    batch_size: int
+    # Voice-activity filtering before transcription (reduces drift/hallucination
+    # on silence/music and tightens timestamps). On by default.
+    vad_filter: bool
 
     def model_signature(self) -> tuple[str, str, str]:
         """Cache key used by the whisper service to reuse a loaded model."""
@@ -108,4 +114,7 @@ def get_settings() -> Settings:
         local_files_only=_env("STT_LOCAL_FILES_ONLY", "false").lower()
         in ("1", "true", "yes"),
         log_level=_env("STT_LOG_LEVEL", "INFO").upper(),
+        # 0 => auto (batch on CUDA, sequential on CPU). Explicit value forces it.
+        batch_size=_int_env("STT_BATCH_SIZE", 0),
+        vad_filter=_env("STT_VAD_FILTER", "true").lower() in ("1", "true", "yes"),
     )

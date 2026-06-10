@@ -32,10 +32,10 @@ describe('setup catalog shape', () => {
 
   it('offers the standard whisper tiers including a single recommended', () => {
     const ids = WHISPER_MODELS.map((m) => m.id);
-    expect(ids).toEqual(expect.arrayContaining(['tiny', 'base', 'small', 'medium', 'large-v3']));
+    expect(ids).toEqual(expect.arrayContaining(['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo']));
     const recommended = WHISPER_MODELS.filter((m) => m.recommended);
     expect(recommended).toHaveLength(1);
-    expect(recommended[0]?.id).toBe('base');
+    expect(recommended[0]?.id).toBe('large-v3-turbo');
   });
 
   it('every whisper model has a positive approx size', () => {

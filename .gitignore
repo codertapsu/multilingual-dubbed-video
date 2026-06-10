@@ -21,6 +21,14 @@ coverage/
 # ===== Rust / Tauri (apps/desktop/src-tauri) =====
 target/
 
+# ===== Bundled sidecar binaries (apps/desktop/src-tauri/binaries) =====
+# Large, platform-specific frozen binaries produced by scripts/package/* and
+# rebuilt fresh in CI per platform. Keep the directory (.gitkeep + README) but
+# never commit the binaries or the build scratch dirs.
+apps/desktop/src-tauri/binaries/*
+!apps/desktop/src-tauri/binaries/.gitkeep
+!apps/desktop/src-tauri/binaries/README.md
+
 # ===== Python workers =====
 .venv/
 venv/

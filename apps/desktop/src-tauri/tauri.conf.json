@@ -4,13 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.videodubber.app",
   "build": {
-    "//": "Angular dev server (see apps/desktop/package.json `start`) must serve on 1420 for `tauri dev`. The Angular project should set `ng serve --port 1420`.",
     "devUrl": "http://localhost:1420",
-    "//frontendDist": "angular.json sets outputPath=dist (no project subfolder), so the application builder emits assets to apps/desktop/dist/browser. Relative to this file (src-tauri/).",
     "frontendDist": "../dist/browser",
-    "//beforeDevCommand": "Started separately via scripts/dev.sh (pnpm dev). Leave empty so `tauri dev` does not also try to boot the Angular server.",
-    "beforeDevCommand": "",
-    "beforeBuildCommand": ""
+    "beforeDevCommand": "pnpm --filter videodubber-desktop dev",
+    "beforeBuildCommand": "pnpm --filter videodubber-desktop build"
   },
   "app": {
     "windows": [
@@ -27,19 +24,29 @@
       }
     ],
     "security": {
-      "//csp": "Permissive enough for the Angular UI to talk to localhost HTTP services and open an EventSource (SSE) to the orchestrator. connect-src must list both http and ws origins for 127.0.0.1 / localhost on the worker ports (5100-5103). ipc:/tauri: are required for Tauri 2 IPC.",
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:5100 http://127.0.0.1:5101 http://127.0.0.1:5102 http://127.0.0.1:5103 http://localhost:5100 http://localhost:5101 http://localhost:5102 http://localhost:5103 ws://127.0.0.1:5100 ws://localhost:5100"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:5100 http://127.0.0.1:5101 http://127.0.0.1:5102 http://127.0.0.1:5103 http://localhost:5100 http://localhost:5101 http://localhost:5102 http://localhost:5103 ws://127.0.0.1:5100 ws://localhost:5100 https://github.com https://objects.githubusercontent.com https://*.githubusercontent.com"
     }
   },
   "plugins": {
-    "//": "Plugin runtime config. Permissions are granted via capabilities/default.json, not here.",
-    "dialog": {},
-    "opener": {}
+    "updater": {
+      "endpoints": [
+        "https://github.com/OWNER/REPO/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ4QzAzMjRGQkEzRUExQjIKUldTeW9UNjZUekxBMk9KZ3VUVDUwaDY5R1JWWjRqL2FBRjBLcDlwN1FsYWZvdmtDRXV4K29GWVYK"
+    }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "//icon": "Tauri requires at least these icon files to build a bundle. Generate them with `pnpm tauri icon path/to/source.png` (see icons/README.md). Placeholders are referenced here; the dev build (`tauri dev`) does NOT strictly require all of them, but a release bundle does.",
+    "createUpdaterArtifacts": true,
+    "externalBin": [
+      "binaries/videodubber-orchestrator",
+      "binaries/vd-stt-worker",
+      "binaries/vd-translation-worker",
+      "binaries/vd-tts-worker",
+      "binaries/ffmpeg",
+      "binaries/ffprobe"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

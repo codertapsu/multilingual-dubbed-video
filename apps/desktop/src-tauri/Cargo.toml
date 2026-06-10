@@ -35,9 +35,18 @@ tauri = { version = "2", features = [] }
 
 # Official Tauri 2 plugins used by this shell:
 #   * dialog  -> native open-file dialog for picking a video.
-#   * opener  -> open a path/URL with the OS default handler.
+#   * opener  -> open a path/URL with the OS default handler (release notes URLs).
+#   * updater -> self-update via GitHub Releases + the `latest.json` manifest.
+#               (UpdaterExt::updater, Update::download_and_install).
+#   * process -> relaunch the app after an update is installed (restart()).
+#   * shell   -> spawn the bundled `externalBin` sidecars in PRODUCTION
+#               (ShellExt::shell().sidecar("…")). The dev path still uses
+#               std::process to launch scripts/start-services.sh.
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-shell = "2"
 
 # Serialization for command params / responses.
 serde = { version = "1", features = ["derive"] }
@@ -51,22 +60,16 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 
-# Async runtime. Tauri re-exports `tauri::async_runtime` (a tokio wrapper), but
-# we depend on tokio directly for the sidecar scaffold (process management).
+# Async runtime. Tauri re-exports `tauri::async_runtime` (a tokio wrapper); we
+# also use tokio directly in commands.rs (oneshot channel bridging the dialog).
 tokio = { version = "1", features = ["full"] }
 
 # ---------------------------------------------------------------------------
-# Cargo features.
-#
-# `spawn-sidecars` is OFF by default. When enabled, `sidecar.rs` will attempt to
-# launch the Node orchestrator + Python workers as managed child processes on
-# startup. In normal development you instead run `pnpm dev` (see scripts/),
-# which starts those services separately, so the desktop shell should NOT try
-# to spawn them. See sidecar.rs for the production-packaging TODOs.
+# Service management (auto start/stop of the backend) lives in `sidecar.rs` and
+# is ON by default — opening the app boots the orchestrator + workers, quitting
+# stops them. It uses only `std::process`, so there is no cargo feature to
+# toggle; disable at runtime with `VIDEODUBBER_MANAGE_SERVICES=0` instead.
 # ---------------------------------------------------------------------------
-[features]
-default = []
-spawn-sidecars = []
 
 # Custom protocol is the production transport; this is the standard Tauri 2
 # release profile tweak to keep binaries small.

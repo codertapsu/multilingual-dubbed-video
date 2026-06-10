@@ -1,8 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for the main VideoDubber window: core window/event/path access plus the dialog and opener plugins.",
-  "windows": ["main"],
+  "description": "Default capability set for the main VideoDubber window. Grants: core window/event/path access; the dialog + opener plugins; the self-updater (`updater:default` for check/download/install + `process:default`/`process:allow-restart` to relaunch after install); and `shell:allow-execute`/`shell:allow-spawn` SCOPED to the bundled externalBin sidecars (orchestrator + 3 workers) so src/sidecar.rs can launch them in production. Each shell scope entry sets `sidecar:true` with a `name` matching the bundle.externalBin base name (Tauri resolves the per-target-triple binary) and `args:false` because every sidecar is configured purely via environment variables — never CLI args.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:default",
@@ -13,6 +15,59 @@
     "dialog:allow-open",
     "opener:default",
     "opener:allow-open-path",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "updater:default",
+    "process:default",
+    "process:allow-restart",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/videodubber-orchestrator",
+          "sidecar": true,
+          "args": false
+        },
+        {
+          "name": "binaries/vd-stt-worker",
+          "sidecar": true,
+          "args": false
+        },
+        {
+          "name": "binaries/vd-translation-worker",
+          "sidecar": true,
+          "args": false
+        },
+        {
+          "name": "binaries/vd-tts-worker",
+          "sidecar": true,
+          "args": false
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/videodubber-orchestrator",
+          "sidecar": true,
+          "args": false
+        },
+        {
+          "name": "binaries/vd-stt-worker",
+          "sidecar": true,
+          "args": false
+        },
+        {
+          "name": "binaries/vd-translation-worker",
+          "sidecar": true,
+          "args": false
+        },
+        {
+          "name": "binaries/vd-tts-worker",
+          "sidecar": true,
+          "args": false
+        }
+      ]
+    }
   ]
 }

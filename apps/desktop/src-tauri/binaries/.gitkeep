@@ -1,0 +1,2 @@
+# Keep this directory in git even though the (large) sidecar binaries are
+# .gitignored. See README.md in this folder for the naming convention.

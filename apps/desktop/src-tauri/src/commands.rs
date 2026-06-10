@@ -18,6 +18,14 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
+// Self-update plumbing:
+//   * `UpdaterExt` adds `app.updater()` -> a `Updater` whose `.check().await`
+//     returns `Result<Option<Update>, Error>` (Some when a newer version is on
+//     the endpoint). `Update` carries `.version`, `.current_version`, `.body`
+//     (release notes), `.date`, and `.download_and_install(on_chunk, on_done)`.
+//   * `tauri_plugin_process` exposes `app.restart()` (via `ProcessExt`-less free
+//     fn on AppHandle once the plugin is initialised) to relaunch after install.
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::orchestrator_client as orch;
 
@@ -246,6 +254,244 @@ pub async fn get_languages() -> Result<Value, String> {
 #[tauri::command]
 pub async fn get_segments(project_id: String) -> Result<Value, String> {
     orch::get_json(&format!("/projects/{}/segments", project_id)).await
+}
+
+// ---------------------------------------------------------------------------
+// First-run setup / model download (proxies to the orchestrator /setup API).
+//
+// These back the onboarding wizard. They are thin proxies — the orchestrator
+// owns the config dir (~/VideoDubber), the catalog, and the install state
+// machine; download progress is streamed to the webview directly over SSE
+// (GET /setup/events), NOT through Rust (same rule as /projects/:id/events).
+// ---------------------------------------------------------------------------
+
+/// `setup_get_status` -> `GET /setup/status`. Returns `SetupStatus`
+/// (`{ firstRunComplete, installed }`). The shell/UI calls this on boot to
+/// decide whether to show the onboarding wizard or Home.
+#[tauri::command]
+pub async fn setup_get_status() -> Result<Value, String> {
+    orch::get_json("/setup/status").await
+}
+
+/// `setup_preflight` -> `GET /setup/preflight`. Returns `PreflightResult`
+/// (`{ ok, checks: PreflightCheck[] }`) — ffmpeg/ffprobe + the 3 workers
+/// reachable, network reachability, free disk space in the models dir.
+#[tauri::command]
+pub async fn setup_preflight() -> Result<Value, String> {
+    orch::get_json("/setup/preflight").await
+}
+
+/// `setup_get_catalog` -> `GET /setup/catalog`. Returns `SetupCatalog`
+/// (curated whisper models, languages, argos pairs, piper voices).
+#[tauri::command]
+pub async fn setup_get_catalog() -> Result<Value, String> {
+    orch::get_json("/setup/catalog").await
+}
+
+/// `setup_install_models` -> `POST /setup/install` with a `SetupInstallRequest`
+/// (`{ whisperModel?, argosPairs?, piperVoices? }`). Orchestrator returns
+/// `202 { started: true }` and runs the download async; progress is observed by
+/// the webview over the `/setup/events` SSE channel. `options` is forwarded
+/// verbatim so the UI can send any subset of the fields.
+#[tauri::command]
+pub async fn setup_install_models(options: Option<Value>) -> Result<Value, String> {
+    let body = options.unwrap_or_else(|| json!({}));
+    orch::post_json("/setup/install", &body).await
+}
+
+/// `setup_complete` -> `POST /setup/complete`. Marks `firstRunComplete=true` in
+/// `~/VideoDubber/setup.json`. Returns `{ ok: true }`.
+#[tauri::command]
+pub async fn setup_complete() -> Result<Value, String> {
+    orch::post_json("/setup/complete", &json!({})).await
+}
+
+// ---------------------------------------------------------------------------
+// Update preferences (proxies to the orchestrator /preferences API).
+//
+// The orchestrator's `preferences.json` is the SOURCE OF TRUTH for the UI. The
+// shell reads `autoUpdate` on startup (see lib.rs) to decide whether to run a
+// background update check.
+// ---------------------------------------------------------------------------
+
+/// `get_preferences` -> `GET /preferences`. Returns `UpdatePreferences`
+/// (`{ autoUpdate }`).
+#[tauri::command]
+pub async fn get_preferences() -> Result<Value, String> {
+    orch::get_json("/preferences").await
+}
+
+/// `set_preferences` -> `PUT /preferences` with `UpdatePreferences`. Persists
+/// `preferences.json`. Returns `{ ok: true }`.
+#[tauri::command]
+pub async fn set_preferences(prefs: Value) -> Result<Value, String> {
+    orch::put_json("/preferences", &prefs).await
+}
+
+/// `get_update_preference` is the updater-screen alias of `get_preferences`
+/// (the brief lists both). Returns `UpdatePreferences`.
+#[tauri::command]
+pub async fn get_update_preference() -> Result<Value, String> {
+    orch::get_json("/preferences").await
+}
+
+/// `set_update_preference` -> `PUT /preferences`. Accepts the full
+/// `UpdatePreferences` body (`{ autoUpdate }`) so the Updates screen can flip
+/// the toggle. Returns `{ ok: true }`.
+#[tauri::command]
+pub async fn set_update_preference(prefs: Value) -> Result<Value, String> {
+    orch::put_json("/preferences", &prefs).await
+}
+
+// ---------------------------------------------------------------------------
+// Native: open an external URL in the default browser (release notes, etc.)
+// ---------------------------------------------------------------------------
+
+/// `open_external` opens an http(s) URL with the OS default browser via the
+/// opener plugin. Used by the Updates screen to show release notes / GitHub.
+#[tauri::command]
+pub async fn open_external(app: AppHandle, url: String) -> Result<Value, String> {
+    // `open_url(url, with)` — `with: None` uses the system default browser.
+    app.opener()
+        .open_url(url.clone(), None::<&str>)
+        .map_err(|e| {
+            app_error_json(
+                "UNKNOWN",
+                &format!("failed to open URL '{url}': {e}"),
+                Some("Verify the URL is a valid http(s) link."),
+            )
+        })?;
+    Ok(json!({ "ok": true }))
+}
+
+/// `get_app_version` -> the installed app version from the bundle metadata.
+/// Network-free (unlike check_for_update), so the Settings page can always show
+/// the current version even when the updater endpoint is unreachable.
+#[tauri::command]
+pub fn get_app_version(app: AppHandle) -> Result<Value, String> {
+    Ok(json!({ "version": app.package_info().version.to_string() }))
+}
+
+// ---------------------------------------------------------------------------
+// Auto-update (tauri-plugin-updater + tauri-plugin-process).
+//
+// The updater runs entirely in Rust: it fetches the signed `latest.json`
+// manifest from the GitHub Releases endpoint (tauri.conf.json plugins.updater),
+// verifies the signature against the embedded pubkey, and downloads/installs the
+// platform artifact. The webview only sees the resulting `UpdateInfo` /
+// progress, never the network call.
+// ---------------------------------------------------------------------------
+
+/// `check_for_update` -> queries the updater endpoint and returns an
+/// `UpdateInfo` (`{ available, version?, currentVersion, notes?, date? }`).
+///
+/// API shape (tauri-plugin-updater 2.x):
+///   `app.updater()? -> Updater`
+///   `updater.check().await? -> Option<Update>`
+///   `Update { version: String, current_version: String, body: Option<String>,
+///             date: Option<OffsetDateTime>, .. }`
+#[tauri::command]
+pub async fn check_for_update(app: AppHandle) -> Result<Value, String> {
+    // Current installed version is always knowable from the package config.
+    let current_version = app.package_info().version.to_string();
+
+    let updater = app.updater().map_err(|e| {
+        app_error_json(
+            "UNKNOWN",
+            &format!("updater is not configured: {e}"),
+            Some("Ensure plugins.updater (endpoints + pubkey) is set in tauri.conf.json and the app is a release bundle."),
+        )
+    })?;
+
+    match updater.check().await {
+        Ok(Some(update)) => Ok(json!({
+            "available": true,
+            "version": update.version,
+            "currentVersion": current_version,
+            // `body` is the release notes from latest.json; `date` is an
+            // OffsetDateTime — stringify to ISO-ish for the UI.
+            "notes": update.body,
+            "date": update.date.map(|d| d.to_string()),
+        })),
+        Ok(None) => Ok(json!({
+            "available": false,
+            "currentVersion": current_version,
+        })),
+        Err(e) => Err(app_error_json(
+            "UNKNOWN",
+            &format!("failed to check for updates: {e}"),
+            Some("Check your internet connection and that the updater endpoint is reachable."),
+        )),
+    }
+}
+
+/// `download_and_install_update` -> downloads + installs the pending update,
+/// then relaunches the app.
+///
+/// API shape:
+///   `Update::download_and_install(on_chunk: Fn(usize, Option<u64>),
+///                                 on_download_finished: Fn()) -> Result<()>`
+///   then `app.restart()` (provided by tauri-plugin-process; this fn diverges /
+///   never returns on success).
+///
+/// We don't stream chunk progress to the webview here (the closures just total
+/// the bytes for logging); the UI shows an indeterminate "installing…" state.
+#[tauri::command]
+pub async fn download_and_install_update(app: AppHandle) -> Result<Value, String> {
+    let updater = app.updater().map_err(|e| {
+        app_error_json("UNKNOWN", &format!("updater is not configured: {e}"), None)
+    })?;
+
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return Err(app_error_json(
+                "UNKNOWN",
+                "no update is available to install",
+                Some("Run check_for_update first; install only when `available` is true."),
+            ))
+        }
+        Err(e) => {
+            return Err(app_error_json(
+                "UNKNOWN",
+                &format!("failed to re-check for the update: {e}"),
+                None,
+            ))
+        }
+    };
+
+    // Download + install. The two callbacks are:
+    //   - on_chunk(chunk_len, content_length)  — bound `Fn`, so we use an
+    //     atomic running total instead of a captured `&mut` (an FnMut closure
+    //     would NOT satisfy the `Fn` bound).
+    //   - on_download_finished()               — bound `FnOnce`.
+    let downloaded = std::sync::atomic::AtomicUsize::new(0);
+    update
+        .download_and_install(
+            move |chunk_len, _content_length| {
+                let total = downloaded
+                    .fetch_add(chunk_len, std::sync::atomic::Ordering::Relaxed)
+                    + chunk_len;
+                // Lightweight stdout trace; the UI shows an indeterminate state.
+                println!("[videodubber:update] downloaded {total} bytes");
+            },
+            || {
+                println!("[videodubber:update] download complete, installing…");
+            },
+        )
+        .await
+        .map_err(|e| {
+            app_error_json(
+                "UNKNOWN",
+                &format!("failed to download/install the update: {e}"),
+                Some("The update could not be applied. Try again, or download the latest installer manually."),
+            )
+        })?;
+
+    // Relaunch into the freshly-installed version. `AppHandle::restart()`
+    // terminates the current process and returns `!` (never), which coerces to
+    // this fn's `Result<Value, String>` return type. Nothing after it runs.
+    app.restart()
 }
 
 // ---------------------------------------------------------------------------

@@ -249,6 +249,14 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
         if let Some(ffmpeg) = ffmpeg_path.as_ref() {
             env.push(("FFMPEG_PATH", ffmpeg.clone()));
         }
+        // The bundled Piper CLI (frozen piper-tts) — without it the worker can
+        // only use system/fallback TTS, which silently produced English audio
+        // for Vietnamese dubs before this was wired up.
+        if let Some(piper) = resolve_sidecar_bin("vd-piper") {
+            env.push(("PIPER_BINARY_PATH", piper));
+        } else {
+            log_info("bundled 'vd-piper' not found; the TTS worker will use system/fallback voices only.");
+        }
         spawn_one(app, "vd-tts-worker", &env);
     }
 
@@ -340,34 +348,26 @@ fn spawn_one(app: &AppHandle, name: &str, env: &[(&str, String)]) {
 /// each `None` if it can't be located (the orchestrator then falls back to PATH,
 /// which in a clean bundle means it reports ffmpeg as unavailable).
 fn resolve_ffmpeg_paths() -> (Option<String>, Option<String>) {
-    let exe_dir = std::env::current_exe()
+    (resolve_sidecar_bin("ffmpeg"), resolve_sidecar_bin("ffprobe"))
+}
+
+/// Resolve a bundled executable sidecar (`externalBin`) to its on-disk path.
+///
+/// Tauri strips the `-<target-triple>` suffix when placing the sidecar in the
+/// bundle, so the resolved file is just `<base>`/`<base>.exe` next to the main
+/// app binary. Returns `None` if the file does not exist there (e.g. a local
+/// build made without that optional sidecar).
+fn resolve_sidecar_bin(base: &str) -> Option<String> {
+    let dir = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(Path::to_path_buf));
+        .and_then(|p| p.parent().map(Path::to_path_buf))?;
 
-    let Some(dir) = exe_dir else {
-        return (None, None);
-    };
+    #[cfg(windows)]
+    let bin = dir.join(format!("{base}.exe"));
+    #[cfg(not(windows))]
+    let bin = dir.join(base);
 
-    let bin_name = |base: &str| -> PathBuf {
-        #[cfg(windows)]
-        {
-            dir.join(format!("{base}.exe"))
-        }
-        #[cfg(not(windows))]
-        {
-            dir.join(base)
-        }
-    };
-
-    // Tauri strips the `-<target-triple>` suffix when placing the sidecar in the
-    // bundle, so the resolved file is just `ffmpeg`/`ffmpeg.exe` next to the app.
-    let ffmpeg = bin_name("ffmpeg");
-    let ffprobe = bin_name("ffprobe");
-
-    (
-        ffmpeg.exists().then(|| ffmpeg.to_string_lossy().into_owned()),
-        ffprobe.exists().then(|| ffprobe.to_string_lossy().into_owned()),
-    )
+    bin.exists().then(|| bin.to_string_lossy().into_owned())
 }
 
 /// Resolve the app config dir per the SHARED CONTRACT: `VIDEODUBBER_CONFIG_DIR`

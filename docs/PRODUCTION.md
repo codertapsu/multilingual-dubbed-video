@@ -27,6 +27,7 @@ mode you use day-to-day.
 │   │  vd-stt-worker              PyInstaller (faster-whisper):5101   (speech-to-text)                  ││ │
 │   │  vd-translation-worker      PyInstaller (Argos)        :5102   (machine translation)              ││ │
 │   │  vd-tts-worker              PyInstaller (Piper/fallback):5103   (text-to-speech)                   ││ │
+│   │  vd-piper                   PyInstaller (piper-tts CLI)         (neural TTS, spawned per segment)  ││ │
 │   │  ffmpeg / ffprobe           static, libass-enabled             (probe/extract/mix/render/burn-in) ││ │
 │   └───────────────────────────────────────────────────────────────────────────────────────────────┘│ │
 │                                                                                                       │ │
@@ -110,6 +111,9 @@ appears once. Users can fetch more languages/voices later from Settings.
   * ports (`ORCHESTRATOR_PORT=5100`, `STT_PORT=5101`,
     `TRANSLATION_WORKER_PORT=5102`, `TTS_WORKER_PORT=5103`),
   * `FFMPEG_PATH` / `FFPROBE_PATH` -> the bundled ffmpeg/ffprobe sidecars,
+  * `PIPER_BINARY_PATH` -> the bundled `vd-piper` CLI and `PIPER_VOICES_DIR` ->
+    `<config>/models/piper` (so the TTS worker speaks with the language-matched
+    Piper voice instead of falling back to the OS default voice),
   * model directories (HF cache, Argos packages dir, `~/VideoDubber/models/piper`),
   * `VIDEODUBBER_CONFIG_DIR` (the app config dir).
 

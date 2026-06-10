@@ -22,6 +22,9 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   WORKER_TIMEOUT: 504,
   CLOUD_CREDENTIALS_MISSING: 424, // Failed Dependency — key not configured
   CLOUD_REQUEST_FAILED: 502, // Bad Gateway — upstream cloud service failed
+  ENGINE_PACK_MISSING: 424, // Failed Dependency — engine not installed
+  ENGINE_PACK_FAILED: 502, // download/verify/build failure
+  ENGINE_UNAVAILABLE: 503, // engine process not reachable
   CANCELLED: 409, // Conflict
   UNKNOWN: 500,
 };

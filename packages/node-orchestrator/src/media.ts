@@ -45,6 +45,22 @@ export interface DuckAndMixInput {
   ttsGainDb: number;
   includeBackground: boolean;
   duck: boolean;
+  /** Two-pass EBU R128 loudness normalization for a transparent final mix. */
+  twoPassLoudnorm?: boolean;
+}
+
+/**
+ * Optional source-separation service (delivered as an engine pack). Splits the
+ * original audio into a vocal stem and a music+effects (M&E) bed so the dub can
+ * replace only the voices and keep the original score. Returns null when no
+ * separation engine is installed (the caller falls back to ducking).
+ */
+export interface SeparationService {
+  separate(
+    audioPath: string,
+    outputDir: string,
+    signal?: AbortSignal,
+  ): Promise<{ vocalsPath: string; accompanimentPath: string } | null>;
 }
 
 /**

@@ -37,8 +37,22 @@ export { LocalTtsProvider } from './providers/tts/localTtsProvider.js';
 export { OpenAiSttProvider } from './providers/stt/openaiSttProvider.js';
 export { LlmTranslationProvider } from './providers/translation/llmTranslationProvider.js';
 export { OpenAiTtsProvider } from './providers/tts/openaiTtsProvider.js';
+export { WhisperCppProvider } from './providers/stt/whisperCppProvider.js';
+export { LocalLlmTranslationProvider } from './providers/translation/localLlmTranslationProvider.js';
+export { NeuralTtsProvider } from './providers/tts/neuralTtsProvider.js';
+export { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
+export { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 export { CredentialsStore } from './credentials/credentialsStore.js';
 export { getSystemProfile, recommendSetup, buildSystemResponse } from './system/systemProfile.js';
+
+// ---- Engine packs ----------------------------------------------------------
+export { EnginePackStore } from './engines/enginePackStore.js';
+export { EngineManager } from './engines/engineManager.js';
+export { EngineInstaller } from './engines/engineInstaller.js';
+export { EngineEventBus } from './engines/engineBus.js';
+export { ENGINE_PACKS, availablePacks, findPack } from './engines/enginePackCatalog.js';
+export { recommendEnginePacks } from './engines/engineRecommendation.js';
+export { pickInstalledPack, requireInstalledPack, packsForProvider } from './engines/packSelection.js';
 
 // ---- Workspace -------------------------------------------------------------
 export { ProjectStore, generateProjectId } from './workspace/projectStore.js';

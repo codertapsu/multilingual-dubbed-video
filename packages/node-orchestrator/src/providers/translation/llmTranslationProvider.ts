@@ -40,17 +40,49 @@ const SERVICE_DEFAULTS: Record<
   anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-haiku-4-5-20251001', dialect: 'anthropic' },
 };
 
-/** Build the strict-JSON translation prompt for one batch. */
+/** A segment for prompting: id + source text, plus optional timing for fitting. */
+export interface PromptSegment {
+  id: string;
+  sourceText: string;
+  startMs?: number;
+  endMs?: number;
+}
+
+/** Words that fit naturally in a window, assuming ~2.8 spoken words/second. */
+function targetWords(startMs?: number, endMs?: number): number | undefined {
+  if (typeof startMs !== 'number' || typeof endMs !== 'number') return undefined;
+  const seconds = Math.max(0, endMs - startMs) / 1000;
+  return seconds > 0 ? Math.max(1, Math.round(seconds * 2.8)) : undefined;
+}
+
+/**
+ * Build the strict-JSON translation prompt for one batch.
+ *
+ * Duration-aware: when a segment carries timing, the prompt states the spoken
+ * time window and a target word budget so the model produces a line that fits
+ * without heavy time-stretching downstream (the "HeyGen trick" from the
+ * research). This is a free quality win on cloud and local alike.
+ */
 export function buildTranslationPrompt(
   sourceLanguage: string,
   targetLanguage: string,
-  segments: { id: string; sourceText: string }[],
+  segments: PromptSegment[],
 ): string {
-  const list = segments.map((s) => `${s.id}: ${s.sourceText}`).join('\n');
+  const list = segments
+    .map((s) => {
+      const words = targetWords(s.startMs, s.endMs);
+      const hint =
+        words !== undefined
+          ? `  [spoken window: ${((s.endMs! - s.startMs!) / 1000).toFixed(1)}s; aim for ~${words} words]`
+          : '';
+      return `${s.id}: ${s.sourceText}${hint}`;
+    })
+    .join('\n');
   return [
     `Translate the following subtitle segments from "${sourceLanguage}" to "${targetLanguage}".`,
     'Rules:',
-    '- These are spoken dialogue lines for dubbing: keep them natural, conversational, and roughly as short as the original so they fit the same time window.',
+    '- These are spoken dialogue lines for dubbing: keep them natural, conversational, and close to the spoken time window of the original so they fit without sounding rushed.',
+    '- When a target word budget is given, get as close to it as natural phrasing allows.',
     '- Preserve names, numbers, and the tone of the original.',
     '- Translate each segment independently but consistently (same terms across segments).',
     '- Respond with ONLY a JSON object of the form {"segments":[{"id":"seg_0001","text":"..."}]} — no prose, no markdown fences.',
@@ -58,6 +90,21 @@ export function buildTranslationPrompt(
     'Segments:',
     list,
   ].join('\n');
+}
+
+/**
+ * Build a single-segment raw-MT prompt for translation-SPECIALIZED models
+ * (TranslateGemma, Seed-X, etc.) that expect one source text and return plain
+ * translated text rather than chat JSON.
+ */
+export function buildRawTranslationPrompt(
+  sourceLanguage: string,
+  targetLanguage: string,
+  segment: PromptSegment,
+): string {
+  const words = targetWords(segment.startMs, segment.endMs);
+  const fit = words !== undefined ? ` Keep it close to ${words} words so it fits the spoken timing.` : '';
+  return `Translate from ${sourceLanguage} to ${targetLanguage}. Output ONLY the translation, no quotes or notes.${fit}\n\n${segment.sourceText}`;
 }
 
 /** Parse the model reply into id->text, tolerating fences and stray prose. */

@@ -1,0 +1,292 @@
+/**
+ * Runtime lifecycle for installed engine packs that run as local servers
+ * (whisper.cpp's `whisper-server`, llama.cpp's `llama-server`, and the
+ * uv-env Python workers for TTS/separation/alignment).
+ *
+ * Responsibilities:
+ *   - Resolve an installed pack's server binary / entrypoint.
+ *   - Start it on a free loopback port, wait for health, hand back a base URL.
+ *   - Track running engines and stop them on demand / on shutdown.
+ *   - **Sequential memory policy**: the dubbing pipeline runs one heavy phase at
+ *     a time, so before starting a heavy engine the manager can unload other
+ *     heavy engines (`withEngine(..., { exclusive: true })`). On big machines
+ *     the caller can keep engines resident by not requesting exclusivity.
+ *
+ * The process launcher and the health probe are injectable so the policy +
+ * lifecycle are unit-testable without real binaries.
+ */
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createServer } from 'node:net';
+import type { Dirent } from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { AppErrorException } from '@videodubber/shared';
+import type { EnginePackStore } from './enginePackStore.js';
+
+/** A running engine instance. */
+export interface RunningEngine {
+  packId: string;
+  baseUrl: string;
+  port: number;
+  /** Kill the process. */
+  stop: () => Promise<void>;
+}
+
+/** How to launch one engine pack's server. */
+export interface EngineLaunchSpec {
+  /** Candidate binary basenames to find inside the pack dir (binary packs). */
+  binaryNames?: string[];
+  /** Python module to run for uv-env packs (via `<venv>/bin/python -m <module>`). */
+  pythonModule?: string;
+  /** Build argv given the resolved executable, port, and pack dir. */
+  args: (ctx: { exe: string; port: number; packDir: string }) => string[];
+  /** Extra environment for the child. */
+  env?: (ctx: { port: number; packDir: string }) => Record<string, string>;
+  /** Health URL builder; polled until it resolves ok. */
+  healthPath?: string;
+  /** Whether this engine is "heavy" (subject to the exclusive unload policy). */
+  heavy?: boolean;
+}
+
+/** Built-in launch specs per provider/pack. */
+export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
+  'whisper-cpp': {
+    binaryNames: ['whisper-server', 'whisper-server.exe'],
+    args: ({ exe: _exe, port }) => ['--host', '127.0.0.1', '--port', String(port), '--inference-path', '/inference'],
+    healthPath: '/',
+    heavy: true,
+  },
+  'local-llm': {
+    binaryNames: ['llama-server', 'llama-server.exe'],
+    // Model path is supplied via VD_LLM_MODEL in the env builder.
+    args: ({ port }) => ['--host', '127.0.0.1', '--port', String(port), '-c', '8192'],
+    env: ({ packDir }) => ({ VD_PACK_DIR: packDir }),
+    healthPath: '/health',
+    heavy: true,
+  },
+  'neural-tts': {
+    pythonModule: 'vd_tts_engine',
+    args: ({ port }) => ['--port', String(port)],
+    healthPath: '/health',
+    heavy: false,
+  },
+  'audio-separator': {
+    pythonModule: 'vd_separator',
+    args: ({ port }) => ['--port', String(port)],
+    healthPath: '/health',
+    heavy: true,
+  },
+  whisperx: {
+    pythonModule: 'vd_whisperx',
+    args: ({ port }) => ['--port', String(port)],
+    healthPath: '/health',
+    heavy: true,
+  },
+};
+
+/** Injectable seams (tests provide fakes). */
+export interface EngineManagerDeps {
+  store: EnginePackStore;
+  /** Spawn a process; defaults to node:child_process spawn. */
+  spawnImpl?: (cmd: string, args: string[], env: Record<string, string>) => ChildProcess;
+  /** Probe a health URL; resolves true when ready. Default: HTTP GET 200. */
+  healthProbe?: (url: string) => Promise<boolean>;
+  /** Allocate a free port. Default: ephemeral via net. */
+  allocatePort?: () => Promise<number>;
+  /** Logger. */
+  logger?: { info: (m: string) => void; warn: (m: string) => void };
+  /** Health-wait timeout (ms). */
+  startTimeoutMs?: number;
+}
+
+export class EngineManager {
+  private readonly running = new Map<string, RunningEngine>();
+
+  constructor(private readonly deps: EngineManagerDeps) {}
+
+  /** Base URL of a running engine, or undefined. */
+  baseUrl(packId: string): string | undefined {
+    return this.running.get(packId)?.baseUrl;
+  }
+
+  /** Whether an engine is currently running. */
+  isRunning(packId: string): boolean {
+    return this.running.has(packId);
+  }
+
+  /**
+   * Ensure a pack's server is running and return its base URL. Idempotent: a
+   * second call returns the existing instance. When `exclusive` is set, other
+   * *heavy* engines are stopped first to free RAM/VRAM for sequential phases.
+   */
+  async ensureRunning(packId: string, opts: { exclusive?: boolean } = {}): Promise<string> {
+    const existing = this.running.get(packId);
+    if (existing) return existing.baseUrl;
+
+    const spec = ENGINE_LAUNCH_SPECS[this.providerOf(packId)];
+    if (!spec) {
+      throw new AppErrorException('ENGINE_UNAVAILABLE', `No launch spec for engine pack "${packId}".`);
+    }
+
+    if (opts.exclusive && spec.heavy) {
+      await this.unloadHeavyExcept(packId);
+    }
+
+    const rec = await this.deps.store.get(packId);
+    if (!rec) {
+      throw new AppErrorException('ENGINE_PACK_MISSING', `Engine pack "${packId}" is not installed.`);
+    }
+
+    const exe = await this.resolveExecutable(rec.path, spec);
+    const port = await (this.deps.allocatePort ?? allocateEphemeralPort)();
+    const args = spec.args({ exe, port, packDir: rec.path });
+    const env = { ...process.env, ...(spec.env ? spec.env({ port, packDir: rec.path }) : {}) } as Record<string, string>;
+
+    this.deps.logger?.info(`Starting engine "${packId}" on port ${port}.`);
+    const spawnImpl = this.deps.spawnImpl ?? defaultSpawn;
+    const child = spawnImpl(exe, args, env);
+
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const stop = async (): Promise<void> => {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* already dead */
+      }
+      this.running.delete(packId);
+    };
+    child.on?.('exit', () => this.running.delete(packId));
+
+    // Wait for health (the engine may take a moment to load its model).
+    const probe = this.deps.healthProbe ?? httpHealthProbe;
+    const healthUrl = `${baseUrl}${spec.healthPath ?? '/health'}`;
+    const ready = await waitFor(() => probe(healthUrl), this.deps.startTimeoutMs ?? 60_000);
+    if (!ready) {
+      await stop();
+      throw new AppErrorException('ENGINE_UNAVAILABLE', `Engine "${packId}" did not become healthy in time.`);
+    }
+
+    const instance: RunningEngine = { packId, baseUrl, port, stop };
+    this.running.set(packId, instance);
+    return baseUrl;
+  }
+
+  /** Stop one engine. */
+  async stop(packId: string): Promise<void> {
+    await this.running.get(packId)?.stop();
+  }
+
+  /** Stop every running engine (call on app shutdown / project completion). */
+  async stopAll(): Promise<void> {
+    await Promise.all([...this.running.values()].map((e) => e.stop()));
+  }
+
+  /** Stop all heavy engines except the one named (the exclusive policy). */
+  private async unloadHeavyExcept(keepPackId: string): Promise<void> {
+    for (const [id, inst] of this.running) {
+      if (id === keepPackId) continue;
+      const spec = ENGINE_LAUNCH_SPECS[this.providerOf(id)];
+      if (spec?.heavy) {
+        this.deps.logger?.info(`Unloading heavy engine "${id}" to free memory for "${keepPackId}".`);
+        await inst.stop();
+      }
+    }
+  }
+
+  /** Pack id == provider id by convention in the catalog; map both ways here. */
+  private providerOf(packId: string): string {
+    // whisper-cpp-metal/cuda/vulkan -> whisper-cpp; llama-cpp-* -> local-llm; etc.
+    if (packId.startsWith('whisper-cpp')) return 'whisper-cpp';
+    if (packId.startsWith('llama-cpp')) return 'local-llm';
+    if (packId === 'tts-neural') return 'neural-tts';
+    if (packId === 'separation-audio') return 'audio-separator';
+    if (packId === 'alignment-whisperx') return 'whisperx';
+    return packId;
+  }
+
+  /** Find the server binary (binary pack) or the venv python (uv-env pack). */
+  private async resolveExecutable(packDir: string, spec: EngineLaunchSpec): Promise<string> {
+    if (spec.pythonModule) {
+      const py = process.platform === 'win32' ? path.join('venv', 'Scripts', 'python.exe') : path.join('venv', 'bin', 'python');
+      const full = path.join(packDir, py);
+      if (await exists(full)) return full;
+      throw new AppErrorException('ENGINE_UNAVAILABLE', `Python venv missing in pack at ${packDir}.`);
+    }
+    for (const name of spec.binaryNames ?? []) {
+      const found = await findFile(packDir, name);
+      if (found) return found;
+    }
+    throw new AppErrorException('ENGINE_UNAVAILABLE', `Server binary not found in pack at ${packDir}.`);
+  }
+}
+
+// --------------------------------------------------------------------------
+// Helpers (exported where useful for tests)
+// --------------------------------------------------------------------------
+
+/** Recursively search a directory for a file with the given basename. */
+export async function findFile(root: string, name: string, depth = 4): Promise<string | undefined> {
+  if (depth < 0) return undefined;
+  let entries: Dirent[];
+  try {
+    entries = await fsp.readdir(root, { withFileTypes: true });
+  } catch {
+    return undefined;
+  }
+  for (const e of entries) {
+    const full = path.join(root, e.name);
+    if (e.isFile() && e.name === name) return full;
+  }
+  for (const e of entries) {
+    if (e.isDirectory()) {
+      const found = await findFile(path.join(root, e.name), name, depth - 1);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+async function exists(p: string): Promise<boolean> {
+  return fsp
+    .stat(p)
+    .then(() => true)
+    .catch(() => false);
+}
+
+/** Poll `fn` until it returns true or the deadline passes. */
+export async function waitFor(fn: () => Promise<boolean>, timeoutMs: number, intervalMs = 500): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  // First attempt immediately.
+  for (;;) {
+    if (await fn().catch(() => false)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+/** Allocate a free ephemeral loopback port. */
+export function allocateEphemeralPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      srv.close(() => (port ? resolve(port) : reject(new Error('could not allocate a port'))));
+    });
+  });
+}
+
+/** Default HTTP health probe: any non-5xx response counts as ready. */
+async function httpHealthProbe(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
+    return res.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+function defaultSpawn(cmd: string, args: string[], env: Record<string, string>): ChildProcess {
+  return spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], env });
+}

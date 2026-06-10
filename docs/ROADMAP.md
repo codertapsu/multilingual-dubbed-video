@@ -120,11 +120,45 @@ updater endpoint resolves.
 
 ---
 
+## Engine upgrades (implemented)
+
+A deep, web-verified survey of the mid-2026 on-device AI landscape lives in
+[`TECH_STACK_RESEARCH.md`](TECH_STACK_RESEARCH.md) (per-hardware-tier stack table,
+maximum-quality fully-local EN→VI pipeline, license traps). Its roadmap is now
+implemented as the **engine-pack** system + hardware-aware recommendations — see
+[`PROVIDERS.md`](PROVIDERS.md#engine-packs):
+
+- **Accelerated STT** — `whisper-cpp` provider (Metal/CUDA/Vulkan packs); batched
+  faster-whisper + VAD; `large-v3-turbo` is the new recommended model; PhoWhisper
+  for Vietnamese-source audio.
+- **Local LLM translation** — `ollama` (keyless daemon) and `llama-cpp` (engine
+  pack) providers speaking the OpenAI dialect (TranslateGemma/Qwen/Gemma);
+  duration-aware prompts; per-segment raw-MT mode.
+- **Neural TTS** — `neural-tts` engine pack (Kokoro / VieNeu / Chatterbox /
+  Qwen3-TTS), including the Vietnamese VieNeu upgrade over Piper.
+- **Vocal separation** — `separation-audio` engine pack powering the
+  “replace voices, keep music & effects” mix mode; two-pass loudnorm.
+- **Forced alignment + diarization** — `alignment-whisperx` engine pack for
+  ±50 ms word timing and per-speaker voices.
+- **Render** — opt-in hardware encode (VideoToolbox/NVENC); Rubber Band
+  time-stretch helpers for natural speech above ~1.3×.
+
+The orchestrator's EngineManager downloads packs on demand, runs them as managed
+local servers, and sequences heavy engines to fit memory.
+
+Still binary-dependent (wired, runs once the relevant binary/model lands): the
+pinned download checksums in the catalog, and Rubber Band subprocess execution
+(the decision + argv are implemented and tested; `atempo` is the default until a
+`rubberband` binary is present).
+
+---
+
 ## Ideas backlog
 
 - Glossary / terminology management UI (the translation worker already accepts a
   `glossary`).
-- Alternative local MT/TTS engines as additional providers.
+- Alternative local MT/TTS engines as additional providers (see
+  [`TECH_STACK_RESEARCH.md`](TECH_STACK_RESEARCH.md) for the vetted list).
 - Per-segment re-translation suggestions and confidence-driven review queues.
 - Export presets (platform-specific resolutions/bitrates) for `render`.
 

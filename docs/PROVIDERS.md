@@ -30,17 +30,69 @@ per project in the new-project wizard — and changed again at any time.
 
 ## Provider catalog
 
-| Phase | Provider id | Engine | Runs | Needs key |
+| Phase | Provider id | Engine | Runs | Needs |
 |---|---|---|---|---|
-| STT | `faster-whisper` | faster-whisper (CTranslate2, int8 CPU), worker `:5101` | local | — |
-| STT | `openai-stt` | OpenAI `whisper-1` transcription API | cloud | OpenAI |
+| STT | `faster-whisper` | faster-whisper (CTranslate2, int8/CUDA), worker `:5101` | local | — |
+| STT | `whisper-cpp` | whisper.cpp server (Metal/CUDA/Vulkan) — accelerated Whisper | local | engine pack |
+| STT | `openai-stt` | OpenAI `whisper-1` transcription API | cloud | OpenAI key |
 | Translation | `argos` | Argos Translate (offline neural MT), worker `:5102` | local | — |
-| Translation | `openai-translate` | OpenAI chat model (default `gpt-4o-mini`) | cloud | OpenAI |
-| Translation | `anthropic-translate` | Anthropic Claude (default `claude-haiku-4-5`) | cloud | Anthropic |
-| Translation | `gemini-translate` | Google Gemini (default `gemini-2.0-flash`) | cloud | Gemini |
+| Translation | `ollama` | Local LLM via Ollama (default `translategemma:12b`) | local | Ollama daemon |
+| Translation | `llama-cpp` | Local LLM via bundled `llama-server` | local | engine pack |
+| Translation | `openai-translate` | OpenAI chat model (default `gpt-4o-mini`) | cloud | OpenAI key |
+| Translation | `anthropic-translate` | Anthropic Claude (default `claude-haiku-4-5`) | cloud | Anthropic key |
+| Translation | `gemini-translate` | Google Gemini (default `gemini-2.0-flash`) | cloud | Gemini key |
 | TTS | `piper-local` | Piper → system voice → silent fallback, worker `:5103` | local | — |
-| TTS | `openai-tts` | OpenAI speech API (default `gpt-4o-mini-tts`) | cloud | OpenAI |
-| Rendering | — | FFmpeg (bundled, libass) | **always local** | — |
+| TTS | `neural-tts` | Neural voices (Kokoro / VieNeu / Chatterbox / Qwen3-TTS) | local | engine pack |
+| TTS | `openai-tts` | OpenAI speech API (default `gpt-4o-mini-tts`) | cloud | OpenAI key |
+| Rendering | — | FFmpeg (bundled, libass; opt-in HW encode) | **always local** | — |
+
+The local STT/translation/TTS upgrades (`whisper-cpp`, `llama-cpp`, `neural-tts`)
+and the optional **vocal separation** and **forced alignment + diarization**
+stages ship as **engine packs** — see below.
+
+## Engine packs
+
+VideoDubber's base installer stays small (faster-whisper CPU, Argos, Piper,
+FFmpeg). Heavier, optional, accelerated engines download on demand as **engine
+packs** and run only when a project uses them — so capable machines can opt into
+the best available engines without bloating the install. Manage them in
+**Settings → Engines**; packs marked “recommended” suit the current machine
+(detected from RAM/CPU/GPU). See [`TECH_STACK_RESEARCH.md`](TECH_STACK_RESEARCH.md)
+for the per-hardware-tier matrix behind the recommendations.
+
+| Pack | Provides | Delivery |
+|---|---|---|
+| `whisper-cpp-metal` / `-cuda` / `-vulkan` | Accelerated STT (`whisper-cpp`) | native binary |
+| `llama-cpp-metal` / `-cuda` / `-vulkan` | Local LLM translation (`llama-cpp`) | native binary + GGUF model |
+| `tts-neural` | Neural multilingual + Vietnamese voices (`neural-tts`) | uv-managed Python env |
+| `separation-audio` | Vocal/M&E separation for the “replace voices” mix | uv-managed Python env |
+| `alignment-whisperx` | Word-accurate timing + speaker diarization | uv-managed Python env |
+
+How packs run:
+- **Native-binary packs** (whisper.cpp, llama.cpp) are downloaded, checksum-verified,
+  extracted, and spawned as OpenAI-compatible local servers — exactly like the
+  bundled FFmpeg. No Python involved.
+- **`uv-env` packs** materialize a self-contained Python environment via
+  [uv](https://docs.astral.sh/uv/) (the ComfyUI-Desktop pattern), so torch/ONNX
+  stacks that don't freeze well still install cleanly. `uv` must be on PATH;
+  if it's absent the installer reports a clear remediation and the rest of the
+  app keeps working.
+
+The orchestrator's **EngineManager** starts a pack's server on demand, waits for
+health, and — because the dubbing pipeline runs one heavy phase at a time —
+**unloads other heavy engines first** (the sequential memory policy), so a 32 GB
+machine can run the best STT → translation → TTS chain without exhausting RAM/VRAM.
+On shutdown every engine process is stopped.
+
+### Cloud-vs-local availability
+
+`GET /providers` reports each provider's `available` flag:
+- cloud provider → its API key is configured;
+- engine-pack provider → a matching pack is installed;
+- plain local provider → always available.
+
+The wizard and Settings disable any option that isn't usable yet and tell you
+what it needs (“needs API key” / “needs engine pack”).
 
 Implementations:
 
@@ -171,7 +223,11 @@ projects honestly record whether anything left the machine.
 | `CLOUD_REQUEST_FAILED` (HTTP 401/403) | The service rejected the key | Re-check the key with the Test button; regenerate it if needed |
 | `CLOUD_REQUEST_FAILED` (other) | Quota, rate limit, network, or service outage | Retry; check the provider's status page and your plan/quota |
 | `WORKER_TIMEOUT` | The service didn't answer in time | Retry; long audio uploads need a stable connection |
+| `ENGINE_PACK_MISSING` | The phase uses an engine that isn't installed | Install the engine pack in Settings → Engines, or pick another provider |
+| `ENGINE_PACK_FAILED` | A pack download/verify/build failed | Check network + disk; retry. Corrupt downloads are discarded automatically |
+| `ENGINE_UNAVAILABLE` | A local engine process didn't start/respond | Retry; if it persists, reinstall the pack or switch to a CPU provider |
 
-All cloud failures are per-step: the pipeline is resumable, so fixing the key and
-retrying the failed step continues from where it stopped. Local providers remain the
-fallback — switching the phase back to local and retrying always works offline.
+All cloud and engine failures are per-step: the pipeline is resumable, so fixing the
+key/pack and retrying the failed step continues from where it stopped. The bundled
+local CPU providers (faster-whisper, Argos, Piper) always work offline — switching a
+phase back to one of them and retrying is the universal fallback.

@@ -46,6 +46,16 @@ class TranslationBackend(Protocol):
         """Return downloadable/available ``(from_base, to_base)`` pairs (may be empty)."""
         ...
 
+    def ensure_pair(self, from_lang: str, to_lang: str) -> bool:
+        """Ensure a ``(from_lang, to_lang)`` package is installed.
+
+        Returns ``True`` if a package was downloaded+installed by this call,
+        ``False`` if it was already present. Raises an
+        :class:`AppErrorException` if the engine is unavailable or the pair is
+        not found in the package index.
+        """
+        ...
+
     def translate(self, text: str, from_lang: str, to_lang: str) -> str:
         """Translate a single string between two base language subtags.
 
@@ -106,6 +116,34 @@ class ArgosBackend:
     # -- introspection ----------------------------------------------------
 
     def installed_pairs(self) -> list[tuple[str, str]]:
+        """Installed ``(from_code, to_code)`` pairs, sourced from the package list.
+
+        Reads ``argostranslate.package.get_installed_packages()`` — the
+        authoritative record of what is installed — rather than deriving pairs
+        from translate-time ``Language`` objects (which can report empty even
+        when a package is installed, because ``translations`` are wired up
+        lazily). This is the fix for ``GET /languages`` returning ``[]``.
+        Falls back to the language-graph derivation if the package list is
+        unavailable for any reason.
+        """
+        try:
+            from argostranslate import package as argos_package  # type: ignore
+
+            installed = argos_package.get_installed_packages()
+        except Exception as exc:  # not installed / unreadable -> fall back
+            logger.debug("Argos: installed package list unavailable: %s", exc)
+            return self._installed_pairs_from_languages()
+
+        pairs: list[tuple[str, str]] = []
+        for pkg in installed:
+            from_code = getattr(pkg, "from_code", None)
+            to_code = getattr(pkg, "to_code", None)
+            if from_code and to_code:
+                pairs.append((from_code, to_code))
+        return pairs
+
+    def _installed_pairs_from_languages(self) -> list[tuple[str, str]]:
+        """Legacy derivation from translate-time ``Language`` objects (fallback)."""
         self._ensure_loaded()
         pairs: list[tuple[str, str]] = []
         for lang in self._languages:
@@ -139,6 +177,107 @@ class ArgosBackend:
             if from_code and to_code:
                 pairs.append((from_code, to_code))
         return pairs
+
+    # -- package install (first-run setup wizard) -------------------------
+
+    def ensure_pair(self, from_lang: str, to_lang: str) -> bool:
+        """Download + install the Argos package for ``from_lang -> to_lang``.
+
+        Idempotent: returns ``False`` (no-op) if the pair is already installed,
+        ``True`` if it was installed by this call. Updates the package index
+        from the network on a miss, finds the matching ``AvailablePackage``,
+        downloads it and installs it from the downloaded path.
+
+        Raises an :class:`AppErrorException` if the Argos library is missing, if
+        the requested pair is not in the package index, or if download/install
+        fails.
+        """
+        try:
+            from argostranslate import package as argos_package  # type: ignore
+        except Exception as exc:  # pragma: no cover - import failure path
+            raise AppErrorException.make(
+                code="TRANSLATION_PACKAGE_MISSING",
+                message="Argos Translate is not installed in this environment.",
+                status_code=503,
+                cause=str(exc),
+                remediation=(
+                    "Install the translation engine: `pip install argostranslate`. "
+                    f"See {_MODEL_SETUP_DOC}."
+                ),
+                docs_ref=_MODEL_SETUP_DOC,
+            ) from exc
+
+        # Already installed? -> idempotent no-op.
+        if (from_lang, to_lang) in set(self.installed_pairs()):
+            logger.info("Argos: pair %s->%s already installed.", from_lang, to_lang)
+            return False
+
+        # Refresh the index (network) so newly-published packages are visible.
+        try:
+            argos_package.update_package_index()
+            available = argos_package.get_available_packages()
+        except Exception as exc:
+            raise AppErrorException.make(
+                code="TRANSLATION_PACKAGE_MISSING",
+                message=(
+                    f"Could not update the Argos package index to install "
+                    f"'{from_lang}' -> '{to_lang}'."
+                ),
+                status_code=503,
+                cause=str(exc),
+                remediation=(
+                    "Check your network connection and retry. The package index "
+                    "is fetched from the Argos servers on first install."
+                ),
+                docs_ref=_MODEL_SETUP_DOC,
+            ) from exc
+
+        match = next(
+            (
+                pkg
+                for pkg in available
+                if getattr(pkg, "from_code", None) == from_lang
+                and getattr(pkg, "to_code", None) == to_lang
+            ),
+            None,
+        )
+        if match is None:
+            raise AppErrorException.make(
+                code="TRANSLATION_PACKAGE_MISSING",
+                message=(
+                    f"No Argos package is published for '{from_lang}' -> '{to_lang}'."
+                ),
+                status_code=422,
+                remediation=(
+                    "Pick a pair that Argos provides (e.g. en->vi). The full list "
+                    "comes from GET /languages 'available'."
+                ),
+                docs_ref=_MODEL_SETUP_DOC,
+            )
+
+        try:
+            download_path = match.download()
+            argos_package.install_from_path(download_path)
+        except Exception as exc:
+            raise AppErrorException.make(
+                code="TRANSLATION_PACKAGE_MISSING",
+                message=(
+                    f"Failed to download/install the Argos package for "
+                    f"'{from_lang}' -> '{to_lang}'."
+                ),
+                status_code=503,
+                cause=str(exc),
+                remediation=(
+                    "Check your network connection and free disk space, then retry."
+                ),
+                docs_ref=_MODEL_SETUP_DOC,
+            ) from exc
+
+        # New package installed -> drop the cached language graph so the next
+        # translate()/installed_pairs() observes it.
+        self.refresh()
+        logger.info("Argos: installed pair %s->%s.", from_lang, to_lang)
+        return True
 
     # -- translation ------------------------------------------------------
 
@@ -208,6 +347,11 @@ class _UnimplementedCloudBackend:
 
     def available_pairs(self) -> list[tuple[str, str]]:
         return []
+
+    def ensure_pair(self, from_lang: str, to_lang: str) -> bool:  # noqa: ARG002
+        # Cloud backends have nothing to download — every supported pair is
+        # served by the remote API once credentials are configured.
+        return False
 
     def translate(self, text: str, from_lang: str, to_lang: str) -> str:  # noqa: ARG002
         raise NotImplementedError(

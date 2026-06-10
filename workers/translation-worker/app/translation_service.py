@@ -97,6 +97,50 @@ def installed_pair_count() -> int:
         return 0
 
 
+def list_installed_pairs() -> list[LanguagePair]:
+    """Installed language pairs only (for ``GET /packages``)."""
+    backend = get_backend()
+    return _dedupe_pairs(backend.installed_pairs())
+
+
+def ensure_package(from_code: str, to_code: str) -> bool:
+    """Ensure the Argos package for ``from_code -> to_code`` is installed.
+
+    Reduces both codes to Argos base subtags (honoring the vi-VI -> vi-VN fix),
+    then delegates to the backend. Returns ``True`` if a package was installed
+    by this call, ``False`` if it was already present.
+
+    Raises
+    ------
+    AppErrorException
+        ``INVALID_LANGUAGE`` if a code cannot be reduced to a base subtag;
+        ``TRANSLATION_PACKAGE_MISSING`` if the pair is unavailable or the
+        download/install fails.
+    """
+    from_lang = to_argos_language(from_code)
+    to_lang = to_argos_language(to_code)
+
+    if not from_lang or not to_lang:
+        raise AppErrorException.make(
+            code="INVALID_LANGUAGE",
+            message=(
+                f"Could not resolve a base language subtag from "
+                f"from='{from_code}', to='{to_code}'."
+            ),
+            status_code=400,
+            remediation="Provide BCP-47 codes such as 'en' / 'vi' (or 'en-US' / 'vi-VN').",
+        )
+
+    backend = get_backend()
+    logger.info(
+        "Ensuring translation package %s -> %s (backend=%s)",
+        from_lang,
+        to_lang,
+        getattr(backend, "id", "?"),
+    )
+    return backend.ensure_pair(from_lang, to_lang)
+
+
 def translate_segments(
     source_language: str,
     target_language: str,

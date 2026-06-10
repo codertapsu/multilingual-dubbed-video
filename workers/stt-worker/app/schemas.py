@@ -75,6 +75,38 @@ class HealthResponse(BaseModel):
     loaded: bool
 
 
+# --- Model management (first-run setup wizard) ----------------------------
+class EnsureModelRequest(BaseModel):
+    """Body of ``POST /models/ensure``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    model: str = Field(
+        ...,
+        description="Whisper model size to download/cache, e.g. tiny|base|small|medium|large-v3.",
+    )
+
+
+class EnsureModelResponse(BaseModel):
+    """Body of a successful ``POST /models/ensure``."""
+
+    ok: bool = True
+    model: str
+    alreadyCached: bool = Field(
+        ...,
+        description="True if the model weights were already present before this call.",
+    )
+
+
+class InstalledModelsResponse(BaseModel):
+    """Body of ``GET /models``."""
+
+    installed: List[str] = Field(
+        default_factory=list,
+        description="Curated model sizes whose weights are present in the local cache.",
+    )
+
+
 # --- Error envelope (mirrors shared AppError) -----------------------------
 class ErrorBody(BaseModel):
     code: str

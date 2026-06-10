@@ -22,7 +22,14 @@ from . import __version__
 from . import whisper_service
 from .config import get_settings
 from .errors import register_exception_handlers
-from .schemas import HealthResponse, TranscribeRequest, TranscribeResponse
+from .schemas import (
+    EnsureModelRequest,
+    EnsureModelResponse,
+    HealthResponse,
+    InstalledModelsResponse,
+    TranscribeRequest,
+    TranscribeResponse,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -78,6 +85,25 @@ def create_app() -> FastAPI:
         from anyio import to_thread
 
         return await to_thread.run_sync(whisper_service.transcribe, req)
+
+    @app.get("/models", response_model=InstalledModelsResponse)
+    async def list_models() -> InstalledModelsResponse:
+        """List Whisper models already cached locally (best-effort, never raises)."""
+        return InstalledModelsResponse(installed=whisper_service.list_installed_models())
+
+    @app.post("/models/ensure", response_model=EnsureModelResponse)
+    async def ensure_model(req: EnsureModelRequest) -> EnsureModelResponse:
+        """Ensure a Whisper model is downloaded + cached (first-run setup wizard).
+
+        Long-running on a cache miss (downloads weights from HuggingFace), so the
+        blocking work runs in a worker thread to keep the event loop responsive.
+        Raises the structured ``STT_MODEL_MISSING`` error on failure.
+        """
+        from anyio import to_thread
+
+        model, already = await to_thread.run_sync(whisper_service.ensure_model, req.model)
+        logger.info("Ensured Whisper model '%s' (alreadyCached=%s).", model, already)
+        return EnsureModelResponse(ok=True, model=model, alreadyCached=already)
 
     @app.on_event("startup")
     async def _maybe_warm_up() -> None:

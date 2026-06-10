@@ -32,12 +32,33 @@ class FakeBackend:
     def __init__(self, installed: set[tuple[str, str]] | None = None) -> None:
         self.installed = installed if installed is not None else {("en", "vi")}
         self.calls: list[tuple[str, str, str]] = []
+        self.ensure_calls: list[tuple[str, str]] = []
 
     def installed_pairs(self) -> list[tuple[str, str]]:
         return sorted(self.installed)
 
     def available_pairs(self) -> list[tuple[str, str]]:
         return [("en", "es"), ("en", "fr")]
+
+    def ensure_pair(self, from_lang: str, to_lang: str) -> bool:
+        """Mimic the real install flow against the fake ``available_pairs``.
+
+        Returns False (no-op) if already installed, True after "installing" an
+        available pair, and raises the structured error for an unknown pair.
+        """
+        self.ensure_calls.append((from_lang, to_lang))
+        if (from_lang, to_lang) in self.installed:
+            return False
+        if (from_lang, to_lang) not in set(self.available_pairs()):
+            raise AppErrorException.make(
+                code="TRANSLATION_PACKAGE_MISSING",
+                message=f"No package published for '{from_lang}' -> '{to_lang}'.",
+                status_code=422,
+                remediation="Pick an available pair.",
+                docs_ref="docs/MODEL_SETUP.md",
+            )
+        self.installed.add((from_lang, to_lang))
+        return True
 
     def translate(self, text: str, from_lang: str, to_lang: str) -> str:
         self.calls.append((text, from_lang, to_lang))

@@ -20,6 +20,7 @@ import logging
 import math
 import os
 import threading
+from pathlib import Path
 from typing import Any, List, Optional
 
 from .config import Settings, get_settings
@@ -37,6 +38,19 @@ logger = logging.getLogger("videodubber.stt.whisper")
 # Cache of loaded WhisperModel instances keyed by (model, device, compute_type).
 _MODEL_CACHE: dict[tuple[str, str, str], Any] = {}
 _CACHE_LOCK = threading.Lock()
+
+# Curated size alias -> HuggingFace repo id, mirroring faster-whisper's internal
+# ``_MODELS`` table for the sizes the setup catalog offers. Duplicated here (not
+# imported from faster_whisper) so this module — and the test suite that
+# monkeypatches it — stays importable without the native dependency installed.
+_SYSTRAN_REPOS: dict[str, str] = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large-v2": "Systran/faster-whisper-large-v2",
+    "large-v3": "Systran/faster-whisper-large-v3",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +175,123 @@ def warm_up(model_name: Optional[str] = None) -> None:
     """Eagerly load a model (best-effort). Used by the optional startup hook."""
     settings = get_settings()
     _load_model(model_name or settings.model, settings)
+
+
+# ---------------------------------------------------------------------------
+# Model management (ensure / list) — used by the first-run setup wizard
+# ---------------------------------------------------------------------------
+def _hf_cache_dir() -> str:
+    """Resolve the HuggingFace hub cache directory faster-whisper downloads into.
+
+    Priority mirrors :func:`config._resolve_cache_dir`:
+      1. ``STT_MODEL_CACHE_DIR`` (also passed to WhisperModel as ``download_root``)
+      2. ``HF_HOME``/hub
+      3. ``HF_HUB_CACHE``
+      4. the library default ``~/.cache/huggingface/hub``.
+    """
+    explicit = os.environ.get("STT_MODEL_CACHE_DIR")
+    if explicit and explicit.strip():
+        return str(Path(explicit).expanduser())
+    hub_cache = os.environ.get("HF_HUB_CACHE")
+    if hub_cache and hub_cache.strip():
+        return str(Path(hub_cache).expanduser())
+    hf_home = os.environ.get("HF_HOME")
+    if hf_home and hf_home.strip():
+        return str(Path(hf_home).expanduser() / "hub")
+    return str(Path("~/.cache/huggingface/hub").expanduser())
+
+
+def _model_repo_dir_name(model_name: str) -> str:
+    """The on-disk snapshot dir name HF uses for a faster-whisper model.
+
+    ``snapshot_download("Systran/faster-whisper-small")`` stores the snapshot
+    under ``<cache>/models--Systran--faster-whisper-small``. Curated size
+    aliases (``tiny``..``large-v3``) map onto the Systran repos; a raw
+    ``owner/repo`` id maps directly.
+    """
+    repo_id = _SYSTRAN_REPOS.get(model_name, None)
+    if repo_id is None:
+        repo_id = model_name if "/" in model_name else f"Systran/faster-whisper-{model_name}"
+    return "models--" + repo_id.replace("/", "--")
+
+
+def is_model_cached(model_name: str) -> bool:
+    """True if the model's weights already exist in the HF cache (no network).
+
+    Best-effort: returns False if the cache dir is unreadable. We look for the
+    repo snapshot dir AND at least one materialized ``model.bin`` under
+    ``snapshots/`` so a half-populated dir is not reported as cached.
+    """
+    cache = Path(_hf_cache_dir())
+    repo_dir = cache / _model_repo_dir_name(model_name)
+    if not repo_dir.is_dir():
+        return False
+    snapshots = repo_dir / "snapshots"
+    if not snapshots.is_dir():
+        # Some layouts (local_dir) drop files at the repo root.
+        return any(repo_dir.glob("model.bin"))
+    try:
+        return any(snapshots.glob("*/model.bin"))
+    except OSError:  # pragma: no cover - defensive
+        return False
+
+
+def ensure_model(model_name: Optional[str] = None) -> tuple[str, bool]:
+    """Ensure a Whisper model is downloaded + cached locally.
+
+    Constructs the faster-whisper ``WhisperModel`` (which triggers the
+    HuggingFace download into the cache) so a subsequent ``/transcribe`` runs
+    fully offline. Long-running on a cache miss; instant on a hit.
+
+    Returns
+    -------
+    (model_name, already_cached):
+        the resolved model name and whether it was already present before this
+        call (so callers can report "alreadyCached").
+
+    Raises
+    ------
+    AppError ``STT_MODEL_MISSING``
+        if faster-whisper is unavailable or the download/load fails.
+    """
+    settings = get_settings()
+    name = (model_name or settings.model).strip() or settings.model
+
+    already = is_model_cached(name)
+    logger.info(
+        "Ensuring Whisper model name=%s (already_cached=%s, cache=%s)",
+        name,
+        already,
+        _hf_cache_dir(),
+    )
+
+    # _load_model downloads-on-miss and caches the constructed model; it raises
+    # the structured STT_MODEL_MISSING AppError on any failure.
+    _load_model(name, settings)
+    return name, already
+
+
+def list_installed_models() -> list[str]:
+    """Scan the HF cache for installed faster-whisper models.
+
+    Returns the curated size aliases (``tiny``..``large-v3``) whose repo
+    snapshots are present, sorted and de-duplicated. Best-effort: returns an
+    empty list if the cache dir is missing/unreadable. Never raises.
+    """
+    cache = Path(_hf_cache_dir())
+    try:
+        if not cache.is_dir():
+            return []
+        present_dirs = {p.name for p in cache.iterdir() if p.is_dir()}
+    except OSError:  # pragma: no cover - defensive
+        return []
+
+    installed: set[str] = set()
+    for size, repo_id in _SYSTRAN_REPOS.items():
+        dir_name = "models--" + repo_id.replace("/", "--")
+        if dir_name in present_dirs and is_model_cached(size):
+            installed.add(size)
+    return sorted(installed)
 
 
 # ---------------------------------------------------------------------------

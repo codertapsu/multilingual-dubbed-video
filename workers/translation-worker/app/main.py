@@ -28,10 +28,20 @@ from .errors import (
     app_error_exception_handler,
     unhandled_exception_handler,
 )
-from .schemas import HealthResponse, LanguagesResponse, TranslateRequest, TranslateResponse
+from .schemas import (
+    EnsurePackageRequest,
+    EnsurePackageResponse,
+    HealthResponse,
+    LanguagesResponse,
+    PackagesResponse,
+    TranslateRequest,
+    TranslateResponse,
+)
 from .translation_service import (
+    ensure_package,
     get_backend,
     installed_pair_count,
+    list_installed_pairs,
     list_languages,
     translate_segments,
 )
@@ -84,8 +94,36 @@ def create_app() -> FastAPI:
 
     @app.get("/languages", response_model=LanguagesResponse)
     def languages() -> LanguagesResponse:
-        """List installed (and, if known, available) language pairs."""
+        """List installed (and, if known, available) language pairs.
+
+        Installed pairs are sourced from ``get_installed_packages()`` so a
+        freshly-installed pair is reported even before any translation has wired
+        up the language graph.
+        """
         return list_languages()
+
+    @app.get("/packages", response_model=PackagesResponse)
+    def packages() -> PackagesResponse:
+        """List installed translation packages (first-run setup wizard)."""
+        return PackagesResponse(installed=list_installed_pairs())
+
+    @app.post("/packages/ensure", response_model=EnsurePackageResponse)
+    def ensure_pkg(req: EnsurePackageRequest) -> EnsurePackageResponse:
+        """Download + install an Argos language package (idempotent).
+
+        Long-running on a cache miss (fetches the package index + model over the
+        network). FastAPI runs this sync handler in a worker thread, so the
+        event loop (and ``/health``) stays responsive. Raises the structured
+        ``TRANSLATION_PACKAGE_MISSING`` / ``INVALID_LANGUAGE`` error on failure.
+        """
+        installed = ensure_package(req.from_, req.to)
+        log.info(
+            "Ensured translation package %s->%s (newly_installed=%s)",
+            req.from_,
+            req.to,
+            installed,
+        )
+        return EnsurePackageResponse(ok=True, installed=installed)
 
     @app.post("/translate-segments", response_model=TranslateResponse)
     def translate(req: TranslateRequest) -> TranslateResponse:

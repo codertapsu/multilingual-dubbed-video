@@ -74,6 +74,33 @@ class LanguagesResponse(BaseModel):
     available: list[LanguagePair] = Field(default_factory=list)
 
 
+class EnsurePackageRequest(BaseModel):
+    """Body for ``POST /packages/ensure`` (mirrors the shared ``ArgosPair``)."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    from_: str = Field(..., alias="from", description="Source language code, e.g. 'en'.")
+    to: str = Field(..., description="Target language code, e.g. 'vi'.")
+
+
+class EnsurePackageResponse(BaseModel):
+    """Body for a successful ``POST /packages/ensure``."""
+
+    ok: bool = True
+    installed: bool = Field(
+        ...,
+        description="True if a package was installed by this call (False if already present).",
+    )
+
+
+class PackagesResponse(BaseModel):
+    """Body for ``GET /packages``."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    installed: list[LanguagePair] = Field(default_factory=list)
+
+
 class HealthResponse(BaseModel):
     """Body for ``GET /health``."""
 

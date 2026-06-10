@@ -160,16 +160,24 @@ export class SetupStore {
 
   // ----- preferences.json --------------------------------------------------
 
-  /** Load update preferences, defaulting to auto-update enabled. */
+  /** Load preferences, defaulting to auto-update enabled. */
   async getPreferences(): Promise<UpdatePreferences> {
     const stored = await readJson<Partial<UpdatePreferences>>(this.preferencesPath);
     if (!stored) return defaultPreferences();
-    return { autoUpdate: stored.autoUpdate !== false };
+    return {
+      autoUpdate: stored.autoUpdate !== false,
+      ...(stored.providerDefaults && typeof stored.providerDefaults === 'object'
+        ? { providerDefaults: stored.providerDefaults }
+        : {}),
+    };
   }
 
-  /** Persist update preferences atomically. */
+  /** Persist preferences atomically (autoUpdate + per-phase provider defaults). */
   async savePreferences(prefs: UpdatePreferences): Promise<UpdatePreferences> {
-    const next: UpdatePreferences = { autoUpdate: prefs.autoUpdate === true };
+    const next: UpdatePreferences = {
+      autoUpdate: prefs.autoUpdate === true,
+      ...(prefs.providerDefaults ? { providerDefaults: prefs.providerDefaults } : {}),
+    };
     await writeJsonAtomic(this.preferencesPath, next);
     return next;
   }

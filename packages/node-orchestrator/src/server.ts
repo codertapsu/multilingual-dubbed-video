@@ -15,15 +15,21 @@ import { fileURLToPath } from 'node:url';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import {
+  ALL_CLOUD_SERVICES,
   COMMON_LANGUAGES,
+  type CloudServiceId,
   type CreateProjectInput,
   type PipelineStepId,
+  type SaveCredentialRequest,
   type SetupInstallRequest,
   type SubtitleExportMode,
   type SubtitleStyle,
   type UpdatePreferences,
 } from '@videodubber/shared';
 import { loadConfig, type OrchestratorConfig } from './config.js';
+import { CredentialsStore } from './credentials/credentialsStore.js';
+import { testCloudCredential } from './credentials/testConnection.js';
+import { buildSystemResponse } from './system/systemProfile.js';
 import { EventBusRegistry } from './events.js';
 import { checkWorkersHealth } from './health.js';
 import { toHttpError } from './httpErrors.js';
@@ -59,6 +65,8 @@ export interface CreateServerOptions {
   setupBus?: SetupEventBus;
   /** Injected first-run installer (defaults to one built from the above). */
   installer?: SetupInstaller;
+  /** Injected cloud-credentials store (defaults to a configDir-backed one). */
+  credentials?: CredentialsStore;
 }
 
 /**
@@ -126,7 +134,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   const store = options.store ?? new ProjectStore(config.projectsDir);
   const media = options.media ?? createLazyMediaService();
-  const registry = options.registry ?? createDefaultRegistry(config);
+  const credentials = options.credentials ?? new CredentialsStore(config.configDir);
+  const registry = options.registry ?? createDefaultRegistry(config, credentials);
   const bus = options.bus ?? new EventBusRegistry();
 
   const orchestrator =
@@ -265,19 +274,101 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
-  app.put('/preferences', async (req: FastifyRequest<{ Body: UpdatePreferences }>, reply) => {
+  app.put('/preferences', async (req: FastifyRequest<{ Body: Partial<UpdatePreferences> }>, reply) => {
     try {
-      const body = req.body ?? { autoUpdate: true };
-      await setupStore.savePreferences({ autoUpdate: body.autoUpdate === true });
+      const body = req.body ?? {};
+      // Partial update: omitted fields keep their stored value, so the
+      // auto-update toggle and the provider defaults can be saved independently.
+      const current = await setupStore.getPreferences();
+      await setupStore.savePreferences({
+        autoUpdate: body.autoUpdate === undefined ? current.autoUpdate : body.autoUpdate === true,
+        ...(body.providerDefaults !== undefined
+          ? { providerDefaults: body.providerDefaults }
+          : current.providerDefaults !== undefined
+            ? { providerDefaults: current.providerDefaults }
+            : {}),
+      });
       return { ok: true };
     } catch (err) {
       return sendError(reply, err);
     }
   });
 
-  // ---- Providers (bonus listing; used by the UI to populate pickers) ------
+  // ---- Providers (per-phase pickers in wizard + settings) ------------------
 
-  app.get('/providers', async () => registry.describe());
+  app.get('/providers', async (_req, reply) => {
+    try {
+      const described = registry.describe();
+      // Decorate with availability: local providers are always selectable;
+      // cloud providers need their service's API key.
+      const creds = await credentials.describe();
+      const configured = new Set(creds.filter((c) => c.configured).map((c) => c.service));
+      const decorate = (list: typeof described.stt) =>
+        list.map((p) => ({
+          ...p,
+          available: p.isLocal || (p.credentialService ? configured.has(p.credentialService) : false),
+        }));
+      return {
+        stt: decorate(described.stt),
+        translation: decorate(described.translation),
+        tts: decorate(described.tts),
+      };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // ---- System profile + hardware-aware recommendation ----------------------
+
+  app.get('/system', async (_req, reply) => {
+    try {
+      return await buildSystemResponse();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // ---- Cloud credentials (masked; full keys never leave the orchestrator) --
+
+  app.get('/credentials', async (_req, reply) => {
+    try {
+      return { services: await credentials.describe() };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.put('/credentials', async (req: FastifyRequest<{ Body: SaveCredentialRequest }>, reply) => {
+    try {
+      const body = req.body;
+      if (!body || !ALL_CLOUD_SERVICES.includes(body.service as CloudServiceId)) {
+        return reply
+          .status(400)
+          .send({ error: { code: 'UNKNOWN', message: `Unknown cloud service "${body?.service}".` } });
+      }
+      await credentials.save(body);
+      return { ok: true, services: await credentials.describe() };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post(
+    '/credentials/test',
+    async (req: FastifyRequest<{ Body: { service?: CloudServiceId } }>, reply) => {
+      try {
+        const service = req.body?.service;
+        if (!service || !ALL_CLOUD_SERVICES.includes(service)) {
+          return reply
+            .status(400)
+            .send({ error: { code: 'UNKNOWN', message: `Unknown cloud service "${service}".` } });
+        }
+        return await testCloudCredential(credentials, service);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
 
   // ---- Projects -----------------------------------------------------------
 

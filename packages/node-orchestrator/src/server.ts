@@ -141,9 +141,17 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   const app = Fastify({ logger: false });
 
-  // CORS open to localhost (Tauri webview + dev browser).
+  // CORS restricted to the app's own origins: localhost dev servers and the
+  // Tauri webview (tauri://localhost on macOS/Linux, http://tauri.localhost on
+  // Windows). A web page on the internet must NOT be able to drive this API.
+  const allowedOrigin =
+    /^(https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?|tauri:\/\/localhost|https?:\/\/tauri\.localhost)$/;
   await app.register(cors, {
-    origin: true,
+    origin: (origin, cb) => {
+      // No Origin header (curl, same-origin, sidecar-to-sidecar) is allowed.
+      if (!origin || allowedOrigin.test(origin)) cb(null, true);
+      else cb(null, false);
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   });
 
@@ -410,7 +418,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       if (!target || typeof target !== 'string') {
         return reply.status(400).send({ error: { code: 'UNKNOWN', message: 'Missing "path" in body.' } });
       }
-      await openPath(target);
+      // Only open locations the app actually manages: the projects root or a
+      // project's configured output directory — not arbitrary filesystem paths.
+      const resolved = resolvePath(target);
+      const projectsRoot = resolvePath(config.projectsDir);
+      let permitted = resolved === projectsRoot || resolved.startsWith(projectsRoot + sep);
+      if (!permitted) {
+        const projects = await store.listProjects().catch(() => []);
+        permitted = projects.some((p) => {
+          const out = resolvePath(p.outputDir);
+          return resolved === out || resolved.startsWith(out + sep);
+        });
+      }
+      if (!permitted) {
+        return reply
+          .status(403)
+          .send({ error: { code: 'UNKNOWN', message: 'Path is outside the app-managed directories.' } });
+      }
+      await openPath(resolved);
       return { ok: true };
     } catch (err) {
       return sendError(reply, err);

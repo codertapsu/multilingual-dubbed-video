@@ -469,28 +469,39 @@ export class PipelineRunner {
     // The TTS worker names files by the numeric part of the segment id
     // (seg_0001 -> segment_0001.wav), so we resolve the index from the id first
     // and only fall back to the 1-based segment index if the id has no number.
-    const alignInputs: AlignInputSegment[] = [];
-    for (const seg of segments) {
-      const fromId = segmentIdToIndex(seg.id);
-      const index = fromId > 0 ? fromId : Number.isFinite(seg.index) ? seg.index + 1 : alignInputs.length + 1;
-      const audioPath = paths.ttsSegment(index);
-      let generatedDurationMs = 0;
-      try {
-        const probed = await this.deps.media.probe(audioPath);
-        generatedDurationMs = probed.durationMs;
-      } catch {
-        // If the WAV is missing/unprobeable, treat as zero-length so alignment
-        // flags it rather than crashing the whole pipeline.
-        generatedDurationMs = 0;
-      }
-      alignInputs.push({
-        segmentId: seg.id,
-        startMs: seg.startMs,
-        endMs: seg.endMs,
-        audioPath,
-        generatedDurationMs,
-      });
-    }
+    // Probes are independent ffprobe runs — do them with bounded concurrency
+    // (sequential probing dominated this step's wall-clock on long videos).
+    const PROBE_CONCURRENCY = 8;
+    const alignInputs = new Array<AlignInputSegment>(segments.length);
+    let nextSegment = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(PROBE_CONCURRENCY, segments.length) }, async () => {
+        while (nextSegment < segments.length) {
+          const i = nextSegment++;
+          const seg = segments[i];
+          if (!seg) continue;
+          const fromId = segmentIdToIndex(seg.id);
+          const index = fromId > 0 ? fromId : Number.isFinite(seg.index) ? seg.index + 1 : i + 1;
+          const audioPath = paths.ttsSegment(index);
+          let generatedDurationMs = 0;
+          try {
+            const probed = await this.deps.media.probe(audioPath);
+            generatedDurationMs = probed.durationMs;
+          } catch {
+            // If the WAV is missing/unprobeable, treat as zero-length so
+            // alignment flags it rather than crashing the whole pipeline.
+            generatedDurationMs = 0;
+          }
+          alignInputs[i] = {
+            segmentId: seg.id,
+            startMs: seg.startMs,
+            endMs: seg.endMs,
+            audioPath,
+            generatedDurationMs,
+          };
+        }
+      }),
+    );
 
     // Pass the total media duration so alignment is gap-aware (a long
     // translation can use the silence until the next line — or until the end of

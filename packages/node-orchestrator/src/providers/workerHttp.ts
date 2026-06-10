@@ -98,10 +98,21 @@ async function requestWorkerJson<TResponse>(
 
   const text = await response.text();
   let parsed: unknown;
+  let parseFailed = false;
   try {
     parsed = text.length > 0 ? JSON.parse(text) : undefined;
   } catch {
     parsed = undefined;
+    parseFailed = true;
+  }
+
+  // A 2xx with a non-JSON body is a malformed worker response — surfacing it
+  // beats silently treating it as an empty result and failing downstream.
+  if (response.ok && parseFailed) {
+    throw new AppErrorException('WORKER_UNAVAILABLE', `${opts.workerName} returned invalid JSON.`, {
+      cause: text.slice(0, 300),
+      remediation: 'Restart the worker; if it persists, check the worker logs for a crash during response serialization.',
+    });
   }
 
   if (!response.ok) {

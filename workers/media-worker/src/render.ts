@@ -26,6 +26,7 @@ import {
   AppErrorException,
   type RenderFinalVideoInput,
   type RenderFinalVideoResult,
+  type RenderQuality,
   type SubtitleExportMode,
   type SubtitleStyle,
 } from '@videodubber/shared';
@@ -33,11 +34,38 @@ import {
   assertInputReadable,
   assertOutputWritable,
   ffmpegHasFilter,
+  listFfmpegEncoders,
   runFfmpeg,
   type RunOptions,
 } from './exec.js';
 import { probeDurationMs } from './probe.js';
 import { buildSubtitlesFilter } from './subtitles.js';
+
+/**
+ * Choose the H.264 video encoder for a re-encode (burned-in subtitles).
+ * `quality` always uses software x264 (best size/quality). `fast` prefers a
+ * hardware encoder when one is available for the platform:
+ *   macOS  -> h264_videotoolbox
+ *   others -> h264_nvenc (NVIDIA)
+ * Falls back to libx264 when the requested hardware encoder is absent.
+ *
+ * Pure given `available` (the set of ffmpeg encoder names present).
+ */
+export function selectVideoCodec(
+  quality: RenderQuality | undefined,
+  platform: NodeJS.Platform,
+  available: Set<string>,
+): { codec: string; extraArgs: string[] } {
+  if (quality === 'fast') {
+    const hw = platform === 'darwin' ? 'h264_videotoolbox' : 'h264_nvenc';
+    if (available.has(hw)) {
+      // VideoToolbox uses -q:v (constant quality, Apple Silicon); NVENC uses -cq.
+      const extraArgs = hw === 'h264_videotoolbox' ? ['-q:v', '55'] : ['-rc', 'vbr', '-cq', '23'];
+      return { codec: hw, extraArgs };
+    }
+  }
+  return { codec: 'libx264', extraArgs: ['-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p'] };
+}
 
 /** Inputs needed to construct the ffmpeg argv (already-validated paths). */
 export interface RenderArgsContext {
@@ -51,6 +79,10 @@ export interface RenderArgsContext {
   copyVideoStream?: boolean;
   /** Platform override for subtitle path escaping (tests). */
   platform?: NodeJS.Platform;
+  /** Video encoder for the burned-in re-encode (default libx264). */
+  videoCodec?: string;
+  /** Encoder-specific args (preset/crf for x264, q/cq for HW). */
+  videoCodecArgs?: string[];
 }
 
 const AUDIO_ARGS = ['-c:a', 'aac', '-b:a', '192k'] as const;
@@ -72,6 +104,10 @@ export function buildRenderArgs(ctx: RenderArgsContext): string[] {
     platform,
   } = ctx;
   const copyVideo = ctx.copyVideoStream !== false; // default true except burned-in
+  // Encoder for re-encodes: default to software x264 unless the caller resolved
+  // a hardware encoder (renderQuality "fast").
+  const videoCodec = ctx.videoCodec ?? 'libx264';
+  const videoCodecArgs = ctx.videoCodecArgs ?? ['-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p'];
 
   switch (subtitleExportMode) {
     case 'burned-in': {
@@ -93,13 +129,8 @@ export function buildRenderArgs(ctx: RenderArgsContext): string[] {
         '-vf',
         filter,
         '-c:v',
-        'libx264',
-        '-preset',
-        'medium',
-        '-crf',
-        '20',
-        '-pix_fmt',
-        'yuv420p',
+        videoCodec,
+        ...videoCodecArgs,
         ...AUDIO_ARGS,
         outputPath,
       ];
@@ -216,6 +247,17 @@ export async function renderFinalVideo(
     assertInputReadable(input.subtitlePath);
   }
 
+  // Resolve the re-encode codec only when we actually re-encode (burned-in).
+  // For "fast" we pick a hardware encoder if this ffmpeg build has one.
+  let videoCodec: string | undefined;
+  let videoCodecArgs: string[] | undefined;
+  if (input.subtitleExportMode === 'burned-in') {
+    const encoders = await listFfmpegEncoders(runOpts);
+    const sel = selectVideoCodec(input.renderQuality, process.platform, encoders);
+    videoCodec = sel.codec;
+    videoCodecArgs = sel.extraArgs;
+  }
+
   const args = buildRenderArgs({
     inputVideoPath: input.inputVideoPath,
     audioPath: input.audioPath,
@@ -226,6 +268,8 @@ export async function renderFinalVideo(
     // burned-in must re-encode; everything else may copy unless caller forbids.
     copyVideoStream:
       input.subtitleExportMode === 'burned-in' ? false : input.copyVideoStream,
+    ...(videoCodec ? { videoCodec } : {}),
+    ...(videoCodecArgs ? { videoCodecArgs } : {}),
   });
 
   await runFfmpeg(args, runOpts);

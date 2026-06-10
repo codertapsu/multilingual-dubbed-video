@@ -74,6 +74,9 @@ export {
   listFfmpegFilters,
   ffmpegHasFilter,
   parseFfmpegFilters,
+  listFfmpegEncoders,
+  ffmpegHasEncoder,
+  parseFfmpegEncoders,
   runFfmpeg,
   runFfprobe,
   assertInputReadable,
@@ -111,10 +114,21 @@ export {
 export {
   duckAndMix,
   buildMixArgs,
+  buildMixMeasureArgs,
   buildMixFilterComplex,
+  loudnormFilter,
+  loudnormApplyFilter,
+  parseLoudnormJson,
   dbToVolumeArg,
   type DuckAndMixInput,
+  type LoudnormMeasurements,
 } from './mix.js';
+
+export {
+  shouldUseRubberband,
+  buildRubberbandArgs,
+  RUBBERBAND_THRESHOLD,
+} from './stretch.js';
 
 export {
   escapeSubtitlePathForFilter,
@@ -127,6 +141,7 @@ export {
 export {
   renderFinalVideo,
   buildRenderArgs,
+  selectVideoCodec,
   sidecarDestinationPath,
   type RenderArgsContext,
 } from './render.js';

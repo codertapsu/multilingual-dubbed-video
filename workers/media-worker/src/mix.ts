@@ -41,6 +41,57 @@ export interface DuckAndMixInput {
   includeBackground: boolean;
   /** Use dynamic sidechain ducking (true) vs. fixed attenuation (false). */
   duck: boolean;
+  /**
+   * Two-pass EBU R128 loudness normalization: measure first, then apply with
+   * the measured values (linear, transparent) instead of the single-pass
+   * dynamic mode. Higher quality for the final mix; one extra analysis pass.
+   */
+  twoPassLoudnorm?: boolean;
+}
+
+/** Target loudness for the final mix (streaming-friendly, dialogue-anchored). */
+const LOUDNORM_TARGET = { I: -16, TP: -1.5, LRA: 11 } as const;
+
+/** Measured loudness from a first `loudnorm` analysis pass (print_format=json). */
+export interface LoudnormMeasurements {
+  input_i: string;
+  input_tp: string;
+  input_lra: string;
+  input_thresh: string;
+  target_offset: string;
+}
+
+/** The single-pass loudnorm filter fragment (dynamic mode). */
+export function loudnormFilter(): string {
+  return `loudnorm=I=${LOUDNORM_TARGET.I}:TP=${LOUDNORM_TARGET.TP}:LRA=${LOUDNORM_TARGET.LRA}`;
+}
+
+/**
+ * The second-pass loudnorm filter fragment, seeded with measured values for a
+ * linear (transparent) normalization. Pure (testable).
+ */
+export function loudnormApplyFilter(m: LoudnormMeasurements): string {
+  return (
+    `loudnorm=I=${LOUDNORM_TARGET.I}:TP=${LOUDNORM_TARGET.TP}:LRA=${LOUDNORM_TARGET.LRA}` +
+    `:measured_I=${m.input_i}:measured_TP=${m.input_tp}:measured_LRA=${m.input_lra}` +
+    `:measured_thresh=${m.input_thresh}:offset=${m.target_offset}:linear=true:print_format=summary`
+  );
+}
+
+/** Parse the JSON block ffmpeg's loudnorm prints to stderr on an analysis pass. */
+export function parseLoudnormJson(stderr: string): LoudnormMeasurements | undefined {
+  const start = stderr.lastIndexOf('{');
+  const end = stderr.lastIndexOf('}');
+  if (start < 0 || end <= start) return undefined;
+  try {
+    const obj = JSON.parse(stderr.slice(start, end + 1)) as Partial<LoudnormMeasurements>;
+    if (obj.input_i && obj.input_tp && obj.input_lra && obj.input_thresh && obj.target_offset) {
+      return obj as LoudnormMeasurements;
+    }
+  } catch {
+    /* fall through */
+  }
+  return undefined;
 }
 
 /** Common normalization applied to each source before mixing. */
@@ -60,15 +111,20 @@ export function dbToVolumeArg(db: number): string {
  *
  * Pure function so it can be asserted in tests without ffmpeg.
  */
-export function buildMixFilterComplex(opts: DuckAndMixInput): string {
+export function buildMixFilterComplex(opts: DuckAndMixInput, loudnorm?: string): string {
   const ttsGain = dbToVolumeArg(opts.ttsGainDb);
 
   // TTS bus is always prepared (it's the voice we want to hear).
   const ttsChain = `[1:a]${normalizeChain()},volume=${ttsGain}[tts]`;
 
+  // The final loudness stage. Defaults to single-pass dynamic loudnorm; the
+  // two-pass path passes a measured-values fragment for transparent linear
+  // normalization (see duckAndMix).
+  const loudness = loudnorm ?? loudnormFilter();
+
   // --- No background: output is just the (gained) TTS, normalized. ---
   if (!opts.includeBackground) {
-    return [ttsChain, `[tts]loudnorm=I=-16:TP=-1.5:LRA=11[out]`].join(';');
+    return [ttsChain, `[tts]${loudness}[out]`].join(';');
   }
 
   const origChain = `[0:a]${normalizeChain()}[orig]`;
@@ -87,18 +143,20 @@ export function buildMixFilterComplex(opts: DuckAndMixInput): string {
       `[orig][tts_key]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1[ducked]`,
       `[ducked]volume=${duckAttenuate}[bg]`,
       `[tts_mix][bg]amix=inputs=2:normalize=0:dropout_transition=0[mixed]`,
-      `[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[out]`,
+      `[mixed]${loudness}[out]`,
     ].join(';');
   }
 
-  // Static ducking: just attenuate the original by duckingLevelDb and mix.
+  // Static mix: attenuate the original by duckingLevelDb and mix. With
+  // duckingLevelDb=0 this is the "replace-vocals / keep M&E bed" case — the
+  // separated music+effects sit at full volume under the dub.
   const bgVolume = dbToVolumeArg(opts.duckingLevelDb);
   return [
     origChain,
     ttsChain,
     `[orig]volume=${bgVolume}[bg]`,
     `[tts][bg]amix=inputs=2:normalize=0:dropout_transition=0[mixed]`,
-    `[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[out]`,
+    `[mixed]${loudness}[out]`,
   ].join(';');
 }
 
@@ -108,7 +166,7 @@ export function buildMixFilterComplex(opts: DuckAndMixInput): string {
  * false we still pass the original as input 0 (it is simply unused by the
  * filtergraph) to keep the input indices stable and the builder simple.
  */
-export function buildMixArgs(opts: DuckAndMixInput): string[] {
+export function buildMixArgs(opts: DuckAndMixInput, loudnorm?: string): string[] {
   return [
     '-y',
     '-i',
@@ -116,7 +174,7 @@ export function buildMixArgs(opts: DuckAndMixInput): string[] {
     '-i',
     opts.ttsTimeline,
     '-filter_complex',
-    buildMixFilterComplex(opts),
+    buildMixFilterComplex(opts, loudnorm),
     '-map',
     '[out]',
     '-ac',
@@ -126,6 +184,28 @@ export function buildMixArgs(opts: DuckAndMixInput): string[] {
     '-c:a',
     'pcm_s16le',
     opts.output,
+  ];
+}
+
+/**
+ * Build the analysis-pass argv: the same mix graph, but loudnorm runs in
+ * print_format=json mode and the output is discarded (-f null). Pure.
+ */
+export function buildMixMeasureArgs(opts: DuckAndMixInput): string[] {
+  const measure = `${loudnormFilter()}:print_format=json`;
+  return [
+    '-y',
+    '-i',
+    opts.originalAudio,
+    '-i',
+    opts.ttsTimeline,
+    '-filter_complex',
+    buildMixFilterComplex(opts, measure),
+    '-map',
+    '[out]',
+    '-f',
+    'null',
+    process.platform === 'win32' ? 'NUL' : '/dev/null',
   ];
 }
 
@@ -139,6 +219,19 @@ export async function duckAndMix(
     assertInputReadable(input.originalAudio);
   }
   assertOutputWritable(input.output);
+
+  if (input.twoPassLoudnorm) {
+    // Pass 1: measure the mixed program loudness.
+    const measureRes = await runFfmpeg(buildMixMeasureArgs(input), runOpts);
+    const measured = parseLoudnormJson(measureRes.stderr);
+    if (measured) {
+      // Pass 2: apply with measured values (linear/transparent).
+      await runFfmpeg(buildMixArgs(input, loudnormApplyFilter(measured)), runOpts);
+      return { output: input.output, durationMs: await probeDurationMs(input.output) };
+    }
+    // Measurement failed (unusual ffmpeg build) — fall back to single pass.
+  }
+
   await runFfmpeg(buildMixArgs(input), runOpts);
   return { output: input.output, durationMs: await probeDurationMs(input.output) };
 }

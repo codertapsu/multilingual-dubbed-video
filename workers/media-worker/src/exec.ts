@@ -327,6 +327,38 @@ export async function ffmpegHasFilter(name: string, opts: RunOptions = {}): Prom
   return (await listFfmpegFilters(opts)).has(name);
 }
 
+/** Parse encoder names out of `ffmpeg -encoders`. Pure (testable). */
+export function parseFfmpegEncoders(stdout: string): Set<string> {
+  const names = new Set<string>();
+  // Rows: " V..... libx264   H.264 ...". The flag column is 6 chars starting
+  // with the media type; the encoder NAME is the second whitespace token.
+  for (const line of stdout.split(/\r?\n/)) {
+    const m = /^\s*[VAS][.A-Z]{5}\s+([A-Za-z0-9_]+)\s/.exec(line);
+    if (m?.[1]) names.add(m[1]);
+  }
+  return names;
+}
+
+const _encodersByBinary = new Map<string, Promise<Set<string>>>();
+
+/** List the encoder names this ffmpeg build provides (cached). */
+export async function listFfmpegEncoders(opts: RunOptions = {}): Promise<Set<string>> {
+  const bin = resolveFfmpegBinary();
+  let cached = _encodersByBinary.get(bin);
+  if (!cached) {
+    cached = runFfmpeg(['-hide_banner', '-encoders'], { timeoutMs: 10_000, ...opts })
+      .then((r) => parseFfmpegEncoders(r.stdout))
+      .catch(() => new Set<string>());
+    _encodersByBinary.set(bin, cached);
+  }
+  return cached;
+}
+
+/** True if this ffmpeg build exposes the named encoder. */
+export async function ffmpegHasEncoder(name: string, opts: RunOptions = {}): Promise<boolean> {
+  return (await listFfmpegEncoders(opts)).has(name);
+}
+
 /** Probe whether a binary is runnable (used by /workers/health). */
 export async function checkBinaryAvailable(
   kind: 'ffmpeg' | 'ffprobe',

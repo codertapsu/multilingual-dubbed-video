@@ -1,59 +1,121 @@
-# Providers
+# Providers — local & cloud, per phase
 
-VideoDubber's three replaceable capabilities — **speech-to-text (STT)**,
-**translation**, and **text-to-speech (TTS)** — are implemented behind small TypeScript
-interfaces and selected per project by id. The default is **always local**. Cloud
-providers are optional, opt-in scaffolds.
+VideoDubber's pipeline has four user-visible phases. Three of them — **speech-to-text
+(STT)**, **translation**, and **text-to-speech (TTS)** — are implemented behind small
+TypeScript interfaces and selected **per phase, per project** by id. The fourth,
+**rendering**, always runs locally (FFmpeg): your video file never leaves the machine.
 
----
-
-## Cost-first philosophy
-
-> **Prefer local. Cloud is opt-in only.**
-
-- The default `processingMode` is **`local`**: faster-whisper + Argos Translate +
-  Piper/system/fallback. Zero marginal cost, fully offline, nothing leaves your machine.
-- A future **`cloud-enhanced`** mode lets you opt **specific steps** into higher-quality
-  cloud providers, gated by the relevant API key. You never have to send everything to
-  the cloud — you choose per capability.
-- Cloud helps most when **quality** matters more than cost: a hard-to-transcribe accent
-  (cloud STT), an unusual or low-resource language pair (cloud MT), or a more natural
-  target voice (cloud TTS). For most local-language dubbing, the local stack is
-  sufficient and free.
-- **No keys, no cloud.** If a cloud key is absent, that provider is simply unavailable;
-  the app stays fully functional on local engines.
+The default is **always local**. Cloud providers are optional, per-phase, key-gated
+opt-ins — mix and match freely (e.g. local STT + cloud translation + local TTS).
 
 ---
 
-## Local provider defaults
+## Local vs cloud — how to choose
 
-| Capability | Provider id | Engine | Worker / port | `isLocal` |
+| | Local (default) | Cloud |
+|---|---|---|
+| Cost | Free after model download | Pay per use (API pricing) |
+| Privacy | Nothing leaves the machine | That phase's data is uploaded |
+| Hardware | Needs RAM/CPU (see below) | Works on any machine |
+| Offline | ✅ | Needs internet |
+| Quality | Good; depends on model size | Often best-in-class |
+
+The app helps you choose: **Settings → This computer** shows what was detected
+(RAM, CPU, GPU) and a hardware-aware recommendation (which local Whisper model
+fits, and whether cloud is advisable for STT/translation on this machine).
+Defaults are saved in **Settings → Processing defaults** and can be overridden
+per project in the new-project wizard — and changed again at any time.
+
+---
+
+## Provider catalog
+
+| Phase | Provider id | Engine | Runs | Needs key |
 |---|---|---|---|---|
-| STT | `faster-whisper` | faster-whisper (CTranslate2, int8 CPU) | STT worker `:5101` | ✅ |
-| Translation | `argos` | Argos Translate (offline neural MT) | Translation worker `:5102` | ✅ |
-| TTS | `local` | Piper → system (`say`/`espeak-ng`) → silent/sine fallback | TTS worker `:5103` | ✅ |
+| STT | `faster-whisper` | faster-whisper (CTranslate2, int8 CPU), worker `:5101` | local | — |
+| STT | `openai-stt` | OpenAI `whisper-1` transcription API | cloud | OpenAI |
+| Translation | `argos` | Argos Translate (offline neural MT), worker `:5102` | local | — |
+| Translation | `openai-translate` | OpenAI chat model (default `gpt-4o-mini`) | cloud | OpenAI |
+| Translation | `anthropic-translate` | Anthropic Claude (default `claude-haiku-4-5`) | cloud | Anthropic |
+| Translation | `gemini-translate` | Google Gemini (default `gemini-2.0-flash`) | cloud | Gemini |
+| TTS | `piper-local` | Piper → system voice → silent fallback, worker `:5103` | local | — |
+| TTS | `openai-tts` | OpenAI speech API (default `gpt-4o-mini-tts`) | cloud | OpenAI |
+| Rendering | — | FFmpeg (bundled, libass) | **always local** | — |
 
 Implementations:
 
-- `packages/node-orchestrator/src/providers/stt/fasterWhisperProvider.ts`
-- `packages/node-orchestrator/src/providers/translation/argosProvider.ts`
-- `packages/node-orchestrator/src/providers/tts/localTtsProvider.ts`
-- Shared HTTP client: `packages/node-orchestrator/src/providers/workerHttp.ts`
+- Local: `packages/node-orchestrator/src/providers/{stt,translation,tts}/…`
+- Cloud: `openaiSttProvider.ts`, `llmTranslationProvider.ts`, `openaiTtsProvider.ts`
+  plus the shared plumbing in `providers/cloud/cloudHttp.ts`
 - Registry / selection: `packages/node-orchestrator/src/providers/registry.ts`
+- `GET /providers` lists every provider with an `available` flag (local providers are
+  always available; cloud ones only when their key is configured).
 
-The TTS worker chooses an engine at run time in this priority order:
+The local TTS worker resolves a voice **per target language** from
+`PIPER_VOICES_DIR` and never reads text with a wrong-language voice — see
+[`MODEL_SETUP.md` §3](MODEL_SETUP.md#3-piper-text-to-speech).
 
-1. **Piper** — when `PIPER_BINARY_PATH` + `PIPER_VOICE_MODEL_PATH` are set.
-2. **System TTS** — macOS `say` (aiff → wav), Linux `espeak-ng`.
-3. **Dev fallback** — a silent (or soft sine) WAV sized to the segment window so the
-   alignment / mix / render steps still run.
+### Why the cloud adapters are SDK-free
+
+Every cloud call is a plain `fetch` from the orchestrator. No provider SDKs are
+bundled, so the **installer carries zero cloud weight** and nothing cloud-related
+is even constructed until a project actually selects a cloud provider. This is the
+project's lazy-loading rule: bundle what every user needs (the balanced local
+engines); load anything optional on demand (models on first run, cloud per call).
+
+---
+
+## Cloud API keys
+
+Add keys in **Settings → Cloud API keys**. Storage rules:
+
+- Keys live **only** in `~/VideoDubber/credentials.json` (owner-only `0600`
+  permissions), written atomically. They are **never** committed, logged, or
+  returned by the API — `GET /credentials` only ever shows a masked form
+  (`sk-…h1Q4`).
+- Environment variables work as a read-only fallback for development:
+  `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`.
+- Each service row has a **Test** button (`POST /credentials/test`) that makes the
+  cheapest authenticated call (model listing) to verify the key.
+- A custom `baseUrl` per service is supported (e.g. an OpenAI-compatible proxy or
+  a local OpenAI-compatible server), as is a `model` override.
+
+> ⚠️ Using a cloud provider sends that phase's data to the service: the extracted
+> **audio track** for cloud STT, the **transcript text** for cloud translation, the
+> **translated text** for cloud TTS. The video file itself is never uploaded.
+> Review the provider's data-retention terms before enabling.
+
+### Voice cloning is excluded
+
+The cloud TTS adapter uses stock voices only. Cloning a real person's voice requires
+that person's explicit, documented consent and a legal review, and is deliberately not
+part of VideoDubber. See [`ROADMAP.md`](ROADMAP.md).
+
+---
+
+## Hardware-aware setup
+
+`GET /system` probes the machine (total RAM, CPU model/cores, GPUs — best-effort via
+`system_profiler` on macOS / `nvidia-smi` elsewhere) and returns a recommendation from
+a pure, unit-tested function (`src/system/systemProfile.ts`):
+
+| Machine | Tier | Local STT model | Cloud advice |
+|---|---|---|---|
+| < 8 GB RAM | constrained | `tiny` | Cloud STT + translation recommended |
+| 8–16 GB | balanced | `base` | Local is fine |
+| 16–32 GB | performance | `small` (`medium` on Apple Silicon) | Local preferred |
+| ≥ 32 GB | performance | `medium` (`large-v3` possible, slow on CPU) | Local preferred |
+| < 4 CPU cores | — | — | Cloud STT suggested for long videos |
+
+TTS never gets a cloud suggestion on hardware grounds — Piper is light; cloud TTS is a
+voice-quality preference.
 
 ---
 
 ## The provider interface contract
 
-All three interfaces live in `@videodubber/shared` and share the same shape: an id, a
-display name, an `isLocal` flag, and one async method.
+All three interfaces live in `@videodubber/shared`; orchestrator-side providers
+additionally accept an optional `AbortSignal` (see `providers/types.ts`):
 
 ```ts
 interface SttProvider {
@@ -72,79 +134,44 @@ interface TtsProvider {
 }
 ```
 
-I/O types (also in `@videodubber/shared`):
-
-- **STT** — `SttInput { audioPath, language?, model, wordTimestamps }` →
-  `SttResult { segments, detectedLanguage, durationMs }`.
-- **Translation** — `TranslationInput { sourceLanguage, targetLanguage, segments[], glossary? }`
-  → `TranslationResult { segments:[{ id, translatedText }] }` (ids/order preserved).
-- **TTS** — `TtsInput { language, voiceId?, segments[], outputDir, speed? }` →
-  `TtsResult { segments: TtsSegment[] }`.
-
-The orchestrator's registry picks an implementation by the `sttProviderId`,
-`translationProviderId`, and `ttsProviderId` fields of `ProjectSettings`. To add a
-provider, implement the interface and register it in `registry.ts`.
-
----
-
-## Optional cloud providers (placeholder architecture)
-
-Cloud adapters are **scaffolded placeholders** — they implement the interfaces but are
-not functional and are not wired into the default pipeline. They live in:
-
-```
-packages/node-orchestrator/src/providers/cloudPlaceholders.ts
-```
-
-Each adapter carries clear `TODO`s and reads its API key from the environment. They are
-intended for the future `cloud-enhanced` processing mode. Activating them is an explicit,
-key-gated opt-in; absent a key, the provider stays unavailable and local providers are
-used.
-
-### Cloud env vars + what data each would send
-
-> ⚠️ Enabling any of these sends data off your machine to a third party. Only set a key
-> if you intend to use that provider, and review the provider's privacy/data-retention
-> terms first. **Never commit real keys.** VideoDubber does not log secrets.
-
-| Provider | Env var(s) | Could power | Data that would be sent |
-|---|---|---|---|
-| **OpenAI** | `OPENAI_API_KEY` | STT (Whisper API), translation (chat), TTS | Extracted **audio** for STT; **source text** for translation; **target text** for TTS. |
-| **DeepL** | `DEEPL_API_KEY` | Translation | **Source segment text** (+ optional glossary). No audio. |
-| **Google Cloud** | `GOOGLE_APPLICATION_CREDENTIALS` (service-account JSON path) | STT, translation, TTS | **Audio** (Speech-to-Text); **source text** (Translation); **target text** (Text-to-Speech). |
-| **Azure Speech** | `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` | STT, TTS | **Audio** (STT); **target text** (neural TTS). |
-| **ElevenLabs** | `ELEVENLABS_API_KEY` | TTS | **Target text** and chosen voice id. (Voice cloning is **out of scope** — see below.) |
-
-Minimization principles for any cloud path:
-
-- Only the data strictly needed for that step is sent (audio for STT, text for MT/TTS).
-- The original video file is **never** uploaded; at most the extracted audio for STT.
-- Local processing remains the default and the fallback.
-
-### Voice cloning is excluded
-
-None of the cloud TTS scaffolds enable **voice cloning**. Cloning a real person's voice
-requires that person's **explicit, documented consent** and a legal review, and is
-deliberately not part of VideoDubber. See [`ROADMAP.md`](ROADMAP.md) and the disclaimer
-in the [README](../README.md#legal--usage-disclaimer).
+To add a provider: implement the interface (set `credentialService` if it needs a
+cloud key), register it in `registry.ts`, and it appears in every picker
+automatically. The LLM translation provider is the template to copy for new
+chat-based services — one class covers OpenAI, Claude and Gemini through per-service
+request builders.
 
 ---
 
 ## Choosing providers in a project
 
-`ProjectSettings` carries the selection:
+`ProjectSettings` carries the selection; the wizard seeds it from
+**Settings → Processing defaults** (stored in `preferences.json` as
+`providerDefaults`):
 
 ```jsonc
 {
-  "processingMode": "local",          // "local" | "cloud-enhanced"
-  "sttProviderId": "faster-whisper",
-  "translationProviderId": "argos",
-  "ttsProviderId": "local",
-  "ttsVoiceId": "vi_VN-vais1000-medium",  // optional
-  "sttModel": "small"                      // optional
+  "processingMode": "cloud-enhanced",      // DERIVED: any cloud phase => cloud-enhanced
+  "sttProviderId": "faster-whisper",       // local STT
+  "translationProviderId": "gemini-translate", // cloud translation
+  "ttsProviderId": "piper-local",          // local TTS
+  "sttModel": "base"
 }
 ```
 
-Keep `processingMode: "local"` for the free, offline, private default. See
-[`MODEL_SETUP.md`](MODEL_SETUP.md) for getting the local models, and
-[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) for provider-related error codes.
+`processingMode` is informational — it is derived from the per-phase choices so
+projects honestly record whether anything left the machine.
+
+---
+
+## Cloud troubleshooting
+
+| Error code | Meaning | Fix |
+|---|---|---|
+| `CLOUD_CREDENTIALS_MISSING` | The phase uses a cloud provider but no key is configured | Add the key in Settings → Cloud API keys, or switch the phase to a local provider |
+| `CLOUD_REQUEST_FAILED` (HTTP 401/403) | The service rejected the key | Re-check the key with the Test button; regenerate it if needed |
+| `CLOUD_REQUEST_FAILED` (other) | Quota, rate limit, network, or service outage | Retry; check the provider's status page and your plan/quota |
+| `WORKER_TIMEOUT` | The service didn't answer in time | Retry; long audio uploads need a stable connection |
+
+All cloud failures are per-step: the pipeline is resumable, so fixing the key and
+retrying the failed step continues from where it stopped. Local providers remain the
+fallback — switching the phase back to local and retrying always works offline.

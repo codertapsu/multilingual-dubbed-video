@@ -17,6 +17,7 @@ preinstalled. The installer embeds everything here.
 | `vd-stt-worker` | STT worker (faster-whisper, port 5101), PyInstaller | `scripts/package/build-workers.{sh,ps1}` |
 | `vd-translation-worker` | Translation worker (Argos, port 5102), PyInstaller | `scripts/package/build-workers.{sh,ps1}` |
 | `vd-tts-worker` | TTS worker (Piper/fallback, port 5103), PyInstaller | `scripts/package/build-workers.{sh,ps1}` |
+| `vd-piper` | Frozen piper-tts CLI (neural TTS; spawned per segment by the TTS worker) | `scripts/package/build-workers.{sh,ps1}` |
 | `ffmpeg` | static, **libass-enabled** FFmpeg | `scripts/package/fetch-ffmpeg.{sh,ps1}` |
 | `ffprobe` | static FFprobe | `scripts/package/fetch-ffmpeg.{sh,ps1}` |
 

@@ -7,6 +7,8 @@
 #     vd-stt-worker-<target-triple>[.exe]
 #     vd-translation-worker-<target-triple>[.exe]
 #     vd-tts-worker-<target-triple>[.exe]
+#     vd-piper-<target-triple>[.exe]        (frozen piper-tts CLI; spawned by
+#                                            the TTS worker per segment)
 #
 # Tauri appends the Rust *target triple* to externalBin base names, so each
 # sidecar MUST be suffixed with the triple of the host you build on
@@ -65,13 +67,16 @@ echo "    out:     ${BIN_DIR}"
 mkdir -p "${BIN_DIR}"
 
 # worker key | venv subdir | spec file | output base name
+# NOTE: "piper" is not a worker service — it's the frozen piper-tts CLI the TTS
+# worker spawns per segment. It builds from the TTS worker's venv.
 WORKERS=(
   "stt|stt-worker|vd-stt-worker"
   "translation|translation-worker|vd-translation-worker"
   "tts|tts-worker|vd-tts-worker"
+  "piper|tts-worker|vd-piper"
 )
 
-ONLY="${ONLY:-stt,translation,tts}"
+ONLY="${ONLY:-stt,translation,tts,piper}"
 
 want() { [[ ",${ONLY}," == *",$1,"* ]]; }
 
@@ -96,6 +101,13 @@ build_one() {
 
   # Ensure PyInstaller is present in this worker's venv.
   "${py}" -m pip install --quiet --upgrade pyinstaller >/dev/null
+
+  # The piper CLI freezes the piper-tts package, which is deliberately NOT in
+  # the TTS worker's requirements.txt (the worker calls the binary, not the
+  # package). Make sure it's present in the build venv (CI venvs are fresh).
+  if [[ "${key}" == "piper" ]]; then
+    "${py}" -m pip install --quiet "piper-tts>=1.4" >/dev/null
+  fi
 
   local dist="${PYI_TMP}/${key}"
   local work="${PYI_TMP}/build-${key}"

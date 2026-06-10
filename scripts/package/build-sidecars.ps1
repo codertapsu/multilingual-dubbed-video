@@ -9,6 +9,7 @@
     vd-stt-worker             (PyInstaller)     <- build-workers.ps1
     vd-translation-worker     (PyInstaller)     <- build-workers.ps1
     vd-tts-worker             (PyInstaller)     <- build-workers.ps1
+    vd-piper                  (PyInstaller)     <- build-workers.ps1 (piper CLI)
     ffmpeg / ffprobe          (static, libass)  <- fetch-ffmpeg.ps1
   All land in apps\desktop\src-tauri\binaries\ with the -<target-triple>.exe suffix.
 
@@ -62,7 +63,7 @@ if (-not $SkipFfmpeg) {
 Write-Host "`n############################################################"
 Write-Host "# Done. Sidecars in $BinDir :"
 Write-Host "############################################################"
-$bases = @("videodubber-orchestrator","vd-stt-worker","vd-translation-worker","vd-tts-worker","ffmpeg","ffprobe")
+$bases = @("videodubber-orchestrator","vd-stt-worker","vd-translation-worker","vd-tts-worker","vd-piper","ffmpeg","ffprobe")
 foreach ($b in $bases) {
   $f = Join-Path $BinDir "$b-$Triple.exe"
   if (Test-Path $f) { Write-Host "    $b-$Triple.exe" }

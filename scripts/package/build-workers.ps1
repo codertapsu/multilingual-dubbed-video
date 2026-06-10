@@ -11,14 +11,14 @@
   Discover it with:  rustc -Vv | Select-String '^host:'
 
 .PARAMETER Only
-  Comma list of workers to build (default: stt,translation,tts).
+  Comma list of targets to build (default: stt,translation,tts,piper).
 
 .PARAMETER TargetTriple
   Override the auto-detected Rust host triple.
 #>
 [CmdletBinding()]
 param(
-  [string]$Only = "stt,translation,tts",
+  [string]$Only = "stt,translation,tts,piper",
   [string]$TargetTriple = $env:TARGET_TRIPLE
 )
 
@@ -45,10 +45,13 @@ Write-Host "    out:    $BinDir"
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 # key | venv subdir | output base name
+# NOTE: "piper" is not a worker service — it's the frozen piper-tts CLI the TTS
+# worker spawns per segment. It builds from the TTS worker's venv.
 $Workers = @(
   @{ key="stt";         subdir="stt-worker";         base="vd-stt-worker" },
   @{ key="translation"; subdir="translation-worker"; base="vd-translation-worker" },
-  @{ key="tts";         subdir="tts-worker";         base="vd-tts-worker" }
+  @{ key="tts";         subdir="tts-worker";         base="vd-tts-worker" },
+  @{ key="piper";       subdir="tts-worker";         base="vd-piper" }
 )
 
 $Wanted = $Only.Split(",") | ForEach-Object { $_.Trim() }
@@ -66,6 +69,12 @@ function Build-One($w) {
   Write-Host ""
   Write-Host "==> [$($w.key)] PyInstaller -> $($w.base).exe"
   & $py -m pip install --quiet --upgrade pyinstaller | Out-Null
+
+  # piper-tts is deliberately NOT in the TTS worker's requirements.txt (the
+  # worker calls the binary, not the package) — install it for the CLI freeze.
+  if ($w.key -eq "piper") {
+    & $py -m pip install --quiet "piper-tts>=1.4" | Out-Null
+  }
 
   $dist = Join-Path $PyiTmp $w.key
   $work = Join-Path $PyiTmp ("build-" + $w.key)

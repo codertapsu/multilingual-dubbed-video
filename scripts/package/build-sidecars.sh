@@ -7,6 +7,7 @@
 #   vd-stt-worker              (PyInstaller)     <- build-workers.sh
 #   vd-translation-worker      (PyInstaller)     <- build-workers.sh
 #   vd-tts-worker              (PyInstaller)     <- build-workers.sh
+#   vd-piper                   (PyInstaller)     <- build-workers.sh (piper CLI)
 #   ffmpeg / ffprobe           (static, libass)  <- fetch-ffmpeg.sh
 #
 # All land in apps/desktop/src-tauri/binaries/ suffixed with the Rust target
@@ -64,14 +65,14 @@ echo ""
 echo "############################################################"
 echo "# Done. Sidecars in ${BIN_DIR}:"
 echo "############################################################"
-ls -1 "${BIN_DIR}" | grep -E "^(videodubber-orchestrator|vd-(stt|translation|tts)-worker|ffmpeg|ffprobe)-" || {
+ls -1 "${BIN_DIR}" | grep -E "^(videodubber-orchestrator|vd-(stt|translation|tts)-worker|vd-piper|ffmpeg|ffprobe)-" || {
   echo "WARNING: no sidecars matched the expected naming. Check the logs above." >&2
 }
 
 # Sanity: warn if any expected base is missing for this triple.
 EXE_SUFFIX=""
 case "${TRIPLE}" in *windows*) EXE_SUFFIX=".exe" ;; esac
-for base in videodubber-orchestrator vd-stt-worker vd-translation-worker vd-tts-worker ffmpeg ffprobe; do
+for base in videodubber-orchestrator vd-stt-worker vd-translation-worker vd-tts-worker vd-piper ffmpeg ffprobe; do
   f="${BIN_DIR}/${base}-${TRIPLE}${EXE_SUFFIX}"
   [[ -f "${f}" ]] || echo "NOTE: missing ${f} (skipped or failed?)."
 done

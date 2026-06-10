@@ -36,7 +36,9 @@ __pycache__/
 
 # ===== Local model & data caches =====
 # Downloaded faster-whisper / Argos / Piper models and other large assets.
-models/
+# Root-anchored: a bare "models/" would also swallow SOURCE directories like
+# packages/shared/src/models/ (which it silently did — never repeat that).
+/models/
 .cache/
 *.onnx
 *.bin

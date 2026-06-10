@@ -13,6 +13,34 @@ requirement.
 
 ---
 
+## Download & install (desktop app)
+
+**Just want to use VideoDubber?** Grab the installer for your OS from the
+[**Releases**](https://github.com/OWNER/REPO/releases) page — no Python, Node, or
+FFmpeg required. The installer is **fully self-contained**: it bundles the app,
+the pipeline engine, all three AI workers, and FFmpeg.
+
+| OS | Download | Install |
+|---|---|---|
+| **macOS** | `.dmg` (Apple Silicon or Intel — pick the one for your Mac) | Open the `.dmg`, drag **VideoDubber** to Applications. |
+| **Windows** | `.msi` or `.exe` | Run it and follow the installer. |
+| **Linux** | `.AppImage` or `.deb` | `chmod +x *.AppImage && ./VideoDubber*.AppImage`, or `sudo dpkg -i *.deb`. |
+
+**First launch** runs a one-time setup wizard that downloads the AI **models** for
+the languages you choose (the only thing not in the installer). After that the app
+works fully **offline**. The app **auto-updates** from GitHub Releases; you can
+switch to manual updates in **Settings → Updates**.
+
+> Replace `OWNER/REPO` above with this project's GitHub slug. Architecture of the
+> bundle: [`docs/PRODUCTION.md`](docs/PRODUCTION.md). How updates work:
+> [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
+
+**Building the installers / cutting a release?** See
+[`docs/RELEASING.md`](docs/RELEASING.md) (and `pnpm package:sidecars` +
+`pnpm app:build`). The rest of this README covers **developing from source**.
+
+---
+
 ## Why local-first? (the cost-first pitch)
 
 Commercial dubbing services and cloud STT/MT/TTS APIs charge per minute of audio and
@@ -97,19 +125,22 @@ Full details, the 8-step flow, and the data model are in
 
 ---
 
-## Prerequisites
+## System requirements
 
 | Requirement | Version / notes |
 |---|---|
+| **OS** | macOS 12+, Windows 10/11, or a modern Linux. (Validated end-to-end on macOS arm64.) |
 | **Node.js** | 20.11+ (LTS). Provides global `fetch` and ES2022. |
 | **pnpm** | 9.x. Enable via `corepack enable` or `npm i -g pnpm`. |
-| **Python** | **3.11–3.12 recommended.** 3.10 works. ⚠️ **Avoid 3.14** for now — some ML wheels (faster-whisper / ctranslate2, numpy) may not yet publish prebuilt wheels, forcing slow/failing source builds. |
-| **FFmpeg + ffprobe** | Required at run time for probe / extract / render. Install per OS — see [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md). |
-| **Rust (optional)** | Only needed to build/run the **full Tauri desktop app**. Install via [rustup](https://rustup.rs). The browser dev mode does **not** need Rust. |
+| **Python** | **3.11–3.13** (3.13 verified working — faster-whisper/ctranslate2, argostranslate, Piper all have wheels). 3.10 works. ⚠️ **Avoid 3.14 for now** — some ML wheels aren't published yet, forcing slow/failing source builds. On macOS: `brew install python@3.13` (or `@3.12`). The project uses a **per-project** interpreter (a `.venv` or `PYTHON_PATH`), so your system `python3` version doesn't matter — see [switching Python](docs/LOCAL_SETUP.md#choosing-the-python-version). |
+| **FFmpeg + ffprobe** | Required at run time for probe / extract / mix / render. Install per OS — see [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md#3-ffmpeg). **For burned-in subtitles** you need an FFmpeg built **with libass** (the `subtitles` filter). macOS Homebrew's default `ffmpeg` omits it — use `brew install ffmpeg-full` and set `FFMPEG_PATH`/`FFPROBE_PATH`. The other subtitle modes (soft / sidecar) work with any FFmpeg. |
+| **Disk** | ~1–2 GB for Node deps + Python venvs + models (a small/base Whisper model, one Argos pair, one Piper voice). |
+| **Rust (optional)** | Only needed to build/run the **native Tauri desktop app** (`pnpm app`). Install via [rustup](https://rustup.rs). The browser dev mode does **not** need Rust. |
 
 Local models (downloaded by the setup script): a faster-whisper model (default
-`small`), an Argos language package (default `en → vi`), and optionally a Piper voice.
-See [`docs/MODEL_SETUP.md`](docs/MODEL_SETUP.md).
+`small`; `base` is a fast CPU choice), an Argos language package (default `en → vi`),
+and optionally a Piper voice for high-quality TTS. See
+[`docs/MODEL_SETUP.md`](docs/MODEL_SETUP.md).
 
 ---
 
@@ -130,53 +161,79 @@ bash scripts/setup-local-models.sh        # Windows: pwsh scripts/setup-local-mo
 # 3. Verify your environment (Node, pnpm, Python, ffmpeg, workers, models)
 pnpm verify
 
-# 4a. Run EVERYTHING with one command (workers + orchestrator + Angular UI):
-pnpm dev
-
-# 4b. ...or run pieces individually in separate terminals:
-pnpm dev:workers        # STT 5101, Translation 5102, TTS 5103
-pnpm dev:orchestrator   # Node orchestrator on 5100
-pnpm dev:desktop        # Angular UI on http://localhost:1420
+# 4. Run EVERYTHING with ONE command, then open http://localhost:1420
+pnpm dev          # foreground (Ctrl-C stops everything)
+#   ...or detached, so your terminal returns:
+pnpm start        # start the whole stack in the background
+pnpm stop         # stop the whole stack (single command)
 ```
 
 Then open **http://localhost:1420** in your browser, pick a video, choose source/target
 languages, and run the pipeline.
 
+> Prefer a **native desktop window**? Run `pnpm app` (needs Rust) — it opens the app and
+> **auto-starts/stops all backend services for you**. See
+> [Running the app](#running-the-app) below.
+
 > First run is slower if models still need to download. Re-runs are fully offline.
 
 ---
 
-## Dual mode: browser vs. native desktop
+## Running the app
 
-VideoDubber's UI is plain Angular 18 that talks to the orchestrator over HTTP/SSE. That
-means you have two ways to run it:
+VideoDubber's UI is plain Angular 18 talking to the orchestrator over HTTP/SSE, so you
+can run it two ways. **Either way, "everything" = the 3 Python workers + the Node
+orchestrator + the UI.**
 
-### 1. Browser dev mode (no Rust required) — recommended for development
-
-```bash
-pnpm dev          # or: pnpm dev:desktop  (UI only)
-```
-
-`ng serve` hosts the UI on **http://localhost:1420**. The UI calls the orchestrator at
-`http://127.0.0.1:5100` directly and subscribes to SSE for progress. Native-only
-conveniences (file-picker dialog, "open output folder") degrade gracefully when not
-running inside Tauri. **No Rust toolchain needed.**
-
-### 2. Full Tauri desktop app (needs Rust)
+### A. Native desktop app — `pnpm app` (auto-manages services)
 
 ```bash
-# In one terminal, start the backend services:
-SKIP_UI=1 pnpm dev          # workers + orchestrator only
-
-# In another, launch the native shell (loads the Angular dev server on :1420):
-pnpm --filter videodubber-desktop tauri dev
+pnpm app          # needs Rust (rustup). Opens the VideoDubber window.
 ```
 
-Tauri 2 wraps the same Angular UI in a native window and adds real native commands
-(`pick_video_file`, `open_path`, etc.) that proxy to the orchestrator via `reqwest`.
-Progress SSE goes **directly** from the webview to the orchestrator (not forwarded
-through Rust). Building a release bundle additionally requires app icons — see the
-`pnpm tauri icon` note in [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md).
+This is the intended end-user experience. The Tauri 2 shell:
+
+- **On open:** automatically starts the backend (orchestrator + STT/translation/TTS
+  workers) — you do **not** run `pnpm dev`.
+- **On quit:** automatically stops all of them. Close the window → everything shuts down.
+
+It also adds real native commands (`pick_video_file`, "open output folder", …) that proxy
+to the orchestrator. Auto-management is controlled by `VIDEODUBBER_MANAGE_SERVICES`
+(default on; set to `0` if you'd rather run the backend yourself). Implementation:
+[`apps/desktop/src-tauri/src/sidecar.rs`](apps/desktop/src-tauri/src/sidecar.rs). See
+[`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) for the simple install & use guide.
+
+### B. Browser dev mode (no Rust required)
+
+```bash
+pnpm dev          # foreground: workers + orchestrator + Angular UI. Ctrl-C stops all.
+```
+
+`ng serve` hosts the UI on **http://localhost:1420**; it calls the orchestrator at
+`http://127.0.0.1:5100` and subscribes to SSE for progress. Native-only conveniences
+degrade gracefully outside Tauri. **No Rust toolchain needed** — great for development.
+
+### Start & stop everything (single commands)
+
+| Goal | Command |
+|---|---|
+| Start everything, **foreground** (Ctrl-C to stop) | `pnpm dev` |
+| Start everything, **detached** (terminal returns) | `pnpm start` |
+| **Stop everything** (any start method) | `pnpm stop` |
+| Open the **native desktop app** (auto start/stop) | `pnpm app` |
+| Backend only (no UI), foreground | `pnpm services` |
+
+- `pnpm stop` is **port-based** — it reliably stops the whole stack (UI 1420, orchestrator
+  5100, workers 5101–5103) however it was started.
+- **Windows:** use the PowerShell equivalents — `pwsh scripts/start.ps1`,
+  `pwsh scripts/stop.ps1`, `pwsh scripts/dev.ps1`.
+- Put machine-specific paths in a `.env` (copy from `.env.example`) — `FFMPEG_PATH`,
+  `PYTHON_PATH`, `PIPER_*`, ports, etc. The start scripts load it automatically.
+
+> Building a release **installer** (`pnpm app:build`) additionally needs app icons
+> (`pnpm tauri icon …`) and, for a fully standalone installer, bundling the Python
+> workers — see [`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) and
+> [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
@@ -187,15 +244,19 @@ through Rust). Building a release bundle additionally requires app icons — see
 | `pnpm install` | Install all TS/Node workspace dependencies. |
 | `bash scripts/setup-local-models.sh` | Create Python venvs + install worker deps + download models. (`.ps1` on Windows.) |
 | `pnpm verify` | Run `scripts/verify-environment.ts`: checks Node/pnpm/Python/ffmpeg/workers/models. |
-| `pnpm dev` | Start the **full** stack (3 workers + orchestrator + Angular UI). |
+| `pnpm dev` | Start the **full** stack (3 workers + orchestrator + Angular UI), foreground. |
+| `pnpm start` | Start the full stack **detached** (background); terminal returns. |
+| `pnpm stop` | **Stop everything** (port-based; works for any start method). |
+| `pnpm app` | Open the **native desktop app** (Tauri; auto starts/stops services). Needs Rust. |
+| `pnpm app:build` | Build a native desktop **installer/bundle** (needs Rust + app icons). |
+| `pnpm services` | Start only the backend (workers + orchestrator), no UI. |
 | `pnpm dev:workers` | Start only the 3 Python workers (5101/5102/5103). |
 | `pnpm dev:orchestrator` | Start only the Node orchestrator (5100). |
 | `pnpm dev:desktop` | Start only the Angular UI (`ng serve`, port 1420). |
 | `pnpm build` | Build the TS packages + media-worker. |
 | `pnpm typecheck` | Type-check every workspace package. |
-| `pnpm test` | Run unit tests (shared utils, orchestrator). |
+| `pnpm test` | Run unit tests (shared utils, media-worker, orchestrator). |
 | `pnpm lint` | ESLint over the TypeScript sources. |
-| `pnpm --filter videodubber-desktop tauri dev` | Launch the native Tauri desktop shell (needs Rust). |
 
 > Environment overrides for `scripts/dev.sh`: `SKIP_WORKERS=1`, `SKIP_UI=1`. For
 > `scripts/setup-local-models.sh`: `SKIP_VENVS=1`, `SKIP_MODELS=1`, `SKIP_WHISPER=1`,
@@ -234,8 +295,12 @@ required. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md).
 
 | Doc | Contents |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, pipeline flow, data model, workspace layout, HTTP API, Tauri commands, SSE model. |
-| [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md) | Node/pnpm/Python/FFmpeg/Rust setup; running each service. |
+| [`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) | **Simple install & use guide for the desktop app** + auto start/stop of services. |
+| [`docs/PRODUCTION.md`](docs/PRODUCTION.md) | The fully self-contained installer: what's bundled vs. downloaded on first run, the first-run wizard, prod sidecar lifecycle, storage & sizes. |
+| [`docs/RELEASING.md`](docs/RELEASING.md) | Release runbook: version bump, updater keys, code signing/notarization, tag → CI → draft Release → publish. |
+| [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md) | How auto-update works (endpoint, pubkey, signature verification), the auto/manual setting, manual checks, rollback. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, pipeline flow, data model, workspace layout, HTTP API, Tauri commands, SSE model, service lifecycle. |
+| [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md) | Node/pnpm/Python/FFmpeg/Rust setup; running, starting & stopping each service. |
 | [`docs/MODEL_SETUP.md`](docs/MODEL_SETUP.md) | Whisper / Argos / Piper models: download, storage, troubleshooting. |
 | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Local defaults, provider interfaces, optional cloud adapters + data flow. |
 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Every error code, common failures, and fixes. |

@@ -17,7 +17,7 @@ doc lists **every** error code, then covers common environment issues.
 |---|---|---|---|---|
 | `FFMPEG_NOT_FOUND` | ffmpeg couldn't be launched | Not installed / not on PATH / bad `FFMPEG_PATH` | Install ffmpeg or set `FFMPEG_PATH` | [LOCAL_SETUP](LOCAL_SETUP.md#3-ffmpeg--ffprobe) |
 | `FFPROBE_NOT_FOUND` | ffprobe couldn't be launched | Same as above, for ffprobe | Install ffmpeg (ships ffprobe) or set `FFPROBE_PATH` | [LOCAL_SETUP](LOCAL_SETUP.md#3-ffmpeg--ffprobe) |
-| `PYTHON_NOT_FOUND` | Python interpreter missing | No Python / wrong `PYTHON_PATH` | Install Python 3.11–3.12 or set `PYTHON_PATH` | [LOCAL_SETUP](LOCAL_SETUP.md#2-python-workers-per-worker-venvs) |
+| `PYTHON_NOT_FOUND` | Python interpreter missing | No Python / wrong `PYTHON_PATH` | Install Python 3.11–3.13 or set `PYTHON_PATH` | [LOCAL_SETUP](LOCAL_SETUP.md#2-python-workers-per-worker-venvs) |
 | `STT_MODEL_MISSING` | faster-whisper model unavailable | Not cached and can't download | Pre-cache the model; check `FASTER_WHISPER_MODEL` | [MODEL_SETUP](MODEL_SETUP.md#1-faster-whisper-speech-to-text) |
 | `TRANSLATION_PACKAGE_MISSING` | No Argos package for the pair | Pair not installed / not published | `argospm install translate-<from>_<to>`; pick a supported pair | [MODEL_SETUP](MODEL_SETUP.md#2-argos-translate-machine-translation) |
 | `PIPER_MISSING` | Piper binary not usable | `PIPER_BINARY_PATH` unset/invalid | Install the Piper binary + set the path, or use the fallback engine | [MODEL_SETUP](MODEL_SETUP.md#3-piper-text-to-speech) |
@@ -57,7 +57,7 @@ FFmpeg builds (e.g. Homebrew's default `ffmpeg`) omit libass — check with
   `mov_text` track), `srt-file`, or `vtt-file` — none of these need libass.
 
 ### `PYTHON_NOT_FOUND`
-No usable Python interpreter. Install Python **3.11–3.12** (avoid 3.14 for ML wheels) or
+No usable Python interpreter. Install Python **3.11–3.13** (avoid 3.14 for ML wheels) or
 set `PYTHON_PATH` to the interpreter that built the worker venvs. See
 [LOCAL_SETUP §2](LOCAL_SETUP.md#2-python-workers-per-worker-venvs).
 
@@ -147,9 +147,9 @@ missing; probe/extract/render will then fail with `FFMPEG_NOT_FOUND` /
 `FFPROBE_NOT_FOUND`.
 
 ### python not found
-Install Python 3.11–3.12 or set `PYTHON_PATH`. Recreate worker venvs with
-`bash scripts/setup-local-models.sh`. The dev scripts prefer
-`workers/<name>/.venv/bin/python`.
+Install Python 3.11–3.13 or set `PYTHON_PATH`. Recreate worker venvs with
+`PYTHON_PATH=python3.13 bash scripts/setup-local-models.sh`. The dev scripts prefer
+`workers/<name>/.venv/bin/python`, so building those venvs with a specific Python pins it.
 
 ### worker not starting / port in use
 Symptoms: `/workers/health` shows a worker unavailable, or uvicorn exits immediately.
@@ -202,6 +202,35 @@ pnpm --filter videodubber-desktop tauri icon path/to/source.png
 ```
 See [LOCAL_SETUP §6](LOCAL_SETUP.md#6-rust--tauri-only-for-the-native-desktop-app). The
 browser dev mode needs neither Rust nor icons.
+
+### Packaged app shows unstyled UI (CSS not applied)
+
+Symptom: the app works (JS runs, routing works) but has **no styling** in the packaged
+build, while `ng serve` looks fine. Cause: Angular's production `inlineCritical`
+optimization emits the global stylesheet as
+`<link rel="stylesheet" media="print" onload="this.media='all'">`. The inline `onload`
+handler is **blocked by the Tauri CSP** (`script-src 'self'`, no `'unsafe-inline'`), so
+the stylesheet stays `media="print"` and never applies to the screen. (`ng serve`
+enforces no CSP, hence it only shows in the packaged app.)
+
+Fix (already applied): disable critical-CSS inlining in `apps/desktop/angular.json`
+production config so a plain render-blocking `<link>` is emitted:
+```json
+"optimization": { "scripts": true, "styles": { "minify": true, "inlineCritical": false }, "fonts": true }
+```
+Verify the built `dist/browser/index.html` has a plain `<link rel="stylesheet" …>` with
+no `media="print"`/`onload`. (Component styles, injected as inline `<style>`, are fine —
+they're covered by `style-src 'unsafe-inline'`.)
+
+### "Could not fetch a valid release JSON" in Settings → Updates
+
+The auto-updater points at `plugins.updater.endpoints` in `tauri.conf.json`, which ships
+as the **placeholder** `https://github.com/OWNER/REPO/releases/latest/download/latest.json`.
+Until you replace `OWNER/REPO` with your real GitHub repo (and publish a release with a
+`latest.json` — see [RELEASING.md](RELEASING.md)), update checks will fail. The app no
+longer auto-checks on launch/Settings load, so this only appears if you click **Check for
+updates** before configuring a real endpoint. The installed version still shows (it's read
+from bundle metadata via `get_app_version`, no network).
 
 ### Angular / TypeScript version pin
 The Angular workspace pins **TypeScript ~5.5.4** (`apps/desktop/package.json`) because

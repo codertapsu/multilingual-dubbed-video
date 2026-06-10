@@ -311,6 +311,55 @@ and segment statuses live.
 
 ---
 
+## 9. Service lifecycle (process management)
+
+"The stack" is four long-running processes: the Node orchestrator (5100) and the three
+Python workers (5101/5102/5103) — plus, in browser mode, the Angular dev server (1420).
+There are two ways they are started and stopped.
+
+### Dev / headless (scripts)
+
+| Script | pnpm | Role |
+|---|---|---|
+| `scripts/dev.sh` | `pnpm dev` | Foreground supervisor: starts workers + orchestrator + UI; `trap`s INT/TERM/EXIT and kills its whole child set on Ctrl-C. Loads `.env`. |
+| `scripts/start.sh` | `pnpm start` | Launches `dev.sh` **detached** (nohup) and writes `.dev-logs/stack.pid`. |
+| `scripts/stop.sh` | `pnpm stop` | **Port-based** teardown of 1420 + 5100–5103 (SIGTERM → SIGKILL), plus the pidfile. Reliable regardless of how the stack was started. |
+| `scripts/start-services.sh` | `pnpm services` | Backend only (no UI), foreground — a thin `SKIP_UI=1` wrapper over `dev.sh`. This is what the desktop shell launches. |
+
+Each has a `.ps1` sibling for Windows. All load a repo-root `.env` (machine paths/ports)
+before starting.
+
+### Desktop app (Tauri auto start/stop)
+
+The packaged/native app manages the backend itself, so opening the window starts
+everything and closing it stops everything:
+
+```
+open app ──> Tauri .setup() ──> sidecar::maybe_spawn_services()
+                                  └─ spawn `scripts/start-services.sh` in its OWN
+                                     process group (unix: process_group(0);
+                                     windows: CREATE_NEW_PROCESS_GROUP)
+                                  └─ track the Child in SidecarManager (managed state)
+
+quit app ──> RunEvent::Exit ────> SidecarManager::shutdown()
+                                  └─ SIGTERM the process group (launcher trap + workers
+                                     exit cleanly) → SIGKILL backstop  (windows: taskkill /T /F)
+```
+
+- Source: [`apps/desktop/src-tauri/src/sidecar.rs`](../apps/desktop/src-tauri/src/sidecar.rs)
+  + wiring in [`lib.rs`](../apps/desktop/src-tauri/src/lib.rs).
+- **Default on.** Disable with `VIDEODUBBER_MANAGE_SERVICES=0` (e.g. when you run the
+  backend yourself). The repo root is found via `VIDEODUBBER_REPO_DIR` or by walking up to
+  `pnpm-workspace.yaml`.
+- The Angular UI in `tauri dev` is started by `beforeDevCommand` (and stopped by Tauri on
+  exit); in a packaged build the UI is served from `frontendDist`, so only the backend
+  process group is managed.
+- **Standalone installers** (no pre-installed Node/Python) would bundle the orchestrator
+  and workers as Tauri sidecars (`bundle.externalBin`, via `pkg`/`pyinstaller`) and launch
+  those instead of the dev script — see [`ROADMAP.md`](ROADMAP.md).
+
+---
+
 ## Why `jianchang512/stt` is reference-only
 
 The open-source project [`jianchang512/stt`](https://github.com/jianchang512/stt) is

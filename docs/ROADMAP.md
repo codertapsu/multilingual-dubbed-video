@@ -79,11 +79,44 @@ the [README](../README.md#legal--usage-disclaimer).
 
 ## Packaging & distribution
 
-### Installer packaging (Tauri sidecars / bundling)
-Ship a one-click installer that bundles the Node orchestrator and Python workers as Tauri
-**sidecars** (managed child processes) so end users don't run dev scripts. The Rust shell
-already has a `spawn-sidecars` Cargo feature scaffold (`src-tauri/src/sidecar.rs`, off by
-default). Includes app icons (`pnpm tauri icon`), code signing, and auto-update.
+### Installer packaging (Tauri sidecars / bundling) — **scaffolded**
+**Done:** the desktop shell **auto-starts the backend on launch and stops it on quit**
+(`src-tauri/src/sidecar.rs`, on by default; `VIDEODUBBER_MANAGE_SERVICES=0` to disable),
+in both a **dev** path (source checkout, Node + Python venvs) and a **production** path
+that launches the bundled sidecars.
+
+**Scaffolded:** a fully self-contained, one-click installer that **embeds** the Node
+orchestrator (Node SEA) and the three Python workers (PyInstaller) **and**
+libass-enabled FFmpeg/ffprobe as Tauri `bundle.externalBin` sidecars — end users need
+**no** Python/Node/FFmpeg preinstalled. The only thing not bundled is the AI **models**,
+downloaded on **first run** by an in-app wizard.
+
+- Build scripts: [`scripts/package/`](../scripts/package/) (`build-sidecars.{sh,ps1}` →
+  `build-orchestrator`, `build-workers` + PyInstaller `.spec`s, `fetch-ffmpeg`). Run
+  with `pnpm package:sidecars`.
+- CI: [`.github/workflows/release.yml`](../.github/workflows/release.yml) — on a `v*`
+  tag, a macOS-arm64 / macOS-x64 / Windows / Linux matrix builds the sidecars + bundles
+  the installers and publishes a **draft** GitHub Release with the updater `latest.json`.
+- Docs: [`PRODUCTION.md`](PRODUCTION.md), [`RELEASING.md`](RELEASING.md).
+
+**Remaining hardening:** generate + commit the real app icons (`pnpm tauri icon`);
+provision the **code-signing certificates** (Apple Developer ID + notarization, Windows
+Authenticode) as CI secrets; generate the **updater keypair** and set the real
+endpoint/pubkey; first end-to-end signed release per OS.
+
+### Auto-update (GitHub Releases) — **scaffolded**
+**Scaffolded:** in-app auto-update via the official `tauri-plugin-updater`, reading a
+signed `latest.json` from GitHub Releases. Users toggle **automatic** vs. **manual**
+updates and can check/install on demand (**Settings → Updates**); updates are
+signature-verified on-device before install.
+
+- Config: `tauri.conf.json` `plugins.updater` (endpoint + pubkey) +
+  `bundle.createUpdaterArtifacts`.
+- Docs: [`AUTOUPDATE.md`](AUTOUPDATE.md).
+
+**Remaining hardening:** generate the signing keypair (`pnpm tauri signer generate`),
+replace the endpoint/pubkey placeholders, and ship the first published release so the
+updater endpoint resolves.
 
 ---
 

@@ -37,9 +37,10 @@ pnpm install
 
 ## 2. Python workers (per-worker venvs)
 
-**Recommended Python: 3.11 or 3.12.** 3.10 works. ⚠️ **Avoid 3.14 for now** — some ML
-wheels (faster-whisper / ctranslate2, numpy) may not yet ship prebuilt wheels for the
-newest interpreters, which forces slow or failing source builds.
+**Recommended Python: 3.11–3.13** (3.13 verified — faster-whisper/ctranslate2,
+argostranslate, and Piper all ship wheels for it). 3.10 works. ⚠️ **Avoid 3.14 for now** —
+some ML wheels aren't published for the very newest interpreter yet, which forces slow or
+failing source builds.
 
 Each worker has its own `requirements.txt` and gets its own `.venv`. The setup script
 does this for all three at once:
@@ -51,6 +52,24 @@ bash scripts/setup-local-models.sh        # Windows: pwsh scripts/setup-local-mo
 That creates `workers/<name>/.venv`, installs each `requirements.txt`, then pre-caches
 models (see [`MODEL_SETUP.md`](MODEL_SETUP.md)). Individual steps are skippable via env
 vars (`SKIP_VENVS=1`, `SKIP_MODELS=1`, `SKIP_WHISPER=1`, `SKIP_ARGOS=1`, `SKIP_PIPER=1`).
+
+### Choosing the Python version
+
+The project **never uses your system `python3`** for the workers — it builds a `.venv`
+per worker from whatever **`PYTHON_PATH`** points at (default `python3`), and the run
+scripts prefer those `.venv`s. So to pin a specific interpreter (e.g. 3.13 while your
+system is on 3.14), just point the setup at it:
+
+```bash
+# macOS: install a specific Python, then build the worker venvs with it
+brew install python@3.13
+PYTHON_PATH=/opt/homebrew/bin/python3.13 bash scripts/setup-local-models.sh
+```
+
+This creates `workers/<name>/.venv` on 3.13; `pnpm dev` / `pnpm app` then use them
+automatically. (Optionally also set `PYTHON_PATH` in your `.env` as a fallback.) The same
+works with `pyenv` — `pyenv install 3.13 && pyenv local 3.13` writes a `.python-version`
+so `python3` resolves to 3.13 inside the repo.
 
 ### Manual per-worker setup (if you prefer)
 
@@ -99,11 +118,29 @@ render. Install per OS:
 
 | OS | Command |
 |---|---|
-| macOS | `brew install ffmpeg` |
+| macOS | `brew install ffmpeg` (or `brew install ffmpeg-full` for **libass** — see below) |
 | Windows | `winget install Gyan.FFmpeg` or `choco install ffmpeg` |
 | Debian/Ubuntu | `sudo apt update && sudo apt install ffmpeg` |
 | Fedora | `sudo dnf install ffmpeg` (RPM Fusion) |
 | Arch | `sudo pacman -S ffmpeg` |
+
+### Burned-in subtitles need libass
+
+The **burned-in** subtitle mode uses FFmpeg's `subtitles` filter, which only exists in
+builds compiled **with libass**. The other modes (soft / `.srt` / `.vtt` sidecar) work
+with any FFmpeg.
+
+- Check your build: `ffmpeg -filters | grep subtitles` (empty ⇒ no libass).
+- **macOS Homebrew's default `ffmpeg` omits libass.** Install a full build and point the
+  app at it:
+  ```bash
+  brew install ffmpeg-full
+  export FFMPEG_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg
+  export FFPROBE_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffprobe   # (or put these in .env)
+  ```
+- Most Linux distro `ffmpeg` packages already include libass.
+- If it's missing, burning fails with the clear error `FFMPEG_FILTER_MISSING` (not a
+  cryptic exit code) — see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#ffmpeg-filter-missing).
 
 If FFmpeg is not on your `PATH`, point the app at the binaries explicitly:
 
@@ -139,11 +176,15 @@ missing; everything else is reported with a remediation hint and a docs link.
 
 ## 5. Running the services
 
-### Everything at once
+### Start & stop everything (single commands)
 
-```bash
-pnpm dev        # scripts/dev.sh — workers + orchestrator + Angular UI
-```
+| Goal | macOS / Linux | Windows |
+|---|---|---|
+| Start everything, **foreground** (Ctrl-C stops) | `pnpm dev` | `pwsh scripts/dev.ps1` |
+| Start everything, **detached** (terminal returns) | `pnpm start` | `pwsh scripts/start.ps1` |
+| **Stop everything** (any start method) | `pnpm stop` | `pwsh scripts/stop.ps1` |
+| Backend only (no UI), foreground | `pnpm services` | `pwsh scripts/start-services.ps1` |
+| Native desktop app (auto start/stop) | `pnpm app` | `pnpm app` |
 
 URLs printed on startup:
 
@@ -155,8 +196,12 @@ URLs printed on startup:
 | Translation worker | http://127.0.0.1:5102 |
 | TTS worker | http://127.0.0.1:5103 |
 
-`SKIP_WORKERS=1 pnpm dev` (UI + orchestrator only) and `SKIP_UI=1 pnpm dev`
-(workers + orchestrator only) are available. Logs land in `.dev-logs/`.
+- `pnpm stop` is **port-based**, so it reliably tears down the whole stack however it was
+  started (foreground, detached, individual `dev:*` commands, or the desktop app).
+- `SKIP_WORKERS=1 pnpm dev` (UI + orchestrator only) and `SKIP_UI=1 pnpm dev` (workers +
+  orchestrator only) are available. Logs land in `.dev-logs/`.
+- The start/stop scripts **load `.env`** automatically, so machine paths like
+  `FFMPEG_PATH`, `PYTHON_PATH`, and `PIPER_*` are applied to every service.
 
 ### Each Python worker individually (exact uvicorn commands)
 
@@ -231,20 +276,31 @@ Platform build prerequisites (see [Tauri's prerequisites guide](https://tauri.ap
 | Windows | Microsoft C++ Build Tools + WebView2 (preinstalled on Win 11) |
 | Linux | `webkit2gtk`, `libappindicator`, `librsvg`, `patchelf`, build essentials |
 
-Run the native shell (start the backend separately first):
+Run the native shell with **one command** — it auto-starts and auto-stops the backend:
 
 ```bash
-# Terminal 1: backend only
-SKIP_UI=1 pnpm dev
-
-# Terminal 2: native window (loads the Angular dev server on :1420)
-pnpm --filter videodubber-desktop tauri dev
+pnpm app           # = pnpm --filter videodubber-desktop tauri dev
 ```
 
-`tauri.conf.json` sets `devUrl` to `http://localhost:1420`, so the Angular dev server
-**must** be serving on **1420** for `tauri dev` (the desktop `dev` script already uses
-`--port 1420`). `beforeDevCommand` is intentionally empty so Tauri doesn't try to boot a
-second Angular server.
+What happens:
+
+- Tauri's `beforeDevCommand` boots the Angular dev server on **1420** (matches
+  `devUrl` in `tauri.conf.json`).
+- The Rust shell's **service manager** ([`src/sidecar.rs`](../apps/desktop/src-tauri/src/sidecar.rs))
+  launches the orchestrator + the 3 Python workers on startup, and **terminates them on
+  quit**. So opening the app starts everything; closing it stops everything.
+- It locates the project (for `scripts/`) via `pnpm-workspace.yaml`, or
+  `VIDEODUBBER_REPO_DIR` if set.
+
+Already running the backend yourself (e.g. `pnpm dev` in a terminal)? Disable
+auto-management so the app just attaches:
+
+```bash
+VIDEODUBBER_MANAGE_SERVICES=0 pnpm app
+```
+
+See [`DESKTOP_APP.md`](DESKTOP_APP.md) for the end-user install & use guide and the
+release-bundle / standalone-installer notes.
 
 ### App icons (`pnpm tauri icon`)
 

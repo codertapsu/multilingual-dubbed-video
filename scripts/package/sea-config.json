@@ -1,0 +1,8 @@
+{
+  "//": "Node SEA (Single Executable Application) config for the orchestrator. Consumed by `node --experimental-sea-config` in build-orchestrator.sh. `main` is the esbuild-bundled single CJS file; `output` is the V8 blob injected into a copy of the node binary. disableExperimentalSEAWarning silences the runtime banner; useSnapshot/useCodeCache are left off for portability.",
+  "main": "apps/desktop/src-tauri/binaries/.sea/orchestrator.cjs",
+  "output": "apps/desktop/src-tauri/binaries/.sea/orchestrator.blob",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": false
+}

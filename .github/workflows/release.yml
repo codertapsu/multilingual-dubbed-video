@@ -1,0 +1,248 @@
+# VideoDubber — Release workflow
+# ==============================================================================
+# Builds the fully self-contained desktop installers (.dmg/.app, .msi/.exe,
+# .deb/AppImage), bundling the Node orchestrator + the 3 Python workers
+# (PyInstaller) + libass-enabled ffmpeg/ffprobe as Tauri externalBin sidecars,
+# code-signs them, and publishes a DRAFT GitHub Release with the auto-updater
+# manifest (latest.json).
+#
+# Trigger: push a tag like `v0.2.0` (see docs/RELEASING.md). Manual re-runs are
+# possible via workflow_dispatch.
+#
+# ------------------------------------------------------------------------------
+# REQUIRED GitHub SECRETS (Settings -> Secrets and variables -> Actions)
+# ------------------------------------------------------------------------------
+# Tauri auto-updater signing (REQUIRED — generate with `pnpm tauri signer generate`):
+#   TAURI_SIGNING_PRIVATE_KEY            Contents of the generated ~/.tauri/<name>.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   The password you set for that key
+#   -> The matching PUBLIC key goes in tauri.conf.json plugins.updater.pubkey.
+#
+# macOS code signing + notarization (REQUIRED for a distributable .dmg):
+#   APPLE_CERTIFICATE                    base64 of your Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD           password for that .p12
+#   APPLE_SIGNING_IDENTITY               e.g. "Developer ID Application: Your Name (TEAMID)"
+#   APPLE_ID                             Apple ID email used for notarization
+#   APPLE_PASSWORD                       app-specific password for that Apple ID
+#   APPLE_TEAM_ID                        your 10-char Apple Team ID
+#   KEYCHAIN_PASSWORD                    any throwaway password for the temp keychain
+#
+# Windows Authenticode signing (OPTIONAL but recommended — avoids SmartScreen):
+#   WINDOWS_CERTIFICATE                  base64 of your code-signing .pfx
+#   WINDOWS_CERTIFICATE_PASSWORD         password for that .pfx
+#   (If unset, the build still produces UNSIGNED installers.)
+#
+# GITHUB_TOKEN is provided automatically; the workflow needs `contents: write`.
+# ==============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag/version to build (e.g. v0.2.0). Used only for manual runs."
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon (arm64) — macos-14 runners are arm64.
+          - os: macos-14
+            label: macos-arm64
+            rust-target: aarch64-apple-darwin
+            tauri-args: "--target aarch64-apple-darwin"
+          # Intel macOS (x64) — macos-13 runners are x64.
+          - os: macos-13
+            label: macos-x64
+            rust-target: x86_64-apple-darwin
+            tauri-args: "--target x86_64-apple-darwin"
+          # Windows x64.
+          - os: windows-latest
+            label: windows-x64
+            rust-target: x86_64-pc-windows-msvc
+            tauri-args: ""
+          # Linux x64 (.deb + AppImage). 22.04 for broad glibc compatibility.
+          - os: ubuntu-22.04
+            label: linux-x64
+            rust-target: x86_64-unknown-linux-gnu
+            tauri-args: ""
+
+    runs-on: ${{ matrix.os }}
+
+    # Job-level env so step `if:` conditions can test whether optional signing
+    # secrets are set (secrets cannot be referenced directly in `if:`).
+    env:
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # --- Toolchains -------------------------------------------------------
+      - name: Setup Node 20 + corepack/pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Rust (stable, ${{ matrix.rust-target }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Cache cargo registry + target
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # --- Linux: Tauri system dependencies --------------------------------
+      # WebKitGTK, libsoup, ayatana appindicator, librsvg, plus 7z for ffmpeg
+      # extraction (not needed on Linux but harmless), and patchelf for AppImage.
+      - name: Install Tauri system deps (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xz-utils \
+            file
+
+      # --- JS deps ----------------------------------------------------------
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
+
+      # --- Python worker venvs (one per worker) ----------------------------
+      # PyInstaller freezes against these. We install each worker's runtime
+      # requirements + pyinstaller. (No models are downloaded here — those are
+      # fetched on first run by the in-app wizard.)
+      - name: Build Python worker venvs (POSIX)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for w in stt-worker translation-worker tts-worker; do
+            echo "::group::venv $w"
+            python -m venv "workers/$w/.venv"
+            "workers/$w/.venv/bin/python" -m pip install --upgrade pip wheel
+            "workers/$w/.venv/bin/python" -m pip install -r "workers/$w/requirements.txt"
+            "workers/$w/.venv/bin/python" -m pip install pyinstaller
+            echo "::endgroup::"
+          done
+
+      - name: Build Python worker venvs (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          foreach ($w in @("stt-worker","translation-worker","tts-worker")) {
+            Write-Host "::group::venv $w"
+            python -m venv "workers/$w/.venv"
+            & "workers/$w/.venv/Scripts/python.exe" -m pip install --upgrade pip wheel
+            & "workers/$w/.venv/Scripts/python.exe" -m pip install -r "workers/$w/requirements.txt"
+            & "workers/$w/.venv/Scripts/python.exe" -m pip install pyinstaller
+            Write-Host "::endgroup::"
+          }
+
+      # --- Build ALL sidecars (orchestrator + workers + ffmpeg) ------------
+      - name: Build sidecars (POSIX)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        env:
+          TARGET_TRIPLE: ${{ matrix.rust-target }}
+          # macOS: copy Homebrew ffmpeg (has libass) instead of downloading.
+          FFMPEG_FROM_BREW: ${{ startsWith(matrix.os, 'macos') && '1' || '0' }}
+        run: |
+          # macOS runners: ensure a libass-enabled ffmpeg is available to copy.
+          if [[ "${{ matrix.os }}" == macos-* ]]; then
+            brew install ffmpeg || true
+          fi
+          bash scripts/package/build-sidecars.sh
+
+      - name: Build sidecars (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          TARGET_TRIPLE: ${{ matrix.rust-target }}
+        run: |
+          pwsh scripts/package/build-sidecars.ps1 -TargetTriple $env:TARGET_TRIPLE
+
+      # --- macOS signing keychain setup ------------------------------------
+      # Import the Developer ID cert into a temporary keychain so codesign can
+      # find it. tauri-action uses APPLE_SIGNING_IDENTITY for the actual signing.
+      - name: Import Apple code-signing certificate (macOS)
+        if: startsWith(matrix.os, 'macos') && env.HAS_APPLE_CERT == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN=build.keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -t 3600 -u "$KEYCHAIN"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security import certificate.p12 -k "$KEYCHAIN" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          rm -f certificate.p12
+
+      # --- Build + publish the Tauri app (draft Release) -------------------
+      # tauri-action runs `tauri build`, signs, and uploads bundles + the
+      # updater latest.json (because bundle.createUpdaterArtifacts is true).
+      - name: Build & release (tauri-action)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing (required so latest.json carries a valid signature).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS notarization (only used on macos runners).
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows Authenticode (optional).
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        with:
+          # The Tauri project lives in apps/desktop; tauri-action runs the
+          # beforeBuildCommand (Angular build) from there per tauri.conf.json.
+          projectPath: apps/desktop
+          # Use the pushed tag (refs/tags/vX) or the manual input.
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || (github.event.inputs.tag || 'v__VERSION__') }}
+          releaseName: "VideoDubber ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.tag }}"
+          releaseBody: |
+            See the assets below to download and install VideoDubber for your OS.
+            First launch downloads the AI models via the in-app setup wizard.
+
+            **Auto-update:** existing installs detect this release via `latest.json`.
+          # Keep as DRAFT so a human reviews + publishes (see docs/RELEASING.md).
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: ${{ matrix.tauri-args }}

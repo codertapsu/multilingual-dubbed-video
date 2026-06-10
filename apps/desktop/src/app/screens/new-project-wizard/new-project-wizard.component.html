@@ -122,6 +122,28 @@
       </fieldset>
 
       <fieldset>
+        <legend>Voice timing</legend>
+        <div class="field">
+          <label for="maxSpeed">Max speech speed</label>
+          <select
+            id="maxSpeed"
+            name="maxSpeed"
+            [ngModel]="settings().maxSpeedRatio"
+            (ngModelChange)="setMaxSpeed($event)"
+          >
+            @for (opt of speedOptions; track opt.value) {
+              <option [value]="opt.value">{{ opt.label }}</option>
+            }
+          </select>
+          <span class="hint">
+            Translated speech is often longer than the original line. The app may
+            speed segments up to this limit to keep them in sync; lines that still
+            don't fit are flagged for review in the editor.
+          </span>
+        </div>
+      </fieldset>
+
+      <fieldset>
         <legend>Processing mode</legend>
         <div class="radio-list" role="radiogroup" aria-label="Processing mode">
           <label class="radio-row">

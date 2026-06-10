@@ -55,8 +55,12 @@ function defaultSettings(): ProjectSettings {
     duckOriginalAudio: true,
     duckingLevelDb: -12,
     ttsGainDb: 0,
-    maxSpeedRatio: 1.3,
-    allowedOverflowMs: 400,
+    // Translations (esp. EN->VI) are usually longer than the source. Combined
+    // with gap-aware alignment (a line can use the pause until the next line),
+    // these tolerances keep most segments fitting on real content. Piper stays
+    // intelligible up to ~1.5x; overflow lets a line spill briefly past its slot.
+    maxSpeedRatio: 1.6,
+    allowedOverflowMs: 1500,
   };
 }
 
@@ -167,6 +171,26 @@ export class NewProjectWizardComponent implements OnInit {
 
   protected setSubtitleMode(mode: SubtitleExportMode): void {
     this.patchSettings('subtitleExportMode', mode);
+  }
+
+  /**
+   * Max speech speed choices. Translations (esp. EN→VI) are often longer than
+   * the source line; the aligner may speed segments up to this cap to fit.
+   * Higher = fewer timing conflicts but faster-sounding speech.
+   */
+  protected readonly speedOptions: ReadonlyArray<{ value: number; label: string; hint: string }> = [
+    { value: 1.3, label: '1.3× — most natural', hint: 'Gentle speed-up; expect more timing warnings on dense dialogue.' },
+    { value: 1.6, label: '1.6× — balanced (recommended)', hint: 'Good fit for most content; speech stays clearly intelligible.' },
+    { value: 1.8, label: '1.8× — tighter fit', hint: 'Noticeably brisk speech; few timing warnings.' },
+    { value: 2.0, label: '2.0× — fit everything', hint: 'Minimizes conflicts; speech can sound rushed.' },
+  ];
+
+  /** <select> values arrive as strings; coerce + guard before patching. */
+  protected setMaxSpeed(value: string): void {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed) && parsed >= 1) {
+      this.patchSettings('maxSpeedRatio', parsed);
+    }
   }
 
   protected setProcessingMode(mode: ProcessingMode): void {

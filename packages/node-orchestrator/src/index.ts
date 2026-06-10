@@ -34,13 +34,11 @@ export type { ProviderDescriptor } from './providers/registry.js';
 export { FasterWhisperProvider } from './providers/stt/fasterWhisperProvider.js';
 export { ArgosTranslationProvider } from './providers/translation/argosProvider.js';
 export { LocalTtsProvider } from './providers/tts/localTtsProvider.js';
-export {
-  OpenAiSttProvider,
-  DeeplTranslationProvider,
-  GoogleTranslationProvider,
-  AzureTtsProvider,
-  ElevenLabsTtsProvider,
-} from './providers/cloudPlaceholders.js';
+export { OpenAiSttProvider } from './providers/stt/openaiSttProvider.js';
+export { LlmTranslationProvider } from './providers/translation/llmTranslationProvider.js';
+export { OpenAiTtsProvider } from './providers/tts/openaiTtsProvider.js';
+export { CredentialsStore } from './credentials/credentialsStore.js';
+export { getSystemProfile, recommendSetup, buildSystemResponse } from './system/systemProfile.js';
 
 // ---- Workspace -------------------------------------------------------------
 export { ProjectStore, generateProjectId } from './workspace/projectStore.js';

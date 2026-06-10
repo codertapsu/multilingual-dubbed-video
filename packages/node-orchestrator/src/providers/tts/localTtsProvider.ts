@@ -21,6 +21,10 @@ interface WorkerSynthesizeResponse {
     endMs: number;
     speedRatio: number;
   }[];
+  /** Engine that spoke the batch: "piper" | "system" | "fallback". */
+  engine?: string;
+  /** Segments replaced by silent placeholders after a runtime engine error. */
+  fallbackSegments?: number;
 }
 
 /** Raw shape of GET /voices. */
@@ -70,7 +74,7 @@ export class LocalTtsProvider implements TtsProvider {
       speedRatio: s.speedRatio,
     }));
 
-    return { segments };
+    return { segments, engine: data.engine, fallbackSegments: data.fallbackSegments };
   }
 
   /** Fetch available voices for a language for the UI voice picker. */

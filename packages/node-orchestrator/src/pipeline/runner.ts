@@ -443,7 +443,22 @@ export class PipelineRunner {
             .join(', ')}). They will be flagged at alignment.`,
       );
     }
-    this.deps.logger.info('Speech synthesis complete.');
+
+    // Surface silent placeholders loudly: "fallback" means no installed voice
+    // can speak the target language, so the dub would have no speech at all.
+    if (result.engine === 'fallback') {
+      this.deps.logger.warn(
+        `TTS produced SILENT placeholder audio: no installed voice can speak ` +
+          `"${project.settings.targetLanguage}". Install a Piper voice for this ` +
+          `language (Settings → Setup) and re-run from the TTS step.`,
+      );
+    } else if ((result.fallbackSegments ?? 0) > 0) {
+      this.deps.logger.warn(
+        `TTS engine "${result.engine}" failed on ${result.fallbackSegments} segment(s); ` +
+          `those segments contain silent placeholder audio.`,
+      );
+    }
+    this.deps.logger.info(`Speech synthesis complete (engine: ${result.engine ?? 'unknown'}).`);
   }
 
   private async stepAlignment(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {

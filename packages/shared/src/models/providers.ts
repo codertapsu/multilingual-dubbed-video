@@ -186,6 +186,17 @@ export interface TtsInput {
 export interface TtsResult {
   /** Synthesized segments. */
   segments: TtsSegment[];
+  /**
+   * Engine that produced the batch ("piper" | "system" | "fallback" for the
+   * local worker). "fallback" means the audio is SILENT placeholders — no
+   * voice for the target language was available.
+   */
+  engine?: string;
+  /**
+   * Segments silently replaced by placeholder audio after the selected engine
+   * errored at runtime. Non-zero output deserves a user-facing warning.
+   */
+  fallbackSegments?: number;
 }
 
 /** A pluggable text-to-speech provider. */

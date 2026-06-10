@@ -122,6 +122,59 @@
       </fieldset>
 
       <fieldset>
+        <legend>Original audio</legend>
+        <div class="radio-list" role="radiogroup" aria-label="Original audio handling">
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="originalAudio"
+              value="keep"
+              [checked]="settings().includeOriginalBackgroundAudio"
+              (change)="setOriginalAudio(true)"
+            />
+            <span class="radio-body">
+              <span class="radio-title">Keep it in the background (recommended)</span>
+              <span class="hint"
+                >Music and effects stay; the original audio is automatically
+                turned down whenever the dubbed voice speaks.</span
+              >
+            </span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="originalAudio"
+              value="remove"
+              [checked]="!settings().includeOriginalBackgroundAudio"
+              (change)="setOriginalAudio(false)"
+            />
+            <span class="radio-body">
+              <span class="radio-title">Remove it completely</span>
+              <span class="hint"
+                >Only the dubbed voice is heard. Original speech, music and
+                effects are all muted.</span
+              >
+            </span>
+          </label>
+        </div>
+        @if (settings().includeOriginalBackgroundAudio) {
+          <div class="field">
+            <label for="duckLevel">Background volume while the dub speaks</label>
+            <select
+              id="duckLevel"
+              name="duckLevel"
+              [ngModel]="settings().duckingLevelDb"
+              (ngModelChange)="setDuckingLevel($event)"
+            >
+              @for (opt of duckingOptions; track opt.value) {
+                <option [value]="opt.value">{{ opt.label }}</option>
+              }
+            </select>
+          </div>
+        }
+      </fieldset>
+
+      <fieldset>
         <legend>Voice timing</legend>
         <div class="field">
           <label for="maxSpeed">Max speech speed</label>

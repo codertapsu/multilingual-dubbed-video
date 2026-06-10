@@ -174,6 +174,38 @@ export class NewProjectWizardComponent implements OnInit {
   }
 
   /**
+   * What happens to the original soundtrack in the final mix.
+   * "Keep" = the original stays as background, side-chain ducked while the
+   * dubbed voice speaks (includeOriginalBackgroundAudio + duckOriginalAudio).
+   * "Remove" = the dub fully replaces the original audio track.
+   */
+  protected setOriginalAudio(keep: boolean): void {
+    this.settings.update((s) => ({
+      ...s,
+      includeOriginalBackgroundAudio: keep,
+      // Dynamic ducking is the only "keep" flavor the wizard exposes; the
+      // ducking level below tunes how far the background drops.
+      duckOriginalAudio: keep ? true : s.duckOriginalAudio,
+    }));
+  }
+
+  /** Background attenuation choices while the dubbed voice speaks. */
+  protected readonly duckingOptions: ReadonlyArray<{ value: number; label: string }> = [
+    { value: -6, label: 'Subtle (−6 dB) — background stays prominent' },
+    { value: -12, label: 'Standard (−12 dB) — recommended' },
+    { value: -18, label: 'Strong (−18 dB) — background well behind the voice' },
+    { value: -24, label: 'Very strong (−24 dB) — background barely audible' },
+  ];
+
+  /** <select> values arrive as strings; coerce + guard before patching. */
+  protected setDuckingLevel(value: string): void {
+    const parsed = Number.parseFloat(value);
+    if (Number.isFinite(parsed) && parsed <= 0) {
+      this.patchSettings('duckingLevelDb', parsed);
+    }
+  }
+
+  /**
    * Max speech speed choices. Translations (esp. EN→VI) are often longer than
    * the source line; the aligner may speed segments up to this cap to fit.
    * Higher = fewer timing conflicts but faster-sounding speech.

@@ -18,8 +18,10 @@ import {
   COMMON_LANGUAGES,
   type CreateProjectInput,
   type PipelineStepId,
+  type SetupInstallRequest,
   type SubtitleExportMode,
   type SubtitleStyle,
+  type UpdatePreferences,
 } from '@videodubber/shared';
 import { loadConfig, type OrchestratorConfig } from './config.js';
 import { EventBusRegistry } from './events.js';
@@ -32,6 +34,11 @@ import type { ProviderRegistry } from './providers/registry.js';
 import { createDefaultRegistry } from './providers/registry.js';
 import type { PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
+import { buildCatalog } from './setup/catalog.js';
+import { runPreflight } from './setup/preflight.js';
+import { SetupEventBus } from './setup/setupBus.js';
+import { SetupInstaller } from './setup/installer.js';
+import { SetupStore } from './setup/setupStore.js';
 
 /** Dependencies that can be overridden when embedding/testing the server. */
 export interface CreateServerOptions {
@@ -46,6 +53,12 @@ export interface CreateServerOptions {
   bus?: EventBusRegistry;
   /** Pre-built orchestrator (overrides the above for full control in tests). */
   orchestrator?: LocalJobOrchestrator;
+  /** Injected first-run setup/preferences store (defaults to a configDir store). */
+  setupStore?: SetupStore;
+  /** Injected global setup event bus (defaults to a fresh one). */
+  setupBus?: SetupEventBus;
+  /** Injected first-run installer (defaults to one built from the above). */
+  installer?: SetupInstaller;
 }
 
 /**
@@ -119,6 +132,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const orchestrator =
     options.orchestrator ?? new LocalJobOrchestrator({ config, store, media, registry, bus });
 
+  // First-run setup: config/state store, the global setup SSE bus, and the
+  // model installer that streams progress over that bus.
+  const setupStore = options.setupStore ?? new SetupStore(config.configDir);
+  const setupBus = options.setupBus ?? new SetupEventBus();
+  const installer =
+    options.installer ?? new SetupInstaller({ config, store: setupStore, bus: setupBus });
+
   const app = Fastify({ logger: false });
 
   // CORS open to localhost (Tauri webview + dev browser).
@@ -149,6 +169,102 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       installed: worker.installed,
       available: worker.available ?? [],
     };
+  });
+
+  // ---- First-run setup ----------------------------------------------------
+
+  app.get('/setup/status', async (_req, reply) => {
+    try {
+      return await setupStore.getStatus();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/setup/preflight', async (_req, reply) => {
+    try {
+      return await runPreflight(config);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/setup/catalog', async (_req, reply) => {
+    try {
+      return buildCatalog();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/setup/install', async (req: FastifyRequest<{ Body: SetupInstallRequest }>, reply) => {
+    try {
+      const request = req.body ?? {};
+      // Kick off asynchronously; progress is observed via GET /setup/events.
+      void installer.run(request);
+      return reply.status(202).send({ started: true });
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/setup/complete', async (_req, reply) => {
+    try {
+      await setupStore.markFirstRunComplete();
+      return { ok: true };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/setup/events', (req, reply) => {
+    // Raw SSE headers; hijack the reply so Fastify doesn't try to serialize.
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+    reply.hijack();
+
+    const write = (payload: unknown): void => {
+      reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const unsubscribe = setupBus.subscribe((event) => write(event));
+
+    // Heartbeat comment keeps proxies/connections alive.
+    const heartbeat = setInterval(() => {
+      reply.raw.write(': ping\n\n');
+    }, 15000);
+
+    const cleanup = (): void => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
+
+    req.raw.on('close', cleanup);
+    req.raw.on('error', cleanup);
+  });
+
+  // ---- Update preferences -------------------------------------------------
+
+  app.get('/preferences', async (_req, reply) => {
+    try {
+      return await setupStore.getPreferences();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.put('/preferences', async (req: FastifyRequest<{ Body: UpdatePreferences }>, reply) => {
+    try {
+      const body = req.body ?? { autoUpdate: true };
+      await setupStore.savePreferences({ autoUpdate: body.autoUpdate === true });
+      return { ok: true };
+    } catch (err) {
+      return sendError(reply, err);
+    }
   });
 
   // ---- Providers (bonus listing; used by the UI to populate pickers) ------

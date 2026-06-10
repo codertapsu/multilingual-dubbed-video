@@ -24,6 +24,13 @@ export interface OrchestratorConfig {
   readonly ttsWorkerUrl: string;
   /** Root directory holding all project workspaces. */
   readonly projectsDir: string;
+  /**
+   * App config/state directory (owns setup.json + preferences.json).
+   * Defaults to the parent of {@link projectsDir} (i.e. ~/VideoDubber).
+   */
+  readonly configDir: string;
+  /** Root directory holding downloaded models (Piper voices under /piper). */
+  readonly modelsDir: string;
   /** Explicit ffmpeg binary path, or undefined to use PATH lookup. */
   readonly ffmpegPath: string | undefined;
   /** Explicit ffprobe binary path, or undefined to use PATH lookup. */
@@ -61,12 +68,29 @@ export function defaultProjectsDir(): string {
 }
 
 /**
+ * Default app config directory: the parent of the projects directory
+ * (i.e. ~/VideoDubber). Holds setup.json + preferences.json.
+ */
+export function defaultConfigDir(projectsDir: string): string {
+  return path.dirname(projectsDir);
+}
+
+/** Default models directory: <configDir>/models (Piper voices under /piper). */
+export function defaultModelsDir(configDir: string): string {
+  return path.join(configDir, 'models');
+}
+
+/**
  * Build the orchestrator config from the current environment (plus optional
  * overrides, handy for tests). Pure aside from reading `process.env`.
  */
 export function loadConfig(overrides: Partial<OrchestratorConfig> = {}): OrchestratorConfig {
   const port = envInt('ORCHESTRATOR_PORT', 5100);
   const host = env('ORCHESTRATOR_HOST') ?? '127.0.0.1';
+
+  const projectsDir = env('VIDEODUBBER_PROJECTS_DIR') ?? defaultProjectsDir();
+  const configDir = env('VIDEODUBBER_CONFIG_DIR') ?? defaultConfigDir(projectsDir);
+  const modelsDir = env('VIDEODUBBER_MODELS_DIR') ?? defaultModelsDir(configDir);
 
   const base: OrchestratorConfig = {
     port,
@@ -75,7 +99,9 @@ export function loadConfig(overrides: Partial<OrchestratorConfig> = {}): Orchest
     sttWorkerUrl: env('STT_WORKER_URL') ?? 'http://127.0.0.1:5101',
     translationWorkerUrl: env('TRANSLATION_WORKER_URL') ?? 'http://127.0.0.1:5102',
     ttsWorkerUrl: env('TTS_WORKER_URL') ?? 'http://127.0.0.1:5103',
-    projectsDir: env('VIDEODUBBER_PROJECTS_DIR') ?? defaultProjectsDir(),
+    projectsDir,
+    configDir,
+    modelsDir,
     ffmpegPath: env('FFMPEG_PATH'),
     ffprobePath: env('FFPROBE_PATH'),
     pythonPath: env('PYTHON_PATH'),

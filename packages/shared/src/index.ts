@@ -53,6 +53,22 @@ export type {
   PipelineState,
 } from './models/pipeline.js';
 
+// ---- Setup / update types --------------------------------------------------
+export type {
+  PreflightCheck,
+  PreflightResult,
+  WhisperModelInfo,
+  PiperVoiceInfo,
+  ArgosPair,
+  SetupCatalog,
+  InstalledModels,
+  SetupStatus,
+  SetupInstallRequest,
+  SetupEvent,
+  UpdatePreferences,
+  UpdateInfo,
+} from './models/setup.js';
+
 // ---- Provider / service contracts -----------------------------------------
 export type {
   RenderFinalVideoInput,

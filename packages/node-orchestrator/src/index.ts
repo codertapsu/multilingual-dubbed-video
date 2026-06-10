@@ -9,7 +9,7 @@
  */
 
 // ---- Configuration ---------------------------------------------------------
-export { loadConfig, defaultProjectsDir } from './config.js';
+export { loadConfig, defaultProjectsDir, defaultConfigDir, defaultModelsDir } from './config.js';
 export type { OrchestratorConfig } from './config.js';
 
 // ---- Server ----------------------------------------------------------------
@@ -71,3 +71,25 @@ export type {
 // ---- Health ----------------------------------------------------------------
 export { checkWorkersHealth, probeBinary } from './health.js';
 export type { WorkersHealth, AvailabilityResult } from './health.js';
+
+// ---- First-run setup -------------------------------------------------------
+export {
+  SetupStore,
+  defaultSetupStatus,
+  defaultPreferences,
+  emptyInstalledModels,
+} from './setup/setupStore.js';
+export {
+  buildCatalog,
+  findPiperVoice,
+  findWhisperModel,
+  WHISPER_MODELS,
+  ARGOS_AVAILABLE,
+  PIPER_VOICES,
+} from './setup/catalog.js';
+export { SetupInstaller } from './setup/installer.js';
+export type { InstallerDeps } from './setup/installer.js';
+export { SetupEventBus } from './setup/setupBus.js';
+export type { SetupEventListener } from './setup/setupBus.js';
+export { runPreflight } from './setup/preflight.js';
+export type { PreflightDeps } from './setup/preflight.js';

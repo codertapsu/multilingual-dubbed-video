@@ -35,9 +35,9 @@
   text-transform: uppercase;
   letter-spacing: 0.02em;
   color: var(--vd-text-muted);
-  position: sticky;
-  top: 56px; /* below the sticky topnav */
-  z-index: 1;
+  // position: sticky;
+  // top: 56px; /* below the sticky topnav */
+  // z-index: 1;
 }
 .seg-row.has-warning {
   background: #fffdf6;

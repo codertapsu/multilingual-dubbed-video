@@ -18,6 +18,14 @@ import type {
   SynthesizeSingleSegmentResult,
   WorkersHealth,
 } from '../models/view-models';
+import type {
+  PreflightResult,
+  SetupCatalog,
+  SetupInstallRequest,
+  SetupStatus,
+  UpdateInfo,
+  UpdatePreferences,
+} from '../models/setup';
 
 /** HTTP verbs the fetch fallback understands. */
 type HttpMethod = 'GET' | 'POST' | 'PUT';
@@ -204,7 +212,10 @@ export class IpcService {
    */
   async pickVideoFile(): Promise<string | null> {
     if (!this.tauri) return null;
-    return this.invoke<string | null>('pick_video_file');
+    // The Tauri command returns `{ path: string | null }` — extract the string
+    // (returning the object made the UI show "[object Object]").
+    const res = await this.invoke<{ path: string | null }>('pick_video_file');
+    return res?.path ?? null;
   }
 
   getWorkersHealth(): Promise<WorkersHealth> {
@@ -213,6 +224,136 @@ export class IpcService {
 
   getLanguages(): Promise<LanguagesResponse> {
     return this.call<LanguagesResponse>('get_languages', {}, 'GET', '/languages');
+  }
+
+  // ------------------------------------------------------------------ //
+  // First-run setup / onboarding                                        //
+  // ------------------------------------------------------------------ //
+
+  /** GET /setup/status — first-run completion flag + installed inventory. */
+  setupGetStatus(): Promise<SetupStatus> {
+    return this.call<SetupStatus>('setup_get_status', {}, 'GET', '/setup/status');
+  }
+
+  /** GET /setup/preflight — environment self-checks (sidecars, disk, network). */
+  setupPreflight(): Promise<PreflightResult> {
+    return this.call<PreflightResult>('setup_preflight', {}, 'GET', '/setup/preflight');
+  }
+
+  /** GET /setup/catalog — curated models/languages/voices the wizard offers. */
+  setupGetCatalog(): Promise<SetupCatalog> {
+    return this.call<SetupCatalog>('setup_get_catalog', {}, 'GET', '/setup/catalog');
+  }
+
+  /**
+   * POST /setup/install — kicks off the async model download. Returns once the
+   * job is *started* (202); progress is delivered over the /setup/events SSE
+   * stream consumed by {@link SetupEventsService}.
+   */
+  setupInstallModels(body: SetupInstallRequest): Promise<{ started: boolean }> {
+    // Tauri's `setup_install_models` takes a `request` param; the HTTP fallback
+    // sends the same object as the JSON body.
+    return this.call<{ started: boolean }>(
+      'setup_install_models',
+      { request: body },
+      'POST',
+      '/setup/install',
+      body,
+    );
+  }
+
+  /** POST /setup/complete — marks first run as done (writes setup.json). */
+  setupComplete(): Promise<{ ok: boolean }> {
+    return this.call<{ ok: boolean }>('setup_complete', {}, 'POST', '/setup/complete');
+  }
+
+  // ------------------------------------------------------------------ //
+  // Preferences + auto-update                                           //
+  // ------------------------------------------------------------------ //
+
+  /** GET /preferences — the persisted update preference. */
+  getPreferences(): Promise<UpdatePreferences> {
+    return this.call<UpdatePreferences>('get_preferences', {}, 'GET', '/preferences');
+  }
+
+  /** PUT /preferences — persist the update preference. */
+  setPreferences(body: UpdatePreferences): Promise<{ ok: boolean }> {
+    return this.call<{ ok: boolean }>(
+      'set_preferences',
+      { preferences: body },
+      'PUT',
+      '/preferences',
+      body,
+    );
+  }
+
+  /**
+   * Convenience: read just the autoUpdate flag. The shell uses the same
+   * `/preferences` endpoint, so in the browser we read it via HTTP too.
+   */
+  async getUpdatePreference(): Promise<UpdatePreferences> {
+    if (this.tauri) {
+      return this.invoke<UpdatePreferences>('get_update_preference');
+    }
+    return this.getPreferences();
+  }
+
+  /** Convenience: persist just the autoUpdate flag. */
+  async setUpdatePreference(body: UpdatePreferences): Promise<{ ok: boolean }> {
+    if (this.tauri) {
+      return this.invoke<{ ok: boolean }>('set_update_preference', {
+        preferences: body,
+      });
+    }
+    return this.setPreferences(body);
+  }
+
+  /**
+   * Check GitHub Releases for an available update (tauri-plugin-updater).
+   * Tauri-only — in the browser there is no updater, so we resolve a safe
+   * "not available" shape (available=false, currentVersion="browser").
+   */
+  async checkForUpdate(): Promise<UpdateInfo> {
+    if (!this.tauri) {
+      return { available: false, currentVersion: 'browser' };
+    }
+    return this.invoke<UpdateInfo>('check_for_update');
+  }
+
+  /**
+   * The installed app version (from bundle metadata). Network-free, so Settings
+   * can show the version even when the updater endpoint is unreachable. In the
+   * browser there is no bundle version, so we resolve `null`.
+   */
+  async getAppVersion(): Promise<string | null> {
+    if (!this.tauri) return null;
+    const res = await this.invoke<{ version?: string }>('get_app_version');
+    return res?.version ?? null;
+  }
+
+  /**
+   * Download + install the pending update then relaunch. Tauri-only; resolves
+   * `{ ok: false }` in the browser (the UI disables this control there).
+   */
+  async downloadAndInstallUpdate(): Promise<{ ok: boolean }> {
+    if (!this.tauri) {
+      return { ok: false };
+    }
+    return this.invoke<{ ok: boolean }>('download_and_install_update');
+  }
+
+  /**
+   * Open a URL in the OS default browser (tauri-plugin-opener). In the browser
+   * we fall back to `window.open` so release-notes links still work in dev.
+   */
+  async openExternal(url: string): Promise<void> {
+    if (this.tauri) {
+      await this.invoke<void>('open_external', { url });
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
   }
 
   // ------------------------------------------------------------------ //
@@ -253,7 +394,14 @@ export class IpcService {
       // nominal differences (InvokeArgs vs Record<string, unknown>).
       this.invokeFn = mod.invoke as unknown as InvokeFn;
     }
-    return this.invokeFn!<T>(command, args);
+    try {
+      return await this.invokeFn!<T>(command, args);
+    } catch (err) {
+      // Tauri commands reject with a JSON-encoded AppError string (see
+      // commands.rs `app_error_json`). Parse it back into a structured AppError
+      // object so the UI renders message/remediation instead of raw JSON.
+      throw parseTauriError(err);
+    }
   }
 
   /** HTTP fallback. Parses the worker/orchestrator JSON error envelope. */
@@ -310,4 +458,25 @@ function safeJsonParse(text: string): unknown {
   } catch {
     return text;
   }
+}
+
+/**
+ * Normalize a rejected Tauri `invoke` error. Tauri commands return
+ * `Err(String)` where the string is a JSON-encoded AppError; parse it back to
+ * the structured object so `toAppError`/the error banner show a clean message
+ * + remediation instead of the raw JSON blob.
+ */
+function parseTauriError(err: unknown): unknown {
+  if (typeof err === 'string') {
+    const parsed = safeJsonParse(err);
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      typeof (parsed as { code?: unknown }).code === 'string' &&
+      typeof (parsed as { message?: unknown }).message === 'string'
+    ) {
+      return parsed;
+    }
+  }
+  return err;
 }

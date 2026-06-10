@@ -1,0 +1,79 @@
+:host {
+  display: block;
+}
+
+.note {
+  align-self: flex-start;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.version-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--vd-sp-3);
+}
+.version-row .label {
+  font-weight: 600;
+  color: var(--vd-text-muted);
+}
+.version-value {
+  font-size: 0.95rem;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vd-sp-3);
+}
+
+.switch-label {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vd-sp-3);
+  margin: 0;
+  font-weight: 400;
+  cursor: pointer;
+}
+.switch-label input {
+  margin-top: 3px;
+  width: auto;
+}
+.switch-label input:disabled {
+  cursor: not-allowed;
+}
+.switch-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.switch-title {
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  gap: var(--vd-sp-3);
+  flex-wrap: wrap;
+}
+
+.update-detail {
+  margin-top: var(--vd-sp-2);
+}
+.release-notes h3 {
+  margin-bottom: var(--vd-sp-2);
+}
+.notes-body {
+  margin: 0;
+  padding: var(--vd-sp-3);
+  background: var(--vd-surface-2);
+  border-radius: var(--vd-radius-sm);
+  font-family: var(--vd-font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}

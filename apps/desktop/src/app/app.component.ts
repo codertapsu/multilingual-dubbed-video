@@ -29,6 +29,7 @@ import { IpcService } from './core/ipc/ipc.service';
           >Projects</a
         >
         <a routerLink="/new" routerLinkActive="active">New project</a>
+        <a routerLink="/settings" routerLinkActive="active">Settings</a>
       </nav>
 
       <span class="mode-tag" [class.local]="!ipc.inTauri" [title]="modeTooltip">

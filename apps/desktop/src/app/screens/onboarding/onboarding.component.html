@@ -1,0 +1,343 @@
+<section class="page stack">
+  <header>
+    <h1>Welcome to VideoDubber</h1>
+    <ol class="steps" aria-label="Setup progress">
+      <li [class.active]="step() === 1" [class.done]="step() > 1">1. Welcome</li>
+      <li [class.active]="step() === 2" [class.done]="step() > 2">2. Self-check</li>
+      <li [class.active]="step() === 3" [class.done]="step() > 3">3. Choose</li>
+      <li [class.active]="step() === 4">4. Download</li>
+    </ol>
+  </header>
+
+  <vd-error-banner [error]="displayError()" (dismiss)="dismissError()" />
+
+  <!-- ============================ STEP 1 ============================ -->
+  @if (step() === 1) {
+    <div class="card stack">
+      <h2>Let's get you set up</h2>
+      <p>
+        VideoDubber turns a video's spoken audio into another language —
+        transcribe, translate, synthesize a new voice, and remux — all on this
+        machine, fully offline once set up.
+      </p>
+      <p class="muted">Before your first project we'll quickly:</p>
+      <ul class="checklist">
+        <li>Check this machine has everything it needs to run.</li>
+        <li>Let you pick your source &amp; target languages and a transcription model.</li>
+        <li>
+          Download the AI models for those languages. This needs an internet
+          connection and can take several minutes depending on the model size.
+        </li>
+      </ul>
+      <p class="hint">
+        The app, media tools and workers are already bundled — only the
+        language models are fetched on first run.
+      </p>
+
+      <div class="row row-between">
+        <span class="hint">This is a one-time setup.</span>
+        <button type="button" class="btn btn-primary" (click)="goToStep(2)">
+          Get started →
+        </button>
+      </div>
+    </div>
+  }
+
+  <!-- ============================ STEP 2 ============================ -->
+  @if (step() === 2) {
+    <div class="card stack">
+      <div class="row row-between">
+        <h2>System self-check</h2>
+        <button
+          type="button"
+          class="btn btn-sm"
+          (click)="runPreflight()"
+          [disabled]="preflightLoading()"
+        >
+          {{ preflightLoading() ? 'Checking…' : 'Re-check' }}
+        </button>
+      </div>
+
+      @if (preflight(); as pf) {
+        @if (pf.ok) {
+          <div class="badge badge-completed summary-badge">
+            ✓ Everything looks good
+          </div>
+        } @else {
+          <div class="badge badge-warning summary-badge" role="status">
+            Some checks need attention — you can still continue, but downloads or
+            dubbing may fail until they're resolved.
+          </div>
+        }
+
+        <ul class="check-list" role="list">
+          @for (check of pf.checks; track check.id) {
+            <li class="check-row" [attr.data-status]="check.status">
+              <span class="check-icon" aria-hidden="true">
+                @switch (check.status) {
+                  @case ('ok') {
+                    ✓
+                  }
+                  @case ('warn') {
+                    !
+                  }
+                  @case ('fail') {
+                    ✕
+                  }
+                }
+              </span>
+              <span class="check-body">
+                <span class="check-label">{{ check.label }}</span>
+                @if (check.detail) {
+                  <span class="hint">{{ check.detail }}</span>
+                }
+                @if (check.remediation) {
+                  <span class="check-remedy">
+                    <span class="label">How to fix:</span> {{ check.remediation }}
+                  </span>
+                }
+              </span>
+              <span
+                class="badge"
+                [class.badge-completed]="check.status === 'ok'"
+                [class.badge-warning]="check.status === 'warn'"
+                [class.badge-failed]="check.status === 'fail'"
+              >
+                {{ check.status }}
+              </span>
+            </li>
+          }
+        </ul>
+      } @else if (preflightLoading()) {
+        <p class="muted">Running checks…</p>
+      } @else {
+        <p class="muted">
+          Couldn't run the checks yet. Make sure the local services have started,
+          then re-check.
+        </p>
+      }
+
+      <div class="row row-between">
+        <button type="button" class="btn" (click)="back()">← Back</button>
+        <button type="button" class="btn btn-primary" (click)="goToStep(3)">
+          Continue →
+        </button>
+      </div>
+    </div>
+  }
+
+  <!-- ============================ STEP 3 ============================ -->
+  @if (step() === 3) {
+    <div class="card stack">
+      <h2>Choose your languages &amp; model</h2>
+
+      @if (catalogLoading() && !catalog()) {
+        <p class="muted">Loading available models…</p>
+      }
+
+      <fieldset>
+        <legend>Languages</legend>
+        <div class="lang-grid">
+          <div class="field">
+            <label for="srcLang">Source language</label>
+            <select
+              id="srcLang"
+              name="srcLang"
+              [ngModel]="sourceLanguage()"
+              (ngModelChange)="setSourceLanguage($event)"
+            >
+              @for (lang of languages(); track lang.code) {
+                <option [value]="lang.code">{{ lang.label }}</option>
+              }
+            </select>
+          </div>
+          <div class="field">
+            <label for="tgtLang">Target language</label>
+            <select
+              id="tgtLang"
+              name="tgtLang"
+              [ngModel]="targetLanguage()"
+              (ngModelChange)="setTargetLanguage($event)"
+            >
+              @for (lang of languages(); track lang.code) {
+                <option [value]="lang.code">{{ lang.label }}</option>
+              }
+            </select>
+          </div>
+        </div>
+
+        @if (!languagesDiffer()) {
+          <p class="hint warn-text" role="alert">
+            Source and target language must be different.
+          </p>
+        } @else if (!argosPairAvailable()) {
+          <p class="hint warn-text" role="status">
+            No prebuilt translation package is listed for
+            {{ languageLabel(sourceLanguage()) }} →
+            {{ languageLabel(targetLanguage()) }}. The app will try to fetch one,
+            but it may not be available offline.
+          </p>
+        }
+      </fieldset>
+
+      <fieldset>
+        <legend>Transcription model (Whisper)</legend>
+        @if (whisperModels().length > 0) {
+          <div class="radio-list" role="radiogroup" aria-label="Whisper model">
+            @for (model of whisperModels(); track model.id) {
+              <label class="radio-row">
+                <input
+                  type="radio"
+                  name="whisperModel"
+                  [value]="model.id"
+                  [checked]="whisperModel() === model.id"
+                  (change)="setWhisperModel(model.id)"
+                />
+                <span class="radio-body">
+                  <span class="radio-title">
+                    {{ model.label }}
+                    @if (model.recommended) {
+                      <span class="badge badge-completed">Recommended</span>
+                    }
+                  </span>
+                  <span class="hint">≈ {{ model.approxSizeMb }} MB download</span>
+                </span>
+              </label>
+            }
+          </div>
+        } @else {
+          <p class="muted">
+            Model catalog unavailable. The default model will be used once
+            services are reachable.
+          </p>
+        }
+      </fieldset>
+
+      <fieldset>
+        <legend>Target voice (text-to-speech)</legend>
+        @if (targetPiperVoice(); as voice) {
+          <label class="radio-row check-toggle">
+            <input
+              type="checkbox"
+              name="fetchPiperVoice"
+              [ngModel]="fetchPiperVoice()"
+              (ngModelChange)="toggleFetchPiperVoice($event)"
+            />
+            <span class="radio-body">
+              <span class="radio-title">Download {{ voice.label }}</span>
+              <span class="hint"
+                >≈ {{ voice.approxSizeMb }} MB — a natural Piper voice for
+                {{ languageLabel(targetLanguage()) }}.</span
+              >
+            </span>
+          </label>
+        } @else {
+          <p class="muted">
+            No bundled Piper voice is listed for
+            {{ languageLabel(targetLanguage()) }} yet. You can add one later from
+            Settings; dubbing will fall back to an available voice.
+          </p>
+        }
+      </fieldset>
+
+      <div class="row row-between">
+        <button type="button" class="btn" (click)="back()">← Back</button>
+        <button
+          type="button"
+          class="btn btn-primary"
+          (click)="startInstall()"
+          [disabled]="!step3Valid() || installing()"
+        >
+          {{ installing() ? 'Starting…' : 'Download models →' }}
+        </button>
+      </div>
+    </div>
+  }
+
+  <!-- ============================ STEP 4 ============================ -->
+  @if (step() === 4) {
+    <div class="card stack">
+      <h2>Downloading models</h2>
+
+      @if (installDone()) {
+        <div class="badge badge-completed summary-badge">
+          ✓ All set — your language models are installed.
+        </div>
+      } @else {
+        <p class="muted">
+          Fetching the AI models for
+          {{ languageLabel(sourceLanguage()) }} →
+          {{ languageLabel(targetLanguage()) }}. Keep this window open.
+        </p>
+      }
+
+      @if (setupEvents.items().length > 0) {
+        <ul class="dl-list" role="list">
+          @for (item of setupEvents.items(); track item.item) {
+            <li class="dl-row">
+              <div class="dl-head">
+                <span class="dl-name">{{ item.item }}</span>
+                <span class="dl-pct mono">
+                  @if (item.done) {
+                    Done
+                  } @else if (item.percent !== null) {
+                    {{ item.percent }}%
+                  } @else {
+                    Working…
+                  }
+                </span>
+              </div>
+              <div
+                class="progress"
+                [class.indeterminate]="item.percent === null && !item.done"
+                role="progressbar"
+                [attr.aria-valuenow]="item.percent ?? undefined"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                [attr.aria-label]="'Downloading ' + item.item"
+              >
+                <span [style.width]="progressWidth(item.percent)"></span>
+              </div>
+              @if (item.message) {
+                <span class="hint">{{ item.message }}</span>
+              }
+            </li>
+          }
+        </ul>
+      } @else if (!installDone()) {
+        <p class="muted">Waiting for the download to begin…</p>
+      }
+
+      <details class="log-details" [open]="!installDone()">
+        <summary>Activity log</summary>
+        <div class="log-panel" aria-live="polite">
+          @for (line of setupEvents.logs(); track $index) {
+            <div class="log-line" [attr.data-level]="line.level">
+              {{ line.message }}
+            </div>
+          } @empty {
+            <div class="log-line muted">No activity yet.</div>
+          }
+        </div>
+      </details>
+
+      <div class="row row-between">
+        <span class="hint">
+          @if (installDone()) {
+            You're ready to create your first project.
+          } @else {
+            Downloads continue in the background.
+          }
+        </span>
+        <button
+          type="button"
+          class="btn btn-primary"
+          (click)="finish()"
+          [disabled]="!installDone() || completing()"
+        >
+          {{ completing() ? 'Finishing…' : 'Finish & start dubbing ▶' }}
+        </button>
+      </div>
+    </div>
+  }
+</section>

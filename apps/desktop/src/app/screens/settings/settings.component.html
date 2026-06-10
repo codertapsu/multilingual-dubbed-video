@@ -1,0 +1,122 @@
+<section class="page stack">
+  <header>
+    <h1>Settings</h1>
+    <p class="muted">Application preferences and updates.</p>
+  </header>
+
+  <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
+
+  <!-- ============================ Updates ============================ -->
+  <div class="card stack">
+    <h2>Updates</h2>
+
+    <div class="version-row">
+      <span class="label">Current version</span>
+      <span class="mono version-value">
+        @if (appVersion(); as v) {
+          {{ v }}
+        } @else {
+          —
+        }
+      </span>
+    </div>
+
+    @if (!inTauri) {
+      <div class="badge badge-warning note" role="status">
+        Update controls are available in the desktop app. You're running in a
+        browser dev session, so checking and installing updates is disabled here.
+      </div>
+    }
+
+    <div class="setting-row">
+      <label class="switch-label" for="autoUpdate">
+        <input
+          id="autoUpdate"
+          name="autoUpdate"
+          type="checkbox"
+          [ngModel]="autoUpdate()"
+          [disabled]="prefLoading() || prefSaving()"
+          (ngModelChange)="toggleAutoUpdate($event)"
+        />
+        <span class="switch-body">
+          <span class="switch-title">Automatically install updates</span>
+          <span class="hint">
+            When on, the app checks for updates on launch and installs them in
+            the background. When off, you update manually below.
+          </span>
+        </span>
+      </label>
+      @if (prefSaving()) {
+        <span class="hint">Saving…</span>
+      }
+    </div>
+
+    <div class="actions">
+      <button
+        type="button"
+        class="btn"
+        (click)="check()"
+        [disabled]="!inTauri || checkOutcome() === 'checking'"
+      >
+        {{ checkOutcome() === 'checking' ? 'Checking…' : 'Check for updates' }}
+      </button>
+
+      @if (updateAvailable()) {
+        <button
+          type="button"
+          class="btn btn-primary"
+          (click)="installUpdate()"
+          [disabled]="installing()"
+        >
+          {{ installing() ? 'Installing…' : 'Download & install' }}
+        </button>
+      }
+    </div>
+
+    <!-- Outcome / details -->
+    @switch (checkOutcome()) {
+      @case ('up-to-date') {
+        <div class="badge badge-completed note" role="status">
+          ✓ You're up to date.
+        </div>
+      }
+      @case ('available') {
+        @if (updateInfo(); as info) {
+          <div class="update-detail stack">
+            <div class="badge badge-running note">
+              Update available: version {{ info.version }}
+            </div>
+            @if (info.date) {
+              <p class="hint">Released {{ info.date }}</p>
+            }
+            @if (info.notes) {
+              <div class="release-notes">
+                <h3>Release notes</h3>
+                <pre class="notes-body">{{ info.notes }}</pre>
+              </div>
+            }
+            <div>
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                (click)="openReleaseNotes()"
+              >
+                View on GitHub ↗
+              </button>
+            </div>
+          </div>
+        }
+      }
+    }
+  </div>
+
+  <!-- ============================ About ============================ -->
+  <div class="card stack">
+    <h2>About VideoDubber</h2>
+    <p class="muted">
+      A local, offline-first video dubbing app. Transcription, translation, and
+      voice synthesis all run on your machine. Only the language models are
+      downloaded on first run.
+    </p>
+  </div>
+</section>

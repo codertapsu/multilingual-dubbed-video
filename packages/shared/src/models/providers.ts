@@ -11,6 +11,7 @@ import type {
   LanguageCode,
   PipelineStepId,
   Project,
+  RenderQuality,
   SubtitleExportMode,
   SubtitleStyle,
   TranscriptSegment,
@@ -38,6 +39,12 @@ export interface RenderFinalVideoInput {
   burnSubtitleStyle?: SubtitleStyle;
   /** Copy the source video stream without re-encoding when possible. */
   copyVideoStream?: boolean;
+  /**
+   * Encode quality/speed when a re-encode is unavoidable (burned-in subtitles):
+   * "quality" => software x264 CRF (default); "fast" => hardware encode
+   * (VideoToolbox/NVENC) when available.
+   */
+  renderQuality?: RenderQuality;
 }
 
 /** Result of rendering the final dubbed video. */

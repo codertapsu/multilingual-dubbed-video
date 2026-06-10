@@ -23,6 +23,42 @@ export type SubtitleExportMode =
 /** Whether processing stays fully local or may use cloud providers. */
 export type ProcessingMode = 'local' | 'cloud-enhanced';
 
+/**
+ * What happens to the original soundtrack in the final mix:
+ * - `keep`           — original kept as background, ducked under the dub.
+ * - `remove`         — dub fully replaces the original audio.
+ * - `replace-vocals` — separate the original into vocals + music/effects (M&E),
+ *                      drop the original vocals, and mix the dub over the
+ *                      full-volume M&E bed (professional dubbing approach;
+ *                      requires a separation engine pack).
+ */
+export type OriginalAudioMode = 'keep' | 'remove' | 'replace-vocals';
+
+/**
+ * Final-render encode quality / speed trade-off:
+ * - `quality` — software x264 CRF (best size/quality; default).
+ * - `fast`    — hardware encode (VideoToolbox / NVENC) when available.
+ */
+export type RenderQuality = 'quality' | 'fast';
+
+/**
+ * Time-stretch engine used to fit a synthesized clip to its window:
+ * - `ffmpeg-atempo`  — ffmpeg `atempo` (universal default).
+ * - `rubberband`     — Rubber Band R3, formant-preserving (more natural for
+ *                      speech above ~1.3x; requires the rubberband engine pack).
+ * - `auto`           — Rubber Band when installed and the ratio warrants it,
+ *                      else atempo.
+ */
+export type TimeStretchEngine = 'ffmpeg-atempo' | 'rubberband' | 'auto';
+
+/** A detected speaker mapped to a chosen TTS voice (diarized multi-voice dub). */
+export interface SpeakerVoiceAssignment {
+  /** Diarization speaker id (matches TranscriptSegment.speakerId). */
+  speakerId: string;
+  /** TTS voice id to use for this speaker. */
+  voiceId: string;
+}
+
 /** Identifier for each ordered step of the dubbing pipeline. */
 export type PipelineStepId =
   | 'probe-video'
@@ -76,12 +112,29 @@ export interface ProjectSettings {
   duckOriginalAudio: boolean;
   /** Ducking level in decibels (negative = quieter). */
   duckingLevelDb: number;
+  /**
+   * How the original soundtrack is treated in the final mix. When set it takes
+   * precedence over the legacy include/duck booleans (which are kept for
+   * back-compat and derived from this). Defaults to `keep`.
+   */
+  originalAudioMode?: OriginalAudioMode;
   /** Gain applied to the synthesized TTS track in decibels. */
   ttsGainDb: number;
   /** Maximum allowed time-stretch ratio for fitting TTS to a window. */
   maxSpeedRatio: number;
   /** Allowed overflow past a segment window before it is flagged, in ms. */
   allowedOverflowMs: number;
+  /** Time-stretch engine for fitting clips to windows (default ffmpeg-atempo). */
+  timeStretchEngine?: TimeStretchEngine;
+  /** Final-render encode quality/speed (default `quality`). */
+  renderQuality?: RenderQuality;
+  /** STT model override (e.g. "large-v3-turbo"). Mirrors sttModel for clarity. */
+  /** Run forced alignment for word-accurate timing (needs an alignment pack). */
+  forcedAlignment?: boolean;
+  /** Run speaker diarization to split the transcript per speaker. */
+  diarize?: boolean;
+  /** Per-speaker TTS voice assignments (used when diarization is on). */
+  speakerVoices?: SpeakerVoiceAssignment[];
   /** Optional style for burned-in subtitles. */
   burnSubtitleStyle?: SubtitleStyle;
 }

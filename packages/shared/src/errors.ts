@@ -30,6 +30,9 @@ export type ErrorCode =
   | 'WORKER_TIMEOUT'
   | 'CLOUD_CREDENTIALS_MISSING'
   | 'CLOUD_REQUEST_FAILED'
+  | 'ENGINE_PACK_MISSING'
+  | 'ENGINE_PACK_FAILED'
+  | 'ENGINE_UNAVAILABLE'
   | 'CANCELLED'
   | 'UNKNOWN';
 
@@ -135,6 +138,21 @@ export const REMEDIATIONS: Record<ErrorCode, { remediation: string; docsRef: str
     remediation:
       'The cloud provider rejected the request. Check that the API key is valid and has quota, then retry; or switch the phase to a local provider.',
     docsRef: 'docs/PROVIDERS.md#cloud-troubleshooting',
+  },
+  ENGINE_PACK_MISSING: {
+    remediation:
+      'This phase uses an engine that has not been installed yet. Install the engine pack in Settings → Engines, or pick a different provider for the phase.',
+    docsRef: 'docs/PROVIDERS.md#engine-packs',
+  },
+  ENGINE_PACK_FAILED: {
+    remediation:
+      'The engine pack could not be downloaded or verified. Check your network and disk space, then retry the install; corrupt downloads are discarded automatically.',
+    docsRef: 'docs/PROVIDERS.md#engine-packs',
+  },
+  ENGINE_UNAVAILABLE: {
+    remediation:
+      'A local engine process did not start or is not responding. Retry the step; if it persists, reinstall the engine pack or switch the phase to a local CPU provider.',
+    docsRef: 'docs/PROVIDERS.md#engine-packs',
   },
   CANCELLED: {
     remediation: 'The operation was cancelled. Re-run the pipeline or retry the step when ready.',

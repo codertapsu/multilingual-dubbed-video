@@ -24,6 +24,10 @@ export type {
   LanguageCode,
   SubtitleExportMode,
   ProcessingMode,
+  OriginalAudioMode,
+  RenderQuality,
+  TimeStretchEngine,
+  SpeakerVoiceAssignment,
   PipelineStepId,
   SubtitleStyle,
   ProjectSettings,
@@ -36,6 +40,20 @@ export type {
   AlignedSegment,
   CreateProjectInput,
 } from './models/domain.js';
+
+// ---- Engine packs ----------------------------------------------------------
+export type {
+  EngineKind,
+  EnginePackKind,
+  EngineAccel,
+  EnginePackArtifact,
+  EnginePackInfo,
+  InstalledEnginePack,
+  EnginesResponse,
+  EnginePackInstallRequest,
+  EnginePackUninstallRequest,
+  EngineInstallEvent,
+} from './models/engines.js';
 
 // ---- Media types -----------------------------------------------------------
 export type {

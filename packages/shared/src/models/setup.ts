@@ -199,7 +199,13 @@ export interface ProviderInfo {
   isLocal: boolean;
   /** Cloud service whose API key this provider needs (cloud providers only). */
   credentialService?: CloudServiceId;
-  /** True when the provider is usable right now (local, or key configured). */
+  /**
+   * Logical engine-pack family this provider needs (e.g. "whisper-cpp",
+   * "llama-cpp", "neural-tts"). Present for local providers that are gated on a
+   * downloaded engine pack rather than always-available.
+   */
+  requiresEnginePack?: string;
+  /** True when the provider is usable right now (local, key configured, or pack installed). */
   available: boolean;
 }
 

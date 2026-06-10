@@ -41,12 +41,27 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir   = Split-Path -Parent $ScriptDir
 Set-Location $RootDir
 
-# --- Defaults (override via env) ---------------------------------------------
+# --- Load .env if present (machine-specific paths/ports). Existing env wins. --
+$EnvFile = Join-Path $RootDir '.env'
+if (Test-Path $EnvFile) {
+    Get-Content $EnvFile | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith('#') -and $line.Contains('=')) {
+            $k, $v = $line.Split('=', 2)
+            $k = $k.Trim(); $v = $v.Trim().Trim('"')
+            if (-not [Environment]::GetEnvironmentVariable($k)) {
+                [Environment]::SetEnvironmentVariable($k, $v)
+            }
+        }
+    }
+}
+
+# --- Defaults (override via env or .env) -------------------------------------
 $OrchestratorPort      = if ($env:ORCHESTRATOR_PORT)      { $env:ORCHESTRATOR_PORT }      else { '5100' }
 $SttWorkerPort         = if ($env:STT_WORKER_PORT)        { $env:STT_WORKER_PORT }        else { '5101' }
 $TranslationWorkerPort = if ($env:TRANSLATION_WORKER_PORT){ $env:TRANSLATION_WORKER_PORT }else { '5102' }
 $TtsWorkerPort         = if ($env:TTS_WORKER_PORT)        { $env:TTS_WORKER_PORT }        else { '5103' }
-$AngularPort           = if ($env:ANGULAR_PORT)           { $env:ANGULAR_PORT }           else { '4200' }
+$AngularPort           = if ($env:ANGULAR_PORT)           { $env:ANGULAR_PORT }           else { '1420' }
 $PythonBin             = if ($env:PYTHON_PATH)            { $env:PYTHON_PATH }            else { 'python' }
 
 $LogDir = Join-Path $RootDir '.dev-logs'

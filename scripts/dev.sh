@@ -25,12 +25,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
 cd "${ROOT_DIR}"
 
-# --- Defaults (override via env) ---------------------------------------------
+# --- Load .env if present (machine-specific paths: PYTHON_PATH, FFMPEG_PATH,
+#     PIPER_*, FASTER_WHISPER_MODEL, ports, ...). Values already in the
+#     environment take precedence (we only set vars that are unset). ----------
+if [[ -f "${ROOT_DIR}/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "${ROOT_DIR}/.env"
+  set +a
+fi
+
+# --- Defaults (override via env or .env) -------------------------------------
 ORCHESTRATOR_PORT="${ORCHESTRATOR_PORT:-5100}"
 STT_WORKER_PORT="${STT_WORKER_PORT:-5101}"
 TRANSLATION_WORKER_PORT="${TRANSLATION_WORKER_PORT:-5102}"
 TTS_WORKER_PORT="${TTS_WORKER_PORT:-5103}"
-ANGULAR_PORT="${ANGULAR_PORT:-4200}"
+ANGULAR_PORT="${ANGULAR_PORT:-1420}"
 
 PYTHON_BIN="${PYTHON_PATH:-python3}"
 LOG_DIR="${ROOT_DIR}/.dev-logs"

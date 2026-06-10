@@ -11,6 +11,11 @@
   },
   "scripts": {
     "dev": "bash scripts/dev.sh",
+    "start": "bash scripts/start.sh",
+    "stop": "bash scripts/stop.sh",
+    "services": "bash scripts/start-services.sh",
+    "app": "pnpm --filter videodubber-desktop tauri dev",
+    "app:build": "pnpm --filter videodubber-desktop tauri build",
     "dev:desktop": "pnpm --filter videodubber-desktop dev",
     "dev:orchestrator": "pnpm --filter @videodubber/node-orchestrator dev",
     "dev:workers": "bash scripts/dev-workers.sh",

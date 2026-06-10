@@ -66,8 +66,21 @@ export type {
   SetupInstallRequest,
   SetupEvent,
   UpdatePreferences,
+  ProviderDefaults,
   UpdateInfo,
+  CloudServiceId,
+  CloudCredentialInfo,
+  SaveCredentialRequest,
+  CredentialTestResult,
+  ProviderInfo,
+  ProvidersResponse,
+  GpuInfo,
+  SystemProfile,
+  HardwareTier,
+  HardwareRecommendation,
+  SystemProfileResponse,
 } from './models/setup.js';
+export { ALL_CLOUD_SERVICES } from './models/setup.js';
 
 // ---- Provider / service contracts -----------------------------------------
 export type {

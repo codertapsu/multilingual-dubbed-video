@@ -20,6 +20,8 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   OUTPUT_NOT_WRITABLE: 500,
   WORKER_UNAVAILABLE: 503,
   WORKER_TIMEOUT: 504,
+  CLOUD_CREDENTIALS_MISSING: 424, // Failed Dependency — key not configured
+  CLOUD_REQUEST_FAILED: 502, // Bad Gateway — upstream cloud service failed
   CANCELLED: 409, // Conflict
   UNKNOWN: 500,
 };

@@ -28,6 +28,8 @@ export type ErrorCode =
   | 'OUTPUT_NOT_WRITABLE'
   | 'WORKER_UNAVAILABLE'
   | 'WORKER_TIMEOUT'
+  | 'CLOUD_CREDENTIALS_MISSING'
+  | 'CLOUD_REQUEST_FAILED'
   | 'CANCELLED'
   | 'UNKNOWN';
 
@@ -123,6 +125,16 @@ export const REMEDIATIONS: Record<ErrorCode, { remediation: string; docsRef: str
     remediation:
       'A worker did not respond in time. Retry the step; for large media consider a smaller STT model or more resources.',
     docsRef: 'docs/TROUBLESHOOTING.md#worker-timeout',
+  },
+  CLOUD_CREDENTIALS_MISSING: {
+    remediation:
+      'This step uses a cloud provider but no API key is configured for it. Add the key in Settings → Cloud API keys (or switch the phase back to a local provider).',
+    docsRef: 'docs/PROVIDERS.md#cloud-api-keys',
+  },
+  CLOUD_REQUEST_FAILED: {
+    remediation:
+      'The cloud provider rejected the request. Check that the API key is valid and has quota, then retry; or switch the phase to a local provider.',
+    docsRef: 'docs/PROVIDERS.md#cloud-troubleshooting',
   },
   CANCELLED: {
     remediation: 'The operation was cancelled. Re-run the pipeline or retry the step when ready.',

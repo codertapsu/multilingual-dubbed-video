@@ -30,6 +30,14 @@ import { loadConfig, type OrchestratorConfig } from './config.js';
 import { CredentialsStore } from './credentials/credentialsStore.js';
 import { testCloudCredential } from './credentials/testConnection.js';
 import { buildSystemResponse } from './system/systemProfile.js';
+import { EngineEventBus } from './engines/engineBus.js';
+import { EngineInstaller } from './engines/engineInstaller.js';
+import { EngineManager } from './engines/engineManager.js';
+import { EnginePackStore } from './engines/enginePackStore.js';
+import { availablePacks, findPack } from './engines/enginePackCatalog.js';
+import { recommendEnginePacks } from './engines/engineRecommendation.js';
+import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
+import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 import { EventBusRegistry } from './events.js';
 import { checkWorkersHealth } from './health.js';
 import { toHttpError } from './httpErrors.js';
@@ -67,6 +75,16 @@ export interface CreateServerOptions {
   installer?: SetupInstaller;
   /** Injected cloud-credentials store (defaults to a configDir-backed one). */
   credentials?: CredentialsStore;
+  /** Injected engine-pack install-state store. */
+  enginePackStore?: EnginePackStore;
+  /** Injected engine runtime lifecycle manager. */
+  engineManager?: EngineManager;
+  /** Injected engine-pack install event bus. */
+  engineBus?: EngineEventBus;
+  /** Injected engine-pack installer. */
+  engineInstaller?: EngineInstaller;
+  /** Injected vocal-separation service. */
+  separation?: AudioSeparatorProvider;
 }
 
 /**
@@ -135,11 +153,34 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const store = options.store ?? new ProjectStore(config.projectsDir);
   const media = options.media ?? createLazyMediaService();
   const credentials = options.credentials ?? new CredentialsStore(config.configDir);
-  const registry = options.registry ?? createDefaultRegistry(config, credentials);
+
+  // Engine-pack subsystem: install-state store, the runtime lifecycle manager,
+  // the install event bus, and the installer. These power the optional
+  // accelerated/heavy engines (whisper.cpp, llama.cpp, neural TTS, separation,
+  // alignment) that download on demand.
+  const enginePackStore = options.enginePackStore ?? new EnginePackStore(config.configDir);
+  const engineManager =
+    options.engineManager ??
+    new EngineManager({
+      store: enginePackStore,
+      logger: {
+        info: (m) => console.log(`[engines] ${m}`),
+        warn: (m) => console.warn(`[engines] ${m}`),
+      },
+    });
+  const engineBus = options.engineBus ?? new EngineEventBus();
+  const engineInstaller = options.engineInstaller ?? new EngineInstaller({ store: enginePackStore, bus: engineBus });
+  const separation =
+    options.separation ?? new AudioSeparatorProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
+  const alignment = new WhisperxAlignmentProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
+
+  const registry =
+    options.registry ?? createDefaultRegistry(config, credentials, engineManager, enginePackStore);
   const bus = options.bus ?? new EventBusRegistry();
 
   const orchestrator =
-    options.orchestrator ?? new LocalJobOrchestrator({ config, store, media, registry, bus });
+    options.orchestrator ??
+    new LocalJobOrchestrator({ config, store, media, registry, bus, separation, alignment });
 
   // First-run setup: config/state store, the global setup SSE bus, and the
   // model installer that streams progress over that bus.
@@ -162,6 +203,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       else cb(null, false);
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  });
+
+  // Stop any running engine servers (whisper.cpp / llama.cpp / uv-env workers)
+  // when the orchestrator shuts down, so no child process is orphaned.
+  app.addHook('onClose', async () => {
+    await engineManager.stopAll();
   });
 
   // ---- Health -------------------------------------------------------------
@@ -299,15 +346,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   app.get('/providers', async (_req, reply) => {
     try {
       const described = registry.describe();
-      // Decorate with availability: local providers are always selectable;
-      // cloud providers need their service's API key.
+      // Availability rules:
+      //  - cloud provider  -> its API key is configured
+      //  - engine-pack provider -> a matching pack is installed
+      //  - plain local provider -> always available
       const creds = await credentials.describe();
       const configured = new Set(creds.filter((c) => c.configured).map((c) => c.service));
+      const installed = await enginePackStore.list();
+      const installedProviders = new Set(
+        installed.map((i) => findPack(i.id)?.providerId).filter((x): x is string => Boolean(x)),
+      );
       const decorate = (list: typeof described.stt) =>
-        list.map((p) => ({
-          ...p,
-          available: p.isLocal || (p.credentialService ? configured.has(p.credentialService) : false),
-        }));
+        list.map((p) => {
+          let available: boolean;
+          if (p.credentialService) available = configured.has(p.credentialService);
+          else if (p.requiresEnginePack) available = installedProviders.has(p.requiresEnginePack);
+          else available = p.isLocal;
+          return { ...p, available };
+        });
       return {
         stt: decorate(described.stt),
         translation: decorate(described.translation),
@@ -316,6 +372,74 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     } catch (err) {
       return sendError(reply, err);
     }
+  });
+
+  // ---- Engine packs (download/manage optional accelerated engines) ---------
+
+  app.get('/engines', async (_req, reply) => {
+    try {
+      return { available: availablePacks(), installed: await enginePackStore.list() };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/engines/recommended', async (_req, reply) => {
+    try {
+      const { profile, recommendation } = await buildSystemResponse();
+      return { recommendations: recommendEnginePacks(profile, recommendation) };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/engines/install', async (req: FastifyRequest<{ Body: { packId?: string } }>, reply) => {
+    try {
+      const packId = req.body?.packId;
+      if (!packId || !findPack(packId)) {
+        return reply.status(400).send({ error: { code: 'ENGINE_PACK_MISSING', message: `Unknown engine pack "${packId}".` } });
+      }
+      // Kick off asynchronously; progress observed via GET /engines/events.
+      void engineInstaller.install(packId);
+      return reply.status(202).send({ started: true });
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/engines/uninstall', async (req: FastifyRequest<{ Body: { packId?: string } }>, reply) => {
+    try {
+      const packId = req.body?.packId;
+      if (!packId) {
+        return reply.status(400).send({ error: { code: 'UNKNOWN', message: 'Missing "packId".' } });
+      }
+      await engineManager.stop(packId).catch(() => undefined);
+      await enginePackStore.remove(packId);
+      return { ok: true };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/engines/events', (req, reply) => {
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+    reply.hijack();
+    const write = (payload: unknown): void => {
+      reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+    const unsubscribe = engineBus.subscribe((event) => write(event));
+    const heartbeat = setInterval(() => reply.raw.write(': ping\n\n'), 15000);
+    const cleanup = (): void => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
+    req.raw.on('close', cleanup);
+    req.raw.on('error', cleanup);
   });
 
   // ---- System profile + hardware-aware recommendation ----------------------

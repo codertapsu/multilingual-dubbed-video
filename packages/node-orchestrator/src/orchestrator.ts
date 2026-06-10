@@ -30,7 +30,8 @@ import type { OrchestratorConfig } from './config.js';
 import type { EventBusRegistry} from './events.js';
 import { type ProjectEventBus } from './events.js';
 import { ProjectLogger } from './logging.js';
-import type { PipelineMediaService } from './media.js';
+import type { PipelineMediaService, SeparationService } from './media.js';
+import type { AlignmentService } from './providers/alignment/whisperxProvider.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { PipelineRunner, type RunnerDeps } from './pipeline/runner.js';
 import type { ProjectStore } from './workspace/projectStore.js';
@@ -43,6 +44,10 @@ export interface OrchestratorDeps {
   media: PipelineMediaService;
   registry: ProviderRegistry;
   bus: EventBusRegistry;
+  /** Optional vocal-separation engine for the "replace-vocals" mix mode. */
+  separation?: SeparationService;
+  /** Optional forced-alignment/diarization engine for tighter timing. */
+  alignment?: AlignmentService;
 }
 
 /** A tracked, in-flight pipeline run. */
@@ -101,6 +106,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       registry: this.deps.registry,
       bus,
       logger,
+      ...(this.deps.separation ? { separation: this.deps.separation } : {}),
+      ...(this.deps.alignment ? { alignment: this.deps.alignment } : {}),
     };
     return { runner: new PipelineRunner(deps), bus, logger };
   }

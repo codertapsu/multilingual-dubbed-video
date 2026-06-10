@@ -46,7 +46,8 @@ import {
 import { alignSegments, summarizeAlignment, type AlignInputSegment } from '../alignment/align.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
-import type { PipelineMediaService, TimelineSegmentInput } from '../media.js';
+import type { PipelineMediaService, SeparationService, TimelineSegmentInput } from '../media.js';
+import type { AlignmentService } from '../providers/alignment/whisperxProvider.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
 import { fileExistsNonEmpty, segmentIdToIndex, type WorkspacePaths } from '../workspace/paths.js';
@@ -58,6 +59,16 @@ export interface RunnerDeps {
   registry: ProviderRegistry;
   bus: ProjectEventBus;
   logger: ProjectLogger;
+  /**
+   * Optional source-separation engine (vocal/M&E split) for the
+   * "replace-vocals" mix mode. Absent => that mode falls back to ducking.
+   */
+  separation?: SeparationService;
+  /**
+   * Optional forced-alignment/diarization engine. Absent => forcedAlignment /
+   * diarize settings are skipped with a warning.
+   */
+  alignment?: AlignmentService;
 }
 
 /** Options controlling a single run. */
@@ -347,12 +358,45 @@ export class PipelineRunner {
       signal,
     );
 
-    await writeSegments(paths.sourceJson, result.segments);
+    let segments = result.segments;
+
+    // Optional forced-alignment / diarization refinement (WhisperX engine pack).
+    // Tightens word timestamps (±50 ms) and, when diarization is on, tags each
+    // segment with a speakerId for per-speaker voices. Skipped (with a warning)
+    // when requested but the engine pack isn't installed.
+    if ((project.settings.forcedAlignment || project.settings.diarize) && this.deps.alignment) {
+      throwIfCancelled(signal);
+      this.deps.logger.info(
+        `Refining timing${project.settings.diarize ? ' + diarizing speakers' : ''} via forced alignment...`,
+      );
+      const refined = await this.deps.alignment
+        .align(
+          paths.original16kMonoWav,
+          segments,
+          result.detectedLanguage || project.settings.sourceLanguage,
+          { diarize: project.settings.diarize === true },
+          signal,
+        )
+        .catch((err: unknown) => {
+          this.deps.logger.warn(`Alignment failed (${String(err)}); keeping the original timestamps.`);
+          return null;
+        });
+      if (refined && refined.length > 0) {
+        segments = refined;
+        this.deps.logger.info('Forced alignment complete (word-accurate timing).');
+      }
+    } else if (project.settings.forcedAlignment || project.settings.diarize) {
+      this.deps.logger.warn(
+        'Forced alignment/diarization was requested but the "Forced alignment + diarization" engine pack is not installed — using the default timestamps.',
+      );
+    }
+
+    await writeSegments(paths.sourceJson, segments);
     const srt = segmentsToSrt(
-      result.segments.map((s) => ({ index: s.index + 1, startMs: s.startMs, endMs: s.endMs, text: s.sourceText })),
+      segments.map((s) => ({ index: s.index + 1, startMs: s.startMs, endMs: s.endMs, text: s.sourceText })),
     );
     await fsp.writeFile(paths.sourceSrt, srt, 'utf8');
-    this.deps.logger.info(`Transcribed ${result.segments.length} segments (detected language: ${result.detectedLanguage}).`);
+    this.deps.logger.info(`Transcribed ${segments.length} segments (detected language: ${result.detectedLanguage}).`);
   }
 
   private async stepTranslation(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
@@ -550,15 +594,54 @@ export class PipelineRunner {
     });
 
     throwIfCancelled(signal);
-    this.deps.logger.info('Ducking original audio and mixing TTS track...');
+
+    // Resolve how the original soundtrack is treated. The new originalAudioMode
+    // takes precedence; legacy include/duck booleans are the fallback.
+    const mode =
+      project.settings.originalAudioMode ??
+      (project.settings.includeOriginalBackgroundAudio ? 'keep' : 'remove');
+
+    let originalAudio = paths.originalWav;
+    let includeBackground = true;
+    let duck = project.settings.duckOriginalAudio;
+    let duckingLevelDb = project.settings.duckingLevelDb;
+
+    if (mode === 'remove') {
+      includeBackground = false;
+    } else if (mode === 'replace-vocals') {
+      // Separate the original into vocals + music/effects, then mix the dub over
+      // the M&E bed at full volume (professional dubbing). Falls back to ducking
+      // when no separation engine pack is installed.
+      const separated = this.deps.separation
+        ? await this.deps.separation.separate(paths.originalWav, paths.audioDir, signal).catch((err: unknown) => {
+            this.deps.logger.warn(`Separation failed (${String(err)}); falling back to ducking the original.`);
+            return null;
+          })
+        : null;
+      if (separated) {
+        this.deps.logger.info('Separated original into vocals + music/effects; mixing dub over the M&E bed.');
+        originalAudio = separated.accompanimentPath;
+        duck = false;
+        duckingLevelDb = 0;
+      } else {
+        this.deps.logger.warn(
+          'No vocal-separation engine installed — install the "Vocal separation" engine pack to keep the original music & effects. Falling back to ducking.',
+        );
+        duck = true;
+      }
+    }
+
+    this.deps.logger.info(`Mixing TTS track (original audio: ${mode})...`);
     await this.deps.media.duckAndMix({
-      originalAudio: paths.originalWav,
+      originalAudio,
       ttsTimeline: paths.ttsFullWav,
       output: paths.finalMixWav,
-      duckingLevelDb: project.settings.duckingLevelDb,
+      duckingLevelDb,
       ttsGainDb: project.settings.ttsGainDb,
-      includeBackground: project.settings.includeOriginalBackgroundAudio,
-      duck: project.settings.duckOriginalAudio,
+      includeBackground,
+      duck,
+      // Two-pass loudnorm gives a transparent, dialogue-anchored final mix.
+      twoPassLoudnorm: true,
     });
     this.deps.logger.info('Audio mix complete (final_mix.wav).');
   }
@@ -583,6 +666,7 @@ export class PipelineRunner {
       subtitlePath,
       burnSubtitleStyle: project.settings.burnSubtitleStyle,
       copyVideoStream: mode !== 'burned-in',
+      ...(project.settings.renderQuality ? { renderQuality: project.settings.renderQuality } : {}),
     });
     this.deps.logger.info(
       `Render complete: ${result.outputPath} (${Math.round(result.durationMs / 1000)}s, ${result.sidecarSubtitlePaths.length} sidecar subtitle file(s)).`,

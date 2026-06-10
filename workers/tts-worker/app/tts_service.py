@@ -10,14 +10,34 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import NamedTuple
 
 from app.cache import AudioCache, cache_key
 from app.config import Settings
-from app.engines import Engine, EngineRegistry, parse_voice
+from app.engines import (
+    Engine,
+    EngineRegistry,
+    engine_voice_key,
+    parse_voice,
+)
 from app.errors import output_not_writable, piper_missing, tts_voice_missing
 from app.lang import to_tts_language
 from app.schemas import SegmentIn, SegmentOut
 from app.wavutil import read_wav_duration_ms
+
+
+class SynthesisBatch(NamedTuple):
+    """A batch synthesis outcome: which engine spoke + the per-segment results.
+
+    `fallback_segments` counts segments that were SILENTLY replaced by the
+    fallback engine after the selected engine errored at runtime — callers use
+    it (together with `engine == "fallback"`) to warn that the output contains
+    placeholder audio rather than real speech.
+    """
+
+    engine: str
+    fallback_segments: int
+    segments: list[SegmentOut]
 
 logger = logging.getLogger("tts.service")
 
@@ -50,10 +70,12 @@ class TtsService:
 
     # -- engine resolution -----------------------------------------------------
 
-    def _resolve_engine(self, voice_id: str | None) -> tuple[Engine, str | None]:
+    def _resolve_engine(self, voice_id: str | None, language: str) -> tuple[Engine, str | None]:
         """Pick the engine for a request, honoring a forced-engine voice prefix.
 
-        Returns (engine, voice_without_prefix).
+        Selection is LANGUAGE-AWARE: an engine is only auto-picked if it can
+        actually speak `language` (Piper needs a matching voice model, macOS
+        `say` needs a matching system voice). Returns (engine, voice).
 
         Raises:
             TtsError(PIPER_MISSING)   if "piper:" forced but Piper unavailable.
@@ -62,7 +84,15 @@ class TtsService:
         forced_name, voice = parse_voice(voice_id)
 
         if forced_name is None:
-            return self.registry.best_available(), voice
+            engine = self.registry.best_for(language)
+            if engine.name == "fallback" and self.registry.best_available().name != "fallback":
+                logger.warning(
+                    "no TTS voice can speak '%s' — writing SILENT placeholders. "
+                    "Install a Piper voice for this language (e.g. via first-run "
+                    "setup) or set PIPER_VOICES_DIR.",
+                    language or "(unknown)",
+                )
+            return engine, voice
 
         engine = self.registry.by_name(forced_name)
         if engine is None:  # defensive — parse_voice only returns known names
@@ -70,7 +100,7 @@ class TtsService:
 
         if not engine.available():
             if forced_name == "piper":
-                raise piper_missing("PIPER_BINARY_PATH/PIPER_VOICE_MODEL_PATH not set or files missing")
+                raise piper_missing("PIPER_BINARY_PATH/PIPER_VOICES_DIR not set or files missing")
             if forced_name == "system":
                 raise tts_voice_missing(voice_id or "system")
             # "fallback" is always available; anything else falls through.
@@ -100,23 +130,30 @@ class TtsService:
         language: str,
         voice: str | None,
         speed: float,
-        voice_id_for_key: str | None,
-    ) -> None:
+        voice_token: str,
+    ) -> bool:
         """Synthesize a single segment, using the cache when possible.
 
         Falls back to the always-available FallbackEngine if the selected engine
         raises during synthesis (e.g. an external binary errors at runtime) —
         unless the engine *is* the fallback, in which case the error propagates.
+
+        Returns True if the SILENT fallback replaced the selected engine.
         """
         window_ms = max(0, seg.endMs - seg.startMs)
-        key = cache_key(seg.id, seg.text, voice_id_for_key, speed)
+        # `voice_token` identifies the engine + concrete voice/model, so audio
+        # synthesized by one engine can never be served from the cache to a
+        # request that would resolve to another (e.g. English `say` clips must
+        # not satisfy a Piper Vietnamese request for the same text).
+        key = cache_key(seg.id, seg.text, voice_token, speed)
 
         cached = self.cache.get(key)
         if cached is not None:
             self.cache.materialize(cached, out_path)
             logger.info("cache hit for %s (engine=%s)", seg.id, engine.name)
-            return
+            return False
 
+        used_fallback = False
         try:
             engine.synth(
                 seg.text,
@@ -135,6 +172,7 @@ class TtsService:
                 seg.id,
                 exc,
             )
+            used_fallback = True
             self.registry.fallback.synth(
                 seg.text,
                 str(out_path),
@@ -144,9 +182,12 @@ class TtsService:
                 window_ms=window_ms,
             )
 
-        # Populate the cache from the freshly written file.
-        if out_path.is_file():
+        # Populate the cache from the freshly written file — but never cache a
+        # runtime-fallback (silent) clip under the real engine's key, or the
+        # silence would keep being served after the engine is fixed.
+        if not used_fallback and out_path.is_file():
             self.cache.put(key, out_path)
+        return used_fallback
 
     # -- public API ------------------------------------------------------------
 
@@ -158,8 +199,8 @@ class TtsService:
         segments: list[SegmentIn],
         output_dir: str,
         speed: float = 1.0,
-    ) -> list[SegmentOut]:
-        """Synthesize every segment, returning measured SegmentOut entries.
+    ) -> SynthesisBatch:
+        """Synthesize every segment, returning the engine used + SegmentOuts.
 
         Notes on `speed`: the requested speed is passed through to engines that
         support it (Piper length_scale, say/espeak rate). The *effective fit* to
@@ -167,24 +208,27 @@ class TtsService:
         so `speedRatio` here echoes the requested speed.
         """
         out_dir = self._ensure_output_dir(output_dir)
-        engine, voice = self._resolve_engine(voice_id)
         lang = to_tts_language(language)
+        engine, voice = self._resolve_engine(voice_id, lang)
+        voice_token = f"{engine_voice_key(engine, lang, voice)}|{voice_id or ''}"
 
         logger.info(
             "synthesize %d segment(s) lang=%s engine=%s voice=%s speed=%s",
             len(segments),
             lang or language,
             engine.name,
-            voice or "(default)",
+            voice or "(auto)",
             speed,
         )
 
+        fallback_count = 0
         results: list[SegmentOut] = []
         for ordinal, seg in enumerate(segments, start=1):
             fname = segment_filename(seg.id, ordinal)
             out_path = out_dir / fname
 
-            self._synth_one(engine, seg, out_path, lang, voice, speed, voice_id)
+            if self._synth_one(engine, seg, out_path, lang, voice, speed, voice_token):
+                fallback_count += 1
 
             duration_ms = read_wav_duration_ms(out_path)
             results.append(
@@ -198,7 +242,7 @@ class TtsService:
                 )
             )
 
-        return results
+        return SynthesisBatch(engine.name, fallback_count, results)
 
     def resynth_single(
         self,
@@ -214,11 +258,11 @@ class TtsService:
         Reuses the same cache + naming logic as the batch path so a regenerated
         clip lands at the expected `segment_NNNN.wav`.
         """
-        results = self.synthesize_segments(
+        batch = self.synthesize_segments(
             language=language,
             voice_id=voice_id,
             segments=[segment],
             output_dir=output_dir,
             speed=speed,
         )
-        return results[0]
+        return batch.segments[0]

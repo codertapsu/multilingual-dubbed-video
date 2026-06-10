@@ -46,7 +46,13 @@ def test_synthesize_segments_fallback(client, tmp_path):
     resp = client.post("/synthesize-segments", json=payload)
     assert resp.status_code == 200, resp.text
 
-    segs = resp.json()["segments"]
+    body = resp.json()
+    # The response reports which engine spoke (here: forced fallback) and that
+    # no segment was silently degraded at runtime.
+    assert body["engine"] == "fallback"
+    assert body["fallbackSegments"] == 0
+
+    segs = body["segments"]
     assert [s["segmentId"] for s in segs] == ["seg_0001", "seg_0002"]
 
     # WAVs were written with the segment_NNNN.wav naming.

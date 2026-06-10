@@ -170,7 +170,20 @@ curl -fL -o ~/VideoDubber/models/piper/vi_VN-vais1000-medium.onnx.json  "$BASE/v
 export PIPER_VOICE_MODEL_PATH=~/VideoDubber/models/piper/vi_VN-vais1000-medium.onnx
 ```
 
-**Both** `PIPER_BINARY_PATH` and `PIPER_VOICE_MODEL_PATH` must be set to use Piper.
+### How the worker picks a voice (language-aware)
+
+You need `PIPER_BINARY_PATH` plus at least one voice. The worker resolves the
+voice **per target language** from the standard Piper filename
+(`vi_VN-…onnx` → `vi`), in precedence order:
+
+1. an explicit request voice that is a path to an `.onnx` file,
+2. `PIPER_VOICE_MODEL_PATH` (only if its filename matches the language),
+3. any matching `*.onnx` in `PIPER_VOICES_DIR`
+   (default `~/VideoDubber/models/piper/` — where setup downloads voices).
+
+A voice whose language does not match is **never** used, and the OS engine is
+only used when the OS has a voice for that language — so a missing Vietnamese
+voice yields silent, flagged placeholders rather than English-sounding speech.
 Voice catalogue / samples: <https://rhasspy.github.io/piper-samples/>.
 
 Confirm the worker sees the voice:
@@ -192,7 +205,7 @@ See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#piper_missing).
 |---|---|---|
 | faster-whisper | `~/.cache/huggingface/hub/` | `HF_HOME` / `HF_HUB_CACHE` |
 | Argos packages | `~/.local/share/argos-translate/packages/` | `ARGOS_PACKAGES_DIR` |
-| Piper voices | `~/VideoDubber/models/piper/` | `MODELS_DIR` (setup), `PIPER_VOICE_MODEL_PATH` (runtime) |
+| Piper voices | `~/VideoDubber/models/piper/` | `PIPER_VOICES_DIR` (runtime), `MODELS_DIR` (setup), `PIPER_VOICE_MODEL_PATH` (single voice) |
 | Piper binary | wherever you unpacked it | `PIPER_BINARY_PATH` |
 
 ---

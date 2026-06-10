@@ -33,6 +33,18 @@ def _default_cache_dir() -> Path:
     return Path.home() / "VideoDubber" / "cache" / "tts"
 
 
+def _default_piper_voices_dir() -> Path:
+    """Default directory holding installed Piper voice models (*.onnx).
+
+    SHARED CONTRACT with the orchestrator's first-run installer and the desktop
+    shell (sidecar.rs): voices live under <config>/models/piper, where <config>
+    is VIDEODUBBER_CONFIG_DIR or ~/VideoDubber. PIPER_VOICES_DIR overrides.
+    """
+    base = _env("VIDEODUBBER_CONFIG_DIR")
+    root = Path(base).expanduser() if base else Path.home() / "VideoDubber"
+    return root / "models" / "piper"
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable view of the worker's configuration."""
@@ -44,6 +56,7 @@ class Settings:
     # Piper engine
     piper_binary_path: str | None
     piper_voice_model_path: str | None
+    piper_voices_dir: Path
 
     # System TTS overrides (optional; otherwise discovered on PATH)
     ffmpeg_path: str | None
@@ -75,6 +88,11 @@ def load_settings() -> Settings:
         port=int(_env("TTS_WORKER_PORT", "5103") or "5103"),
         piper_binary_path=_env("PIPER_BINARY_PATH"),
         piper_voice_model_path=_env("PIPER_VOICE_MODEL_PATH"),
+        piper_voices_dir=(
+            Path(_env("PIPER_VOICES_DIR") or "").expanduser()
+            if _env("PIPER_VOICES_DIR")
+            else _default_piper_voices_dir()
+        ),
         ffmpeg_path=_env("FFMPEG_PATH"),
         cache_dir=cache_dir,
         default_sample_rate=int(_env("TTS_DEFAULT_SAMPLE_RATE", "22050") or "22050"),

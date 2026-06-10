@@ -57,9 +57,10 @@ def piper_missing(detail: str) -> TtsError:
         message=f"Piper TTS is not available: {detail}",
         status_code=503,
         remediation=(
-            "Install the Piper binary and a voice model, then set "
-            "PIPER_BINARY_PATH and PIPER_VOICE_MODEL_PATH. See "
-            "https://github.com/rhasspy/piper for binaries and "
+            "Install the Piper binary (PIPER_BINARY_PATH) and a voice model for "
+            "the target language — either drop a .onnx voice into "
+            "PIPER_VOICES_DIR (default ~/VideoDubber/models/piper) or set "
+            "PIPER_VOICE_MODEL_PATH. See "
             "https://huggingface.co/rhasspy/piper-voices for .onnx voices. "
             "Or omit the 'piper:' voice prefix to allow graceful fallback."
         ),

@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.config import settings
-from app.engines import EngineRegistry
+from app.engines import EngineRegistry, model_language
 from app.errors import TtsError
 from app.lang import to_tts_language
 from app.schemas import (
@@ -103,17 +103,20 @@ async def voices(
     caps = registry.capabilities()
 
     if caps["piper"]:
-        # The Piper voice is whatever .onnx model is configured. We can't easily
-        # enumerate the model's language, so we report the requested language
-        # (or "*") and a stable id; callers force it via "piper:" if desired.
-        listed.append(
-            Voice(
-                id="piper:default",
-                language=lang or "*",
-                displayName="Piper (configured voice model)",
-                engine="piper",
+        # Enumerate installed voice models (voices dir + configured model). The
+        # language is parsed from the standard Piper filename convention.
+        for model in registry.piper.candidate_models():
+            model_lang = model_language(model.name) or "*"
+            if lang and model_lang != "*" and model_lang != lang:
+                continue
+            listed.append(
+                Voice(
+                    id=f"piper:{model}",
+                    language=model_lang,
+                    displayName=f"Piper — {model.stem}",
+                    engine="piper",
+                )
             )
-        )
 
     if caps["system"]:
         listed.append(
@@ -141,14 +144,18 @@ async def voices(
 @app.post("/synthesize-segments", response_model=SynthesizeResponse)
 async def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
     """Synthesize one WAV per segment into req.outputDir."""
-    segments = service.synthesize_segments(
+    batch = service.synthesize_segments(
         language=req.language,
         voice_id=req.voiceId,
         segments=req.segments,
         output_dir=req.outputDir,
         speed=req.speed,
     )
-    return SynthesizeResponse(segments=segments)
+    return SynthesizeResponse(
+        segments=batch.segments,
+        engine=batch.engine,
+        fallbackSegments=batch.fallback_segments,
+    )
 
 
 def run() -> None:

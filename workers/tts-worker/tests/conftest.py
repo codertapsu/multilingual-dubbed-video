@@ -23,9 +23,11 @@ if str(_PKG_ROOT) not in sys.path:
 def _isolated_cache(tmp_path, monkeypatch):
     """Point the cache dir at a temp dir for every test, and clear Piper env."""
     monkeypatch.setenv("VIDEODUBBER_CACHE_DIR", str(tmp_path / "cache_root"))
-    # Make sure no ambient Piper config leaks into tests.
+    # Make sure no ambient Piper config leaks into tests — including any real
+    # voices the developer has installed under ~/VideoDubber/models/piper.
     monkeypatch.delenv("PIPER_BINARY_PATH", raising=False)
     monkeypatch.delenv("PIPER_VOICE_MODEL_PATH", raising=False)
+    monkeypatch.setenv("PIPER_VOICES_DIR", str(tmp_path / "no_voices"))
     yield
 
 

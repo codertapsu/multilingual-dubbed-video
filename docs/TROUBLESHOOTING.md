@@ -21,7 +21,7 @@ doc lists **every** error code, then covers common environment issues.
 | `STT_MODEL_MISSING` | faster-whisper model unavailable | Not cached and can't download | Pre-cache the model; check `FASTER_WHISPER_MODEL` | [MODEL_SETUP](MODEL_SETUP.md#1-faster-whisper-speech-to-text) |
 | `TRANSLATION_PACKAGE_MISSING` | No Argos package for the pair | Pair not installed / not published | `argospm install translate-<from>_<to>`; pick a supported pair | [MODEL_SETUP](MODEL_SETUP.md#2-argos-translate-machine-translation) |
 | `PIPER_MISSING` | Piper binary not usable | `PIPER_BINARY_PATH` unset/invalid | Install the Piper binary + set the path, or use the fallback engine | [MODEL_SETUP](MODEL_SETUP.md#3-piper-text-to-speech) |
-| `TTS_VOICE_MISSING` | Piper voice not usable | `PIPER_VOICE_MODEL_PATH` unset/invalid | Download a voice `.onnx`+`.onnx.json` and set the path | [MODEL_SETUP](MODEL_SETUP.md#3-piper-text-to-speech) |
+| `TTS_VOICE_MISSING` | No voice for the language | No matching `.onnx` in `PIPER_VOICES_DIR` / bad `PIPER_VOICE_MODEL_PATH` | Download a voice `.onnx`+`.onnx.json` for the target language | [MODEL_SETUP](MODEL_SETUP.md#3-piper-text-to-speech) |
 | `UNSUPPORTED_MEDIA` | Input can't be probed/decoded | Corrupt / unsupported container or codec | Re-encode to a standard MP4/MKV; verify with `ffprobe` | [#unsupported_media](#unsupported_media) |
 | `NO_AUDIO_STREAM` | No audio to transcribe | Video has no audio track | Use a video with audio, or add a track | [#no_audio_stream](#no_audio_stream) |
 | `INVALID_LANGUAGE` | Bad/unsupported language code | Typo or unknown locale | Use a valid code (e.g. `en`, `vi-VN`); see normalization rules | [#invalid_language](#invalid_language) |
@@ -79,10 +79,21 @@ want Piper, leave it unset — the TTS worker falls back to system TTS or a sile
 WAV automatically.
 
 ### `TTS_VOICE_MISSING`
-`PIPER_VOICE_MODEL_PATH` is unset or the `.onnx`/`.onnx.json` pair is missing/unreadable.
-Download a voice and set the path
-([MODEL_SETUP §3](MODEL_SETUP.md#3-piper-text-to-speech)). Confirm with
-`curl "http://127.0.0.1:5103/voices?language=<lang>"`.
+No usable voice for the requested language. Drop a matching `.onnx`/`.onnx.json` voice
+into `PIPER_VOICES_DIR` (default `~/VideoDubber/models/piper/`) or set
+`PIPER_VOICE_MODEL_PATH` ([MODEL_SETUP §3](MODEL_SETUP.md#3-piper-text-to-speech)).
+Confirm with `curl "http://127.0.0.1:5103/voices?language=<lang>"`.
+
+### The dub speaks the wrong language (or is silent)
+The TTS worker picks its engine **per target language**: Piper needs a voice whose
+filename matches the language (`vi_VN-…onnx` → `vi`), and the OS engine (`say` /
+espeak-ng) is only used when the OS actually has a voice for that language. If nothing
+can speak the language, segments are written as **silent placeholders** and the
+pipeline logs a warning naming the missing voice — install a Piper voice for the
+target language and re-run. (Older builds could read Vietnamese text aloud with the
+default English system voice; current builds never use a wrong-language voice.) The
+`/synthesize-segments` response reports the engine used
+(`"engine": "piper" | "system" | "fallback"`).
 
 ### `UNSUPPORTED_MEDIA`
 The input couldn't be probed or decoded (corrupt file, or a container/codec FFmpeg can't

@@ -77,6 +77,19 @@ class SynthesizeResponse(BaseModel):
     """POST /synthesize-segments response. Mirrors shared TtsResult."""
 
     segments: list[SegmentOut]
+    engine: EngineName = Field(
+        default="fallback",
+        description="The engine that synthesized this batch.",
+    )
+    fallbackSegments: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Number of segments silently replaced by the fallback engine after "
+            "the selected engine errored at runtime. Non-zero (or engine == "
+            "'fallback') means the output contains placeholder silence."
+        ),
+    )
 
 
 class Voice(BaseModel):

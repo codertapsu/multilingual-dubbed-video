@@ -15,7 +15,6 @@ import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import {
   ALL_SUBTITLE_EXPORT_MODES,
-  PROCESSING_MODE_LABELS,
   SUBTITLE_EXPORT_MODE_HINTS,
   SUBTITLE_EXPORT_MODE_LABELS,
   formatBytes,
@@ -29,10 +28,10 @@ import type {
   AppError,
   CreateProjectInput,
   MediaInfo,
-  ProcessingMode,
   ProjectSettings,
   SubtitleExportMode,
 } from '../../core/models';
+import type { ProviderInfo, ProvidersResponse } from '../../core/models/setup';
 
 /** Wizard step index. */
 type WizardStep = 1 | 2;
@@ -91,7 +90,6 @@ export class NewProjectWizardComponent implements OnInit {
   protected readonly subtitleModes = ALL_SUBTITLE_EXPORT_MODES;
   protected readonly subtitleLabels = SUBTITLE_EXPORT_MODE_LABELS;
   protected readonly subtitleHints = SUBTITLE_EXPORT_MODE_HINTS;
-  protected readonly processingLabels = PROCESSING_MODE_LABELS;
   protected readonly formatBytes = formatBytes;
   protected readonly formatDuration = formatDurationCoarse;
   protected readonly inTauri = this.ipc.inTauri;
@@ -105,6 +103,22 @@ export class NewProjectWizardComponent implements OnInit {
     ...FALLBACK_COMMON_LANGUAGES,
   ]);
   protected readonly settings = signal<ProjectSettings>(defaultSettings());
+
+  /** Per-phase provider catalog (local + cloud, with availability flags). */
+  protected readonly providers = signal<ProvidersResponse | null>(null);
+
+  /** Phases currently routed to a cloud provider (drives the privacy note). */
+  protected readonly cloudPhases = computed(() => {
+    const provs = this.providers();
+    const s = this.settings();
+    if (!provs) return [] as string[];
+    const find = (list: ProviderInfo[], id: string) => list.find((p) => p.id === id);
+    const phases: string[] = [];
+    if (find(provs.stt, s.sttProviderId)?.isLocal === false) phases.push('speech-to-text (uploads the audio track)');
+    if (find(provs.translation, s.translationProviderId)?.isLocal === false) phases.push('translation (sends the transcript text)');
+    if (find(provs.tts, s.ttsProviderId)?.isLocal === false) phases.push('text-to-speech (sends the translated text)');
+    return phases;
+  });
 
   // -------- async state --------
   protected readonly busy = signal(false);
@@ -130,6 +144,7 @@ export class NewProjectWizardComponent implements OnInit {
 
   ngOnInit(): void {
     void this.loadLanguages();
+    void this.loadProvidersAndDefaults();
   }
 
   private async loadLanguages(): Promise<void> {
@@ -140,6 +155,37 @@ export class NewProjectWizardComponent implements OnInit {
       }
     } catch {
       // Offline / orchestrator down: keep the bundled fallback list silently.
+    }
+  }
+
+  /**
+   * Load the provider catalog and seed the project settings with the user's
+   * saved defaults (Settings → Processing defaults). A default provider whose
+   * API key has since been removed is skipped — the local engine stays.
+   */
+  private async loadProvidersAndDefaults(): Promise<void> {
+    try {
+      const [provs, prefs] = await Promise.all([
+        this.ipc.getProviders(),
+        this.ipc.getAppPreferences(),
+      ]);
+      this.providers.set(provs);
+      const d = prefs.providerDefaults;
+      if (d) {
+        const usable = (list: ProviderInfo[], id?: string) =>
+          id && list.some((p) => p.id === id && p.available) ? id : undefined;
+        this.settings.update((s) => ({
+          ...s,
+          sttProviderId: usable(provs.stt, d.sttProviderId) ?? s.sttProviderId,
+          translationProviderId:
+            usable(provs.translation, d.translationProviderId) ?? s.translationProviderId,
+          ttsProviderId: usable(provs.tts, d.ttsProviderId) ?? s.ttsProviderId,
+          sttModel: d.sttModel ?? s.sttModel,
+        }));
+        this.syncProcessingMode();
+      }
+    } catch {
+      // Offline / orchestrator down: the wizard still works with local defaults.
     }
   }
 
@@ -225,10 +271,21 @@ export class NewProjectWizardComponent implements OnInit {
     }
   }
 
-  protected setProcessingMode(mode: ProcessingMode): void {
-    // cloud-enhanced is disabled in the MVP; guard anyway.
-    if (mode === 'cloud-enhanced') return;
-    this.patchSettings('processingMode', mode);
+  /** Change the engine for one phase and re-derive the processing mode. */
+  protected setProvider(
+    key: 'sttProviderId' | 'translationProviderId' | 'ttsProviderId',
+    providerId: string,
+  ): void {
+    this.patchSettings(key, providerId);
+    this.syncProcessingMode();
+  }
+
+  /**
+   * processingMode is DERIVED: "cloud-enhanced" iff any phase routes to a
+   * non-local provider. Persisted on the project for transparency/reporting.
+   */
+  private syncProcessingMode(): void {
+    this.patchSettings('processingMode', this.cloudPhases().length > 0 ? 'cloud-enhanced' : 'local');
   }
 
   /**

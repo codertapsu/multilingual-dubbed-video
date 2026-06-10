@@ -77,3 +77,80 @@
   max-height: 240px;
   overflow-y: auto;
 }
+
+// ---- Processing setup (system profile / defaults / cloud keys) ----
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.chip {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--border, #3a3a44);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  opacity: 0.9;
+}
+
+.chip-tier {
+  text-transform: capitalize;
+  border-color: var(--accent, #7aa2f7);
+}
+
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.rec-line {
+  margin: 0;
+}
+
+.defaults-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.9rem 1.2rem;
+}
+
+.static-value {
+  margin: 0.35rem 0 0;
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+.cred-row {
+  padding: 0.7rem 0;
+  border-top: 1px solid var(--border, #2c2c34);
+}
+
+.cred-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.cred-name {
+  font-weight: 600;
+}
+
+.cred-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+
+  .grow {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.test-ok {
+  color: var(--ok, #9ece6a);
+}
+
+.test-fail {
+  color: var(--error, #f7768e);
+}

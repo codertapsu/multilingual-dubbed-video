@@ -197,35 +197,79 @@
       </fieldset>
 
       <fieldset>
-        <legend>Processing mode</legend>
-        <div class="radio-list" role="radiogroup" aria-label="Processing mode">
-          <label class="radio-row">
-            <input
-              type="radio"
-              name="processingMode"
-              value="local"
-              [checked]="settings().processingMode === 'local'"
-              (change)="setProcessingMode('local')"
-            />
-            <span class="radio-body">
-              <span class="radio-title">{{ processingLabels['local'] }}</span>
-              <span class="hint">Everything runs on this machine. No network.</span>
-            </span>
-          </label>
-          <label class="radio-row disabled">
-            <input type="radio" name="processingMode" value="cloud-enhanced" disabled />
-            <span class="radio-body">
-              <span class="radio-title">
-                {{ processingLabels['cloud-enhanced'] }}
-                <span class="badge badge-pending">Future</span>
-              </span>
-              <span class="hint"
-                >Optional cloud providers (OpenAI, DeepL, ElevenLabs…). Not in
-                this build.</span
+        <legend>Processing engines</legend>
+        <p class="hint">
+          Each phase can run locally (private, free, works offline) or in the
+          cloud (often better quality on weaker hardware; needs an API key from
+          Settings and sends that phase's data to the service). Defaults come
+          from Settings → Processing defaults.
+        </p>
+        @if (providers(); as provs) {
+          <div class="lang-grid">
+            <div class="field">
+              <label for="provStt">Speech to text</label>
+              <select
+                id="provStt"
+                name="provStt"
+                [ngModel]="settings().sttProviderId"
+                (ngModelChange)="setProvider('sttProviderId', $event)"
               >
-            </span>
-          </label>
-        </div>
+                @for (p of provs.stt; track p.id) {
+                  <option [value]="p.id" [disabled]="!p.available">
+                    {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+                  </option>
+                }
+              </select>
+            </div>
+            <div class="field">
+              <label for="provTranslation">Translation</label>
+              <select
+                id="provTranslation"
+                name="provTranslation"
+                [ngModel]="settings().translationProviderId"
+                (ngModelChange)="setProvider('translationProviderId', $event)"
+              >
+                @for (p of provs.translation; track p.id) {
+                  <option [value]="p.id" [disabled]="!p.available">
+                    {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+                  </option>
+                }
+              </select>
+            </div>
+            <div class="field">
+              <label for="provTts">Text to speech</label>
+              <select
+                id="provTts"
+                name="provTts"
+                [ngModel]="settings().ttsProviderId"
+                (ngModelChange)="setProvider('ttsProviderId', $event)"
+              >
+                @for (p of provs.tts; track p.id) {
+                  <option [value]="p.id" [disabled]="!p.available">
+                    {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+                  </option>
+                }
+              </select>
+            </div>
+            <div class="field">
+              <label>Rendering</label>
+              <p class="hint">
+                Local FFmpeg — always on this machine; your video never leaves it.
+              </p>
+            </div>
+          </div>
+          @if (cloudPhases().length > 0) {
+            <div class="badge badge-warning audio-warn" role="note">
+              ☁ Cloud processing enabled for: {{ cloudPhases().join('; ') }}.
+              Only that data is uploaded — the video file itself stays local.
+            </div>
+          }
+        } @else {
+          <p class="hint">
+            Engine list unavailable (backend offline?) — the project will use
+            the local engines.
+          </p>
+        }
       </fieldset>
 
       <div class="row row-between">

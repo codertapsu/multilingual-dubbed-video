@@ -91,9 +91,101 @@ export type SetupEvent =
   | { type: 'done'; status: SetupStatus }
   | { type: 'error'; error: AppError };
 
-/** GET/PUT /preferences -> the auto-update preference. */
+/** Default per-phase providers applied to NEW projects. */
+export interface ProviderDefaults {
+  sttProviderId?: string;
+  translationProviderId?: string;
+  ttsProviderId?: string;
+  sttModel?: string;
+}
+
+/** GET/PUT /preferences -> persisted preferences. */
 export interface UpdatePreferences {
   autoUpdate: boolean;
+  providerDefaults?: ProviderDefaults;
+}
+
+// ---------------------------------------------------------------------------
+// Cloud services, credentials, providers, system profile (mirror shared)
+// ---------------------------------------------------------------------------
+
+/** Cloud AI services the app can call directly (per-phase, opt-in). */
+export type CloudServiceId = 'openai' | 'anthropic' | 'gemini';
+
+/** Masked, display-safe state of one cloud service's credentials. */
+export interface CloudCredentialInfo {
+  service: CloudServiceId;
+  configured: boolean;
+  maskedKey?: string;
+  fromEnv?: boolean;
+  baseUrl?: string;
+  model?: string;
+}
+
+/** PUT /credentials body. */
+export interface SaveCredentialRequest {
+  service: CloudServiceId;
+  apiKey?: string | null;
+  baseUrl?: string | null;
+  model?: string | null;
+}
+
+/** POST /credentials/test result. */
+export interface CredentialTestResult {
+  service: CloudServiceId;
+  ok: boolean;
+  detail: string;
+}
+
+/** One selectable provider for a pipeline phase (GET /providers). */
+export interface ProviderInfo {
+  id: string;
+  displayName: string;
+  isLocal: boolean;
+  credentialService?: CloudServiceId;
+  available: boolean;
+}
+
+/** GET /providers response. */
+export interface ProvidersResponse {
+  stt: ProviderInfo[];
+  translation: ProviderInfo[];
+  tts: ProviderInfo[];
+}
+
+/** A detected GPU (best-effort). */
+export interface GpuInfo {
+  name: string;
+  vramMb?: number;
+}
+
+/** GET /system -> hardware/OS profile. */
+export interface SystemProfile {
+  platform: string;
+  arch: string;
+  cpuModel: string;
+  cpuCores: number;
+  totalRamMb: number;
+  freeRamMb: number;
+  gpus: GpuInfo[];
+  appleSilicon: boolean;
+}
+
+/** Capability tier derived from the profile. */
+export type HardwareTier = 'constrained' | 'balanced' | 'performance';
+
+/** Hardware-aware setup recommendation. */
+export interface HardwareRecommendation {
+  tier: HardwareTier;
+  whisperModel: string;
+  suggestCloud: { stt: boolean; translation: boolean; tts: boolean };
+  reasons: string[];
+}
+
+/** GET /system response envelope. */
+export interface SystemProfileResponse {
+  profile: SystemProfile;
+  recommendation: HardwareRecommendation;
 }
 
 /** Result of `check_for_update` (tauri-plugin-updater). */

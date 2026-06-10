@@ -19,10 +19,16 @@ import type {
   WorkersHealth,
 } from '../models/view-models';
 import type {
+  CloudCredentialInfo,
+  CloudServiceId,
+  CredentialTestResult,
   PreflightResult,
+  ProvidersResponse,
+  SaveCredentialRequest,
   SetupCatalog,
   SetupInstallRequest,
   SetupStatus,
+  SystemProfileResponse,
   UpdateInfo,
   UpdatePreferences,
 } from '../models/setup';
@@ -308,6 +314,52 @@ export class IpcService {
     return this.setPreferences(body);
   }
 
+  // ------------------------------------------------------------------ //
+  // Providers / system profile / cloud credentials                      //
+  //                                                                     //
+  // These endpoints are consumed over HTTP in BOTH modes: the Tauri     //
+  // webview's CSP already allows the orchestrator origin (it's how SSE  //
+  // works), and skipping the Rust proxy keeps the surface small.        //
+  // ------------------------------------------------------------------ //
+
+  /** GET /providers — selectable providers per phase, with availability. */
+  getProviders(): Promise<ProvidersResponse> {
+    return this.http<ProvidersResponse>('GET', '/providers');
+  }
+
+  /** GET /system — hardware profile + hardware-aware recommendation. */
+  getSystemProfile(): Promise<SystemProfileResponse> {
+    return this.http<SystemProfileResponse>('GET', '/system');
+  }
+
+  /** GET /credentials — masked per-service credential status. */
+  getCredentials(): Promise<{ services: CloudCredentialInfo[] }> {
+    return this.http<{ services: CloudCredentialInfo[] }>('GET', '/credentials');
+  }
+
+  /** PUT /credentials — set/replace/clear one service's key. */
+  saveCredential(body: SaveCredentialRequest): Promise<{ ok: boolean; services: CloudCredentialInfo[] }> {
+    return this.http<{ ok: boolean; services: CloudCredentialInfo[] }>('PUT', '/credentials', body);
+  }
+
+  /** POST /credentials/test — live round-trip to the cloud service. */
+  testCredential(service: CloudServiceId): Promise<CredentialTestResult> {
+    return this.http<CredentialTestResult>('POST', '/credentials/test', { service });
+  }
+
+  /**
+   * GET/PUT /preferences over HTTP in both modes — the Rust proxy only knows
+   * the autoUpdate field, and these calls need the full preferences object
+   * (provider defaults included).
+   */
+  getAppPreferences(): Promise<UpdatePreferences> {
+    return this.http<UpdatePreferences>('GET', '/preferences');
+  }
+
+  saveAppPreferences(body: Partial<UpdatePreferences>): Promise<{ ok: boolean }> {
+    return this.http<{ ok: boolean }>('PUT', '/preferences', body);
+  }
+
   /**
    * Check GitHub Releases for an available update (tauri-plugin-updater).
    * Tauri-only — in the browser there is no updater, so we resolve a safe
@@ -410,6 +462,10 @@ export class IpcService {
     const init: RequestInit = {
       method,
       headers: { Accept: 'application/json' },
+      // Generous ceiling so a hung orchestrator can't wedge the UI forever.
+      // Long-running work (pipeline runs) returns 202 immediately, but project
+      // creation copies the source video, which can take minutes for large files.
+      signal: AbortSignal.timeout(10 * 60 * 1000),
     };
     if (body !== undefined && method !== 'GET') {
       (init.headers as Record<string, string>)['Content-Type'] = 'application/json';

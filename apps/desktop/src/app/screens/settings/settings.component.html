@@ -6,6 +6,209 @@
 
   <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
 
+  <!-- ============================ This computer ============================ -->
+  @if (system(); as sys) {
+    <div class="card stack">
+      <h2>This computer</h2>
+      <div class="chips">
+        <span class="chip mono">{{ sys.profile.cpuModel }}</span>
+        <span class="chip">{{ sys.profile.cpuCores }} cores</span>
+        <span class="chip">{{ ramLabel() }}</span>
+        @for (gpu of sys.profile.gpus; track gpu.name) {
+          <span class="chip">{{ gpu.name }}</span>
+        }
+        <span class="chip chip-tier">{{ sys.recommendation.tier }}</span>
+      </div>
+      <div class="stack-sm">
+        <p class="rec-line">
+          Recommended local speech-recognition model:
+          <strong class="mono">{{ sys.recommendation.whisperModel }}</strong>
+        </p>
+        @for (reason of sys.recommendation.reasons; track reason) {
+          <p class="hint">{{ reason }}</p>
+        }
+        @if (sys.recommendation.suggestCloud.stt || sys.recommendation.suggestCloud.translation) {
+          <p class="hint">
+            For this machine, cloud processing is suggested for:
+            {{ sys.recommendation.suggestCloud.stt ? 'speech-to-text' : '' }}
+            {{ sys.recommendation.suggestCloud.stt && sys.recommendation.suggestCloud.translation ? '+' : '' }}
+            {{ sys.recommendation.suggestCloud.translation ? 'translation' : '' }}
+            — add an API key below, then pick the cloud provider per phase.
+          </p>
+        }
+      </div>
+      <div class="actions">
+        <button type="button" class="btn" (click)="applyRecommended()" [disabled]="defaultsSaving()">
+          Use recommended model as default
+        </button>
+      </div>
+    </div>
+  }
+
+  <!-- ============================ Processing defaults ============================ -->
+  <div class="card stack">
+    <h2>Processing defaults</h2>
+    <p class="muted">
+      The engine used for each phase of new projects. Local engines are private
+      and free; cloud engines can give better quality on weaker hardware but
+      send that phase's data to the service. You can still change providers per
+      project in the wizard, and re-visit this screen anytime.
+    </p>
+
+    @if (providers(); as provs) {
+      <div class="defaults-grid">
+        <div class="field">
+          <label for="defStt">1 · Speech to text</label>
+          <select
+            id="defStt"
+            name="defStt"
+            [ngModel]="defaults().sttProviderId ?? 'faster-whisper'"
+            (ngModelChange)="patchDefault('sttProviderId', $event)"
+          >
+            @for (p of provs.stt; track p.id) {
+              <option [value]="p.id" [disabled]="!p.available">
+                {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+              </option>
+            }
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="defSttModel">Local STT model</label>
+          <select
+            id="defSttModel"
+            name="defSttModel"
+            [ngModel]="defaults().sttModel ?? 'base'"
+            (ngModelChange)="patchDefault('sttModel', $event)"
+          >
+            @for (m of whisperModels; track m.id) {
+              <option [value]="m.id">{{ m.label }}</option>
+            }
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="defTranslation">2 · Translation</label>
+          <select
+            id="defTranslation"
+            name="defTranslation"
+            [ngModel]="defaults().translationProviderId ?? 'argos'"
+            (ngModelChange)="patchDefault('translationProviderId', $event)"
+          >
+            @for (p of provs.translation; track p.id) {
+              <option [value]="p.id" [disabled]="!p.available">
+                {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+              </option>
+            }
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="defTts">3 · Text to speech</label>
+          <select
+            id="defTts"
+            name="defTts"
+            [ngModel]="defaults().ttsProviderId ?? 'piper-local'"
+            (ngModelChange)="patchDefault('ttsProviderId', $event)"
+          >
+            @for (p of provs.tts; track p.id) {
+              <option [value]="p.id" [disabled]="!p.available">
+                {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+              </option>
+            }
+          </select>
+        </div>
+
+        <div class="field">
+          <label>4 · Rendering</label>
+          <p class="static-value">Local FFmpeg — always on this machine (your video never leaves it).</p>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn btn-primary" (click)="saveDefaults()" [disabled]="defaultsSaving()">
+          {{ defaultsSaving() ? 'Saving…' : 'Save defaults' }}
+        </button>
+        @if (defaultsSaved()) {
+          <span class="badge badge-completed note">✓ Saved — applies to new projects</span>
+        }
+      </div>
+    } @else {
+      <p class="hint">Provider list unavailable — is the local backend running?</p>
+    }
+  </div>
+
+  <!-- ============================ Cloud API keys ============================ -->
+  <div class="card stack">
+    <h2>Cloud API keys</h2>
+    <p class="muted">
+      Optional. Keys are stored only on this machine
+      (<span class="mono">~/VideoDubber/credentials.json</span>, owner-only
+      permissions) and are sent only to the service they belong to. Nothing is
+      uploaded anywhere unless you select a cloud provider for a phase.
+    </p>
+
+    @for (svc of services; track svc) {
+      <div class="cred-row stack-sm">
+        <div class="cred-head">
+          <span class="cred-name">{{ serviceMeta[svc].label }}</span>
+          @if (credentialFor(svc); as cred) {
+            @if (cred.configured) {
+              <span class="badge badge-completed">
+                {{ cred.fromEnv ? 'from environment' : ('key ' + (cred.maskedKey ?? 'set')) }}
+              </span>
+            } @else {
+              <span class="badge">not configured</span>
+            }
+          }
+        </div>
+        <div class="cred-controls">
+          <input
+            type="password"
+            class="grow"
+            [attr.aria-label]="serviceMeta[svc].label + ' API key'"
+            [placeholder]="serviceMeta[svc].keyHint"
+            [ngModel]="keyInputFor(svc)"
+            (ngModelChange)="setKeyInput(svc, $event)"
+            [name]="'key-' + svc"
+            autocomplete="off"
+          />
+          <button
+            type="button"
+            class="btn btn-sm"
+            (click)="saveKey(svc)"
+            [disabled]="credBusy() !== null || keyInputFor(svc).trim().length === 0"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm"
+            (click)="testKey(svc)"
+            [disabled]="credBusy() !== null || !(credentialFor(svc)?.configured ?? false)"
+          >
+            {{ credBusy() === svc ? '…' : 'Test' }}
+          </button>
+          @if (credentialFor(svc)?.configured && !credentialFor(svc)?.fromEnv) {
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              (click)="clearKey(svc)"
+              [disabled]="credBusy() !== null"
+            >
+              Remove
+            </button>
+          }
+        </div>
+        @if (testResults()[svc]; as result) {
+          <p class="hint" [class.test-ok]="result.ok" [class.test-fail]="!result.ok">
+            {{ result.ok ? '✓' : '✗' }} {{ result.detail }}
+          </p>
+        }
+      </div>
+    }
+  </div>
+
   <!-- ============================ Updates ============================ -->
   <div class="card stack">
     <h2>Updates</h2>

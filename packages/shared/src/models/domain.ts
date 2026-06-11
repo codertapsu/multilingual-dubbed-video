@@ -124,6 +124,14 @@ export interface ProjectSettings {
   maxSpeedRatio: number;
   /** Allowed overflow past a segment window before it is flagged, in ms. */
   allowedOverflowMs: number;
+  /**
+   * Auto-fit overflowing translations: after alignment, re-translate any
+   * `timing-conflict` segment with a tighter word budget, re-synthesize, and
+   * re-align so it fits. Works with LLM translation providers that can shorten
+   * on request (Ollama/llama.cpp/cloud); a harmless no-op for Argos. Default on
+   * — set false to keep the literal translation and fix conflicts in the editor.
+   */
+  autoFitOverflow?: boolean;
   /** Time-stretch engine for fitting clips to windows (default ffmpeg-atempo). */
   timeStretchEngine?: TimeStretchEngine;
   /** Final-render encode quality/speed (default `quality`). */

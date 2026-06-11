@@ -114,6 +114,16 @@ export class FakeMediaService implements PipelineMediaService {
     if (dur !== undefined) {
       return { ...fakeMediaInfo(dur), durationMs: dur };
     }
+    // Otherwise, a TTS-segment WAV may encode its duration as its file content
+    // (used by re-synthesis tests where the duration changes when text shortens).
+    if (inputPath.includes('tts_segments')) {
+      try {
+        const n = Number.parseInt(await fsp.readFile(inputPath, 'utf8'), 10);
+        if (Number.isFinite(n)) return { ...fakeMediaInfo(n), durationMs: n };
+      } catch {
+        /* fall through to the default */
+      }
+    }
     const info = this.opts.mediaInfo ?? fakeMediaInfo();
     return this.opts.hasAudio === false ? { ...info, hasAudio: false, audioStreams: [] } : info;
   }

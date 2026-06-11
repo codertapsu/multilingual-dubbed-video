@@ -2,7 +2,15 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Project } from '@videodubber/shared';
+import type {
+  Project,
+  TranslationInput,
+  TranslationProvider,
+  TranslationResult,
+  TtsInput,
+  TtsProvider,
+  TtsResult,
+} from '@videodubber/shared';
 import { PipelineRunner, planSttChunks, type RunnerDeps } from './runner.js';
 import { ProjectStore } from '../workspace/projectStore.js';
 import { EventBusRegistry } from '../events.js';
@@ -13,6 +21,7 @@ import {
   FakeTranslationProvider,
   FakeTtsProvider,
   createProjectInput,
+  defaultSettings,
   fakeMediaInfo,
   fakeRegistry,
   makeSegments,
@@ -213,6 +222,146 @@ describe('planSttChunks', () => {
       [0, 60_000],
       [60_000, 120_000],
     ]);
+  });
+});
+
+describe('PipelineRunner — auto-fit overflowing translations', () => {
+  it('re-translates + re-synthesizes timing-conflict segments so they fit', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(
+      createProjectInput(video, {
+        settings: defaultSettings({ maxSpeedRatio: 1.6, allowedOverflowMs: 300, autoFitOverflow: true }),
+      }),
+    );
+    const paths = store.paths(project.id);
+
+    // Two adjacent 1s segments -> segment 0's gap-aware window is 1000 ms.
+    const stt = new FakeSttProvider(
+      makeSegments([
+        [0, 1000, 'zh0'],
+        [1000, 2000, 'zh1'],
+      ]),
+    );
+
+    // Translation shortens a segment's text each time it is (re)translated.
+    const counts = new Map<string, number>();
+    const translation: TranslationProvider = {
+      id: 'argos',
+      displayName: 'shrinking-mt',
+      isLocal: true,
+      async translateSegments(input: TranslationInput): Promise<TranslationResult> {
+        return {
+          segments: input.segments.map((s) => {
+            const n = counts.get(s.id) ?? 0;
+            counts.set(s.id, n + 1);
+            return { id: s.id, translatedText: 'x'.repeat(Math.max(10, 90 - n * 60)) };
+          }),
+        };
+      },
+    };
+
+    // TTS writes duration (= textLen * 30 ms) as the WAV content; FakeMediaService
+    // probe reads it back, so re-synthesis after shortening changes the duration.
+    const tts: TtsProvider = {
+      id: 'piper-local',
+      displayName: 'len-tts',
+      isLocal: true,
+      async synthesizeSegments(input: TtsInput): Promise<TtsResult> {
+        const segments = await Promise.all(
+          input.segments.map(async (s, i) => {
+            const num = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
+            const audioPath = path.join(input.outputDir, `segment_${String(num).padStart(4, '0')}.wav`);
+            const durationMs = s.text.length * 30;
+            await fsp.mkdir(input.outputDir, { recursive: true });
+            await fsp.writeFile(audioPath, String(durationMs), 'utf8');
+            return { segmentId: s.id, text: s.text, audioPath, durationMs, startMs: s.startMs, endMs: s.endMs, speedRatio: 1 };
+          }),
+        );
+        return { segments };
+      },
+    };
+
+    const bus = buses.get(project.id);
+    const deps: RunnerDeps = {
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(stt, translation, tts),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    };
+
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+
+    // seg 0 began as a timing-conflict (90 chars -> 2700 ms in a 1000 ms window)
+    // and was auto-fit (re-translated to 30 chars -> 900 ms -> fits).
+    const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8')) as {
+      segmentId: string;
+      status: string;
+    }[];
+    expect(aligned.find((a) => a.segmentId === 'seg_0001')?.status).not.toBe('timing-conflict');
+
+    // It was re-translated once (initial + one refit) and the persisted text shrank.
+    expect(counts.get('seg_0001')).toBe(2);
+    const translated = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')) as {
+      segments: { id: string; translatedText: string }[];
+    };
+    expect(translated.segments.find((s) => s.id === 'seg_0001')!.translatedText.length).toBe(30);
+  });
+
+  it('does not refit when autoFitOverflow is false', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(
+      createProjectInput(video, {
+        settings: defaultSettings({ maxSpeedRatio: 1.6, allowedOverflowMs: 300, autoFitOverflow: false }),
+      }),
+    );
+    const paths = store.paths(project.id);
+    const counts = new Map<string, number>();
+    const translation: TranslationProvider = {
+      id: 'argos',
+      displayName: 'mt',
+      isLocal: true,
+      async translateSegments(input: TranslationInput): Promise<TranslationResult> {
+        return {
+          segments: input.segments.map((s) => {
+            counts.set(s.id, (counts.get(s.id) ?? 0) + 1);
+            return { id: s.id, translatedText: 'x'.repeat(90) };
+          }),
+        };
+      },
+    };
+    const tts: TtsProvider = {
+      id: 'piper-local',
+      displayName: 'len-tts',
+      isLocal: true,
+      async synthesizeSegments(input: TtsInput): Promise<TtsResult> {
+        const segments = await Promise.all(
+          input.segments.map(async (s, i) => {
+            const num = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
+            const audioPath = path.join(input.outputDir, `segment_${String(num).padStart(4, '0')}.wav`);
+            await fsp.mkdir(input.outputDir, { recursive: true });
+            await fsp.writeFile(audioPath, String(s.text.length * 30), 'utf8');
+            return { segmentId: s.id, text: s.text, audioPath, durationMs: s.text.length * 30, startMs: s.startMs, endMs: s.endMs, speedRatio: 1 };
+          }),
+        );
+        return { segments };
+      },
+    };
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(
+        new FakeSttProvider(makeSegments([[0, 1000, 'zh0'], [1000, 2000, 'zh1']])),
+        translation,
+        tts,
+      ),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    // Only the initial translation ran — no refit.
+    expect(counts.get('seg_0001')).toBe(1);
   });
 });
 

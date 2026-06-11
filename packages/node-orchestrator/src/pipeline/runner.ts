@@ -750,14 +750,29 @@ export class PipelineRunner {
     // translation can use the silence until the next line — or until the end of
     // the video for the last segment — instead of being flagged as a conflict).
     const totalDurationMs = (await this.deps.store.getProject(project.id)).mediaInfo?.durationMs;
-    const aligned = alignSegments(
-      alignInputs,
-      {
-        maxSpeedRatio: project.settings.maxSpeedRatio,
-        allowedOverflowMs: project.settings.allowedOverflowMs,
-      },
-      totalDurationMs,
-    );
+    const settings = {
+      maxSpeedRatio: project.settings.maxSpeedRatio,
+      allowedOverflowMs: project.settings.allowedOverflowMs,
+    };
+    let aligned = alignSegments(alignInputs, settings, totalDurationMs);
+
+    // Auto-fit: re-translate (tighter), re-synthesize, and re-align any segment
+    // that can't fit even at max speed, so timing-conflicts self-heal instead of
+    // needing a manual edit. No-op when the setting is off, there are no
+    // conflicts, or the translation provider can't shorten on request (Argos).
+    if (project.settings.autoFitOverflow !== false && aligned.some((a) => a.status === 'timing-conflict')) {
+      this.deps.logger.info('Auto-fitting overflowing translations to their timing windows...');
+      aligned = await this.refitOverflowingSegments(
+        project,
+        paths,
+        segments,
+        alignInputs,
+        aligned,
+        settings,
+        totalDurationMs,
+        signal,
+      );
+    }
 
     await fsp.writeFile(paths.translatedAlignedJson, `${JSON.stringify(aligned, null, 2)}\n`, 'utf8');
 
@@ -770,6 +785,114 @@ export class PipelineRunner {
         `${summary.timingConflicts} segment(s) cannot fit even at max speed — consider editing the translation.`,
       );
     }
+  }
+
+  /**
+   * Re-fit segments that can't fit even at max speed: re-translate each with a
+   * tighter word budget (achieved by handing the LLM a SHRUNK window, which
+   * lowers the prompt's word target), re-synthesize, re-probe, and re-align —
+   * up to a couple of passes. Persists the shortened translations + subtitle
+   * sidecars when they change. A provider that can't shorten on request (Argos)
+   * returns identical text, which we detect as "no change" and stop without any
+   * wasted TTS. Pure inputs are mutated in place (segments + alignInputs).
+   */
+  private async refitOverflowingSegments(
+    project: Project,
+    paths: WorkspacePaths,
+    segments: TranscriptSegment[],
+    alignInputs: AlignInputSegment[],
+    aligned: AlignedSegment[],
+    settings: { maxSpeedRatio: number; allowedOverflowMs: number },
+    totalDurationMs: number | undefined,
+    signal: AbortSignal,
+  ): Promise<AlignedSegment[]> {
+    const MAX_ATTEMPTS = 2;
+    const translation = this.deps.registry.getTranslation(project.settings.translationProviderId);
+    const tts = this.deps.registry.getTts(project.settings.ttsProviderId);
+    const segById = new Map(segments.map((s) => [s.id, s]));
+    const inputById = new Map(alignInputs.map((a) => [a.segmentId, a]));
+    let current = aligned;
+    let changedAny = false;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      throwIfCancelled(signal);
+      const conflicts = current.filter((a) => a.status === 'timing-conflict');
+      if (conflicts.length === 0) break;
+
+      // Attempt 1 targets the max-speed window (relies on atempo headroom);
+      // attempt 2 targets the natural window (must fit without any speed-up).
+      const tightFactor = attempt === 1 ? Math.max(1, settings.maxSpeedRatio) : 1;
+      const reqSegs = conflicts.map((c) => {
+        const availableMs = Math.max(1, c.placedDurationMs - c.overflowMs);
+        const tightMs = Math.max(500, Math.round(availableMs * tightFactor));
+        return { id: c.segmentId, sourceText: segById.get(c.segmentId)?.sourceText ?? '', startMs: 0, endMs: tightMs };
+      });
+
+      const result = await translation.translateSegments(
+        {
+          sourceLanguage: project.settings.sourceLanguage,
+          targetLanguage: project.settings.targetLanguage,
+          segments: reqSegs,
+        },
+        signal,
+      );
+      const newTextById = new Map(result.segments.map((s) => [s.id, (s.translatedText ?? '').trim()]));
+
+      const changed: string[] = [];
+      for (const c of conflicts) {
+        const seg = segById.get(c.segmentId);
+        const newText = newTextById.get(c.segmentId);
+        if (seg && newText && newText.length > 0 && newText !== (seg.translatedText ?? '')) {
+          seg.translatedText = newText;
+          changed.push(c.segmentId);
+        }
+      }
+      if (changed.length === 0) break; // provider can't shorten (e.g. Argos) or converged
+
+      changedAny = true;
+
+      // Re-synthesize only the changed segments (overwrites their WAVs in place).
+      await tts.synthesizeSegments(
+        {
+          language: project.settings.targetLanguage,
+          voiceId: project.settings.ttsVoiceId,
+          segments: changed.map((id) => {
+            const s = segById.get(id)!;
+            return { id, text: (s.translatedText ?? '').trim(), startMs: s.startMs, endMs: s.endMs };
+          }),
+          outputDir: paths.ttsSegmentsDir,
+          speed: 1.0,
+        },
+        signal,
+      );
+
+      // Re-probe the changed segments' new durations, then re-align everything
+      // (gap-aware alignment depends on neighbours, so re-run the whole list).
+      for (const id of changed) {
+        const input = inputById.get(id);
+        if (!input) continue;
+        try {
+          input.generatedDurationMs = (await this.deps.media.probe(input.audioPath)).durationMs;
+        } catch {
+          input.generatedDurationMs = 0;
+        }
+      }
+      current = alignSegments(alignInputs, settings, totalDurationMs);
+      this.deps.logger.info(
+        `Auto-fit pass ${attempt}: shortened ${changed.length} overflowing line(s); ` +
+          `${current.filter((a) => a.status === 'timing-conflict').length} conflict(s) remain.`,
+      );
+    }
+
+    if (changedAny) {
+      // Persist the shortened translations + regenerate subtitle sidecars so the
+      // editor + burned/sidecar subtitles match the audio.
+      await writeSegments(paths.translatedJson, segments);
+      const cues = transcriptSegmentsToCues(segments);
+      await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
+      await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
+    }
+    return current;
   }
 
   private async stepAudioMix(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {

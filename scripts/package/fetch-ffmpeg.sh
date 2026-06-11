@@ -35,6 +35,11 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." >/dev/null 2>&1 && pwd)"
 BIN_DIR="${REPO_ROOT}/apps/desktop/src-tauri/binaries"
 WORK="${BIN_DIR}/.ffmpeg"
 
+# Load .env (when run standalone) so the local-copy mode below can find a
+# libass-enabled ffmpeg via FFMPEG_PATH/FFPROBE_PATH instead of downloading.
+# build-sidecars.sh already loads it; this makes the script self-sufficient too.
+if [[ -f "${REPO_ROOT}/.env" ]]; then set -a; . "${REPO_ROOT}/.env"; set +a; fi
+
 resolve_triple() {
   if [[ -n "${TARGET_TRIPLE:-}" ]]; then echo "${TARGET_TRIPLE}"; return; fi
   if command -v rustc >/dev/null 2>&1; then rustc -Vv | sed -n 's/^host: //p'; return; fi
@@ -87,26 +92,43 @@ verify_and_stage() {
 # recent formulae) OR download a static notarized build from osxexperts.
 # ---------------------------------------------------------------------------
 fetch_macos() {
-  if [[ "${FFMPEG_FROM_BREW:-0}" == "1" ]] && command -v brew >/dev/null 2>&1; then
-    local prefix; prefix="$(brew --prefix ffmpeg 2>/dev/null || true)"
-    if [[ -n "${prefix}" && -x "${prefix}/bin/ffmpeg" ]]; then
-      echo "==> Using Homebrew ffmpeg at ${prefix}"
-      verify_and_stage "${prefix}/bin/ffmpeg" "${prefix}/bin/ffprobe"
+  # 1. Explicit Homebrew opt-in, OR auto-detect a brew ffmpeg with libass.
+  #    `ffmpeg-full` (keg-only) is preferred when present; otherwise the regular
+  #    `ffmpeg` formula (recent formulae include libass). verify_and_stage
+  #    rejects a build without the `subtitles` filter, so this is safe.
+  if command -v brew >/dev/null 2>&1; then
+    local brew_ff=""
+    local full_prefix; full_prefix="$(brew --prefix ffmpeg-full 2>/dev/null || true)"
+    if [[ -n "${full_prefix}" && -x "${full_prefix}/bin/ffmpeg" ]]; then
+      brew_ff="${full_prefix}/bin"
+    else
+      local prefix; prefix="$(brew --prefix ffmpeg 2>/dev/null || true)"
+      [[ -n "${prefix}" && -x "${prefix}/bin/ffmpeg" ]] && brew_ff="${prefix}/bin"
+    fi
+    if [[ -n "${brew_ff}" ]]; then
+      echo "==> Using Homebrew ffmpeg at ${brew_ff}"
+      verify_and_stage "${brew_ff}/ffmpeg" "${brew_ff}/ffprobe"
       return
     fi
-    echo "WARN: brew --prefix ffmpeg not usable; falling back to download." >&2
   fi
 
-  # osxexperts hosts per-arch zips of ffmpeg and ffprobe separately.
-  local arch="arm64"
-  case "${TRIPLE}" in x86_64-*) arch="intel" ;; esac
-  local ff_url="${FFMPEG_URL:-https://www.osxexperts.net/ffmpeg${FFMPEG_VERSION//./}${arch}.zip}"
-  local fp_url="${FFPROBE_URL:-https://www.osxexperts.net/ffprobe${FFMPEG_VERSION//./}${arch}.zip}"
-
-  echo "==> Downloading ffmpeg:  ${ff_url}"
-  curl -fsSL "${ff_url}" -o "${WORK}/ffmpeg.zip"
-  echo "==> Downloading ffprobe: ${fp_url}"
-  curl -fsSL "${fp_url}" -o "${WORK}/ffprobe.zip"
+  # 2. Explicit download URLs only. The old osxexperts.net host is defunct, so
+  #    there is no safe built-in default — require FFMPEG_URL/FFPROBE_URL or a
+  #    local/brew copy. Fail with a clear, actionable message.
+  if [[ -z "${FFMPEG_URL:-}" || -z "${FFPROBE_URL:-}" ]]; then
+    echo "ERROR: no local or Homebrew ffmpeg found, and no FFMPEG_URL/FFPROBE_URL set." >&2
+    echo "       For a LOCAL build: install a libass build and point .env at it, e.g." >&2
+    echo "         brew install ffmpeg-full   # keg-only, includes libass" >&2
+    echo "         FFMPEG_PATH=\$(brew --prefix ffmpeg-full)/bin/ffmpeg" >&2
+    echo "         FFPROBE_PATH=\$(brew --prefix ffmpeg-full)/bin/ffprobe" >&2
+    echo "       Then re-run. For a DISTRIBUTABLE build, set FFMPEG_URL/FFPROBE_URL to a" >&2
+    echo "       static, libass-enabled macOS build (CI)." >&2
+    exit 1
+  fi
+  echo "==> Downloading ffmpeg:  ${FFMPEG_URL}"
+  curl -fsSL "${FFMPEG_URL}" -o "${WORK}/ffmpeg.zip"
+  echo "==> Downloading ffprobe: ${FFPROBE_URL}"
+  curl -fsSL "${FFPROBE_URL}" -o "${WORK}/ffprobe.zip"
   unzip -o -q "${WORK}/ffmpeg.zip" -d "${WORK}/ff"
   unzip -o -q "${WORK}/ffprobe.zip" -d "${WORK}/fp"
   verify_and_stage \

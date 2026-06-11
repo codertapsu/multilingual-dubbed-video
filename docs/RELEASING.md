@@ -98,12 +98,24 @@ git commit -am "release: v0.2.0"
 Catch packaging breakage before CI:
 
 ```bash
-pnpm package:sidecars     # builds orchestrator + 3 workers + ffmpeg for your host
+pnpm package:sidecars     # builds orchestrator + workers + piper + ffmpeg for your host
 pnpm app:build            # produces a local installer in apps/desktop/src-tauri/target
 ```
 
 Verify the local bundle launches, the first-run wizard appears, and a tiny dub
 completes. (You need the worker venvs present — `scripts/setup-local-models.sh`.)
+
+> **ffmpeg for local builds.** `package:sidecars` loads `.env`, and
+> `fetch-ffmpeg` stages a **local** libass-enabled ffmpeg from
+> `FFMPEG_PATH`/`FFPROBE_PATH` (or `FFMPEG_BIN`/`FFPROBE_BIN`) when set —
+> no download. On macOS, `brew install ffmpeg-full` and point `.env` at it:
+> ```
+> FFMPEG_PATH=$(brew --prefix ffmpeg-full)/bin/ffmpeg
+> FFPROBE_PATH=$(brew --prefix ffmpeg-full)/bin/ffprobe
+> ```
+> If neither is set, it auto-tries Homebrew, else needs `FFMPEG_URL`/`FFPROBE_URL`.
+> Locally-staged binaries are dynamically linked (run on **your** machine only);
+> **distributable** builds must use a STATIC libass ffmpeg (set the URLs in CI).
 
 ### 3. Tag and push
 

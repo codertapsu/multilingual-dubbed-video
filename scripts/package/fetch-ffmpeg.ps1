@@ -30,6 +30,21 @@ $RepoRoot  = Resolve-Path (Join-Path $ScriptDir "..\..")
 $BinDir    = Join-Path $RepoRoot "apps\desktop\src-tauri\binaries"
 $Work      = Join-Path $BinDir ".ffmpeg"
 
+# Load .env (when run standalone) so the local-copy mode below can find a
+# libass-enabled ffmpeg via FFMPEG_PATH/FFPROBE_PATH instead of downloading.
+function Import-DotEnv($path) {
+  if (-not (Test-Path $path)) { return }
+  Get-Content $path | ForEach-Object {
+    $line = $_.Trim()
+    if ($line -and -not $line.StartsWith('#') -and $line.Contains('=')) {
+      $k, $v = $line.Split('=', 2)
+      $v = $v.Trim().Trim('"').Trim("'")
+      [Environment]::SetEnvironmentVariable($k.Trim(), $v, 'Process')
+    }
+  }
+}
+Import-DotEnv (Join-Path $RepoRoot ".env")
+
 function Resolve-Triple {
   if ($TargetTriple) { return $TargetTriple }
   if (Get-Command rustc -ErrorAction SilentlyContinue) {
@@ -44,6 +59,26 @@ Write-Host "==> Fetching libass-enabled ffmpeg/ffprobe"
 Write-Host "    triple: $Triple"
 New-Item -ItemType Directory -Force -Path $BinDir, $Work | Out-Null
 Get-ChildItem $Work -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+
+# Local-copy mode: stage an existing libass-enabled ffmpeg/ffprobe instead of
+# downloading (handy for local builds). Set FFMPEG_BIN+FFPROBE_BIN, or
+# FFMPEG_PATH+FFPROBE_PATH (e.g. in .env). Verified for the subtitles filter below.
+$LocalFfmpeg  = if ($env:FFMPEG_BIN)  { $env:FFMPEG_BIN }  else { $env:FFMPEG_PATH }
+$LocalFfprobe = if ($env:FFPROBE_BIN) { $env:FFPROBE_BIN } else { $env:FFPROBE_PATH }
+if ($LocalFfmpeg -and $LocalFfprobe -and (Test-Path $LocalFfmpeg) -and (Test-Path $LocalFfprobe)) {
+  Write-Host "==> Staging ffmpeg/ffprobe from local paths (not portable - local build only)."
+  $filters = & $LocalFfmpeg -hide_banner -filters 2>$null
+  if (-not ($filters -match '\bsubtitles\b')) {
+    throw "local ffmpeg is missing the 'subtitles' filter (no libass). Use a full/gpl build."
+  }
+  Write-Host "    libass OK."
+  Copy-Item -Force $LocalFfmpeg  (Join-Path $BinDir "ffmpeg-$Triple.exe")
+  Copy-Item -Force $LocalFfprobe (Join-Path $BinDir "ffprobe-$Triple.exe")
+  Write-Host ""
+  Write-Host "==> ffmpeg sidecars staged:"
+  Get-ChildItem $BinDir -Filter "ff*-$Triple.exe" | ForEach-Object { Write-Host "    $($_.Name)" }
+  exit 0
+}
 
 # gyan.dev publishes a .zip (essentials/full) and a .7z (full). The .zip needs no
 # extra tool on Windows (Expand-Archive). The "release-full" zip includes libass.

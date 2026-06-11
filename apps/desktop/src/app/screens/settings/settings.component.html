@@ -217,8 +217,22 @@
       transcription, local LLM translation, neural voices, vocal separation, and
       forced alignment. They download on demand and run only when a project uses
       them, so the base app stays small. Packs marked “recommended” suit this
-      computer.
+      computer. Nothing else needs to be installed first.
     </p>
+
+    @if (prerequisites(); as pre) {
+      @if (pre.uv.available) {
+        <p class="hint test-ok">
+          ✓ Python engines are self-contained{{ pre.uv.bundled ? ' (uses the bundled runtime)' : '' }} — just click Install.
+        </p>
+      } @else {
+        <p class="hint test-fail">
+          ⚠ Python engines (neural voices, separation, alignment) need
+          <span class="mono">uv</span>. The installed desktop app bundles it; in a dev build, install it from
+          <span class="mono">https://docs.astral.sh/uv/</span> and reopen.
+        </p>
+      }
+    }
 
     @if (enginePacks().length === 0) {
       <p class="hint">No engine packs are available for this platform, or the backend is offline.</p>
@@ -251,6 +265,11 @@
           <div class="cred-controls">
             @if (isEngineInstalled(pack.id)) {
               <button type="button" class="btn btn-ghost btn-sm" (click)="uninstallEngine(pack.id)">Remove</button>
+            } @else if (needsUv(pack) && prerequisites() && !prerequisites()!.uv.available) {
+              <button type="button" class="btn btn-sm" disabled title="This engine needs uv (bundled in the installed app)">
+                Install
+              </button>
+              <span class="hint test-fail">Needs uv — see the note above.</span>
             } @else {
               <button type="button" class="btn btn-sm" (click)="installEngine(pack.id)">Install</button>
             }

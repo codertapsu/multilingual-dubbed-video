@@ -32,7 +32,7 @@ import type {
   UpdateInfo,
   UpdatePreferences,
 } from '../models/setup';
-import type { EnginesResponse } from '../models';
+import type { EnginePrerequisites, EnginesResponse } from '../models';
 
 /** HTTP verbs the fetch fallback understands. */
 type HttpMethod = 'GET' | 'POST' | 'PUT';
@@ -348,6 +348,11 @@ export class IpcService {
   /** GET /engines/recommended — hardware-aware suggested packs. */
   getRecommendedEngines(): Promise<{ recommendations: { packId: string; reason: string }[] }> {
     return this.http<{ recommendations: { packId: string; reason: string }[] }>('GET', '/engines/recommended');
+  }
+
+  /** GET /engines/prerequisites — uv (bundled?) + Ollama availability. */
+  getEnginePrerequisites(): Promise<EnginePrerequisites> {
+    return this.http<EnginePrerequisites>('GET', '/engines/prerequisites');
   }
 
   /** POST /engines/install — start a pack download (progress via SSE). */

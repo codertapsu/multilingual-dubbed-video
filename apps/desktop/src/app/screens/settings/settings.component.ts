@@ -12,7 +12,7 @@ import { IpcService } from '../../core/ipc/ipc.service';
 import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { environment } from '../../core/environment';
-import type { AppError, EnginePackInfo, InstalledEnginePack } from '../../core/models';
+import type { AppError, EnginePackInfo, EnginePrerequisites, InstalledEnginePack } from '../../core/models';
 import type {
   CloudCredentialInfo,
   CloudServiceId,
@@ -91,7 +91,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected readonly installedEngines = signal<InstalledEnginePack[]>([]);
   protected readonly recommendedEngineIds = signal<Set<string>>(new Set());
   protected readonly engineProgress = signal<Record<string, { percent: number | null; message: string }>>({});
+  protected readonly prerequisites = signal<EnginePrerequisites | null>(null);
   private engineEvents: EventSource | null = null;
+
+  /** True for packs delivered as a uv-managed Python env (need uv). */
+  protected needsUv(pack: EnginePackInfo): boolean {
+    return pack.packKind === 'python-uv';
+  }
 
   protected readonly ramLabel = computed(() => {
     const profile = this.system()?.profile;
@@ -141,6 +147,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.ipc
         .getRecommendedEngines()
         .then((r) => this.recommendedEngineIds.set(new Set(r.recommendations.map((x) => x.packId))))
+        .catch(() => undefined),
+      this.ipc
+        .getEnginePrerequisites()
+        .then((p) => this.prerequisites.set(p))
         .catch(() => undefined),
     ]);
   }

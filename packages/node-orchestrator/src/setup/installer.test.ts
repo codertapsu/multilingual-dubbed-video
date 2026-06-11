@@ -7,6 +7,7 @@ import { loadConfig } from '../config.js';
 import { SetupInstaller } from './installer.js';
 import { SetupEventBus } from './setupBus.js';
 import { SetupStore } from './setupStore.js';
+import { setWorkerTransport, type RawWorkerResponse } from '../providers/workerHttp.js';
 
 let tmp: string;
 let store: SetupStore;
@@ -23,6 +24,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fsp.rm(tmp, { recursive: true, force: true });
+  setWorkerTransport(null);
   vi.restoreAllMocks();
 });
 
@@ -33,12 +35,9 @@ function config() {
   });
 }
 
-/** A small JSON Response helper. */
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
+/** A small raw worker-response helper (for the workerHttp transport seam). */
+function rawJson(body: unknown, status = 200): RawWorkerResponse {
+  return { status, ok: status >= 200 && status < 300, text: JSON.stringify(body) };
 }
 
 /** A binary Response with a Content-Length so download progress is emitted. */
@@ -54,20 +53,19 @@ describe('SetupInstaller', () => {
     const onnxBytes = new Uint8Array(2048).fill(7);
     const configBytes = new Uint8Array([123, 125]); // "{}"
 
+    // Worker JSON calls (/models/ensure, /packages/ensure) go through workerHttp's
+    // transport seam; the Piper file download uses fetchImpl.
+    setWorkerTransport(async (_method, url) => {
+      if (url.endsWith('/models/ensure')) return rawJson({ ok: true, model: 'base', alreadyCached: false });
+      if (url.endsWith('/packages/ensure')) return rawJson({ ok: true, installed: true });
+      throw new Error(`unexpected worker call: ${url}`);
+    });
     const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
       const url = String(input);
-      if (url.endsWith('/models/ensure')) {
-        return jsonResponse({ ok: true, model: 'base', alreadyCached: false });
-      }
-      if (url.endsWith('/packages/ensure')) {
-        return jsonResponse({ ok: true, installed: true });
-      }
       if (url.endsWith('.onnx')) return fileResponse(onnxBytes);
       if (url.endsWith('.onnx.json')) return fileResponse(configBytes);
       throw new Error(`unexpected fetch: ${url}`);
     });
-    // Worker JSON calls use the global fetch; the Piper download uses fetchImpl.
-    vi.stubGlobal('fetch', fetchMock);
 
     const installer = new SetupInstaller({
       config: config(),
@@ -108,23 +106,17 @@ describe('SetupInstaller', () => {
   });
 
   it('emits an error event when the STT worker reports failure', async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
-      const url = String(input);
+    setWorkerTransport(async (_method, url) => {
       if (url.endsWith('/models/ensure')) {
-        return jsonResponse(
-          { error: { code: 'STT_MODEL_MISSING', message: 'boom' } },
-          424,
-        );
+        return rawJson({ error: { code: 'STT_MODEL_MISSING', message: 'boom' } }, 424);
       }
-      throw new Error(`unexpected fetch: ${url}`);
+      throw new Error(`unexpected worker call: ${url}`);
     });
-    vi.stubGlobal('fetch', fetchMock);
 
     const installer = new SetupInstaller({
       config: config(),
       store,
       bus,
-      fetchImpl: fetchMock as unknown as typeof fetch,
     });
 
     await installer.run({ whisperModel: 'base' });

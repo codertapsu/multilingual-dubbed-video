@@ -52,7 +52,7 @@ Settings → Secrets and variables → Actions. Required / optional:
 | Secret | Required | Purpose |
 |---|---|---|
 | `TAURI_SIGNING_PRIVATE_KEY` | ✅ | Contents of `~/.tauri/videodubber.key`. Signs `latest.json`. |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | ✅ | Password for that key. |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | see note | Password for that key. **The committed key was generated with an *empty* password** — GitHub can't store an empty secret, so instead hardcode `TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''` in `release.yml` (or regenerate the key *with* a password and set both this secret and the new pubkey). |
 | `APPLE_CERTIFICATE` | macOS | base64 of your Developer ID Application `.p12`. |
 | `APPLE_CERTIFICATE_PASSWORD` | macOS | Password for the `.p12`. |
 | `APPLE_SIGNING_IDENTITY` | macOS | e.g. `Developer ID Application: Name (TEAMID)`. |
@@ -98,9 +98,12 @@ the first release:
 >   macOS, or `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`).
 > - **Auto-update** (a later release): set `createUpdaterArtifacts: true` in
 >   `tauri.conf.json`, set `includeUpdaterJson: true` in `release.yml`, and add the
->   `TAURI_SIGNING_PRIVATE_KEY` (+ password) secret. The pubkey is already committed;
->   regenerate the pair with `pnpm tauri signer generate` if you don't have the
->   private key (safe pre-launch — no installs exist yet).
+>   `TAURI_SIGNING_PRIVATE_KEY` secret (contents of `~/.tauri/videodubber.key`). That
+>   key has an **empty password**, so set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''`
+>   directly in `release.yml` (GitHub can't store an empty secret). The pubkey is
+>   already committed; regenerate the pair with `pnpm tauri signer generate` if you
+>   don't have the private key, or if you'd prefer a password-protected key (safe
+>   pre-launch — no installs exist yet; just re-commit the new pubkey).
 
 ### Engine-pack assets (one-time, for the macOS Metal whisper.cpp engine)
 

@@ -12,9 +12,11 @@
 # ------------------------------------------------------------------------------
 # REQUIRED GitHub SECRETS (Settings -> Secrets and variables -> Actions)
 # ------------------------------------------------------------------------------
-# Tauri auto-updater signing (REQUIRED — generate with `pnpm tauri signer generate`):
+# Tauri auto-updater signing (only when auto-update is enabled — see RELEASING.md):
 #   TAURI_SIGNING_PRIVATE_KEY            Contents of the generated ~/.tauri/<name>.key
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   The password you set for that key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   Password for that key. The committed key has
+#                                        an EMPTY password; GitHub can't store an empty
+#                                        secret, so hardcode `: ''` below instead.
 #   -> The matching PUBLIC key goes in tauri.conf.json plugins.updater.pubkey.
 #
 # macOS code signing + notarization (REQUIRED for a distributable .dmg):

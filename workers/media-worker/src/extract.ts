@@ -87,8 +87,11 @@ export function buildClip16kMonoArgs(
   startMs: number,
   endMs: number,
 ): string[] {
-  const ssSec = Math.max(0, startMs) / 1000;
-  const durSec = Math.max(0, endMs - startMs) / 1000;
+  // Clamp the start to 0, then derive the duration from the CLAMPED start so a
+  // negative start never makes the window over-read past `endMs`.
+  const startClamped = Math.max(0, startMs);
+  const ssSec = startClamped / 1000;
+  const durSec = Math.max(0, endMs - startClamped) / 1000;
   return [
     '-y',
     '-ss',

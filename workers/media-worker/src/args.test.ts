@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseFfmpegFilters } from './exec.js';
-import { buildExtract16kMonoArgs, buildExtractAudioArgs } from './extract.js';
+import { buildClip16kMonoArgs, buildExtract16kMonoArgs, buildExtractAudioArgs } from './extract.js';
 import { buildProbeArgs, ffprobeJsonToMediaInfo, parseFrameRate } from './probe.js';
 import {
   buildRenderArgs,
@@ -18,6 +18,7 @@ import {
   buildTimelineFilterComplex,
   buildTimelineMixArgs,
   chunkClips,
+  estimateTimelineTmpBytes,
   MAX_INPUTS_PER_MIX,
   type TimelineClip,
 } from './tts-timeline.js';
@@ -392,5 +393,39 @@ describe('parseFfmpegFilters', () => {
     const names = parseFfmpegFilters(minimal);
     expect(names.has('subtitles')).toBe(false);
     expect(names.has('volume')).toBe(true);
+  });
+});
+
+describe('buildClip16kMonoArgs', () => {
+  it('input-seeks and bounds the window, output 16k mono pcm_s16le', () => {
+    const args = buildClip16kMonoArgs('in.wav', 'out.wav', 60_000, 150_000);
+    // -ss must come BEFORE -i (fast input seek); -t bounds the window length.
+    expect(args.indexOf('-ss')).toBeLessThan(args.indexOf('-i'));
+    expect(args[args.indexOf('-ss') + 1]).toBe('60.000');
+    expect(args[args.indexOf('-t') + 1]).toBe('90.000'); // 150s - 60s
+    expect(args).toEqual(expect.arrayContaining(['-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le']));
+    expect(args.at(-1)).toBe('out.wav');
+  });
+
+  it('clamps a negative start and never emits a negative duration', () => {
+    const args = buildClip16kMonoArgs('in.wav', 'out.wav', -5_000, 1_000);
+    expect(args[args.indexOf('-ss') + 1]).toBe('0.000');
+    expect(args[args.indexOf('-t') + 1]).toBe('1.000');
+  });
+});
+
+describe('estimateTimelineTmpBytes', () => {
+  it('is 0 for the single-pass path (<= MAX_INPUTS_PER_MIX clips)', () => {
+    expect(estimateTimelineTmpBytes(MAX_INPUTS_PER_MIX, 60_000)).toBe(0);
+    expect(estimateTimelineTmpBytes(1, 7_200_000)).toBe(0);
+  });
+
+  it('scales with intermediate count and full-clip length for chunked builds', () => {
+    // 2-hour timeline, 2400 clips => ceil(2400/32)=75 level-1 + ceil(75/32)=3 level-2.
+    const bytes = estimateTimelineTmpBytes(2400, 2 * 60 * 60 * 1000);
+    const perFull = Math.ceil((7_200_000 / 1000) * 48_000 * 2 * 2);
+    expect(bytes).toBe(Math.ceil((75 + 3) * perFull * 1.2));
+    // Sanity: this is tens of GiB, which is exactly why the guard exists.
+    expect(bytes / 1024 ** 3).toBeGreaterThan(50);
   });
 });

@@ -22,10 +22,10 @@
  * audioPath are skipped (they contribute only silence).
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, statfsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { AlignedSegment } from '@videodubber/shared';
+import { AppErrorException, type AlignedSegment } from '@videodubber/shared';
 import {
   assertInputReadable,
   assertOutputWritable,
@@ -39,6 +39,50 @@ export const MAX_INPUTS_PER_MIX = 32;
 
 const SAMPLE_RATE = 48_000;
 const CHANNELS = 2;
+const BYTES_PER_SAMPLE = 2; // pcm_s16le
+
+/**
+ * Estimate peak temp-dir bytes the CHUNKED timeline build will occupy. Each
+ * chunk is mixed to a full-length intermediate WAV (so it can be amix'd at
+ * t=0), so a long, densely-segmented video can need many gigabytes of scratch.
+ * Returns 0 for the single-pass path (no intermediates). Pure / unit-tested.
+ */
+export function estimateTimelineTmpBytes(clipCount: number, totalDurationMs: number): number {
+  if (clipCount <= MAX_INPUTS_PER_MIX) return 0;
+  const bytesPerFullWav = Math.ceil((Math.max(0, totalDurationMs) / 1000) * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE);
+  const level1 = Math.ceil(clipCount / MAX_INPUTS_PER_MIX);
+  const level2 = level1 > MAX_INPUTS_PER_MIX ? Math.ceil(level1 / MAX_INPUTS_PER_MIX) : 0;
+  // Level-1 + level-2 intermediates coexist on disk; add 20% headroom.
+  return Math.ceil((level1 + level2) * bytesPerFullWav * 1.2);
+}
+
+/**
+ * Fail fast with a clear error if the system temp dir lacks room for the
+ * chunked-build intermediates, instead of a cryptic ENOSPC partway through.
+ * Skipped silently when `statfs` is unavailable on the platform.
+ */
+function assertTmpSpace(requiredBytes: number): void {
+  if (requiredBytes <= 0) return;
+  let availBytes: number;
+  try {
+    const s = statfsSync(tmpdir());
+    availBytes = s.bavail * s.bsize;
+  } catch {
+    return; // statfs unsupported here — don't block the build on a missing guard
+  }
+  if (availBytes < requiredBytes) {
+    const gib = (n: number): string => (n / 1024 ** 3).toFixed(1);
+    throw new AppErrorException({
+      code: 'OUTPUT_NOT_WRITABLE',
+      message:
+        `Not enough temp space to build the long-video TTS timeline: need ~${gib(requiredBytes)} GiB ` +
+        `free in ${tmpdir()}, found ~${gib(availBytes)} GiB.`,
+      remediation:
+        'Free space in your system temp directory (or set TMPDIR to a larger volume), then retry the audio-mix step.',
+      docsRef: 'docs/TROUBLESHOOTING.md#output',
+    });
+  }
+}
 
 /** A placed clip: a source WAV that starts at `startMs` on the timeline. */
 export interface TimelineClip {
@@ -236,7 +280,10 @@ export async function buildTtsTimeline(
   }
 
   // Chunked path: mix each chunk to an intermediate full-length WAV, then mix
-  // the intermediates (which already start at t=0) together.
+  // the intermediates (which already start at t=0) together. These intermediates
+  // are full-length, so a long/dense video can need many GiB of scratch — fail
+  // fast with a clear message if temp space is short.
+  assertTmpSpace(estimateTimelineTmpBytes(clips.length, totalDurationMs));
   const tmpDir = mkdtempSync(join(tmpdir(), 'vd-tts-'));
   try {
     const chunks = chunkClips(clips);

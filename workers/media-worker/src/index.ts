@@ -109,6 +109,7 @@ export {
   buildTimelineFilterComplex,
   alignedSegmentsToClips,
   chunkClips,
+  estimateTimelineTmpBytes,
   MAX_INPUTS_PER_MIX,
   type TimelineClip,
 } from './tts-timeline.js';

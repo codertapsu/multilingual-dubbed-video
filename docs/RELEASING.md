@@ -74,40 +74,33 @@ Settings → Secrets and variables → Actions. Required / optional:
 
 ## First release (v0.1.0) — quickstart
 
-The repo references are already set (`codertapsu/multilingual-dubbed-video`), the
-engine-pack URLs are pinned + checksummed, and `release.yml` builds all four
-platforms. To cut **v0.1.0**:
+The repo references are set (`codertapsu/multilingual-dubbed-video`), the
+engine-pack URLs are pinned + checksummed, all platforms bundle a **static,
+portable** ffmpeg, and v0.1.0 ships with auto-update **off**
+(`bundle.createUpdaterArtifacts: false`) — so **no secrets are required** to cut
+the first release:
 
-1. **Add the updater signing secret** (the only hard requirement — the pubkey is
-   already committed). If you have the matching private key, set it; otherwise
-   regenerate the pair (this is fine pre-launch, no installs exist yet):
-   ```bash
-   pnpm tauri signer generate -w ~/.tauri/videodubber.key   # if regenerating
-   # paste the printed PUBLIC key into tauri.conf.json -> plugins.updater.pubkey
-   ```
-   Then in GitHub → Settings → Secrets and variables → Actions, add:
-   `TAURI_SIGNING_PRIVATE_KEY` (the file contents) and
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
-2. **(Optional, recommended for macOS) Apple notarization secrets** — see the
-   table in *One-time setup*. Without them the macOS `.dmg` is unsigned and
-   Gatekeeper shows "can't be opened" (users right-click → Open, or run
-   `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`). Windows shows
-   a SmartScreen prompt without `WINDOWS_CERTIFICATE`.
-3. **Tag and push** — this triggers the Release workflow:
+1. **Tag and push** — this triggers the Release workflow (macOS arm64/x64,
+   Windows, Linux), which builds the self-contained installers and uploads them
+   to a **draft** GitHub Release:
    ```bash
    git tag v0.1.0 && git push origin v0.1.0
    ```
-4. **Review the draft release** GitHub created, then **Publish** it.
+   Watch **Actions**. Jobs run independently (`fail-fast: false`), so even if one
+   platform hiccups the others still upload.
+2. **Review the draft release** GitHub created, then **Publish** it. Users can now
+   download from the Releases page.
 
-> ⚠ **Known v0.1.0 caveats (be upfront in the notes):**
-> - **macOS ffmpeg portability.** CI bundles the runner's Homebrew ffmpeg, which
->   is dynamically linked — it may not run on every Mac. Windows/Linux bundle a
->   static ffmpeg and are fully self-contained. If a macOS user hits
->   `FFMPEG_NOT_FOUND`, `brew install ffmpeg` is the interim fix. (Tracked: ship a
->   relocatable/static macOS ffmpeg.)
-> - **No auto-update without the signing secret.** If you skip step 1 the build
->   fails at the updater-signing step; either add the secret or set
->   `bundle.createUpdaterArtifacts: false` for a no-auto-update build.
+> **Optional polish (any time):**
+> - **Apple notarization / Windows Authenticode** (the secret tables in *One-time
+>   setup*). Without them the macOS `.dmg` / Windows installer are unsigned —
+>   Gatekeeper / SmartScreen show a first-launch warning (right-click → **Open** on
+>   macOS, or `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`).
+> - **Auto-update** (a later release): set `createUpdaterArtifacts: true` in
+>   `tauri.conf.json`, set `includeUpdaterJson: true` in `release.yml`, and add the
+>   `TAURI_SIGNING_PRIVATE_KEY` (+ password) secret. The pubkey is already committed;
+>   regenerate the pair with `pnpm tauri signer generate` if you don't have the
+>   private key (safe pre-launch — no installs exist yet).
 
 ### Engine-pack assets (one-time, for the macOS Metal whisper.cpp engine)
 

@@ -41,12 +41,11 @@ engine, the speech/translation/voice workers, and FFmpeg.
 
 ## Known limitations
 
-- **macOS ffmpeg:** the bundled ffmpeg is dynamically linked on this build; if you
-  hit an FFmpeg error, `brew install ffmpeg` is the interim fix. (A relocatable
-  build is tracked.)
-- **Signing/notarization:** if this build is unsigned, macOS Gatekeeper and
-  Windows SmartScreen show a first‑launch warning — bypass as noted above.
-- **Auto‑update** activates once a release ships a signed `latest.json`.
+- **Signing/notarization:** this build is unsigned, so macOS Gatekeeper and
+  Windows SmartScreen show a first‑launch warning — bypass as noted above
+  (right‑click → **Open** on macOS; "More info → Run anyway" on Windows).
+- **Auto‑update** is off in v0.1.0; update by downloading a newer release. It
+  activates in a later release once builds ship a signed `latest.json`.
 
 See the [README](https://github.com/codertapsu/multilingual-dubbed-video) and
 [docs](https://github.com/codertapsu/multilingual-dubbed-video/tree/main/docs)

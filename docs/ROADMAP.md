@@ -146,14 +146,12 @@ implemented as the **engine-pack** system + hardware-aware recommendations — s
 The orchestrator's EngineManager downloads packs on demand, runs them as managed
 local servers, and sequences heavy engines to fit memory.
 
-Engine-pack download URLs are pinned to verified upstream releases
-(llama.cpp all platforms; whisper.cpp CUDA on Windows). The macOS Metal
-whisper.cpp server has no upstream build, so it's self-hosted — build + upload +
-set `codertapsu/multilingual-dubbed-video`, per [`ENGINE_PACKS.md`](ENGINE_PACKS.md). Remaining: pin
-`sha256` checksums for the pinned URLs (the installer warns + installs unverified
-until then), and Rubber Band subprocess execution (the decision + argv are
-implemented and tested; `atempo` is the default until a `rubberband` binary is
-present).
+Engine-pack download URLs are pinned to verified upstream releases **with sha256
+checksums** (llama.cpp all platforms; whisper.cpp CUDA on Windows). The macOS
+Metal whisper.cpp server has no upstream build, so it's self-hosted — build +
+upload + pin its checksum, per [`ENGINE_PACKS.md`](ENGINE_PACKS.md). Remaining:
+Rubber Band subprocess execution (the decision + argv are implemented and tested;
+`atempo` is the default until a `rubberband` binary is present).
 
 ---
 

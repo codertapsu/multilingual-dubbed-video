@@ -92,11 +92,10 @@ verify_and_stage() {
 # recent formulae) OR download a static notarized build from osxexperts.
 # ---------------------------------------------------------------------------
 fetch_macos() {
-  # 1. Explicit Homebrew opt-in, OR auto-detect a brew ffmpeg with libass.
-  #    `ffmpeg-full` (keg-only) is preferred when present; otherwise the regular
-  #    `ffmpeg` formula (recent formulae include libass). verify_and_stage
-  #    rejects a build without the `subtitles` filter, so this is safe.
-  if command -v brew >/dev/null 2>&1; then
+  # 1. Explicit Homebrew opt-in (FFMPEG_FROM_BREW=1). NOT auto-used, because
+  #    Homebrew ffmpeg is dynamically linked to /opt/homebrew dylibs and is NOT
+  #    portable — fine for local testing, wrong for a distributable installer.
+  if [[ "${FFMPEG_FROM_BREW:-0}" == "1" ]] && command -v brew >/dev/null 2>&1; then
     local brew_ff=""
     local full_prefix; full_prefix="$(brew --prefix ffmpeg-full 2>/dev/null || true)"
     if [[ -n "${full_prefix}" && -x "${full_prefix}/bin/ffmpeg" ]]; then
@@ -106,29 +105,24 @@ fetch_macos() {
       [[ -n "${prefix}" && -x "${prefix}/bin/ffmpeg" ]] && brew_ff="${prefix}/bin"
     fi
     if [[ -n "${brew_ff}" ]]; then
-      echo "==> Using Homebrew ffmpeg at ${brew_ff}"
+      echo "==> Using Homebrew ffmpeg at ${brew_ff} (FFMPEG_FROM_BREW=1; NOT portable)."
       verify_and_stage "${brew_ff}/ffmpeg" "${brew_ff}/ffprobe"
       return
     fi
   fi
 
-  # 2. Explicit download URLs only. The old osxexperts.net host is defunct, so
-  #    there is no safe built-in default — require FFMPEG_URL/FFPROBE_URL or a
-  #    local/brew copy. Fail with a clear, actionable message.
-  if [[ -z "${FFMPEG_URL:-}" || -z "${FFPROBE_URL:-}" ]]; then
-    echo "ERROR: no local or Homebrew ffmpeg found, and no FFMPEG_URL/FFPROBE_URL set." >&2
-    echo "       For a LOCAL build: install a libass build and point .env at it, e.g." >&2
-    echo "         brew install ffmpeg-full   # keg-only, includes libass" >&2
-    echo "         FFMPEG_PATH=\$(brew --prefix ffmpeg-full)/bin/ffmpeg" >&2
-    echo "         FFPROBE_PATH=\$(brew --prefix ffmpeg-full)/bin/ffprobe" >&2
-    echo "       Then re-run. For a DISTRIBUTABLE build, set FFMPEG_URL/FFPROBE_URL to a" >&2
-    echo "       static, libass-enabled macOS build (CI)." >&2
-    exit 1
-  fi
-  echo "==> Downloading ffmpeg:  ${FFMPEG_URL}"
-  curl -fsSL "${FFMPEG_URL}" -o "${WORK}/ffmpeg.zip"
-  echo "==> Downloading ffprobe: ${FFPROBE_URL}"
-  curl -fsSL "${FFPROBE_URL}" -o "${WORK}/ffprobe.zip"
+  # 2. Download a STATIC, libass-enabled, portable build. Default to the
+  #    Martin-Riedl macOS arm64/x64 static release (signed+notarized, links only
+  #    against macOS system frameworks — verified with `otool -L`). This is what
+  #    makes the distributable .dmg self-contained. Override with FFMPEG_URL/
+  #    FFPROBE_URL to pin a specific build.
+  local arch="arm64"; case "${TRIPLE}" in x86_64-*) arch="amd64" ;; esac
+  local ff_url="${FFMPEG_URL:-https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/ffmpeg.zip}"
+  local fp_url="${FFPROBE_URL:-https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/ffprobe.zip}"
+  echo "==> Downloading static ffmpeg:  ${ff_url}"
+  curl -fsSL "${ff_url}" -o "${WORK}/ffmpeg.zip"
+  echo "==> Downloading static ffprobe: ${fp_url}"
+  curl -fsSL "${fp_url}" -o "${WORK}/ffprobe.zip"
   unzip -o -q "${WORK}/ffmpeg.zip" -d "${WORK}/ff"
   unzip -o -q "${WORK}/ffprobe.zip" -d "${WORK}/fp"
   verify_and_stage \

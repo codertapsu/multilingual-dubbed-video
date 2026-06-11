@@ -170,13 +170,10 @@ jobs:
         shell: bash
         env:
           TARGET_TRIPLE: ${{ matrix.rust-target }}
-          # macOS: copy Homebrew ffmpeg (has libass) instead of downloading.
-          FFMPEG_FROM_BREW: ${{ startsWith(matrix.os, 'macos') && '1' || '0' }}
         run: |
-          # macOS runners: ensure a libass-enabled ffmpeg is available to copy.
-          if [[ "${{ matrix.os }}" == macos-* ]]; then
-            brew install ffmpeg || true
-          fi
+          # No .env on CI, so fetch-ffmpeg downloads a STATIC, libass-enabled,
+          # portable ffmpeg (macOS: Martin-Riedl; Linux: johnvansickle) — the
+          # resulting installers are fully self-contained.
           bash scripts/package/build-sidecars.sh
 
       - name: Build sidecars (Windows)
@@ -240,9 +237,11 @@ jobs:
             See the assets below to download and install VideoDubber for your OS.
             First launch downloads the AI models via the in-app setup wizard.
 
-            **Auto-update:** existing installs detect this release via `latest.json`.
+            macOS: if the app isn't notarized, right-click → Open the first time.
           # Keep as DRAFT so a human reviews + publishes (see docs/RELEASING.md).
           releaseDraft: true
           prerelease: false
-          includeUpdaterJson: true
+          # Auto-update is enabled in a later release: set createUpdaterArtifacts
+          # true in tauri.conf.json + add the TAURI_SIGNING_PRIVATE_KEY secret.
+          includeUpdaterJson: false
           args: ${{ matrix.tauri-args }}

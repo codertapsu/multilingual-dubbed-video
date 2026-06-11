@@ -38,7 +38,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "externalBin": [
       "binaries/videodubber-orchestrator",
       "binaries/vd-stt-worker",

@@ -45,6 +45,18 @@ universal default.
 
 ## Scale & throughput
 
+### Long videos (30–120 min+) — **implemented**
+Hours-long inputs are handled, not just short clips: STT is transcribed in bounded,
+checkpointed, resumable windows with per-chunk progress; TTS synthesis and local-LLM
+translation run with bounded concurrency; cloud translation batches by a character
+budget; alignment probes are individually timed out and report progress; and the
+long-video audio-mix path guards against temp-disk exhaustion. Full description in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#long-video-handling).
+
+**Remaining (optional):** a persistent/batch Piper process (synthesize many segments
+in one model-resident invocation) on top of the existing thread-pool parallelism, and
+ndjson streaming of the aligned-segment artifact beyond a few thousand segments.
+
 ### Batch processing
 Queue multiple videos (or a folder) with shared settings and run them sequentially,
 reusing the resumable per-project workspaces. Useful for series/playlists.

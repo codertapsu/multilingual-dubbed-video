@@ -112,6 +112,40 @@ alignment → audio-mix → render`.
   Subtitle paths used in the FFmpeg `subtitles=` filter are validated/escaped; FFmpeg is
   always invoked with an argv array, never a concatenated shell string.
 
+### Long-video handling
+
+Steps that scale with duration are bounded so 30–120 min+ videos are reliable, not just
+short clips:
+
+- **Chunked STT.** Audio longer than `STT_CHUNK_THRESHOLD_MS` (default 15 min) is
+  transcribed in `STT_CHUNK_WINDOW_MS` windows (default 10 min): each window is clipped to
+  a 16 kHz mono WAV (`clip16kMono`), transcribed as its own bounded request, timestamp-
+  offset to absolute, and **checkpointed** to `audio/stt_chunks/chunk_NNNN.json`. A re-run
+  resumes from the first missing checkpoint; the scratch dir is reclaimed once
+  `source.json` is written. This keeps each request well under the worker timeout, makes
+  STT crash-resumable, reports per-chunk progress, and caps peak memory at one window.
+  Source language is detected once (first window) and reused for the rest. Short audio
+  keeps the single-request path.
+- **Parallel TTS.** The TTS worker synthesizes segments with a bounded thread pool
+  (`TTS_CONCURRENCY`, default min(cpu,4)); each segment is an independent engine subprocess
+  writing a uniquely-keyed cache file, so the pool overlaps wall-clock without locks.
+- **Translation throughput.** Cloud-LLM requests batch by **both** a segment cap and a
+  source-character budget (`CLOUD_LLM_BATCH_SIZE` / `CLOUD_LLM_MAX_PROMPT_CHARS`) so a run
+  of long lines can't overflow the model context or truncate its JSON reply; the local-LLM
+  raw-segment path runs a bounded, order-preserving concurrency pool (`LOCAL_LLM_CONCURRENCY`).
+- **Bounded probing + progress.** Alignment probes each segment WAV with a 15 s per-probe
+  timeout (a slow/locked probe is treated as 0 ms, like a missing file) and emits throttled
+  progress. STT/alignment progress flows over SSE as `progressPercent` patches, throttled
+  to per-chunk/per-batch so the stream is never flooded.
+- **Temp-space guard.** The chunked TTS-timeline build (used past
+  `MAX_INPUTS_PER_MIX` segments) writes full-length intermediates; it estimates the disk
+  they need and fails fast with a clear message if the temp volume is too small, instead
+  of a cryptic mid-render `ENOSPC`.
+
+Transport note: worker calls use `node:http` (not `fetch`/undici), so a long request is
+bounded only by the orchestrator's own `AbortController` (`WORKER_REQUEST_TIMEOUT_MS`),
+never undici's internal ~5 min header timeout.
+
 ---
 
 ## 3. Provider architecture

@@ -21,13 +21,30 @@ param(
   [string]$TargetTriple = $env:TARGET_TRIPLE,
   [switch]$SkipWorkers,
   [switch]$SkipOrchestrator,
-  [switch]$SkipFfmpeg
+  [switch]$SkipFfmpeg,
+  [switch]$SkipUv
 )
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot  = Resolve-Path (Join-Path $ScriptDir "..\..")
 $BinDir    = Join-Path $RepoRoot "apps\desktop\src-tauri\binaries"
+
+# Load .env so machine-specific paths (FFMPEG_PATH/FFPROBE_PATH for the local
+# ffmpeg-copy mode, PYTHON_PATH, etc.) are available to this script and every
+# sub-script it spawns.
+function Import-DotEnv($path) {
+  if (-not (Test-Path $path)) { return }
+  Get-Content $path | ForEach-Object {
+    $line = $_.Trim()
+    if ($line -and -not $line.StartsWith('#') -and $line.Contains('=')) {
+      $k, $v = $line.Split('=', 2)
+      $v = $v.Trim().Trim('"').Trim("'")
+      [Environment]::SetEnvironmentVariable($k.Trim(), $v, 'Process')
+    }
+  }
+}
+Import-DotEnv (Join-Path $RepoRoot ".env")
 
 function Resolve-Triple {
   if ($TargetTriple) { return $TargetTriple }
@@ -60,10 +77,17 @@ if (-not $SkipFfmpeg) {
   & (Join-Path $ScriptDir "fetch-ffmpeg.ps1") -TargetTriple $Triple
 }
 
+if (-not $SkipUv) {
+  Write-Host "`n### uv (engine-pack Python env manager) ####################"
+  # Non-fatal: a missing uv only disables the optional Python engine packs.
+  try { & (Join-Path $ScriptDir "fetch-uv.ps1") -TargetTriple $Triple }
+  catch { Write-Warning "uv fetch failed; Python engine packs will be unavailable until uv is bundled or installed. $_" }
+}
+
 Write-Host "`n############################################################"
 Write-Host "# Done. Sidecars in $BinDir :"
 Write-Host "############################################################"
-$bases = @("videodubber-orchestrator","vd-stt-worker","vd-translation-worker","vd-tts-worker","vd-piper","ffmpeg","ffprobe")
+$bases = @("videodubber-orchestrator","vd-stt-worker","vd-translation-worker","vd-tts-worker","vd-piper","vd-uv","ffmpeg","ffprobe")
 foreach ($b in $bases) {
   $f = Join-Path $BinDir "$b-$Triple.exe"
   if (Test-Path $f) { Write-Host "    $b-$Triple.exe" }

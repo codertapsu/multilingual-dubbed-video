@@ -289,6 +289,15 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
         if let Some(ffprobe) = ffprobe_path.as_ref() {
             env.push(("FFPROBE_PATH", ffprobe.clone()));
         }
+        // The bundled `uv` lets the orchestrator install the optional Python
+        // engine packs (neural TTS / separation / alignment) — and uv fetches
+        // its own Python — so the user needs NOTHING preinstalled. Without it,
+        // those packs surface an "install uv" remediation in the UI.
+        if let Some(uv) = resolve_sidecar_bin("vd-uv") {
+            env.push(("VIDEODUBBER_UV_PATH", uv));
+        } else {
+            log_info("bundled 'vd-uv' not found; Python engine packs will require uv on PATH.");
+        }
         spawn_one(app, "videodubber-orchestrator", &env);
     }
 

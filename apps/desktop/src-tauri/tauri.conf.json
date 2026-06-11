@@ -45,6 +45,7 @@
       "binaries/vd-translation-worker",
       "binaries/vd-tts-worker",
       "binaries/vd-piper",
+      "binaries/vd-uv",
       "binaries/ffmpeg",
       "binaries/ffprobe"
     ],

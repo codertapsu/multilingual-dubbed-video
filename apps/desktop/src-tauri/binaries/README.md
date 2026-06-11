@@ -18,6 +18,7 @@ preinstalled. The installer embeds everything here.
 | `vd-translation-worker` | Translation worker (Argos, port 5102), PyInstaller | `scripts/package/build-workers.{sh,ps1}` |
 | `vd-tts-worker` | TTS worker (Piper/fallback, port 5103), PyInstaller | `scripts/package/build-workers.{sh,ps1}` |
 | `vd-piper` | Frozen piper-tts CLI (neural TTS; spawned per segment by the TTS worker) | `scripts/package/build-workers.{sh,ps1}` |
+| `vd-uv` | `uv` binary (Astral) — installs the optional Python engine packs and downloads their own Python, so users need nothing preinstalled | `scripts/package/fetch-uv.{sh,ps1}` |
 | `ffmpeg` | static, **libass-enabled** FFmpeg | `scripts/package/fetch-ffmpeg.{sh,ps1}` |
 | `ffprobe` | static FFprobe | `scripts/package/fetch-ffmpeg.{sh,ps1}` |
 

@@ -30,6 +30,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." >/dev/null 2>&1 && pwd)"
 BIN_DIR="${REPO_ROOT}/apps/desktop/src-tauri/binaries"
 
+# Load .env so machine-specific paths (FFMPEG_PATH/FFPROBE_PATH for the local
+# ffmpeg-copy mode, PYTHON_PATH, etc.) are available to this script AND every
+# sub-script it spawns. Without this, fetch-ffmpeg.sh can't find a local
+# libass-enabled ffmpeg and falls back to a network download.
+if [[ -f "${REPO_ROOT}/.env" ]]; then set -a; . "${REPO_ROOT}/.env"; set +a; fi
+
 resolve_triple() {
   if [[ -n "${TARGET_TRIPLE:-}" ]]; then echo "${TARGET_TRIPLE}"; return; fi
   if command -v rustc >/dev/null 2>&1; then rustc -Vv | sed -n 's/^host: //p'; return; fi
@@ -61,18 +67,25 @@ if [[ "${SKIP_FFMPEG:-0}" != "1" ]]; then
   bash "${SCRIPT_DIR}/fetch-ffmpeg.sh"
 fi
 
+if [[ "${SKIP_UV:-0}" != "1" ]]; then
+  echo ""; echo "### uv (engine-pack Python env manager) ####################"
+  # Non-fatal: a missing uv only disables the optional Python engine packs;
+  # the base app + model downloads still work fully.
+  bash "${SCRIPT_DIR}/fetch-uv.sh" || echo "WARNING: uv fetch failed; Python engine packs (neural TTS / separation / alignment) will be unavailable until uv is bundled or installed." >&2
+fi
+
 echo ""
 echo "############################################################"
 echo "# Done. Sidecars in ${BIN_DIR}:"
 echo "############################################################"
-ls -1 "${BIN_DIR}" | grep -E "^(videodubber-orchestrator|vd-(stt|translation|tts)-worker|vd-piper|ffmpeg|ffprobe)-" || {
+ls -1 "${BIN_DIR}" | grep -E "^(videodubber-orchestrator|vd-(stt|translation|tts)-worker|vd-piper|vd-uv|ffmpeg|ffprobe)-" || {
   echo "WARNING: no sidecars matched the expected naming. Check the logs above." >&2
 }
 
 # Sanity: warn if any expected base is missing for this triple.
 EXE_SUFFIX=""
 case "${TRIPLE}" in *windows*) EXE_SUFFIX=".exe" ;; esac
-for base in videodubber-orchestrator vd-stt-worker vd-translation-worker vd-tts-worker vd-piper ffmpeg ffprobe; do
+for base in videodubber-orchestrator vd-stt-worker vd-translation-worker vd-tts-worker vd-piper vd-uv ffmpeg ffprobe; do
   f="${BIN_DIR}/${base}-${TRIPLE}${EXE_SUFFIX}"
   [[ -f "${f}" ]] || echo "NOTE: missing ${f} (skipped or failed?)."
 done

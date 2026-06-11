@@ -74,9 +74,15 @@ How packs run:
   bundled FFmpeg. No Python involved.
 - **`uv-env` packs** materialize a self-contained Python environment via
   [uv](https://docs.astral.sh/uv/) (the ComfyUI-Desktop pattern), so torch/ONNX
-  stacks that don't freeze well still install cleanly. `uv` must be on PATH;
-  if it's absent the installer reports a clear remediation and the rest of the
-  app keeps working.
+  stacks that don't freeze well still install cleanly. The installed app **bundles
+  uv** (and uv fetches its own Python), so nothing needs to be preinstalled; in a
+  dev/source build, install uv and the rest of the app keeps working regardless.
+
+> **Maintainers:** the download URLs live in `enginePackCatalog.ts`. The
+> `llama-cpp-*` packs use upstream binaries; the macOS Metal whisper.cpp binary
+> must be built and self-hosted (ggml-org ships whisper.cpp binaries for Windows
+> only). See **[`ENGINE_PACKS.md`](ENGINE_PACKS.md)** for where to host and how to
+> pin URLs/checksums.
 
 The orchestrator's **EngineManager** starts a pack's server on demand, waits for
 health, and — because the dubbing pipeline runs one heavy phase at a time —

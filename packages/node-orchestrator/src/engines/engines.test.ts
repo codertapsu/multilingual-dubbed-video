@@ -55,17 +55,20 @@ describe('pack selection (best accel, installed-aware)', () => {
   });
 
   it('orders candidate packs by acceleration', () => {
-    const ids = packsForProvider('whisper-cpp', 'win32', 'x64').map((p) => p.id);
+    // local-llm on Windows has both a CUDA and a Vulkan pack.
+    const ids = packsForProvider('local-llm', 'win32', 'x64').map((p) => p.id);
     // cuda (rank 5) before vulkan (rank 3)
-    expect(ids.indexOf('whisper-cpp-cuda')).toBeLessThan(ids.indexOf('whisper-cpp-vulkan'));
+    expect(ids.indexOf('llama-cpp-cuda')).toBeLessThan(ids.indexOf('llama-cpp-vulkan'));
   });
 
   it('pickInstalledPack returns undefined until a pack is installed, then the best one', async () => {
-    expect(await pickInstalledPack(store, 'whisper-cpp', 'win32', 'x64')).toBeUndefined();
-    const dirPath = store.packDir('whisper-cpp-vulkan');
+    expect(await pickInstalledPack(store, 'local-llm', 'win32', 'x64')).toBeUndefined();
+    // Install only the Vulkan pack; CUDA (higher rank) is not installed, so the
+    // best INSTALLED pack is the Vulkan one.
+    const dirPath = store.packDir('llama-cpp-vulkan');
     await mkdir(dirPath, { recursive: true });
-    await store.add({ id: 'whisper-cpp-vulkan', path: dirPath, installedAt: '2026-01-01T00:00:00Z' });
-    expect(await pickInstalledPack(store, 'whisper-cpp', 'win32', 'x64')).toBe('whisper-cpp-vulkan');
+    await store.add({ id: 'llama-cpp-vulkan', path: dirPath, installedAt: '2026-01-01T00:00:00Z' });
+    expect(await pickInstalledPack(store, 'local-llm', 'win32', 'x64')).toBe('llama-cpp-vulkan');
   });
 
   it('requireInstalledPack throws ENGINE_PACK_MISSING when none installed', async () => {

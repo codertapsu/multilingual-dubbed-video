@@ -6,19 +6,46 @@
  * Each logical engine may have several packs (one per platform/arch/accel);
  * `availablePacks()` filters to the ones runnable on the current machine.
  *
- * URLs/checksums are pinned per release. They are intentionally easy to update:
- * bump the version constant and the artifact entries. The installer verifies
- * the sha256 when present and discards corrupt downloads.
+ * ── EDITING URLs ──────────────────────────────────────────────────────────
+ * To change what gets downloaded, edit:
+ *   1. the version constants below (LLAMA_CPP / WHISPER_CPP), and
+ *   2. each pack's `artifacts[].url` + `artifacts[].sha256`.
+ * The installer verifies the sha256 when present (and discards corrupt
+ * downloads); when sha256 is empty it logs a warning and installs unverified.
+ * See docs/ENGINE_PACKS.md for the full "where to host / how to pin" guide.
  *
- * NOTE: checksums are left empty here; the installer logs a warning and still
- * installs when a checksum is absent (so the catalog stays usable before the
- * release-engineering step pins them). Pin them before shipping.
+ * ── WHAT IS UPSTREAM vs SELF-HOSTED ──────────────────────────────────────
+ *  - llama.cpp publishes prebuilt server binaries for every platform we ship,
+ *    so the `llama-cpp-*` packs point straight at ggml-org's GitHub releases.
+ *  - whisper.cpp publishes prebuilt binaries ONLY for Windows. The macOS Metal
+ *    server has NO upstream binary, so `whisper-cpp-metal` points at
+ *    SELF_HOSTED_BASE — YOU build it once and upload it to your own GitHub
+ *    Release (recipe in docs/ENGINE_PACKS.md), then set OWNER/REPO + the tag.
+ *  - The Python packs (`tts-neural`, `separation-audio`, `alignment-whisperx`)
+ *    have NO download URL — they install from PyPI via the bundled `uv`
+ *    (`uv-env://` markers; the requirement sets live in engineInstaller.ts).
  */
 import type { EnginePackInfo } from '@videodubber/shared';
 
-/** Pinned upstream versions (single source of truth for URL templates). */
-const WHISPER_CPP = 'v1.8.6';
-const LLAMA_CPP = 'b9581';
+// Pinned upstream releases (single source of truth for the URL templates).
+// Verified against the GitHub releases on 2026-06-11.
+const LLAMA_CPP = 'b9592'; // github.com/ggml-org/llama.cpp/releases
+const WHISPER_CPP = 'v1.8.6'; // github.com/ggml-org/whisper.cpp/releases
+
+/** Upstream release-asset download bases. */
+const LLAMA_DL = `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP}`;
+const WHISPER_DL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP}`;
+
+/**
+ * Base URL for binaries with NO upstream prebuilt (currently: the macOS Metal
+ * whisper.cpp server). Replace OWNER/REPO and the tag with your own GitHub
+ * Release once you've built + uploaded the asset (see docs/ENGINE_PACKS.md).
+ * Until then, installing `whisper-cpp-metal` fails with a clear network error
+ * — every OTHER engine (llama.cpp, neural TTS, separation, alignment) works.
+ */
+const SELF_HOSTED_BASE =
+  process.env.VIDEODUBBER_ENGINE_BASE?.trim() ||
+  'https://github.com/OWNER/REPO/releases/download/engine-packs-v1';
 
 /**
  * The full curated set. `availablePacks()` filters by platform/arch.
@@ -32,78 +59,64 @@ const LLAMA_CPP = 'b9581';
  */
 export const ENGINE_PACKS: readonly EnginePackInfo[] = [
   // --- whisper.cpp (STT acceleration) --------------------------------------
+  // whisper.cpp ships prebuilt binaries for WINDOWS ONLY. macOS Metal has no
+  // upstream server build, so that pack is self-hosted (build recipe in
+  // docs/ENGINE_PACKS.md). Everywhere else, the bundled faster-whisper already
+  // covers CPU, and Windows NVIDIA is covered by the cuBLAS pack below.
   {
     id: 'whisper-cpp-metal',
     kind: 'stt',
     packKind: 'binary',
-    displayName: 'whisper.cpp (Apple Metal + CoreML)',
+    displayName: 'whisper.cpp (Apple Metal)',
     description:
-      'Accelerated Whisper for Apple Silicon (Metal GPU + optional CoreML/ANE encoder). ~10× realtime for large-v3-turbo. The macOS speed fix — CTranslate2 has no Metal backend.',
+      'Accelerated Whisper for Apple Silicon (Metal GPU). ~10× realtime for large-v3-turbo — the macOS speed fix, since CTranslate2 has no Metal backend. Self-hosted binary (see docs/ENGINE_PACKS.md).',
     providerId: 'whisper-cpp',
     platforms: ['darwin'],
     arch: ['arm64'],
     accel: 'metal',
     tier: 'balanced',
-    approxSizeMb: 12,
+    approxSizeMb: 14,
     artifacts: [
       {
-        url: `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP}/whisper-cpp-${WHISPER_CPP}-darwin-arm64.tar.gz`,
-        approxSizeMb: 12,
+        // No upstream macOS server binary — built + uploaded to your own release.
+        url: `${SELF_HOSTED_BASE}/whisper-cpp-${WHISPER_CPP}-macos-arm64.tar.gz`,
+        sha256: '',
+        approxSizeMb: 14,
         destPath: '.',
         archive: true,
       },
     ],
-    licenseNote: 'MIT (whisper.cpp and ggml model conversions).',
+    licenseNote: 'MIT (whisper.cpp + ggml).',
   },
   {
     id: 'whisper-cpp-cuda',
     kind: 'stt',
     packKind: 'binary',
-    displayName: 'whisper.cpp (NVIDIA CUDA)',
+    displayName: 'whisper.cpp (NVIDIA CUDA, Windows)',
     description:
-      'Accelerated Whisper for NVIDIA GPUs (CUDA). Large speedups over CPU for large models.',
+      'Accelerated Whisper for NVIDIA GPUs on Windows (cuBLAS). Large speedups over CPU for big models.',
     providerId: 'whisper-cpp',
-    platforms: ['win32', 'linux'],
+    platforms: ['win32'],
     arch: ['x64'],
     accel: 'cuda',
     tier: 'performance',
     minVramMb: 4096,
-    approxSizeMb: 120,
+    approxSizeMb: 90,
     artifacts: [
       {
-        url: `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP}/whisper-cpp-${WHISPER_CPP}-cuda-x64.tar.gz`,
-        approxSizeMb: 120,
+        // Upstream prebuilt (contains whisper-cli.exe / whisper-server.exe).
+        url: `${WHISPER_DL}/whisper-cublas-12.4.0-bin-x64.zip`,
+        sha256: '',
+        approxSizeMb: 90,
         destPath: '.',
         archive: true,
       },
     ],
-    licenseNote: 'MIT.',
-  },
-  {
-    id: 'whisper-cpp-vulkan',
-    kind: 'stt',
-    packKind: 'binary',
-    displayName: 'whisper.cpp (Vulkan — AMD/Intel GPU)',
-    description:
-      'Accelerated Whisper via Vulkan for AMD/Intel GPUs on Windows/Linux where CUDA is unavailable.',
-    providerId: 'whisper-cpp',
-    platforms: ['win32', 'linux'],
-    arch: ['x64'],
-    accel: 'vulkan',
-    tier: 'balanced',
-    approxSizeMb: 30,
-    artifacts: [
-      {
-        url: `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP}/whisper-cpp-${WHISPER_CPP}-vulkan-x64.tar.gz`,
-        approxSizeMb: 30,
-        destPath: '.',
-        archive: true,
-      },
-    ],
-    licenseNote: 'MIT.',
+    licenseNote: 'MIT. Requires an NVIDIA GPU + driver.',
   },
 
   // --- llama.cpp server (local LLM translation) ----------------------------
+  // All upstream: ggml-org publishes prebuilt llama-server binaries per platform.
   {
     id: 'llama-cpp-metal',
     kind: 'translation',
@@ -117,11 +130,12 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     accel: 'metal',
     tier: 'performance',
     minRamMb: 16384,
-    approxSizeMb: 20,
+    approxSizeMb: 30,
     artifacts: [
       {
-        url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP}/llama-${LLAMA_CPP}-bin-macos-arm64.zip`,
-        approxSizeMb: 20,
+        url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-macos-arm64.tar.gz`,
+        sha256: '',
+        approxSizeMb: 30,
         destPath: '.',
         archive: true,
       },
@@ -132,20 +146,55 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     id: 'llama-cpp-cuda',
     kind: 'translation',
     packKind: 'binary',
-    displayName: 'llama.cpp server (NVIDIA CUDA)',
+    displayName: 'llama.cpp server (NVIDIA CUDA, Windows)',
     description:
-      'Local LLM runtime for offline translation on NVIDIA GPUs. OpenAI-compatible server.',
+      'Local LLM runtime for offline translation on NVIDIA GPUs (Windows). OpenAI-compatible server.',
     providerId: 'local-llm',
-    platforms: ['win32', 'linux'],
+    platforms: ['win32'],
     arch: ['x64'],
     accel: 'cuda',
     tier: 'performance',
     minVramMb: 8192,
-    approxSizeMb: 400,
+    approxSizeMb: 420,
     artifacts: [
       {
-        url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP}/llama-${LLAMA_CPP}-bin-win-cuda-x64.zip`,
-        approxSizeMb: 400,
+        url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-win-cuda-12.4-x64.zip`,
+        sha256: '',
+        approxSizeMb: 30,
+        destPath: '.',
+        archive: true,
+      },
+      {
+        // The CUDA build needs the CUDA 12 runtime DLLs (separate upstream zip),
+        // extracted alongside llama-server.exe.
+        url: `${LLAMA_DL}/cudart-llama-bin-win-cuda-12.4-x64.zip`,
+        sha256: '',
+        approxSizeMb: 390,
+        destPath: '.',
+        archive: true,
+      },
+    ],
+    licenseNote: 'MIT. Requires an NVIDIA GPU + driver.',
+  },
+  {
+    id: 'llama-cpp-vulkan',
+    kind: 'translation',
+    packKind: 'binary',
+    displayName: 'llama.cpp server (Vulkan, Windows)',
+    description:
+      'Local LLM runtime for offline translation via Vulkan (AMD/Intel GPU) on Windows. OpenAI-compatible server.',
+    providerId: 'local-llm',
+    platforms: ['win32'],
+    arch: ['x64'],
+    accel: 'vulkan',
+    tier: 'balanced',
+    minRamMb: 16384,
+    approxSizeMb: 40,
+    artifacts: [
+      {
+        url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-win-vulkan-x64.zip`,
+        sha256: '',
+        approxSizeMb: 40,
         destPath: '.',
         archive: true,
       },
@@ -153,23 +202,24 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     licenseNote: 'MIT.',
   },
   {
-    id: 'llama-cpp-vulkan',
+    id: 'llama-cpp-linux',
     kind: 'translation',
     packKind: 'binary',
-    displayName: 'llama.cpp server (Vulkan / CPU)',
+    displayName: 'llama.cpp server (Linux, Vulkan/CPU)',
     description:
-      'Local LLM runtime for offline translation via Vulkan (AMD/Intel GPU) or CPU on Windows/Linux.',
+      'Local LLM runtime for offline translation on Linux (Vulkan GPU, CPU fallback). OpenAI-compatible server.',
     providerId: 'local-llm',
-    platforms: ['win32', 'linux'],
+    platforms: ['linux'],
     arch: ['x64'],
     accel: 'vulkan',
     tier: 'balanced',
     minRamMb: 16384,
-    approxSizeMb: 30,
+    approxSizeMb: 50,
     artifacts: [
       {
-        url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP}/llama-${LLAMA_CPP}-bin-win-vulkan-x64.zip`,
-        approxSizeMb: 30,
+        url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-ubuntu-vulkan-x64.tar.gz`,
+        sha256: '',
+        approxSizeMb: 50,
         destPath: '.',
         archive: true,
       },

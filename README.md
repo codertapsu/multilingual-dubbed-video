@@ -15,28 +15,37 @@ requirement.
 
 ## Download & install (desktop app)
 
-**Just want to use VideoDubber?** Grab the installer for your OS from the
-[**Releases**](https://github.com/codertapsu/multilingual-dubbed-video/releases) page — no Python, Node, or
-FFmpeg required. The installer is **fully self-contained**: it bundles the app,
-the pipeline engine, all three AI workers, and FFmpeg.
+**Just want to use VideoDubber?** Head to the
+[**Releases**](https://github.com/codertapsu/multilingual-dubbed-video/releases) page and
+grab the installer for your OS — no Python, Node, or FFmpeg required. Each build is
+**fully self-contained**: it bundles the app, the pipeline engine, all three AI
+workers, and FFmpeg.
 
-| OS | Download | Install |
+| Your machine | File to download | First launch |
 |---|---|---|
-| **macOS** | `.dmg` (Apple Silicon or Intel — pick the one for your Mac) | Open the `.dmg`, drag **VideoDubber** to Applications. If it isn't notarized yet, right-click the app → **Open** the first time (or `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`). |
-| **Windows** | `.msi` or `.exe` | Run it and follow the installer. |
-| **Linux** | `.AppImage` or `.deb` | `chmod +x *.AppImage && ./VideoDubber*.AppImage`, or `sudo dpkg -i *.deb`. |
+| **Mac — Apple Silicon** (M1/M2/M3/M4) | `VideoDubber_<ver>_aarch64.dmg` | Unsigned build → **right-click the app → Open** (or `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`). |
+| **Windows (64-bit)** | `VideoDubber_<ver>_x64-setup.exe` (or `_x64_en-US.msi`) | SmartScreen → **More info → Run anyway**. |
+| **Linux (64-bit)** | `VideoDubber_<ver>_amd64.AppImage` / `.deb` | `chmod +x *.AppImage && ./VideoDubber*.AppImage`, or `sudo dpkg -i *.deb`. |
+| **Mac — Intel** | `VideoDubber_<ver>_x64.dmg` | Same as Apple Silicon. |
 
-**First launch** runs a one-time setup wizard that downloads the AI **models** for
-the languages you choose (the only thing not in the installer). After that the app
-works fully **offline**. The app **auto-updates** from GitHub Releases; you can
-switch to manual updates in **Settings → Updates**.
+> **Which Mac do I have?**  → **About This Mac**: "Apple M…" = Apple Silicon, "Intel" = Intel.
 
-> Architecture of the bundle: [`docs/PRODUCTION.md`](docs/PRODUCTION.md). How
-> updates work: [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
+Not every platform is necessarily attached to a given release — builds are added as
+they're ready, so check the Releases page for the installers currently available.
+
+**First launch** runs a one-time wizard that downloads the AI **models** for the
+languages you choose (the only thing not in the installer); after that the app works
+fully **offline**. To update, download a newer release from the Releases page —
+in-app auto-update arrives in a later version (then toggleable in **Settings →
+Updates**).
+
+> Bundle internals: [`docs/PRODUCTION.md`](docs/PRODUCTION.md) · auto-update design:
+> [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
 
 **Building the installers / cutting a release?** See
-[`docs/RELEASING.md`](docs/RELEASING.md) (and `pnpm package:sidecars` +
-`pnpm app:build`). The rest of this README covers **developing from source**.
+[`docs/RELEASING.md`](docs/RELEASING.md) (`pnpm package:sidecars` + `pnpm app:build`;
+macOS is built locally — the hybrid CI/local model is documented there). The rest of
+this README covers **developing from source**.
 
 ---
 

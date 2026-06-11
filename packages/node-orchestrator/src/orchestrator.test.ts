@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LocalJobOrchestrator } from './orchestrator.js';
+import type { ProviderReadiness } from './providers/readiness.js';
 import { loadConfig } from './config.js';
 import { EventBusRegistry } from './events.js';
 import { ProjectStore } from './workspace/projectStore.js';
@@ -131,6 +132,55 @@ describe('LocalJobOrchestrator extras', () => {
     expect(info.hasAudio).toBe(true);
     const reloaded = await store.getProject(project.id);
     expect(reloaded.mediaInfo?.durationMs).toBe(info.durationMs);
+  });
+});
+
+describe('run readiness gate', () => {
+  function gatedOrchestrator(checkReadiness: () => Promise<ProviderReadiness[]>): LocalJobOrchestrator {
+    return new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media: new FakeMediaService(),
+      registry: fakeRegistry(
+        new FakeSttProvider(makeSegments([[0, 1000, 'hi']])),
+        new FakeTranslationProvider(),
+        new FakeTtsProvider(() => 900),
+      ),
+      bus: new EventBusRegistry(),
+      checkReadiness,
+    });
+  }
+
+  it('refuses to start a run when a selected provider is not ready', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video));
+    const gated = gatedOrchestrator(async () => [
+      {
+        phase: 'translation',
+        providerId: 'ollama',
+        status: 'daemon-unreachable',
+        ready: false,
+        message: 'Ollama is not running.',
+        remediation: 'Start Ollama.',
+      },
+    ]);
+
+    await expect(gated.runPipeline(project.id)).rejects.toMatchObject({
+      appError: { code: 'ENGINE_UNAVAILABLE', remediation: 'Start Ollama.' },
+    });
+    // The bug guarantee: nothing was scheduled.
+    expect(gated.isRunning(project.id)).toBe(false);
+  });
+
+  it('starts the run when the selected providers are ready', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video));
+    const gated = gatedOrchestrator(async () => [
+      { phase: 'stt', providerId: 'faster-whisper', status: 'ready', ready: true, message: 'Ready.' },
+    ]);
+
+    await expect(gated.runPipeline(project.id)).resolves.toBeUndefined();
+    await gated.cancelJob(project.id); // clean up the scheduled background run
   });
 });
 

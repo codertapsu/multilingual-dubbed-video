@@ -33,6 +33,7 @@ import { ProjectLogger } from './logging.js';
 import type { PipelineMediaService, SeparationService } from './media.js';
 import type { AlignmentService } from './providers/alignment/whisperxProvider.js';
 import type { ProviderRegistry } from './providers/registry.js';
+import { assertRunReady, type ProviderReadiness } from './providers/readiness.js';
 import { PipelineRunner, type RunnerDeps } from './pipeline/runner.js';
 import type { ProjectStore } from './workspace/projectStore.js';
 import { segmentIdToIndex, type WorkspacePaths } from './workspace/paths.js';
@@ -48,6 +49,14 @@ export interface OrchestratorDeps {
   separation?: SeparationService;
   /** Optional forced-alignment/diarization engine for tighter timing. */
   alignment?: AlignmentService;
+  /**
+   * Optional readiness checker. When present, a run is gated on it: the selected
+   * providers (for the phases that will execute) are checked BEFORE the run is
+   * scheduled, so an unready provider (e.g. Ollama with no daemon) fails fast
+   * with an actionable error instead of dying deep in a step. Returns one entry
+   * per checked phase; the gate throws if any is not ready.
+   */
+  checkReadiness?: (project: Project, fromStep?: PipelineStepId) => Promise<ProviderReadiness[]>;
 }
 
 /** A tracked, in-flight pipeline run. */
@@ -127,8 +136,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   async runPipeline(projectId: string): Promise<void> {
     if (this.running.has(projectId)) return;
     const project = await this.deps.store.getProject(projectId);
-    // Re-check after the await: a concurrent run() request may have started one
-    // while we were loading the project. startRun() then registers the job
+    // Gate the run: refuse to start (with an actionable error) if a selected
+    // provider isn't ready, so the run never dies deep in a step.
+    if (this.deps.checkReadiness) assertRunReady(await this.deps.checkReadiness(project));
+    // Re-check after the await(s): a concurrent run() request may have started
+    // one while we were loading/validating. startRun() registers the job
     // synchronously (no await before this.running.set), so this guard is safe.
     if (this.running.has(projectId)) return;
     this.startRun(project, undefined);
@@ -158,6 +170,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       await this.cancelJob(projectId);
     }
     const project = await this.deps.store.getProject(projectId);
+    // Gate the retry too — but only on the providers whose phases will actually
+    // re-run from `stepId` (a retry-from-render isn't blocked by the translator).
+    if (this.deps.checkReadiness) assertRunReady(await this.deps.checkReadiness(project, stepId));
     this.startRun(project, stepId);
   }
 

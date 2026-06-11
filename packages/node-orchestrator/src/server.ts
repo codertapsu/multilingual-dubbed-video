@@ -47,6 +47,7 @@ import { openPath } from './openPath.js';
 import { LocalJobOrchestrator } from './orchestrator.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { createDefaultRegistry } from './providers/registry.js';
+import { checkProviderReadiness } from './providers/readiness.js';
 import type { PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog } from './setup/catalog.js';
@@ -184,7 +185,20 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   const orchestrator =
     options.orchestrator ??
-    new LocalJobOrchestrator({ config, store, media, registry, bus, separation, alignment });
+    new LocalJobOrchestrator({
+      config,
+      store,
+      media,
+      registry,
+      bus,
+      separation,
+      alignment,
+      // Gate runs on provider readiness so an unready provider (e.g. Ollama with
+      // no daemon, a missing engine pack, or an unconfigured cloud key) fails
+      // fast with remediation instead of dying mid-pipeline.
+      checkReadiness: (project, fromStep) =>
+        checkProviderReadiness(project, { registry, credentials, enginePackStore }, fromStep),
+    });
 
   // First-run setup: config/state store, the global setup SSE bus, and the
   // model installer that streams progress over that bus.

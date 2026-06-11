@@ -39,8 +39,8 @@ import type { EnginePackStore } from '../engines/enginePackStore.js';
 import { requireInstalledPack } from '../engines/packSelection.js';
 
 /** Default local-LLM models per backend (overridable via env). */
-const OLLAMA_URL = process.env.OLLAMA_URL?.trim() || 'http://127.0.0.1:11434/v1';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL?.trim() || 'translategemma:12b';
+export const OLLAMA_URL = process.env.OLLAMA_URL?.trim() || 'http://127.0.0.1:11434/v1';
+export const OLLAMA_MODEL = process.env.OLLAMA_MODEL?.trim() || 'translategemma:12b';
 const LLAMACPP_MODEL = process.env.LLAMACPP_MODEL?.trim() || 'translategemma-12b';
 
 /** Default provider ids per capability. */

@@ -33,22 +33,31 @@ mode you use day-to-day.
 │                                                                                                       │ │
 └───────────────────────────────────────────────────────────────────────────────────────────────────┘ │
                                                                                                         │
-        DOWNLOADED ON FIRST RUN (NOT in the installer) — large + language-dependent:                    │
-          • faster-whisper model (tiny … large-v3)   -> HuggingFace cache (~/.cache/huggingface)         │
+        DOWNLOADED ON DEMAND (NOT in the installer) — large + machine-dependent:                        │
+          • faster-whisper model (tiny … large-v3-turbo) -> HuggingFace cache (~/.cache/huggingface)     │
           • Argos language packages (e.g. en→vi)      -> argostranslate user-data dir                    │
           • Piper voices (.onnx + .onnx.json)         -> ~/VideoDubber/models/piper                      │
+          • ENGINE PACKS (Settings → Engines, optional, for capable machines):                           │
+              whisper.cpp (Metal/CUDA/Vulkan)  ·  llama.cpp + local LLM  ·  neural TTS                    │
+              vocal separation  ·  forced alignment + diarization        -> ~/VideoDubber/engines        │
 └────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **End users need NO Python, Node, or FFmpeg preinstalled.** Everything required
 to run is inside the app bundle.
 
-### Why models are not bundled
+### Why models (and heavy engines) are not bundled
 
-A single Whisper `large-v3` is ~3 GB; each language pair and voice adds more.
-Bundling every combination would make a multi-gigabyte installer that's mostly
-dead weight for any one user. Instead the app ships small and the **first-run
-wizard** fetches exactly the model(s) for the languages the user picks.
+A single Whisper `large-v3` is ~3 GB; each language pair and voice adds more, and
+the optional accelerated/neural engines are larger still. Bundling every
+combination would make a multi-gigabyte installer that's mostly dead weight for
+any one user. Instead the app ships small and:
+
+- the **first-run wizard** fetches exactly the model(s) for the languages picked;
+- **engine packs** (Settings → Engines) download only the higher-quality engines
+  a given machine can use, verified and run on demand — see
+  [`PROVIDERS.md`](PROVIDERS.md#engine-packs). The base app always works on the
+  bundled CPU engines; packs are purely additive.
 
 ---
 
@@ -96,6 +105,25 @@ The install steps (run by the orchestrator):
 State lives in `<config>/setup.json` (see **Storage** below), so the wizard only
 appears once. Users can fetch more languages/voices later from Settings.
 
+### What a brand-new user has to do (nothing preinstalled)
+
+1. **Install** — drag the app from the `.dmg` (macOS) / run the `.msi`/`.exe`
+   (Windows) / `.deb`/AppImage (Linux). No Python, Node, FFmpeg, or anything else
+   is required first.
+2. **Open it** — the backend (orchestrator + workers + ffmpeg) auto-starts.
+3. **Follow the wizard** — pick languages, click **Download**; it fetches just the
+   models for those languages. That's the entire required setup; the app can now
+   dub fully offline.
+4. **(Optional) Settings → Engines** — install higher-quality engine packs for a
+   capable machine. These are **self-contained**: native engines are downloaded
+   binaries, and the Python engines use the **bundled `uv`** (which fetches its
+   own Python), so there is still **nothing to preinstall**. The screen detects
+   what each engine needs and guides you; a pack that can't run yet is disabled
+   with an explanation rather than failing.
+
+The only thing the user ever needs is an **internet connection** for the
+downloads — everything is obtained through the app's UI.
+
 ---
 
 ## Production sidecar lifecycle
@@ -124,6 +152,18 @@ On a clean machine the orchestrator + workers come up as frozen binaries; the UI
 reports their health via `GET /workers/health`. The webview connects directly to
 `http://127.0.0.1:5100` for HTTP + SSE (the shell does not proxy SSE).
 
+### Engine packs (optional, downloaded later)
+
+Installed engine packs are **not** bundled sidecars — the orchestrator's
+`EngineManager` owns their lifecycle. When a project selects a pack-backed
+provider (accelerated whisper.cpp, local-LLM translation, neural TTS, vocal
+separation, forced alignment), the orchestrator starts that pack's server on a
+free loopback port, health-waits it, and runs it for that phase; because the
+dubbing pipeline is sequential, it **unloads other heavy engines first** so a
+single machine isn't overcommitted. All engine processes are stopped when the
+orchestrator shuts down (which happens when the app quits). Nothing engine-pack
+related runs until the user installs a pack and a project uses it.
+
 ---
 
 ## Storage layout (production)
@@ -132,14 +172,17 @@ reports their health via `GET /workers/health`. The webview connects directly to
 |---|---|
 | `<config>` = `$VIDEODUBBER_CONFIG_DIR` or `~/VideoDubber` | App config/state root. |
 | `<config>/setup.json` | First-run state (`firstRunComplete`, installed models). |
-| `<config>/preferences.json` | User preferences (e.g. `autoUpdate`). |
+| `<config>/preferences.json` | Preferences (auto-update + default per-phase providers). |
+| `<config>/credentials.json` | Cloud API keys (owner-only `0600`; optional). |
+| `<config>/engines.json` + `<config>/engines/<packId>/` | Installed engine packs + their files. |
 | `~/VideoDubber/models/piper` | Downloaded Piper voices. |
 | `~/.cache/huggingface` | faster-whisper model cache (HF default). |
 | argostranslate user-data dir | Installed Argos `.argosmodel` packages. |
 | `~/VideoDubber/projects` | Per-project workspaces (unchanged from dev). |
 
-Uninstalling the app does **not** delete `~/VideoDubber` or the model caches —
-re-installing reuses already-downloaded models (no second first-run download).
+Uninstalling the app does **not** delete `~/VideoDubber`, the model caches, or
+engine packs — re-installing reuses everything already downloaded (no second
+first-run download, no re-installing engine packs).
 
 ---
 

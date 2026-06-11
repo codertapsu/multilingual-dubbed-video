@@ -18,11 +18,21 @@ When you **open** the app, the Tauri shell launches the backend automatically:
 - the three **Python workers** — STT (5101), Translation (5102), TTS (5103).
 
 When you **close/quit** the app, all of those are shut down automatically. One window =
-the whole stack.
+the whole stack. Any optional **engine packs** the project uses (accelerated
+whisper.cpp, local-LLM translation, neural TTS, separation, alignment) are also
+started on demand and stopped on quit by the orchestrator — see
+[`PROVIDERS.md`](PROVIDERS.md#engine-packs).
 
-Internally the shell runs [`scripts/start-services.sh`](../scripts/start-services.sh)
-(`scripts\start-services.ps1` on Windows) in its own process group and terminates that
-group on exit. Source: [`apps/desktop/src-tauri/src/sidecar.rs`](../apps/desktop/src-tauri/src/sidecar.rs).
+Internally there are two lifecycle paths in
+[`apps/desktop/src-tauri/src/sidecar.rs`](../apps/desktop/src-tauri/src/sidecar.rs):
+
+- **Installed/bundled app** — the shell spawns the frozen `externalBin` sidecars
+  (orchestrator + 3 workers + the `vd-piper` CLI + ffmpeg/ffprobe) directly and
+  tracks them for teardown. Nothing else needs to be installed first.
+- **Dev (source checkout)** — the shell runs
+  [`scripts/start-services.sh`](../scripts/start-services.sh)
+  (`scripts\start-services.ps1` on Windows) in its own process group and terminates
+  that group on exit.
 
 ---
 

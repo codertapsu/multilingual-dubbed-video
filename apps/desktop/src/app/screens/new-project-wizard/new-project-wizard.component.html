@@ -224,6 +224,22 @@
             >
           </span>
         </label>
+        <label class="radio-row">
+          <input
+            type="checkbox"
+            name="autoFitOverflow"
+            [ngModel]="settings().autoFitOverflow ?? true"
+            (ngModelChange)="patchSettings('autoFitOverflow', $event)"
+          />
+          <span class="radio-body">
+            <span class="radio-title">Auto-fit lines that overflow their timing</span>
+            <span class="hint"
+              >When a translated line is too long to fit even at max speed, re-translate it
+              shorter and re-synthesize so it fits — fewer timing conflicts. Works with LLM
+              translators (Ollama / llama.cpp / cloud); ignored for Argos.</span
+            >
+          </span>
+        </label>
       </fieldset>
 
       <fieldset>

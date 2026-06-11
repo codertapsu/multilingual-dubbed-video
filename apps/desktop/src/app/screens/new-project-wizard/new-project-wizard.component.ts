@@ -65,6 +65,9 @@ function defaultSettings(): ProjectSettings {
     // intelligible up to ~1.5x; overflow lets a line spill briefly past its slot.
     maxSpeedRatio: 1.6,
     allowedOverflowMs: 1500,
+    // Auto-shorten any line that still can't fit even at max speed (LLM
+    // translation providers only; no-op for Argos). On by default.
+    autoFitOverflow: true,
   };
 }
 

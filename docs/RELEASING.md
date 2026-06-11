@@ -39,12 +39,11 @@ In `tauri.conf.json`, `plugins.updater.endpoints` must point at your repo's
 `latest.json`:
 
 ```
-https://github.com/OWNER/REPO/releases/latest/download/latest.json
+https://github.com/codertapsu/multilingual-dubbed-video/releases/latest/download/latest.json
 ```
 
-Replace `OWNER/REPO` with the real GitHub slug (e.g. `videodubber/videodubber`).
-`releases/latest/download/...` always resolves to the newest **published**
-(non-draft, non-prerelease) release.
+(This is already set to the real repo slug.) `releases/latest/download/...`
+always resolves to the newest **published** (non-draft, non-prerelease) release.
 
 ### 3. Configure GitHub secrets
 
@@ -70,6 +69,54 @@ Settings → Secrets and variables → Actions. Required / optional:
 > Application* identity (cert + private key) as a `.p12`, then
 > `base64 -i cert.p12 | pbcopy`. The app-specific password is created at
 > <https://appleid.apple.com> → Sign-In and Security → App-Specific Passwords.
+
+---
+
+## First release (v0.1.0) — quickstart
+
+The repo references are already set (`codertapsu/multilingual-dubbed-video`), the
+engine-pack URLs are pinned + checksummed, and `release.yml` builds all four
+platforms. To cut **v0.1.0**:
+
+1. **Add the updater signing secret** (the only hard requirement — the pubkey is
+   already committed). If you have the matching private key, set it; otherwise
+   regenerate the pair (this is fine pre-launch, no installs exist yet):
+   ```bash
+   pnpm tauri signer generate -w ~/.tauri/videodubber.key   # if regenerating
+   # paste the printed PUBLIC key into tauri.conf.json -> plugins.updater.pubkey
+   ```
+   Then in GitHub → Settings → Secrets and variables → Actions, add:
+   `TAURI_SIGNING_PRIVATE_KEY` (the file contents) and
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+2. **(Optional, recommended for macOS) Apple notarization secrets** — see the
+   table in *One-time setup*. Without them the macOS `.dmg` is unsigned and
+   Gatekeeper shows "can't be opened" (users right-click → Open, or run
+   `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`). Windows shows
+   a SmartScreen prompt without `WINDOWS_CERTIFICATE`.
+3. **Tag and push** — this triggers the Release workflow:
+   ```bash
+   git tag v0.1.0 && git push origin v0.1.0
+   ```
+4. **Review the draft release** GitHub created, then **Publish** it.
+
+> ⚠ **Known v0.1.0 caveats (be upfront in the notes):**
+> - **macOS ffmpeg portability.** CI bundles the runner's Homebrew ffmpeg, which
+>   is dynamically linked — it may not run on every Mac. Windows/Linux bundle a
+>   static ffmpeg and are fully self-contained. If a macOS user hits
+>   `FFMPEG_NOT_FOUND`, `brew install ffmpeg` is the interim fix. (Tracked: ship a
+>   relocatable/static macOS ffmpeg.)
+> - **No auto-update without the signing secret.** If you skip step 1 the build
+>   fails at the updater-signing step; either add the secret or set
+>   `bundle.createUpdaterArtifacts: false` for a no-auto-update build.
+
+### Engine-pack assets (one-time, for the macOS Metal whisper.cpp engine)
+
+Only `whisper-cpp-metal` is self-hosted. Build it once and upload it to an
+`engine-packs-v1` release on this repo — full recipe in
+[`ENGINE_PACKS.md`](ENGINE_PACKS.md#3-self-hosting-the-macos-metal-whispercpp-binary).
+Every other engine pack (llama.cpp, neural TTS, separation, alignment) needs no
+hosting. Paste the built asset's `shasum -a 256` into the `whisper-cpp-metal`
+artifact's `sha256` in `enginePackCatalog.ts`.
 
 ---
 
@@ -194,7 +241,7 @@ assembles these into a single `latest.json`:
   "notes": "…release notes…",
   "pub_date": "2026-06-10T00:00:00Z",
   "platforms": {
-    "darwin-aarch64": { "signature": "…", "url": "https://github.com/OWNER/REPO/releases/download/v0.2.0/VideoDubber_aarch64.app.tar.gz" },
+    "darwin-aarch64": { "signature": "…", "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/v0.2.0/VideoDubber_aarch64.app.tar.gz" },
     "darwin-x86_64":  { "signature": "…", "url": "…" },
     "windows-x86_64": { "signature": "…", "url": "…" },
     "linux-x86_64":   { "signature": "…", "url": "…" }

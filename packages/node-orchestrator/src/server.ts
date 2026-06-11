@@ -46,8 +46,9 @@ import { createFfmpegMediaService } from './mediaAdapter.js';
 import { openPath } from './openPath.js';
 import { LocalJobOrchestrator } from './orchestrator.js';
 import type { ProviderRegistry } from './providers/registry.js';
-import { createDefaultRegistry } from './providers/registry.js';
+import { createDefaultRegistry, OLLAMA_MODEL } from './providers/registry.js';
 import { buildReadinessContext, checkProviderReadiness, describeProviderReadiness } from './providers/readiness.js';
+import { OllamaPullManager, listOllamaModels } from './providers/ollamaModels.js';
 import type { PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog } from './setup/catalog.js';
@@ -199,6 +200,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       checkReadiness: (project, fromStep) =>
         checkProviderReadiness(project, { registry, credentials, enginePackStore }, fromStep),
     });
+
+  // Tracks background Ollama model pulls (lazy on-demand for the large, optional
+  // local-LLM translation models). The UI polls /providers/ollama/pull-status.
+  const ollamaPulls = new OllamaPullManager(OLLAMA_URL);
 
   // First-run setup: config/state store, the global setup SSE bus, and the
   // model installer that streams progress over that bus.
@@ -402,6 +407,36 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       const project = await store.getProject(req.params.id);
       const providers = await checkProviderReadiness(project, { registry, credentials, enginePackStore });
       return { ok: providers.every((p) => p.ready), providers };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // ---- Ollama models (lazy, on-demand: large optional translation models) ----
+
+  app.get('/providers/ollama/models', async (_req, reply) => {
+    try {
+      const models = await listOllamaModels(OLLAMA_URL);
+      return { models, configured: OLLAMA_MODEL, present: models.includes(OLLAMA_MODEL) };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/providers/ollama/pull', async (req: FastifyRequest<{ Body: { model?: string } }>, reply) => {
+    try {
+      const model = req.body?.model?.trim() || OLLAMA_MODEL;
+      const state = ollamaPulls.start(model);
+      return reply.status(202).send({ model, ...state });
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/providers/ollama/pull-status', async (req: FastifyRequest<{ Querystring: { model?: string } }>, reply) => {
+    try {
+      const model = req.query?.model?.trim() || OLLAMA_MODEL;
+      return { model, ...ollamaPulls.status(model) };
     } catch (err) {
       return sendError(reply, err);
     }

@@ -379,7 +379,7 @@ export class PipelineRunner {
       case 'tts':
         return this.stepTts(project, paths, signal);
       case 'alignment':
-        return this.stepAlignment(project, paths, signal);
+        return this.stepAlignment(project, paths, signal, onProgress);
       case 'audio-mix':
         return this.stepAudioMix(project, paths, signal);
       case 'render':
@@ -683,7 +683,12 @@ export class PipelineRunner {
     this.deps.logger.info(`Speech synthesis complete (engine: ${result.engine ?? 'unknown'}).`);
   }
 
-  private async stepAlignment(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
+  private async stepAlignment(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress: StepProgress,
+  ): Promise<void> {
     throwIfCancelled(signal);
     const segments = await readSegments(paths.translatedJson);
 
@@ -694,8 +699,11 @@ export class PipelineRunner {
     // Probes are independent ffprobe runs — do them with bounded concurrency
     // (sequential probing dominated this step's wall-clock on long videos).
     const PROBE_CONCURRENCY = 8;
+    const PROBE_TIMEOUT_MS = 15_000;
     const alignInputs = new Array<AlignInputSegment>(segments.length);
+    const progressEvery = Math.max(1, Math.floor(segments.length / 20));
     let nextSegment = 0;
+    let probedCount = 0;
     await Promise.all(
       Array.from({ length: Math.min(PROBE_CONCURRENCY, segments.length) }, async () => {
         while (nextSegment < segments.length) {
@@ -707,11 +715,18 @@ export class PipelineRunner {
           const audioPath = paths.ttsSegment(index);
           let generatedDurationMs = 0;
           try {
-            const probed = await this.deps.media.probe(audioPath);
-            generatedDurationMs = probed.durationMs;
+            // Bound each probe so one hung/locked ffprobe can't stall the whole
+            // step on a long video; an unprobeable WAV is treated as 0ms below.
+            const info = await Promise.race([
+              this.deps.media.probe(audioPath),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('probe timeout')), PROBE_TIMEOUT_MS),
+              ),
+            ]);
+            generatedDurationMs = info.durationMs;
           } catch {
-            // If the WAV is missing/unprobeable, treat as zero-length so
-            // alignment flags it rather than crashing the whole pipeline.
+            // If the WAV is missing/unprobeable/slow, treat as zero-length so
+            // alignment flags it rather than crashing or hanging the pipeline.
             generatedDurationMs = 0;
           }
           alignInputs[i] = {
@@ -721,6 +736,12 @@ export class PipelineRunner {
             audioPath,
             generatedDurationMs,
           };
+          // Throttled progress (<=~20 emits) so long-video probing isn't a
+          // silent multi-minute wait. Concurrent emits only race on the percent.
+          probedCount++;
+          if (probedCount === segments.length || probedCount % progressEvery === 0) {
+            await onProgress(probedCount / segments.length);
+          }
         }
       }),
     );

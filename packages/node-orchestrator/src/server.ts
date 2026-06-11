@@ -47,7 +47,7 @@ import { openPath } from './openPath.js';
 import { LocalJobOrchestrator } from './orchestrator.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { createDefaultRegistry } from './providers/registry.js';
-import { checkProviderReadiness } from './providers/readiness.js';
+import { buildReadinessContext, checkProviderReadiness, describeProviderReadiness } from './providers/readiness.js';
 import type { PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog } from './setup/catalog.js';
@@ -363,30 +363,45 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   app.get('/providers', async (_req, reply) => {
     try {
+      // Single source of truth for availability: the readiness contract. This
+      // is the same check the run gate uses, so the UI can never show a provider
+      // as available that a run would then reject (the Ollama "always available"
+      // bug). Build the shared context once, then describe every provider.
       const described = registry.describe();
-      // Availability rules:
-      //  - cloud provider  -> its API key is configured
-      //  - engine-pack provider -> a matching pack is installed
-      //  - plain local provider -> always available
-      const creds = await credentials.describe();
-      const configured = new Set(creds.filter((c) => c.configured).map((c) => c.service));
-      const installed = await enginePackStore.list();
-      const installedProviders = new Set(
-        installed.map((i) => findPack(i.id)?.providerId).filter((x): x is string => Boolean(x)),
-      );
-      const decorate = (list: typeof described.stt) =>
-        list.map((p) => {
-          let available: boolean;
-          if (p.credentialService) available = configured.has(p.credentialService);
-          else if (p.requiresEnginePack) available = installedProviders.has(p.requiresEnginePack);
-          else available = p.isLocal;
-          return { ...p, available };
-        });
-      return {
-        stt: decorate(described.stt),
-        translation: decorate(described.translation),
-        tts: decorate(described.tts),
-      };
+      const rdeps = { registry, credentials, enginePackStore };
+      const ctx = await buildReadinessContext(rdeps);
+      const decorate = (phase: 'stt' | 'translation' | 'tts', list: typeof described.stt) =>
+        Promise.all(
+          list.map(async (p) => {
+            const r = await describeProviderReadiness(phase, p, rdeps, ctx);
+            return {
+              ...p,
+              available: r.ready,
+              readinessStatus: r.status,
+              ...(r.remediation ? { remediation: r.remediation } : {}),
+              ...(r.action ? { action: r.action } : {}),
+            };
+          }),
+        );
+      const [stt, translation, tts] = await Promise.all([
+        decorate('stt', described.stt),
+        decorate('translation', described.translation),
+        decorate('tts', described.tts),
+      ]);
+      return { stt, translation, tts };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // Pre-run readiness for a specific project's SELECTED providers, so the UI can
+  // disable "Run" + show remediation before the click. The run gate
+  // (orchestrator) is the real guarantee; this is the friendly pre-empt.
+  app.get('/projects/:id/run-preflight', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      const project = await store.getProject(req.params.id);
+      const providers = await checkProviderReadiness(project, { registry, credentials, enginePackStore });
+      return { ok: providers.every((p) => p.ready), providers };
     } catch (err) {
       return sendError(reply, err);
     }

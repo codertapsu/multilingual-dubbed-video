@@ -72,8 +72,8 @@ export interface ReadinessDeps {
   probeOllama?: (model: string) => Promise<OllamaProbe>;
 }
 
-/** Just the provider fields readiness cares about (instances satisfy this). */
-interface ProviderTraits {
+/** Just the provider fields readiness cares about (instances + descriptors satisfy this). */
+export interface ProviderTraits {
   id: string;
   displayName?: string;
   isLocal?: boolean;
@@ -112,12 +112,26 @@ function providerFor(phase: ProviderPhase, registry: ProviderRegistry, project: 
 }
 
 /** Per-request shared context so we only probe Ollama / read credentials once. */
-interface ReadinessContext {
+export interface ReadinessContext {
   configured: Set<CloudServiceId>;
   ollama: () => Promise<OllamaProbe>;
 }
 
-async function describeOne(
+/**
+ * Build the shared readiness context once (resolve configured cloud services +
+ * a memoized Ollama probe), so checking many providers in one request doesn't
+ * re-read credentials or re-probe the daemon per provider.
+ */
+export async function buildReadinessContext(deps: ReadinessDeps): Promise<ReadinessContext> {
+  const creds = await deps.credentials.describe();
+  const configured = new Set(creds.filter((c) => c.configured).map((c) => c.service));
+  const probe = deps.probeOllama ?? defaultProbeOllama;
+  let ollamaPromise: Promise<OllamaProbe> | undefined;
+  return { configured, ollama: () => (ollamaPromise ??= probe(OLLAMA_MODEL)) };
+}
+
+/** Readiness of a single provider (cloud key / engine pack / Ollama daemon+model). */
+export async function describeProviderReadiness(
   phase: ProviderPhase,
   provider: ProviderTraits,
   deps: ReadinessDeps,
@@ -196,15 +210,12 @@ export async function checkProviderReadiness(
   deps: ReadinessDeps,
   fromStep?: PipelineStepId,
 ): Promise<ProviderReadiness[]> {
-  const creds = await deps.credentials.describe();
-  const configured = new Set(creds.filter((c) => c.configured).map((c) => c.service));
-  const probe = deps.probeOllama ?? defaultProbeOllama;
-  let ollamaPromise: Promise<OllamaProbe> | undefined;
-  const ctx: ReadinessContext = { configured, ollama: () => (ollamaPromise ??= probe(OLLAMA_MODEL)) };
-
+  const ctx = await buildReadinessContext(deps);
   const retryIndex = fromStep ? pipelineStepIndex(fromStep) : 0;
   const phases = PHASES.filter((p) => pipelineStepIndex(p.step) >= retryIndex);
-  return Promise.all(phases.map((p) => describeOne(p.phase, providerFor(p.phase, deps.registry, project), deps, ctx)));
+  return Promise.all(
+    phases.map((p) => describeProviderReadiness(p.phase, providerFor(p.phase, deps.registry, project), deps, ctx)),
+  );
 }
 
 const STATUS_CODE: Record<Exclude<ReadinessStatus, 'ready'>, ErrorCode> = {

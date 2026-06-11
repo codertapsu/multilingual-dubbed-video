@@ -37,6 +37,33 @@ export type LocalLlmBackend = 'ollama' | 'llama-cpp';
 
 const BATCH_SIZE = 20;
 
+/** Default raw-segment concurrency (overridable via env or options). */
+function localLlmConcurrencyDefault(): number {
+  const raw = process.env.LOCAL_LLM_CONCURRENCY?.trim();
+  const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : 4;
+}
+
+/** Map over items with bounded concurrency, preserving input order. */
+async function mapWithConcurrency<I, O>(
+  items: readonly I[],
+  concurrency: number,
+  fn: (item: I, index: number) => Promise<O>,
+): Promise<O[]> {
+  const results = new Array<O>(items.length);
+  let next = 0;
+  const lanes = Math.max(1, Math.min(concurrency, items.length || 1));
+  await Promise.all(
+    Array.from({ length: lanes }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await fn(items[i]!, i);
+      }
+    }),
+  );
+  return results;
+}
+
 /** Minimal POST-JSON seam (overridable in tests). */
 export type LocalPostJson = <T>(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal) => Promise<T>;
 
@@ -72,6 +99,14 @@ export interface LocalLlmOptions {
   /** Resolve the OpenAI-compatible base URL (may start an engine on demand). */
   resolveBaseUrl: () => Promise<string>;
   timeoutMs: number;
+  /**
+   * Max segments translated concurrently in raw-segment mode. Modern local
+   * servers (llama-server continuous batching, Ollama parallel slots) genuinely
+   * parallelize these; a single-slot server just queues them harmlessly. This
+   * keeps long videos from being translated strictly one segment at a time.
+   * Default 4 (or the LOCAL_LLM_CONCURRENCY env var).
+   */
+  concurrency?: number;
   postJson?: LocalPostJson;
 }
 
@@ -84,11 +119,13 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
 
   private readonly mode: LocalLlmMode;
   private readonly postJson: LocalPostJson;
+  private readonly concurrency: number;
 
   constructor(private readonly opts: LocalLlmOptions) {
     this.id = opts.id ?? 'local-llm';
     this.mode = opts.mode ?? 'raw-segment';
     this.postJson = opts.postJson ?? defaultPostJson;
+    this.concurrency = Math.max(1, opts.concurrency ?? localLlmConcurrencyDefault());
     this.displayName = opts.backend === 'ollama' ? 'Ollama (local LLM)' : 'llama.cpp (local LLM)';
     if (opts.backend === 'llama-cpp') this.requiresEnginePack = 'llama-cpp';
   }
@@ -148,8 +185,10 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     input: TranslationInput,
     signal: AbortSignal,
   ): Promise<TranslationResult> {
-    const results: TranslationResultSegment[] = [];
-    for (const seg of input.segments) {
+    // Bounded concurrency: still one request per segment (preserving the strict
+    // 1:1 mapping dubbing needs), but overlapped so a long video isn't
+    // translated strictly one segment at a time. Result order is preserved.
+    const segments = await mapWithConcurrency(input.segments, this.concurrency, async (seg) => {
       const prompt = buildRawTranslationPrompt(source, target, seg);
       const data = await this.postJson<{ choices?: { message?: { content?: string } }[] }>(
         `${baseUrl}/chat/completions`,
@@ -163,8 +202,8 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
         signal,
       );
       const text = (data.choices?.[0]?.message?.content ?? '').trim();
-      results.push({ id: seg.id, translatedText: text || seg.sourceText });
-    }
-    return { segments: results };
+      return { id: seg.id, translatedText: text || seg.sourceText } satisfies TranslationResultSegment;
+    });
+    return { segments };
   }
 }

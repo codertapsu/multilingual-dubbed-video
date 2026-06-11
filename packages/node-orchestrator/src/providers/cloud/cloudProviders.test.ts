@@ -8,6 +8,7 @@ import {
   LlmTranslationProvider,
   buildTranslationPrompt,
   parseTranslationReply,
+  planTranslationBatches,
 } from '../translation/llmTranslationProvider.js';
 import { mapOpenAiSegments } from '../stt/openaiSttProvider.js';
 import { segmentFilename, wavDurationMs } from '../tts/openaiTtsProvider.js';
@@ -179,5 +180,33 @@ describe('OpenAI TTS helpers', () => {
 
   it('returns 0 for non-WAV buffers', () => {
     expect(wavDurationMs(Buffer.from('definitely not a wav file, sorry'))).toBe(0);
+  });
+});
+
+describe('planTranslationBatches', () => {
+  const seg = (id: string, len: number) => ({ id, sourceText: 'x'.repeat(len) });
+
+  it('packs short lines up to the segment cap', () => {
+    const segs = Array.from({ length: 60 }, (_, i) => seg(`seg_${i}`, 20));
+    const batches = planTranslationBatches(segs, 25, 100_000);
+    expect(batches.map((b) => b.length)).toEqual([25, 25, 10]);
+  });
+
+  it('splits earlier when segments are long (char budget)', () => {
+    // ~540 chars each => ~14 fit under an 8000-char budget before the count cap.
+    const segs = Array.from({ length: 30 }, (_, i) => seg(`seg_${i}`, 500));
+    const batches = planTranslationBatches(segs, 25, 8000);
+    expect(batches.length).toBeGreaterThan(Math.ceil(30 / 25));
+    for (const b of batches) {
+      const chars = b.reduce((n, s) => n + s.id.length + s.sourceText.length + 40, 0);
+      // Each batch is within budget OR is a single oversized segment on its own.
+      expect(b.length === 1 || chars <= 8000).toBe(true);
+    }
+  });
+
+  it('never drops or reorders segments', () => {
+    const segs = Array.from({ length: 17 }, (_, i) => seg(`seg_${i}`, 1000));
+    const flat = planTranslationBatches(segs, 25, 8000).flat();
+    expect(flat.map((s) => s.id)).toEqual(segs.map((s) => s.id));
   });
 });

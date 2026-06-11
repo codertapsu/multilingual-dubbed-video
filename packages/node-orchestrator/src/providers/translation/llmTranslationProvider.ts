@@ -23,8 +23,22 @@ import type { CancellableTranslationProvider } from '../types.js';
 import type { CredentialsStore } from '../../credentials/credentialsStore.js';
 import { cloudPostJson, extractJsonObject, requireCredential, SERVICE_LABELS } from '../cloud/cloudHttp.js';
 
-/** Segments per LLM request — large enough to amortize, small enough to fit. */
-const BATCH_SIZE = 25;
+function envIntDefault(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** Max segments per LLM request (cap; a batch may be smaller when text is long). */
+const MAX_BATCH_SEGMENTS = envIntDefault('CLOUD_LLM_BATCH_SIZE', 25);
+/**
+ * Soft cap on source-text characters per request. A batch of 25 SHORT subtitle
+ * lines still goes in one request (unchanged), but a run of very long lines is
+ * split into smaller requests so the prompt can't overflow a smaller model's
+ * context window or truncate its JSON reply. ~8000 source chars ≈ a couple
+ * thousand input tokens plus a similar response budget.
+ */
+const MAX_BATCH_CHARS = envIntDefault('CLOUD_LLM_MAX_PROMPT_CHARS', 8000);
 
 /** Per-service chat defaults (model overridable via stored credentials). */
 const SERVICE_DEFAULTS: Record<
@@ -46,6 +60,34 @@ export interface PromptSegment {
   sourceText: string;
   startMs?: number;
   endMs?: number;
+}
+
+/**
+ * Group segments into request batches respecting BOTH a max segment count and a
+ * soft source-character budget — so 25 short lines still batch together, but a
+ * run of very long lines is split into smaller requests that won't overflow a
+ * model's context window or truncate its JSON reply. Pure / unit-tested.
+ */
+export function planTranslationBatches(
+  segments: PromptSegment[],
+  maxSegments = MAX_BATCH_SEGMENTS,
+  maxChars = MAX_BATCH_CHARS,
+): PromptSegment[][] {
+  const batches: PromptSegment[][] = [];
+  let current: PromptSegment[] = [];
+  let chars = 0;
+  for (const seg of segments) {
+    const segChars = seg.id.length + seg.sourceText.length + 40; // + per-line overhead
+    if (current.length > 0 && (current.length >= maxSegments || chars + segChars > maxChars)) {
+      batches.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(seg);
+    chars += segChars;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
 }
 
 /** Words that fit naturally in a window, assuming ~2.8 spoken words/second. */
@@ -152,8 +194,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     const target = normalizeLanguageCode(input.targetLanguage);
 
     const results: TranslationResultSegment[] = [];
-    for (let i = 0; i < input.segments.length; i += BATCH_SIZE) {
-      const batch = input.segments.slice(i, i + BATCH_SIZE);
+    for (const batch of planTranslationBatches(input.segments)) {
       const prompt = buildTranslationPrompt(source, target, batch);
       const reply =
         defaults.dialect === 'anthropic'

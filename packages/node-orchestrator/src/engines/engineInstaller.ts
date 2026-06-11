@@ -24,6 +24,7 @@ import { AppErrorException, type EnginePackArtifact, type EnginePackInfo, type I
 import type { EngineEventBus } from './engineBus.js';
 import type { EnginePackStore } from './enginePackStore.js';
 import { findPack } from './enginePackCatalog.js';
+import { resolveUvPath, UV_PYTHON_VERSION } from './uv.js';
 
 /** Locked Python requirement sets per uv-env pack id (the engine "manifest"). */
 const UV_ENV_REQUIREMENTS: Record<string, string[]> = {
@@ -178,15 +179,20 @@ export class EngineInstaller {
     if (!reqs) {
       throw new AppErrorException('ENGINE_PACK_FAILED', `No requirement set defined for uv pack "${pack.id}".`);
     }
-    const uv = await this.which('uv');
+    // Prefer the bundled uv (VIDEODUBBER_UV_PATH); fall back to PATH. With the
+    // bundled uv, nothing needs to be preinstalled — uv downloads its own Python.
+    const uv = await resolveUvPath();
     if (!uv) {
-      throw new AppErrorException('ENGINE_PACK_FAILED', `'uv' is required to install ${pack.displayName} but was not found on PATH.`, {
-        remediation: 'Install uv (https://docs.astral.sh/uv/) and retry. uv manages the self-contained Python runtime for this engine.',
+      throw new AppErrorException('ENGINE_PACK_FAILED', `'uv' is required to install ${pack.displayName} but was not found.`, {
+        remediation:
+          'The packaged app bundles uv automatically. In a dev/source build, install uv (https://docs.astral.sh/uv/) and retry — it manages the self-contained Python runtime for this engine.',
       });
     }
     const venvDir = path.join(packDir, artifact.destPath);
     this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `Creating Python environment for ${pack.displayName}…` });
-    await this.run(uv, ['venv', venvDir]);
+    // `--python <version>` makes uv install a managed standalone CPython when
+    // the machine has none, so this works on a clean system with no Python.
+    await this.run(uv, ['venv', '--python', UV_PYTHON_VERSION, venvDir]);
     const reqFile = path.join(packDir, 'requirements.txt');
     await fsp.writeFile(reqFile, `${reqs.join('\n')}\n`, 'utf8');
     this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `Installing ${pack.displayName} dependencies (this can take a few minutes)…` });
@@ -206,20 +212,6 @@ export class EngineInstaller {
         if (code === 0) resolve();
         else reject(new Error(`${cmd} exited ${code}: ${stderr.slice(0, 400)}`));
       });
-    });
-  }
-
-  /** Best-effort `which`/`where` lookup; returns the resolved path or null. */
-  private which(bin: string): Promise<string | null> {
-    return new Promise((resolve) => {
-      const finder = process.platform === 'win32' ? 'where' : 'which';
-      const child = spawn(finder, [bin], { stdio: ['ignore', 'pipe', 'ignore'] });
-      let out = '';
-      child.stdout?.on('data', (d: Buffer) => {
-        out += d.toString();
-      });
-      child.on('error', () => resolve(null));
-      child.on('close', (code) => resolve(code === 0 ? out.trim().split(/\r?\n/)[0] || bin : null));
     });
   }
 }

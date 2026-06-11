@@ -8,6 +8,7 @@ import { availablePacks, findPack, packRunsOn } from './enginePackCatalog.js';
 import { packsForProvider, pickInstalledPack, requireInstalledPack } from './packSelection.js';
 import { packFitsMachine, recommendEnginePacks } from './engineRecommendation.js';
 import { EngineManager, findFile, waitFor } from './engineManager.js';
+import { _resetUvCache, resolveUvPath, uvAvailable } from './uv.js';
 import { recommendSetup } from '../system/systemProfile.js';
 
 function profile(o: Partial<SystemProfile> = {}): SystemProfile {
@@ -186,6 +187,32 @@ describe('EngineManager lifecycle policy', () => {
 
     await manager.stopAll();
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('uv resolution (bundled vs PATH)', () => {
+  afterEach(() => {
+    delete process.env.VIDEODUBBER_UV_PATH;
+    _resetUvCache();
+  });
+
+  it('prefers the bundled uv path when the file exists', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-uv-'));
+    const uv = path.join(dir, 'vd-uv');
+    await writeFile(uv, '#!/bin/sh\n');
+    process.env.VIDEODUBBER_UV_PATH = uv;
+    _resetUvCache();
+    expect(await resolveUvPath()).toBe(uv);
+    expect(await uvAvailable()).toBe(true);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('ignores a bundled path that does not exist and falls through', async () => {
+    process.env.VIDEODUBBER_UV_PATH = '/no/such/vd-uv';
+    _resetUvCache();
+    // Result depends on whether uv is on PATH in this env; just assert it does
+    // not return the bogus bundled path.
+    expect(await resolveUvPath()).not.toBe('/no/such/vd-uv');
   });
 });
 

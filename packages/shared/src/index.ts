@@ -49,6 +49,7 @@ export type {
   EnginePackArtifact,
   EnginePackInfo,
   InstalledEnginePack,
+  EnginePrerequisites,
   EnginesResponse,
   EnginePackInstallRequest,
   EnginePackUninstallRequest,

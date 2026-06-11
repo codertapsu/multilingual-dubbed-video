@@ -96,6 +96,25 @@ export interface InstalledEnginePack {
   installedAt: string;
 }
 
+/**
+ * Availability of the system tools some engines rely on, so the UI can guide
+ * the user (GET /engines/prerequisites).
+ */
+export interface EnginePrerequisites {
+  /** uv (Python env manager for the neural-TTS/separation/alignment packs). */
+  uv: {
+    /** Usable now (bundled with the app, or installed on PATH). */
+    available: boolean;
+    /** True when it's the app-bundled copy (the user installed nothing). */
+    bundled: boolean;
+  };
+  /** Ollama daemon for the optional `ollama` local-LLM translation provider. */
+  ollama: {
+    /** The daemon answered at its local API. */
+    available: boolean;
+  };
+}
+
 /** GET /engines response: catalog (runnable on this machine) + installed set. */
 export interface EnginesResponse {
   /** Packs whose platform/arch match the current machine. */

@@ -36,6 +36,7 @@ import { EngineManager } from './engines/engineManager.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
 import { recommendEnginePacks } from './engines/engineRecommendation.js';
+import { resolveUvPath } from './engines/uv.js';
 import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 import { EventBusRegistry } from './events.js';
@@ -53,6 +54,9 @@ import { runPreflight } from './setup/preflight.js';
 import { SetupEventBus } from './setup/setupBus.js';
 import { SetupInstaller } from './setup/installer.js';
 import { SetupStore } from './setup/setupStore.js';
+
+/** Ollama's OpenAI-compatible base URL (for the prerequisites probe). */
+const OLLAMA_URL = process.env.OLLAMA_URL?.trim() || 'http://127.0.0.1:11434/v1';
 
 /** Dependencies that can be overridden when embedding/testing the server. */
 export interface CreateServerOptions {
@@ -388,6 +392,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     try {
       const { profile, recommendation } = await buildSystemResponse();
       return { recommendations: recommendEnginePacks(profile, recommendation) };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // System tools some engines rely on, so the UI can guide the user. uv is
+  // bundled with the packaged app (zero prerequisites); Ollama is an optional
+  // user-run daemon (the llama.cpp engine pack is the no-daemon alternative).
+  app.get('/engines/prerequisites', async (_req, reply) => {
+    try {
+      const uvPath = await resolveUvPath();
+      const ollamaOk = await fetch(`${OLLAMA_URL}/models`, { signal: AbortSignal.timeout(1500) })
+        .then((r) => r.ok)
+        .catch(() => false);
+      return {
+        uv: { available: uvPath !== null, bundled: Boolean(process.env.VIDEODUBBER_UV_PATH && uvPath === process.env.VIDEODUBBER_UV_PATH) },
+        ollama: { available: ollamaOk },
+      };
     } catch (err) {
       return sendError(reply, err);
     }

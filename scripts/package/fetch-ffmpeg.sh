@@ -11,11 +11,13 @@
 # a build linked against libass. The default Homebrew `ffmpeg` omits it; the
 # static builds below include it. We verify with `ffmpeg -filters | grep subtitles`.
 #
-# Sources (all ship full/`-gpl` builds WITH libass):
-#   * macOS arm64/x64 : https://www.osxexperts.net  (static, notarized) OR copy
-#                       from `brew --prefix ffmpeg` if that build has libass.
-#   * Windows x64     : https://www.gyan.dev/ffmpeg/builds (release-full)
-#   * Linux x64       : https://johnvansickle.com/ffmpeg (release static) or BtbN.
+# Sources (all ship -gpl/full builds WITH libass):
+#   * macOS arm64/x64 : https://ffmpeg.martin-riedl.de  (static, notarized) — the
+#                       default; or a libass `brew` build (FFMPEG_FROM_BREW=1).
+#   * Windows x64     : https://github.com/BtbN/FFmpeg-Builds (win64-gpl .zip).
+#   * Linux x64       : https://github.com/BtbN/FFmpeg-Builds (linux64-gpl .tar.xz).
+#                       GitHub-hosted = reliable from CI; johnvansickle.com blocks
+#                       datacenter IPs (curl exit 22) so it is NOT used here.
 #
 # These URLs change with each release; pin a known-good version per platform via
 # the env knobs below, or override the whole URL. The script is defensive: it
@@ -134,12 +136,16 @@ fetch_macos() {
 # Linux: johnvansickle static release (amd64) — single tarball has both bins.
 # ---------------------------------------------------------------------------
 fetch_linux() {
-  local url="${FFMPEG_URL:-https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz}"
+  # BtbN GitHub builds: reliable from CI runners (GitHub-hosted), unlike
+  # johnvansickle.com which rate-limits / blocks datacenter IPs (curl exit 22 in
+  # CI). The -gpl build is static and includes libass (subtitles) + libx264/x265
+  # (H.264/HEVC render). Binaries live under bin/ in a single ffmpeg-* top dir.
+  local url="${FFMPEG_URL:-https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz}"
   echo "==> Downloading ${url}"
   curl -fsSL "${url}" -o "${WORK}/ffmpeg.tar.xz"
   tar -xJf "${WORK}/ffmpeg.tar.xz" -C "${WORK}"
-  local dir; dir="$(find "${WORK}" -maxdepth 1 -type d -name 'ffmpeg-*-static' | head -n1)"
-  verify_and_stage "${dir}/ffmpeg" "${dir}/ffprobe"
+  local dir; dir="$(find "${WORK}" -maxdepth 1 -type d -name 'ffmpeg-*' | head -n1)"
+  verify_and_stage "${dir}/bin/ffmpeg" "${dir}/bin/ffprobe"
 }
 
 # ---------------------------------------------------------------------------
@@ -148,14 +154,13 @@ fetch_linux() {
 # native path on Windows runners.
 # ---------------------------------------------------------------------------
 fetch_windows() {
-  local url="${FFMPEG_URL:-https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z}"
+  # BtbN GitHub builds: a .zip (no 7z needed) with libass + libx264/x265. gyan.dev
+  # ships the *full* build only as .7z; its *.zip is 'essentials'. This branch is
+  # the Git Bash / WSL path; fetch-ffmpeg.ps1 is the native Windows-runner path.
+  local url="${FFMPEG_URL:-https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip}"
   echo "==> Downloading ${url}"
-  curl -fsSL "${url}" -o "${WORK}/ffmpeg.7z"
-  if ! command -v 7z >/dev/null 2>&1; then
-    echo "ERROR: 7z required to extract the gyan.dev build. Use the .ps1 on Windows runners." >&2
-    exit 1
-  fi
-  7z x -y -o"${WORK}/ff" "${WORK}/ffmpeg.7z" >/dev/null
+  curl -fsSL "${url}" -o "${WORK}/ffmpeg.zip"
+  unzip -o -q "${WORK}/ffmpeg.zip" -d "${WORK}/ff"
   local dir; dir="$(find "${WORK}/ff" -maxdepth 1 -type d -name 'ffmpeg-*' | head -n1)"
   verify_and_stage "${dir}/bin/ffmpeg.exe" "${dir}/bin/ffprobe.exe"
 }

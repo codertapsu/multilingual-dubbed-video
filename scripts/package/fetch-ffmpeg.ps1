@@ -80,10 +80,12 @@ if ($LocalFfmpeg -and $LocalFfprobe -and (Test-Path $LocalFfmpeg) -and (Test-Pat
   exit 0
 }
 
-# gyan.dev publishes a .zip (essentials/full) and a .7z (full). The .zip needs no
-# extra tool on Windows (Expand-Archive). The "release-full" zip includes libass.
+# BtbN GitHub builds: GitHub-hosted (reliable from CI), a .zip Expand-Archive can
+# open with no extra tool, and a -gpl build that includes libass (subtitles) plus
+# libx264/x265. NOTE: gyan.dev ships the *full* build only as .7z — its *.zip is
+# 'essentials', so the previously-used ffmpeg-release-full.zip URL is a 404.
 if (-not $FfmpegUrl) {
-  $FfmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.zip"
+  $FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
 }
 
 $Zip = Join-Path $Work "ffmpeg.zip"

@@ -33,6 +33,25 @@ def _default_cache_dir() -> Path:
     return Path.home() / "VideoDubber" / "cache" / "tts"
 
 
+def _resolve_concurrency() -> int:
+    """Number of segments to synthesize in parallel.
+
+    Each segment is an independent engine subprocess (Piper) writing a distinct
+    file under a uniquely-keyed cache, so concurrency overlaps the per-segment
+    subprocess wall-clock (the dominant cost on long videos). Defaults to a
+    conservative min(cpu, 4); override with TTS_CONCURRENCY.
+    """
+    raw = _env("TTS_CONCURRENCY")
+    if raw:
+        try:
+            n = int(raw)
+            if n > 0:
+                return n
+        except ValueError:
+            pass
+    return max(1, min(os.cpu_count() or 4, 4))
+
+
 def _default_piper_voices_dir() -> Path:
     """Default directory holding installed Piper voice models (*.onnx).
 
@@ -67,6 +86,9 @@ class Settings:
     # Audio defaults
     default_sample_rate: int
 
+    # Synthesis parallelism (segments synthesized concurrently).
+    concurrency: int
+
     @property
     def piper_configured(self) -> bool:
         """True if both the Piper binary path and a voice model are set."""
@@ -96,6 +118,7 @@ def load_settings() -> Settings:
         ffmpeg_path=_env("FFMPEG_PATH"),
         cache_dir=cache_dir,
         default_sample_rate=int(_env("TTS_DEFAULT_SAMPLE_RATE", "22050") or "22050"),
+        concurrency=_resolve_concurrency(),
     )
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import NamedTuple
 
@@ -221,17 +222,12 @@ class TtsService:
             speed,
         )
 
-        fallback_count = 0
-        results: list[SegmentOut] = []
-        for ordinal, seg in enumerate(segments, start=1):
-            fname = segment_filename(seg.id, ordinal)
-            out_path = out_dir / fname
-
-            if self._synth_one(engine, seg, out_path, lang, voice, speed, voice_token):
-                fallback_count += 1
-
+        def _one(item: tuple[int, SegmentIn]) -> tuple[SegmentOut, bool]:
+            ordinal, seg = item
+            out_path = out_dir / segment_filename(seg.id, ordinal)
+            used_fallback = self._synth_one(engine, seg, out_path, lang, voice, speed, voice_token)
             duration_ms = read_wav_duration_ms(out_path)
-            results.append(
+            return (
                 SegmentOut(
                     segmentId=seg.id,
                     audioPath=str(out_path),
@@ -239,9 +235,25 @@ class TtsService:
                     startMs=seg.startMs,
                     endMs=seg.endMs,
                     speedRatio=speed,
-                )
+                ),
+                used_fallback,
             )
 
+        items = list(enumerate(segments, start=1))
+        workers = max(1, min(self.settings.concurrency, len(items) or 1))
+        if workers <= 1:
+            pairs = [_one(item) for item in items]
+        else:
+            # Each segment writes a distinct file under a uniquely-keyed cache
+            # (cache_key includes the segment id), so there is no cross-thread
+            # contention; the pool overlaps the per-segment engine subprocesses
+            # (Piper) that dominate wall-clock on long videos. map() preserves
+            # input order, so results stay segment-ordered.
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                pairs = list(pool.map(_one, items))
+
+        fallback_count = sum(1 for _, used in pairs if used)
+        results = [out for out, _ in pairs]
         return SynthesisBatch(engine.name, fallback_count, results)
 
     def resynth_single(

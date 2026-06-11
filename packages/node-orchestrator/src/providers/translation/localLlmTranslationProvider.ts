@@ -68,12 +68,28 @@ async function mapWithConcurrency<I, O>(
 export type LocalPostJson = <T>(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal) => Promise<T>;
 
 async function defaultPostJson<T>(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify(body),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (err) {
+    // A THROWN fetch (connection refused / DNS / reset / abort) means the daemon
+    // isn't reachable — surface that clearly instead of a raw "fetch failed"
+    // (which the runner would otherwise map to UNKNOWN).
+    if (signal?.aborted) {
+      throw new AppErrorException('CANCELLED', 'Local LLM request was cancelled.');
+    }
+    throw new AppErrorException('ENGINE_UNAVAILABLE', `Local LLM is not reachable at ${url}.`, {
+      cause: err instanceof Error ? err.message : String(err),
+      remediation:
+        'Start the local LLM — Ollama: run `ollama serve` and `ollama pull <model>` (set OLLAMA_MODEL to match), ' +
+        'or enable the llama.cpp engine pack — OR switch the project\'s Translation provider to Argos (offline, no setup).',
+    });
+  }
   if (!res.ok) {
     throw new AppErrorException('ENGINE_UNAVAILABLE', `Local LLM returned HTTP ${res.status}.`, {
       cause: (await res.text().catch(() => '')).slice(0, 300),

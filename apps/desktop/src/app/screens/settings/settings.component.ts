@@ -432,7 +432,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (!info?.version) return;
     // Best-effort: link to the GitHub releases page for the new tag.
     await this.ipc.openExternal(
-      `https://github.com/OWNER/REPO/releases/tag/v${info.version}`,
+      `https://github.com/codertapsu/multilingual-dubbed-video/releases/tag/v${info.version}`,
     );
   }
 

@@ -22,7 +22,7 @@ At the top of that file are the only knobs you normally touch:
 ```ts
 const LLAMA_CPP   = 'b9592';     // ggml-org/llama.cpp release tag
 const WHISPER_CPP = 'v1.8.6';    // ggml-org/whisper.cpp release tag
-const SELF_HOSTED_BASE = 'https://github.com/OWNER/REPO/releases/download/engine-packs-v1';
+const SELF_HOSTED_BASE = 'https://github.com/codertapsu/multilingual-dubbed-video/releases/download/engine-packs-v1';
 ```
 
 Each pack lists one or more `artifacts`, each with a `url`, an optional `sha256`,
@@ -43,7 +43,7 @@ bump the version constant, or edit the artifact `url`/`sha256` directly.
 | `llama-cpp-vulkan` | Windows x64 | **upstream** | none |
 | `llama-cpp-linux` | Linux x64 | **upstream** | none |
 | `whisper-cpp-cuda` | Windows x64 | **upstream** ggml-org/whisper.cpp (cuBLAS) | none |
-| `whisper-cpp-metal` | macOS arm64 | **self-host** (no upstream build) | **build + upload + set OWNER/REPO** |
+| `whisper-cpp-metal` | macOS arm64 | **self-host** (no upstream build) | **build + upload + set codertapsu/multilingual-dubbed-video** |
 | `tts-neural` | all | PyPI via bundled `uv` | none (no URL) |
 | `separation-audio` | all | PyPI via bundled `uv` | none |
 | `alignment-whisperx` | all | PyPI via bundled `uv` | none |
@@ -99,14 +99,14 @@ gh release upload engine-packs-v1 whisper-cpp-v1.8.6-macos-arm64.tar.gz
 ```
 
 The asset's public URL is then:
-`https://github.com/<you>/<repo>/releases/download/engine-packs-v1/whisper-cpp-v1.8.6-macos-arm64.tar.gz`
+`https://github.com/codertapsu/multilingual-dubbed-video/releases/download/engine-packs-v1/whisper-cpp-v1.8.6-macos-arm64.tar.gz`
 
 ### 3c. Point the catalog at it
 
-In `enginePackCatalog.ts`, set `OWNER/REPO` (and the tag, if you changed it):
+In `enginePackCatalog.ts`, set `codertapsu/multilingual-dubbed-video` (and the tag, if you changed it):
 
 ```ts
-const SELF_HOSTED_BASE = 'https://github.com/<you>/<repo>/releases/download/engine-packs-v1';
+const SELF_HOSTED_BASE = 'https://github.com/codertapsu/multilingual-dubbed-video/releases/download/engine-packs-v1';
 ```
 
 …and paste the hash from 3a into the `whisper-cpp-metal` artifact's `sha256`.

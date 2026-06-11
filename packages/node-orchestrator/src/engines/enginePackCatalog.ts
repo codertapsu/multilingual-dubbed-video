@@ -20,7 +20,7 @@
  *  - whisper.cpp publishes prebuilt binaries ONLY for Windows. The macOS Metal
  *    server has NO upstream binary, so `whisper-cpp-metal` points at
  *    SELF_HOSTED_BASE — YOU build it once and upload it to your own GitHub
- *    Release (recipe in docs/ENGINE_PACKS.md), then set OWNER/REPO + the tag.
+ *    Release (recipe in docs/ENGINE_PACKS.md), then set codertapsu/multilingual-dubbed-video + the tag.
  *  - The Python packs (`tts-neural`, `separation-audio`, `alignment-whisperx`)
  *    have NO download URL — they install from PyPI via the bundled `uv`
  *    (`uv-env://` markers; the requirement sets live in engineInstaller.ts).
@@ -38,14 +38,14 @@ const WHISPER_DL = `https://github.com/ggml-org/whisper.cpp/releases/download/${
 
 /**
  * Base URL for binaries with NO upstream prebuilt (currently: the macOS Metal
- * whisper.cpp server). Replace OWNER/REPO and the tag with your own GitHub
+ * whisper.cpp server). Replace codertapsu/multilingual-dubbed-video and the tag with your own GitHub
  * Release once you've built + uploaded the asset (see docs/ENGINE_PACKS.md).
  * Until then, installing `whisper-cpp-metal` fails with a clear network error
  * — every OTHER engine (llama.cpp, neural TTS, separation, alignment) works.
  */
 const SELF_HOSTED_BASE =
   process.env.VIDEODUBBER_ENGINE_BASE?.trim() ||
-  'https://github.com/OWNER/REPO/releases/download/engine-packs-v1';
+  'https://github.com/codertapsu/multilingual-dubbed-video/releases/download/engine-packs-v1';
 
 /**
  * The full curated set. `availablePacks()` filters by platform/arch.
@@ -106,7 +106,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
       {
         // Upstream prebuilt (contains whisper-cli.exe / whisper-server.exe).
         url: `${WHISPER_DL}/whisper-cublas-12.4.0-bin-x64.zip`,
-        sha256: '',
+        sha256: '63b70c91fe2fd7449865c45f6422ab628439eacc6985d8309c77bfb65cc68a19',
         approxSizeMb: 90,
         destPath: '.',
         archive: true,
@@ -134,7 +134,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     artifacts: [
       {
         url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-macos-arm64.tar.gz`,
-        sha256: '',
+        sha256: 'e395d9f746bc1b04e3e019295e76a5158de3ecc837a2f08b7fe6e76ec5b42729',
         approxSizeMb: 30,
         destPath: '.',
         archive: true,
@@ -159,7 +159,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     artifacts: [
       {
         url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-win-cuda-12.4-x64.zip`,
-        sha256: '',
+        sha256: 'd00b3e988f0fbd03d055904eb361b1065cfa014e1860366d42eb599af4016260',
         approxSizeMb: 30,
         destPath: '.',
         archive: true,
@@ -168,7 +168,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
         // The CUDA build needs the CUDA 12 runtime DLLs (separate upstream zip),
         // extracted alongside llama-server.exe.
         url: `${LLAMA_DL}/cudart-llama-bin-win-cuda-12.4-x64.zip`,
-        sha256: '',
+        sha256: '8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6',
         approxSizeMb: 390,
         destPath: '.',
         archive: true,
@@ -193,7 +193,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     artifacts: [
       {
         url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-win-vulkan-x64.zip`,
-        sha256: '',
+        sha256: '126667a2b89892fdc0c3b0b95cba0783bbdfaa69d8fd13e3d8da5c4c1307c8f4',
         approxSizeMb: 40,
         destPath: '.',
         archive: true,
@@ -218,7 +218,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     artifacts: [
       {
         url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-ubuntu-vulkan-x64.tar.gz`,
-        sha256: '',
+        sha256: '414cf74f8e9e185c2903b4e7520b0479b723f60ae501fb16ed3a3cf89fd59719',
         approxSizeMb: 50,
         destPath: '.',
         archive: true,

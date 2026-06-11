@@ -30,7 +30,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/OWNER/REPO/releases/latest/download/latest.json"
+        "https://github.com/codertapsu/multilingual-dubbed-video/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ4QzAzMjRGQkEzRUExQjIKUldTeW9UNjZUekxBMk9KZ3VUVDUwaDY5R1JWWjRqL2FBRjBLcDlwN1FsYWZvdmtDRXV4K29GWVYK"
     }

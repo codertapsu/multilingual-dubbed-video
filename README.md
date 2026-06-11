@@ -16,13 +16,13 @@ requirement.
 ## Download & install (desktop app)
 
 **Just want to use VideoDubber?** Grab the installer for your OS from the
-[**Releases**](https://github.com/OWNER/REPO/releases) page — no Python, Node, or
+[**Releases**](https://github.com/codertapsu/multilingual-dubbed-video/releases) page — no Python, Node, or
 FFmpeg required. The installer is **fully self-contained**: it bundles the app,
 the pipeline engine, all three AI workers, and FFmpeg.
 
 | OS | Download | Install |
 |---|---|---|
-| **macOS** | `.dmg` (Apple Silicon or Intel — pick the one for your Mac) | Open the `.dmg`, drag **VideoDubber** to Applications. |
+| **macOS** | `.dmg` (Apple Silicon or Intel — pick the one for your Mac) | Open the `.dmg`, drag **VideoDubber** to Applications. If it isn't notarized yet, right-click the app → **Open** the first time (or `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`). |
 | **Windows** | `.msi` or `.exe` | Run it and follow the installer. |
 | **Linux** | `.AppImage` or `.deb` | `chmod +x *.AppImage && ./VideoDubber*.AppImage`, or `sudo dpkg -i *.deb`. |
 
@@ -31,9 +31,8 @@ the languages you choose (the only thing not in the installer). After that the a
 works fully **offline**. The app **auto-updates** from GitHub Releases; you can
 switch to manual updates in **Settings → Updates**.
 
-> Replace `OWNER/REPO` above with this project's GitHub slug. Architecture of the
-> bundle: [`docs/PRODUCTION.md`](docs/PRODUCTION.md). How updates work:
-> [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
+> Architecture of the bundle: [`docs/PRODUCTION.md`](docs/PRODUCTION.md). How
+> updates work: [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
 
 **Building the installers / cutting a release?** See
 [`docs/RELEASING.md`](docs/RELEASING.md) (and `pnpm package:sidecars` +

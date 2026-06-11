@@ -235,12 +235,13 @@ they're covered by `style-src 'unsafe-inline'`.)
 
 ### "Could not fetch a valid release JSON" in Settings → Updates
 
-The auto-updater points at `plugins.updater.endpoints` in `tauri.conf.json`, which ships
-as the **placeholder** `https://github.com/OWNER/REPO/releases/latest/download/latest.json`.
-Until you replace `OWNER/REPO` with your real GitHub repo (and publish a release with a
-`latest.json` — see [RELEASING.md](RELEASING.md)), update checks will fail. The app no
-longer auto-checks on launch/Settings load, so this only appears if you click **Check for
-updates** before configuring a real endpoint. The installed version still shows (it's read
+The auto-updater points at `plugins.updater.endpoints` in `tauri.conf.json`:
+`https://github.com/codertapsu/multilingual-dubbed-video/releases/latest/download/latest.json`.
+Update checks fail **until a release that includes a signed `latest.json` is
+published** (see [RELEASING.md](RELEASING.md)) — e.g. the very first release, or
+any release built without the Tauri signing secret. The app no longer auto-checks
+on launch/Settings load, so this only appears if you click **Check for
+updates** before such a release exists. The installed version still shows (it's read
 from bundle metadata via `get_app_version`, no network).
 
 ### Angular / TypeScript version pin

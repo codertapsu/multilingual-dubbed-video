@@ -25,7 +25,7 @@ VideoDubber updates itself via **GitHub Releases** using the official
    `plugins.updater.endpoints`:
 
    ```
-   https://github.com/OWNER/REPO/releases/latest/download/latest.json
+   https://github.com/codertapsu/multilingual-dubbed-video/releases/latest/download/latest.json
    ```
 
    `releases/latest/download/...` always resolves to the newest **published**
@@ -116,13 +116,17 @@ To pull a bad version:
 
 | Where | Key | Value |
 |---|---|---|
-| `tauri.conf.json` | `plugins.updater.endpoints` | `["https://github.com/OWNER/REPO/releases/latest/download/latest.json"]` |
+| `tauri.conf.json` | `plugins.updater.endpoints` | `["https://github.com/codertapsu/multilingual-dubbed-video/releases/latest/download/latest.json"]` |
 | `tauri.conf.json` | `plugins.updater.pubkey` | the public key from `pnpm tauri signer generate` |
 | `tauri.conf.json` | `bundle.createUpdaterArtifacts` | `true` (emit the signed update archives + `latest.json`) |
 | `capabilities/default.json` | permissions | `updater:default`, `process:allow-restart` (or `process:default`), `opener:default` |
 | CI secrets | `TAURI_SIGNING_PRIVATE_KEY` (+ password) | signs `latest.json` per release |
 | App config | `<config>/preferences.json` → `autoUpdate` | user's auto/manual choice |
 
-**Placeholders to replace before the first release:** `OWNER/REPO` in the
-endpoint and `REPLACE_WITH_TAURI_UPDATER_PUBKEY` for the pubkey. See
-[`RELEASING.md`](RELEASING.md#one-time-setup).
+**Before auto-update works:** the endpoint already points at the real repo
+(`codertapsu/multilingual-dubbed-video`). Generate the updater keypair, put the
+**public** key in `tauri.conf.json` → `plugins.updater.pubkey`, and add the
+**private** key as the `TAURI_SIGNING_PRIVATE_KEY` CI secret so each release
+ships a signed `latest.json`. See [`RELEASING.md`](RELEASING.md#one-time-setup).
+A release built without that secret still installs fine — it just won't
+auto-update.

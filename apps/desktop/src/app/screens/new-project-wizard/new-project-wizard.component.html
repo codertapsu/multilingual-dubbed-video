@@ -430,10 +430,21 @@
           type="button"
           class="btn btn-primary"
           (click)="start()"
-          [disabled]="busy()"
+          [disabled]="busy() || ollamaPulling()"
         >
           {{ busy() ? 'Starting…' : 'Start dubbing ▶' }}
         </button>
+        @if (ollamaPullAction(); as pullModel) {
+          <button
+            type="button"
+            class="btn"
+            (click)="pullOllamaAndRetry(pullModel)"
+            [disabled]="ollamaPulling()"
+            title="Download the local translation model on demand, then start"
+          >
+            {{ ollamaPulling() ? 'Pulling… ' + ollamaPullPercent() + '%' : 'Pull “' + pullModel + '” & start ▶' }}
+          </button>
+        }
       </div>
     </div>
   }

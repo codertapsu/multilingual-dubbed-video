@@ -137,6 +137,20 @@ export interface CredentialTestResult {
   detail: string;
 }
 
+/** Why a provider is (not) ready — mirrors the orchestrator readiness contract. */
+export type ProviderReadinessStatus =
+  | 'ready'
+  | 'cloud-key-missing'
+  | 'engine-pack-missing'
+  | 'daemon-unreachable'
+  | 'model-missing';
+
+/** A one-click affordance that would make a not-ready provider ready. */
+export interface ProviderReadinessAction {
+  kind: 'install-pack' | 'pull-ollama-model' | 'open-credentials' | 'guide';
+  ref?: string;
+}
+
 /** One selectable provider for a pipeline phase (GET /providers). */
 export interface ProviderInfo {
   id: string;
@@ -144,6 +158,10 @@ export interface ProviderInfo {
   isLocal: boolean;
   credentialService?: CloudServiceId;
   available: boolean;
+  /** Readiness verdict + remediation, so the UI can disable + explain + offer a fix. */
+  readinessStatus?: ProviderReadinessStatus;
+  remediation?: string;
+  action?: ProviderReadinessAction;
 }
 
 /** GET /providers response. */
@@ -151,6 +169,23 @@ export interface ProvidersResponse {
   stt: ProviderInfo[];
   translation: ProviderInfo[];
   tts: ProviderInfo[];
+}
+
+/** One provider's readiness for a project's run (GET /projects/:id/run-preflight). */
+export interface RunPreflightProvider {
+  phase: 'stt' | 'translation' | 'tts';
+  providerId: string;
+  status: ProviderReadinessStatus;
+  ready: boolean;
+  message: string;
+  remediation?: string;
+  action?: ProviderReadinessAction;
+}
+
+/** GET /projects/:id/run-preflight response. */
+export interface RunPreflightResult {
+  ok: boolean;
+  providers: RunPreflightProvider[];
 }
 
 /** A detected GPU (best-effort). */

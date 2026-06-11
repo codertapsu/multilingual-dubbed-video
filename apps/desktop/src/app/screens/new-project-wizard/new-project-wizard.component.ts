@@ -33,7 +33,7 @@ import type {
   RenderQuality,
   SubtitleExportMode,
 } from '../../core/models';
-import type { ProviderInfo, ProvidersResponse } from '../../core/models/setup';
+import type { ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
 
 /** Wizard step index. */
 type WizardStep = 1 | 2;
@@ -357,6 +357,24 @@ export class NewProjectWizardComponent implements OnInit {
     this.busy.set(true);
     this.error.set(null);
     try {
+      // Proactive readiness gate: don't even attempt a run we know will be
+      // rejected. The orchestrator enforces the same check, but surfacing it
+      // here means the user sees the fix (start Ollama / pull a model / install
+      // an engine pack / add a key) before anything starts. A failed preflight
+      // fetch falls through to runPipeline, whose gate still protects the run.
+      const preflight = await this.ipc.runPreflight(id).catch(() => null);
+      const problems = preflight && !preflight.ok ? preflight.providers.filter((p) => !p.ready) : [];
+      if (problems.length > 0) {
+        const first = problems[0]!;
+        const more = problems.length - 1;
+        this.error.set({
+          code: 'ENGINE_UNAVAILABLE',
+          message: more > 0 ? `${first.message} (and ${more} more provider issue${more > 1 ? 's' : ''})` : first.message,
+          ...(first.remediation ? { remediation: first.remediation } : {}),
+        });
+        this.preflightProblems.set(problems);
+        return;
+      }
       await this.ipc.runPipeline(id);
       await this.router.navigate(['/project', id, 'processing']);
     } catch (err) {
@@ -364,6 +382,45 @@ export class NewProjectWizardComponent implements OnInit {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  /** Not-ready providers from the last preflight (for the inline "fix" affordance). */
+  protected readonly preflightProblems = signal<RunPreflightProvider[]>([]);
+
+  /** Pull the configured Ollama model on demand (lazy), then re-check + start. */
+  protected async pullOllamaAndRetry(model: string): Promise<void> {
+    if (this.ollamaPulling()) return;
+    this.ollamaPulling.set(true);
+    this.error.set(null);
+    try {
+      await this.ipc.pullOllamaModel(model);
+      // Poll until the pull finishes (or errors), then re-run the gate.
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const st = await this.ipc.getOllamaPullStatus(model);
+        this.ollamaPullPercent.set(st.percent);
+        if (st.status === 'done') break;
+        if (st.status === 'error') {
+          this.error.set({ code: 'ENGINE_UNAVAILABLE', message: `Pulling "${model}" failed.`, ...(st.error ? { remediation: st.error } : {}) });
+          return;
+        }
+      }
+      this.preflightProblems.set([]);
+      await this.start();
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.ollamaPulling.set(false);
+    }
+  }
+
+  protected readonly ollamaPulling = signal(false);
+  protected readonly ollamaPullPercent = signal(0);
+
+  /** The Ollama model to offer pulling, if a preflight problem asks for it. */
+  protected ollamaPullAction(): string | null {
+    const p = this.preflightProblems().find((x) => x.action?.kind === 'pull-ollama-model' && x.action?.ref);
+    return p?.action?.ref ?? null;
   }
 
   protected dismissError(): void {

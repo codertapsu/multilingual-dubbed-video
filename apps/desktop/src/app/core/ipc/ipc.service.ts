@@ -24,6 +24,7 @@ import type {
   CredentialTestResult,
   PreflightResult,
   ProvidersResponse,
+  RunPreflightResult,
   SaveCredentialRequest,
   SetupCatalog,
   SetupInstallRequest,
@@ -323,7 +324,29 @@ export class IpcService {
   // works), and skipping the Rust proxy keeps the surface small.        //
   // ------------------------------------------------------------------ //
 
-  /** GET /providers — selectable providers per phase, with availability. */
+  /** GET /projects/:id/run-preflight — readiness of the project's SELECTED providers. */
+  runPreflight(projectId: string): Promise<RunPreflightResult> {
+    return this.http<RunPreflightResult>('GET', `/projects/${encodeURIComponent(projectId)}/run-preflight`);
+  }
+
+  /** GET /providers/ollama/models — pulled models + whether the configured one is present. */
+  getOllamaModels(): Promise<{ models: string[]; configured: string; present: boolean }> {
+    return this.http('GET', '/providers/ollama/models');
+  }
+
+  /** POST /providers/ollama/pull — start pulling a (large, optional) model in the background. */
+  pullOllamaModel(model?: string): Promise<{ model: string; status: string; percent: number }> {
+    return this.http('POST', '/providers/ollama/pull', model ? { model } : {});
+  }
+
+  /** GET /providers/ollama/pull-status — poll a model pull's progress. */
+  getOllamaPullStatus(
+    model: string,
+  ): Promise<{ model: string; status: string; percent: number; error?: string }> {
+    return this.http('GET', `/providers/ollama/pull-status?model=${encodeURIComponent(model)}`);
+  }
+
+  /** GET /providers — selectable providers per phase, with availability + readiness. */
   getProviders(): Promise<ProvidersResponse> {
     return this.http<ProvidersResponse>('GET', '/providers');
   }

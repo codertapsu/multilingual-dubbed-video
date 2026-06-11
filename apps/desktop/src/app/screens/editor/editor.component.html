@@ -108,6 +108,17 @@
             >
               {{ isSynthesizing(row.segment.id) ? 'Synthesizing…' : 'Regenerate TTS' }}
             </button>
+            @if (row.timingConflict || row.needsReview) {
+              <button
+                type="button"
+                class="btn btn-sm"
+                (click)="tightenToFit(row.segment)"
+                [disabled]="isSynthesizing(row.segment.id)"
+                title="Re-translate this line shorter so it fits its timing window, then re-synthesize"
+              >
+                {{ isSynthesizing(row.segment.id) ? 'Fitting…' : 'Tighten to fit' }}
+              </button>
+            }
           </span>
         </div>
       }

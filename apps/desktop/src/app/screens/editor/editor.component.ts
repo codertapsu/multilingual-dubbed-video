@@ -169,6 +169,28 @@ export class EditorComponent implements OnInit {
     }
   }
 
+  /** Re-translate one overflowing line shorter, then re-synthesize, so it fits. */
+  protected async tightenToFit(segment: SegmentWithAlignment): Promise<void> {
+    const segmentId = segment.id;
+    if (this.synthesizing().has(segmentId)) return;
+    this.markSynth(segmentId, true);
+    this.error.set(null);
+    try {
+      const result = await this.ipc.refitSegment(this.id(), segmentId);
+      // The line was shortened + persisted; reflect the new text + alignment.
+      this.drafts.update((d) => ({ ...d, [segmentId]: result.translatedText }));
+      this.segments.update((segs) =>
+        segs.map((s) =>
+          s.id === segmentId ? { ...s, translatedText: result.translatedText, alignment: result.alignment } : s,
+        ),
+      );
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.markSynth(segmentId, false);
+    }
+  }
+
   protected isSynthesizing(segmentId: string): boolean {
     return this.synthesizing().has(segmentId);
   }

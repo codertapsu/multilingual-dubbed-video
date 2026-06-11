@@ -188,6 +188,18 @@ export class IpcService {
     );
   }
 
+  /** POST /projects/:id/segments/:segId/refit — re-translate the line shorter + re-synthesize to fit. */
+  refitSegment(
+    projectId: string,
+    segmentId: string,
+  ): Promise<SynthesizeSingleSegmentResult & { translatedText: string }> {
+    return this.http(
+      'POST',
+      `/projects/${encodeURIComponent(projectId)}/segments/${encodeURIComponent(segmentId)}/refit`,
+      {},
+    );
+  }
+
   renderFinalVideo(
     projectId: string,
     options: RenderFinalVideoBody = {},
@@ -344,6 +356,11 @@ export class IpcService {
     model: string,
   ): Promise<{ model: string; status: string; percent: number; error?: string }> {
     return this.http('GET', `/providers/ollama/pull-status?model=${encodeURIComponent(model)}`);
+  }
+
+  /** POST /projects/:id/ensure-resources — background-install the required local models. */
+  ensureProjectResources(projectId: string): Promise<{ installing: boolean }> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/ensure-resources`, {});
   }
 
   /** GET /providers — selectable providers per phase, with availability + readiness. */

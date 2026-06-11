@@ -49,6 +49,7 @@ import type { ProviderRegistry } from './providers/registry.js';
 import { createDefaultRegistry, OLLAMA_MODEL } from './providers/registry.js';
 import { buildReadinessContext, checkProviderReadiness, describeProviderReadiness } from './providers/readiness.js';
 import { OllamaPullManager, listOllamaModels } from './providers/ollamaModels.js';
+import { computeRequiredResources, hasRequiredResources } from './setup/requiredResources.js';
 import type { PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog } from './setup/catalog.js';
@@ -412,6 +413,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
+  // Background pre-fetch: as soon as a project's languages/providers are known,
+  // download the REQUIRED local default models (whisper / Argos pair / Piper
+  // voice) that aren't installed yet — so a run doesn't stall on a missing model
+  // later. Idempotent; progress streams over GET /setup/events. The wizard calls
+  // this right after creating a project.
+  app.post('/projects/:id/ensure-resources', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      const project = await store.getProject(req.params.id);
+      const status = await setupStore.getStatus();
+      const request = computeRequiredResources(project.settings, status.installed);
+      const installing = hasRequiredResources(request);
+      if (installing) void installer.run(request);
+      return { installing, request };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
   // ---- Ollama models (lazy, on-demand: large optional translation models) ----
 
   app.get('/providers/ollama/models', async (_req, reply) => {
@@ -682,6 +701,18 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       try {
         const result = await orchestrator.synthesizeSingleSegment(req.params.id, req.params.segId, req.body ?? {});
         return result;
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // "Tighten to fit": re-translate one line shorter, then re-synthesize + re-align.
+  app.post(
+    '/projects/:id/segments/:segId/refit',
+    async (req: FastifyRequest<{ Params: { id: string; segId: string } }>, reply) => {
+      try {
+        return await orchestrator.refitSegment(req.params.id, req.params.segId);
       } catch (err) {
         return sendError(reply, err);
       }

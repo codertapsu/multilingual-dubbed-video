@@ -309,6 +309,50 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /**
+   * "Tighten to fit" one segment: re-translate it with a tighter word budget (by
+   * handing the LLM a shrunk window, which lowers the prompt's target), then
+   * re-synthesize + re-align via {@link synthesizeSingleSegment}. The editor uses
+   * this on a flagged line. A provider that can't shorten (Argos) returns the
+   * same text, so we keep the existing translation and just re-synthesize.
+   */
+  async refitSegment(
+    projectId: string,
+    segmentId: string,
+  ): Promise<{ segment: TtsSegment; alignment: AlignedSegment; translatedText: string }> {
+    const project = await this.deps.store.getProject(projectId);
+    const paths = this.deps.store.paths(projectId);
+    const segments =
+      (await this.tryReadSegments(paths.translatedJson)) ?? (await this.tryReadSegments(paths.sourceJson)) ?? [];
+    const idx = segments.findIndex((s) => s.id === segmentId);
+    const seg = idx >= 0 ? segments[idx] : undefined;
+    if (!seg) {
+      throw new AppErrorException('UNKNOWN', `Segment not found: ${segmentId}`);
+    }
+
+    // Gap-aware window: this line may use the silence until the next line starts
+    // (or the end of the media for the last line). Target the max-speed window so
+    // the new line fits with the same atempo headroom the aligner allows.
+    const next = segments[idx + 1];
+    const endSlot = next ? next.startMs : ((await this.deps.store.getProject(projectId)).mediaInfo?.durationMs ?? seg.endMs);
+    const availableMs = Math.max(1, endSlot - seg.startMs);
+    const tightMs = Math.max(500, Math.round(availableMs * Math.max(1, project.settings.maxSpeedRatio)));
+
+    const translation = this.deps.registry.getTranslation(project.settings.translationProviderId);
+    const result = await translation.translateSegments({
+      sourceLanguage: project.settings.sourceLanguage,
+      targetLanguage: project.settings.targetLanguage,
+      segments: [{ id: segmentId, sourceText: seg.sourceText, startMs: 0, endMs: tightMs }],
+    });
+    const proposed = (result.segments[0]?.translatedText ?? '').trim();
+    const finalText =
+      proposed && proposed !== (seg.translatedText ?? '') ? proposed : (seg.translatedText ?? seg.sourceText ?? '');
+
+    // Persist the shortened text + re-synthesize + re-align (handled inside).
+    const { segment, alignment } = await this.synthesizeSingleSegment(projectId, segmentId, { text: finalText });
+    return { segment, alignment, translatedText: finalText };
+  }
+
+  /**
    * Render the final video. Optional overrides update the project settings
    * (subtitle export mode / burn style) before delegating to the runner's
    * render step semantics.

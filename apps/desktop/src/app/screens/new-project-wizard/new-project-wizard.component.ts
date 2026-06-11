@@ -330,6 +330,11 @@ export class NewProjectWizardComponent implements OnInit {
       this.outputDir.set(project.outputDir);
       this.store.setCurrent(project);
 
+      // Pre-fetch any required local models (whisper/Argos pair/Piper voice) in
+      // the background now that the languages are known, so the run doesn't stall
+      // on a missing model later. Fire-and-forget; progress shows via setup SSE.
+      void this.ipc.ensureProjectResources(project.id).catch(() => {});
+
       // Probe — surface media info, but a probe failure shouldn't strand the
       // user: they can still proceed (the pipeline re-probes as step 1).
       try {

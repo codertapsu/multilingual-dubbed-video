@@ -72,6 +72,17 @@ export interface SeparationService {
 export interface PipelineMediaService extends MediaService {
   /** Extract a 16 kHz mono PCM WAV suitable for faster-whisper. */
   extract16kMono(inputPath: string, outputPath: string): Promise<AudioExtractResult>;
+  /**
+   * Extract a `[startMs, endMs)` window as a 16 kHz mono WAV — used to cut long
+   * audio into bounded STT chunks. Optional so older adapters still satisfy the
+   * type; the runner falls back to single-shot transcription when it's absent.
+   */
+  clip16kMono?(
+    inputPath: string,
+    outputPath: string,
+    startMs: number,
+    endMs: number,
+  ): Promise<AudioExtractResult>;
   /** Build the full-length TTS timeline WAV. */
   buildTtsTimeline(input: BuildTtsTimelineInput): Promise<{ outputPath: string; durationMs: number }>;
   /** Duck the original audio and mix the TTS timeline into the final track. */

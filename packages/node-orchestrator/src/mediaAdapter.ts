@@ -37,10 +37,12 @@ interface MediaWorkerModule {
     extractAudio(inputPath: string, outputPath: string): Promise<AudioExtractResult>;
     renderFinalVideo(input: RenderFinalVideoInput): Promise<RenderFinalVideoResult>;
     extract16kMono?(inputPath: string, outputPath: string): Promise<AudioExtractResult>;
+    clip16kMono?(inputPath: string, outputPath: string, startMs: number, endMs: number): Promise<AudioExtractResult>;
     buildTtsTimeline?(input: BuildTtsTimelineInput): Promise<{ outputPath: string; durationMs: number }>;
     duckAndMix?(input: DuckAndMixInput): Promise<{ output: string; durationMs: number }>;
   };
   extract16kMono?(inputPath: string, outputPath: string): Promise<AudioExtractResult>;
+  clip16kMono?(inputPath: string, outputPath: string, startMs: number, endMs: number): Promise<AudioExtractResult>;
   buildTtsTimeline?(input: BuildTtsTimelineInput): Promise<{ outputPath: string; durationMs: number }>;
   duckAndMix?(input: DuckAndMixInput): Promise<{ output: string; durationMs: number }>;
 }
@@ -87,6 +89,13 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
         ? mod.extract16kMono
         : undefined;
 
+  const clip16kMono =
+    typeof svc.clip16kMono === 'function'
+      ? svc.clip16kMono.bind(svc)
+      : typeof mod.clip16kMono === 'function'
+        ? mod.clip16kMono
+        : undefined;
+
   const buildTtsTimeline =
     typeof svc.buildTtsTimeline === 'function'
       ? svc.buildTtsTimeline.bind(svc)
@@ -109,6 +118,10 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
       extract16kMono ? extract16kMono(inputPath, outputPath) : missing('extract16kMono'),
     buildTtsTimeline: (input) => (buildTtsTimeline ? buildTtsTimeline(input) : missing('buildTtsTimeline')),
     duckAndMix: (input) => (duckAndMix ? duckAndMix(input) : missing('duckAndMix')),
+    // clip16kMono is optional on the interface: only expose it when the loaded
+    // media-worker provides it, so the runner can detect support and otherwise
+    // fall back to single-shot transcription.
+    ...(clip16kMono ? { clip16kMono: (i: string, o: string, s: number, e: number) => clip16kMono(i, o, s, e) } : {}),
   };
 
   return adapter;

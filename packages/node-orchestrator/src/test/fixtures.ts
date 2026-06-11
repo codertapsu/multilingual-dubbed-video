@@ -130,6 +130,17 @@ export class FakeMediaService implements PipelineMediaService {
     return { audioPath: outputPath, sampleRate: 16000, channels: 1, durationMs: 10_000 };
   }
 
+  async clip16kMono(
+    inputPath: string,
+    outputPath: string,
+    startMs: number,
+    endMs: number,
+  ): Promise<AudioExtractResult> {
+    this.calls.push(`clip16kMono:${outputPath}:${startMs}-${endMs}`);
+    await this.touch(outputPath);
+    return { audioPath: outputPath, sampleRate: 16000, channels: 1, durationMs: Math.max(0, endMs - startMs) };
+  }
+
   async buildTtsTimeline(input: BuildTtsTimelineInput): Promise<{ outputPath: string; durationMs: number }> {
     this.calls.push(`buildTtsTimeline:${input.outputPath}`);
     await this.touch(input.outputPath);

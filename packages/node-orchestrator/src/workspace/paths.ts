@@ -35,6 +35,13 @@ export interface WorkspacePaths {
   readonly ttsFullWav: string;
   readonly finalMixWav: string;
 
+  /** Scratch dir for chunked-STT clips + per-chunk transcript checkpoints. */
+  readonly sttChunksDir: string;
+  /** Path of a single STT chunk's clipped 16k-mono WAV (0-based index). */
+  sttChunkWav(index: number): string;
+  /** Path of a single STT chunk's transcript checkpoint JSON (0-based index). */
+  sttChunkJson(index: number): string;
+
   readonly subtitlesDir: string;
   readonly sourceJson: string;
   readonly sourceSrt: string;
@@ -74,6 +81,7 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
   const inputDir = path.join(root, 'input');
   const audioDir = path.join(root, 'audio');
   const ttsSegmentsDir = path.join(audioDir, 'tts_segments');
+  const sttChunksDir = path.join(audioDir, 'stt_chunks');
   const subtitlesDir = path.join(root, 'subtitles');
   const renderDir = path.join(root, 'render');
   const logsDir = path.join(root, 'logs');
@@ -92,6 +100,10 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     ttsSegmentsDir,
     ttsFullWav: path.join(audioDir, 'tts_full.wav'),
     finalMixWav: path.join(audioDir, 'final_mix.wav'),
+
+    sttChunksDir,
+    sttChunkWav: (index: number) => path.join(sttChunksDir, `chunk_${padSegmentIndex(index)}.wav`),
+    sttChunkJson: (index: number) => path.join(sttChunksDir, `chunk_${padSegmentIndex(index)}.json`),
 
     subtitlesDir,
     sourceJson: path.join(subtitlesDir, 'source.json'),

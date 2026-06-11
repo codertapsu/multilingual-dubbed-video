@@ -97,8 +97,10 @@ export {
 export {
   extractAudio,
   extract16kMono,
+  clip16kMono,
   buildExtractAudioArgs,
   buildExtract16kMonoArgs,
+  buildClip16kMonoArgs,
 } from './extract.js';
 
 export {

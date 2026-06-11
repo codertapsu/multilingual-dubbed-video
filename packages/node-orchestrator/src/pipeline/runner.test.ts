@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Project } from '@videodubber/shared';
-import { PipelineRunner, type RunnerDeps } from './runner.js';
+import { PipelineRunner, planSttChunks, type RunnerDeps } from './runner.js';
 import { ProjectStore } from '../workspace/projectStore.js';
 import { EventBusRegistry } from '../events.js';
 import { ProjectLogger } from '../logging.js';
@@ -13,6 +13,7 @@ import {
   FakeTranslationProvider,
   FakeTtsProvider,
   createProjectInput,
+  fakeMediaInfo,
   fakeRegistry,
   makeSegments,
   writeDummyVideo,
@@ -190,5 +191,106 @@ describe('PipelineRunner end-to-end (mocked)', () => {
     expect(types).toContain('state');
     expect(types).toContain('step');
     expect(types).toContain('done');
+  });
+});
+
+describe('planSttChunks', () => {
+  it('returns a single whole-file chunk at or below the threshold', () => {
+    expect(planSttChunks(600_000, 600_000, 900_000)).toEqual([{ index: 0, startMs: 0, endMs: 600_000 }]);
+    expect(planSttChunks(0, 600_000, 900_000)).toEqual([{ index: 0, startMs: 0, endMs: 0 }]);
+  });
+
+  it('splits long audio into fixed windows with no overlap', () => {
+    expect(planSttChunks(150_000, 60_000, 60_000)).toEqual([
+      { index: 0, startMs: 0, endMs: 60_000 },
+      { index: 1, startMs: 60_000, endMs: 120_000 },
+      { index: 2, startMs: 120_000, endMs: 150_000 },
+    ]);
+  });
+
+  it('handles an exact multiple of the window cleanly', () => {
+    expect(planSttChunks(120_000, 60_000, 60_000).map((c) => [c.startMs, c.endMs])).toEqual([
+      [0, 60_000],
+      [60_000, 120_000],
+    ]);
+  });
+});
+
+describe('PipelineRunner — chunked STT (long audio)', () => {
+  /** Build a runner over a long (100s) media with small chunk windows. */
+  async function buildChunkingProject() {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+    const media = new FakeMediaService({ mediaInfo: fakeMediaInfo(100_000) }); // 100s
+    const registry = fakeRegistry(
+      // One chunk-relative segment per call; offsets are applied per window.
+      new FakeSttProvider(makeSegments([[0, 1000, 'hi']])),
+      new FakeTranslationProvider(),
+      new FakeTtsProvider(),
+    );
+    const bus = buses.get(project.id);
+    const logger = new ProjectLogger(paths.pipelineLog, bus);
+    const deps: RunnerDeps = { store, media, registry, bus, logger, sttChunkWindowMs: 30_000, sttChunkThresholdMs: 20_000 };
+    return { project, paths, media, deps, bus };
+  }
+
+  it('clips into windows, transcribes each, and merges with absolute offsets', async () => {
+    const { project, paths, media, deps, bus } = await buildChunkingProject();
+
+    const progress: number[] = [];
+    bus.subscribe((e) => {
+      if (e.type === 'step' && e.step.id === 'stt' && typeof e.step.progressPercent === 'number') {
+        progress.push(e.step.progressPercent);
+      }
+    });
+
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+
+    // 100s / 30s windows => 4 chunks: 4 clips + 4 transcribe calls.
+    expect(media.calls.filter((c) => c.startsWith('clip16kMono:'))).toHaveLength(4);
+    expect((deps.registry.getStt() as FakeSttProvider).calls).toBe(4);
+
+    const source = JSON.parse(await fsp.readFile(paths.sourceJson, 'utf8')) as {
+      segments: { id: string; index: number; startMs: number }[];
+    };
+    expect(source.segments).toHaveLength(4);
+    expect(source.segments.map((s) => s.startMs)).toEqual([0, 30_000, 60_000, 90_000]);
+    expect(source.segments.map((s) => s.id)).toEqual(['seg_0001', 'seg_0002', 'seg_0003', 'seg_0004']);
+    expect(source.segments.map((s) => s.index)).toEqual([0, 1, 2, 3]);
+
+    // Progress was reported per chunk and reached 100.
+    expect(progress.length).toBeGreaterThanOrEqual(4);
+    expect(progress.at(-1)).toBe(100);
+
+    // Scratch chunk dir is reclaimed after success.
+    await expect(fsp.stat(paths.sttChunksDir)).rejects.toBeTruthy();
+  });
+
+  it('resumes from an existing chunk checkpoint (skips already-done windows)', async () => {
+    const { project, paths, media, deps } = await buildChunkingProject();
+
+    // Pre-seed chunk 0's checkpoint so it is reused, not re-clipped/transcribed.
+    await fsp.mkdir(paths.sttChunksDir, { recursive: true });
+    await fsp.writeFile(
+      paths.sttChunkJson(0),
+      JSON.stringify({
+        detectedLanguage: 'en',
+        segments: [{ id: 'seg_0001', index: 0, startMs: 5, endMs: 900, sourceText: 'cached' }],
+      }),
+      'utf8',
+    );
+
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+
+    // Chunk 0 reused => only 3 clips + 3 transcribe calls.
+    expect(media.calls.filter((c) => c.startsWith('clip16kMono:'))).toHaveLength(3);
+    expect((deps.registry.getStt() as FakeSttProvider).calls).toBe(3);
+
+    const source = JSON.parse(await fsp.readFile(paths.sourceJson, 'utf8')) as {
+      segments: { sourceText: string }[];
+    };
+    expect(source.segments).toHaveLength(4);
+    expect(source.segments[0]!.sourceText).toBe('cached');
   });
 });

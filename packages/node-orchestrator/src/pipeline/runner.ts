@@ -50,7 +50,7 @@ import type { PipelineMediaService, SeparationService, TimelineSegmentInput } fr
 import type { AlignmentService } from '../providers/alignment/whisperxProvider.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
-import { fileExistsNonEmpty, segmentIdToIndex, type WorkspacePaths } from '../workspace/paths.js';
+import { fileExistsNonEmpty, padSegmentIndex, segmentIdToIndex, type WorkspacePaths } from '../workspace/paths.js';
 
 /** Dependencies injected into the runner (mockable in tests). */
 export interface RunnerDeps {
@@ -69,6 +69,14 @@ export interface RunnerDeps {
    * diarize settings are skipped with a warning.
    */
   alignment?: AlignmentService;
+  /**
+   * Long-video STT chunking knobs. Audio longer than `sttChunkThresholdMs` is
+   * transcribed in `sttChunkWindowMs` windows (bounded requests + per-chunk
+   * checkpoints + progress). Defaults: 10-min windows above a 15-min threshold
+   * (also overridable via STT_CHUNK_WINDOW_MS / STT_CHUNK_THRESHOLD_MS).
+   */
+  sttChunkWindowMs?: number;
+  sttChunkThresholdMs?: number;
 }
 
 /** Options controlling a single run. */
@@ -117,6 +125,63 @@ async function readSegments(path: string): Promise<TranscriptSegment[]> {
 /** Write transcript segments to a JSON artifact. */
 async function writeSegments(path: string, segments: TranscriptSegment[]): Promise<void> {
   await fsp.writeFile(path, `${JSON.stringify({ segments }, null, 2)}\n`, 'utf8');
+}
+
+/** Progress callback for a long-running step (fraction in 0..1). */
+export type StepProgress = (fraction: number) => Promise<void>;
+
+/** Parse a positive-int env var with a fallback (local, to avoid a config import). */
+function envIntMs(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** Default STT chunk window / threshold (overridable via env or RunnerDeps). */
+const DEFAULT_STT_CHUNK_WINDOW_MS = envIntMs('STT_CHUNK_WINDOW_MS', 10 * 60_000);
+const DEFAULT_STT_CHUNK_THRESHOLD_MS = envIntMs('STT_CHUNK_THRESHOLD_MS', 15 * 60_000);
+
+/** A single STT time-window to transcribe independently. */
+export interface SttChunk {
+  index: number;
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * Split a total audio duration into bounded transcription windows. Audio at or
+ * below `thresholdMs` returns a single whole-file chunk (no extra clip pass);
+ * longer audio is cut into fixed `windowMs` windows with no overlap. With ≤14
+ * boundaries for a 2-hour video the boundary-word risk is negligible, while the
+ * win is large: each request is bounded (so the worker timeout always suffices),
+ * each chunk is checkpointed (crash-resumable), progress is reported per chunk,
+ * and peak memory stays at one window rather than the whole file.
+ */
+export function planSttChunks(totalDurationMs: number, windowMs: number, thresholdMs: number): SttChunk[] {
+  if (!Number.isFinite(totalDurationMs) || totalDurationMs <= 0 || windowMs <= 0 || totalDurationMs <= thresholdMs) {
+    return [{ index: 0, startMs: 0, endMs: Math.max(0, totalDurationMs) }];
+  }
+  const chunks: SttChunk[] = [];
+  for (let i = 0, start = 0; start < totalDurationMs; i++) {
+    const end = Math.min(start + windowMs, totalDurationMs);
+    chunks.push({ index: i, startMs: start, endMs: end });
+    start = end;
+  }
+  return chunks;
+}
+
+/** Shift a segment's timings (and any per-word timings) by `offsetMs`. */
+function offsetSegment(seg: TranscriptSegment, offsetMs: number): TranscriptSegment {
+  if (offsetMs === 0) return seg;
+  return {
+    ...seg,
+    startMs: seg.startMs + offsetMs,
+    endMs: seg.endMs + offsetMs,
+    ...(seg.words
+      ? { words: seg.words.map((w) => ({ ...w, startMs: w.startMs + offsetMs, endMs: w.endMs + offsetMs })) }
+      : {}),
+  };
 }
 
 /**
@@ -173,8 +238,15 @@ export class PipelineRunner {
         state = await transition(this.deps, state, stepId, 'running', { progressPercent: 0 });
         logger.info(`Step "${pipelineStepLabel(stepId)}" started.`);
 
+        // Mid-step progress: re-emit the step as "running" with an updated
+        // percent. Called sparingly (per chunk/batch), so it never floods SSE.
+        const onProgress: StepProgress = async (fraction) => {
+          const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+          state = await transition(this.deps, state, stepId, 'running', { progressPercent: pct });
+        };
+
         try {
-          await this.executeStep(stepId, project, paths, options.signal);
+          await this.executeStep(stepId, project, paths, options.signal, onProgress);
         } catch (err) {
           const appError = toAppError(err);
           logger.error(`Step "${pipelineStepLabel(stepId)}" failed: ${appError.code} — ${appError.message}`);
@@ -293,6 +365,7 @@ export class PipelineRunner {
     project: Project,
     paths: WorkspacePaths,
     signal: AbortSignal,
+    onProgress: StepProgress,
   ): Promise<void> {
     switch (stepId) {
       case 'probe-video':
@@ -300,7 +373,7 @@ export class PipelineRunner {
       case 'extract-audio':
         return this.stepExtractAudio(project, paths, signal);
       case 'stt':
-        return this.stepStt(project, paths, signal);
+        return this.stepStt(project, paths, signal, onProgress);
       case 'translation':
         return this.stepTranslation(project, paths, signal);
       case 'tts':
@@ -340,25 +413,52 @@ export class PipelineRunner {
     await this.deps.media.extract16kMono(project.inputVideoPath, paths.original16kMonoWav);
   }
 
-  private async stepStt(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
+  private async stepStt(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress: StepProgress,
+  ): Promise<void> {
     throwIfCancelled(signal);
     const provider = this.deps.registry.getStt(project.settings.sttProviderId);
     const model = project.settings.sttModel ?? 'small';
-    this.deps.logger.info(`Transcribing with provider "${provider.id}" (model ${model})...`);
+    const explicitLanguage = project.settings.sourceLanguage
+      ? toWhisperLanguage(project.settings.sourceLanguage)
+      : undefined;
 
-    const result = await provider.transcribe(
-      {
-        audioPath: paths.original16kMonoWav,
-        language: project.settings.sourceLanguage
-          ? toWhisperLanguage(project.settings.sourceLanguage)
-          : undefined,
+    // Decide whether to chunk: long audio is transcribed in bounded windows so
+    // the request can't outrun the worker timeout, each window is checkpointed
+    // (crash-resumable), progress is visible, and memory stays bounded.
+    const totalDurationMs = (await this.deps.store.getProject(project.id)).mediaInfo?.durationMs ?? 0;
+    const windowMs = this.deps.sttChunkWindowMs ?? DEFAULT_STT_CHUNK_WINDOW_MS;
+    const thresholdMs = this.deps.sttChunkThresholdMs ?? DEFAULT_STT_CHUNK_THRESHOLD_MS;
+    const plan = planSttChunks(totalDurationMs, windowMs, thresholdMs);
+    // Chunking needs the optional clip16kMono capability; without it (an older
+    // media-worker) fall back to a single request even for long audio.
+    const canChunk = plan.length > 1 && typeof this.deps.media.clip16kMono === 'function';
+
+    let segments: TranscriptSegment[];
+    let detectedLanguage: string | undefined;
+
+    if (!canChunk) {
+      this.deps.logger.info(`Transcribing with provider "${provider.id}" (model ${model})...`);
+      const result = await provider.transcribe(
+        { audioPath: paths.original16kMonoWav, language: explicitLanguage, model, wordTimestamps: true },
+        signal,
+      );
+      segments = result.segments;
+      detectedLanguage = result.detectedLanguage;
+    } else {
+      ({ segments, detectedLanguage } = await this.transcribeChunked(
+        paths,
+        provider,
         model,
-        wordTimestamps: true,
-      },
-      signal,
-    );
-
-    let segments = result.segments;
+        explicitLanguage,
+        plan,
+        signal,
+        onProgress,
+      ));
+    }
 
     // Optional forced-alignment / diarization refinement (WhisperX engine pack).
     // Tightens word timestamps (±50 ms) and, when diarization is on, tags each
@@ -373,7 +473,7 @@ export class PipelineRunner {
         .align(
           paths.original16kMonoWav,
           segments,
-          result.detectedLanguage || project.settings.sourceLanguage,
+          detectedLanguage || project.settings.sourceLanguage,
           { diarize: project.settings.diarize === true },
           signal,
         )
@@ -396,7 +496,85 @@ export class PipelineRunner {
       segments.map((s) => ({ index: s.index + 1, startMs: s.startMs, endMs: s.endMs, text: s.sourceText })),
     );
     await fsp.writeFile(paths.sourceSrt, srt, 'utf8');
-    this.deps.logger.info(`Transcribed ${segments.length} segments (detected language: ${result.detectedLanguage}).`);
+    this.deps.logger.info(`Transcribed ${segments.length} segments (detected language: ${detectedLanguage}).`);
+
+    // The STT chunk clips/checkpoints were scratch space; reclaim the disk now
+    // that source.json is the durable artifact (a retry re-chunks from scratch).
+    if (canChunk) {
+      await fsp.rm(paths.sttChunksDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  /**
+   * Transcribe long audio in bounded windows: clip each window to a 16k-mono
+   * WAV, transcribe it, offset its timings to absolute, checkpoint it to disk,
+   * and report progress. Re-runs resume from the first window whose checkpoint
+   * is missing. Language is auto-detected once (on the first window) and reused
+   * for the rest so the whole transcript shares one language.
+   */
+  private async transcribeChunked(
+    paths: WorkspacePaths,
+    provider: ReturnType<ProviderRegistry['getStt']>,
+    model: string,
+    explicitLanguage: string | undefined,
+    plan: SttChunk[],
+    signal: AbortSignal,
+    onProgress: StepProgress,
+  ): Promise<{ segments: TranscriptSegment[]; detectedLanguage: string | undefined }> {
+    await fsp.mkdir(paths.sttChunksDir, { recursive: true });
+    const totalSec = Math.round((plan[plan.length - 1]?.endMs ?? 0) / 1000);
+    this.deps.logger.info(
+      `Transcribing ${totalSec}s in ${plan.length} chunks (provider "${provider.id}", model ${model})...`,
+    );
+
+    const all: TranscriptSegment[] = [];
+    let detectedLanguage = explicitLanguage;
+
+    for (const chunk of plan) {
+      throwIfCancelled(signal);
+      const checkpoint = paths.sttChunkJson(chunk.index);
+      let chunkSegments: TranscriptSegment[];
+
+      if (await fileExistsNonEmpty(checkpoint)) {
+        const saved = JSON.parse(await fsp.readFile(checkpoint, 'utf8')) as {
+          detectedLanguage?: string;
+          segments?: TranscriptSegment[];
+        };
+        chunkSegments = saved.segments ?? [];
+        if (!detectedLanguage && saved.detectedLanguage) detectedLanguage = saved.detectedLanguage;
+        this.deps.logger.info(
+          `STT chunk ${chunk.index + 1}/${plan.length}: reused checkpoint (${chunkSegments.length} segments).`,
+        );
+      } else {
+        const clipPath = paths.sttChunkWav(chunk.index);
+        await this.deps.media.clip16kMono!(paths.original16kMonoWav, clipPath, chunk.startMs, chunk.endMs);
+        const res = await provider.transcribe(
+          { audioPath: clipPath, language: detectedLanguage, model, wordTimestamps: true },
+          signal,
+        );
+        if (!detectedLanguage && res.detectedLanguage) detectedLanguage = res.detectedLanguage;
+        chunkSegments = res.segments.map((s) => offsetSegment(s, chunk.startMs));
+        await fsp.writeFile(
+          checkpoint,
+          `${JSON.stringify({ detectedLanguage: res.detectedLanguage, segments: chunkSegments }, null, 2)}\n`,
+          'utf8',
+        );
+        // The clip WAV is large; drop it once its checkpoint is written.
+        await fsp.rm(clipPath, { force: true }).catch(() => {});
+        this.deps.logger.info(
+          `STT chunk ${chunk.index + 1}/${plan.length}: ${chunkSegments.length} segments ` +
+            `(${Math.round(chunk.startMs / 1000)}-${Math.round(chunk.endMs / 1000)}s).`,
+        );
+      }
+
+      all.push(...chunkSegments);
+      await onProgress((chunk.index + 1) / plan.length);
+    }
+
+    // Re-number ids/index so the merged transcript is contiguous and unique
+    // (each chunk's worker numbering restarts at seg_0001).
+    const segments = all.map((s, i) => ({ ...s, index: i, id: `seg_${padSegmentIndex(i + 1)}` }));
+    return { segments, detectedLanguage };
   }
 
   private async stepTranslation(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {

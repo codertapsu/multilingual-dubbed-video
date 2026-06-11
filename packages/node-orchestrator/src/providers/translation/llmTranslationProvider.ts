@@ -115,7 +115,7 @@ export function buildTranslationPrompt(
       const words = targetWords(s.startMs, s.endMs);
       const hint =
         words !== undefined
-          ? `  [spoken window: ${((s.endMs! - s.startMs!) / 1000).toFixed(1)}s; aim for ~${words} words]`
+          ? `  [spoken window: ${((s.endMs! - s.startMs!) / 1000).toFixed(1)}s; target ${words} words or fewer]`
           : '';
       return `${s.id}: ${s.sourceText}${hint}`;
     })
@@ -123,8 +123,8 @@ export function buildTranslationPrompt(
   return [
     `Translate the following subtitle segments from "${sourceLanguage}" to "${targetLanguage}".`,
     'Rules:',
-    '- These are spoken dialogue lines for dubbing: keep them natural, conversational, and close to the spoken time window of the original so they fit without sounding rushed.',
-    '- When a target word budget is given, get as close to it as natural phrasing allows.',
+    '- These are spoken dialogue lines for dubbing: they must fit the original spoken time window. Favor concise, natural phrasing over literal completeness — drop filler and redundancy so the line is no longer than it needs to be.',
+    '- When a target word budget is given, treat it as a firm ceiling: a shorter line that fits the timing is BETTER than a complete line that overflows. Stay at or under the budget.',
     '- Preserve names, numbers, and the tone of the original.',
     '- Translate each segment independently but consistently (same terms across segments).',
     '- Respond with ONLY a JSON object of the form {"segments":[{"id":"seg_0001","text":"..."}]} — no prose, no markdown fences.',
@@ -145,7 +145,10 @@ export function buildRawTranslationPrompt(
   segment: PromptSegment,
 ): string {
   const words = targetWords(segment.startMs, segment.endMs);
-  const fit = words !== undefined ? ` Keep it close to ${words} words so it fits the spoken timing.` : '';
+  const fit =
+    words !== undefined
+      ? ` Keep it to ${words} words or fewer so it fits the spoken timing — for dubbing, prefer a concise line that fits over a longer, more literal one.`
+      : '';
   return `Translate from ${sourceLanguage} to ${targetLanguage}. Output ONLY the translation, no quotes or notes.${fit}\n\n${segment.sourceText}`;
 }
 

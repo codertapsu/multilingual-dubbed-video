@@ -116,6 +116,59 @@ artifact's `sha256` in `enginePackCatalog.ts`.
 
 ---
 
+## Hybrid release: CI for Windows/Linux, local Mac for macOS
+
+In practice the macOS jobs on GitHub's hosted runners fail intermittently at the
+DMG bundling step (`bundle_dmg.sh` drives Finder via AppleScript, which is flaky
+on headless `macos-14` runners) — even when the *same commit* bundles cleanly on
+a real Mac. The robust, repeatable model is therefore a split:
+
+* **CI builds Windows + Linux** — the platforms you can't build on a Mac. They
+  upload to the draft release automatically (`tauri-action`, `fail-fast: false`,
+  so each platform is independent and a macOS flake never blocks the others).
+* **You build macOS on your Mac** and attach the `.dmg` to the same release.
+
+### Build the macOS installer locally
+
+From a checkout of the tag you're releasing (e.g. `git checkout v0.1.0`):
+
+```bash
+pnpm install
+pnpm package:sidecars          # orchestrator + workers + piper + uv + static ffmpeg
+pnpm app:build                 # tauri build -> .app + .dmg
+```
+
+The installer lands at
+`apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_<version>_aarch64.dmg`.
+Verify it's self-contained before shipping (should print only `/System` and
+`/usr/lib` — no `/opt/homebrew`):
+
+```bash
+otool -L apps/desktop/src-tauri/target/release/bundle/macos/VideoDubber.app/Contents/MacOS/ffmpeg \
+  | grep -E '/opt/|/usr/local|homebrew' && echo "NON-PORTABLE" || echo "portable"
+shasum -a 256 apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_*_aarch64.dmg
+```
+
+> **Intel (x86_64) macOS** can be cross-built from Apple Silicon (Rosetta is
+> needed for the x86_64 PyInstaller workers + Node SEA), but the sidecar scripts
+> aren't wired for mac cross-arch yet — easiest is to let CI's `macos-x64` job
+> produce it, or ship Apple-Silicon-only for now.
+
+### Attach + publish
+
+Drag the `.dmg` onto the draft release (Releases → the tag's draft → **Edit** →
+drop into assets), or with the CLI:
+
+```bash
+gh release upload <tag> <path-to-dmg> --clobber
+gh release edit <tag> --draft=false      # publish
+```
+
+Assets can be added to a release **after** publishing, so it's fine to publish the
+platforms you have and attach the rest (Linux from CI, Intel) as they land.
+
+---
+
 ## Per-release steps
 
 ### 1. Bump the version

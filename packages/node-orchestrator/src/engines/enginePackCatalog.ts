@@ -23,7 +23,8 @@
  *    Release (recipe in docs/ENGINE_PACKS.md), then set codertapsu/multilingual-dubbed-video + the tag.
  *  - The Python packs (`tts-neural`, `separation-audio`, `alignment-whisperx`)
  *    have NO download URL — they install from PyPI via the bundled `uv`
- *    (`uv-env://` markers; the requirement sets live in engineInstaller.ts).
+ *    (`uv-env://` markers; the per-platform requirement sets live in
+ *    engines/uvRequirements.ts).
  */
 import type { EnginePackInfo } from '@videodubber/shared';
 
@@ -238,6 +239,10 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     providerId: 'neural-tts',
     accel: 'cpu',
     tier: 'performance',
+    // Intel macOS is excluded: torch (pulled by neucodec) ships no x86_64 macOS
+    // wheel, so the venv can't be built there. Linux/Windows x64 + Apple Silicon
+    // are fine.
+    excludePlatformArch: [{ platform: 'darwin', arch: 'x64' }],
     // CPU-feasible at ~1.5–2 GB working RAM (Q4 backbone + NeuCodec).
     minRamMb: 4096,
     approxSizeMb: 2000,
@@ -297,6 +302,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
 export function packRunsOn(pack: EnginePackInfo, platform: NodeJS.Platform, arch: string): boolean {
   if (pack.platforms && pack.platforms.length > 0 && !pack.platforms.includes(platform)) return false;
   if (pack.arch && pack.arch.length > 0 && !pack.arch.includes(arch)) return false;
+  if (pack.excludePlatformArch?.some((e) => e.platform === platform && e.arch === arch)) return false;
   return true;
 }
 

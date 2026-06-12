@@ -36,9 +36,13 @@ describe('engine pack catalog', () => {
     expect(winx64).not.toContain('whisper-cpp-metal');
   });
 
-  it('cross-platform packs (uv-env) run everywhere', () => {
+  it('cross-platform packs (uv-env) run everywhere except excluded combos', () => {
     expect(packRunsOn(findPack('tts-neural')!, 'win32', 'x64')).toBe(true);
+    expect(packRunsOn(findPack('tts-neural')!, 'linux', 'x64')).toBe(true);
     expect(packRunsOn(findPack('tts-neural')!, 'darwin', 'arm64')).toBe(true);
+    // Intel macOS is excluded (no torch x86_64 wheel) and not offered there.
+    expect(packRunsOn(findPack('tts-neural')!, 'darwin', 'x64')).toBe(false);
+    expect(availablePacks('darwin', 'x64').map((p) => p.id)).not.toContain('tts-neural');
   });
 });
 

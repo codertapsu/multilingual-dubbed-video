@@ -23,38 +23,16 @@ import { Readable } from 'node:stream';
 import { AppErrorException, type EnginePackArtifact, type EnginePackInfo, type InstalledEnginePack } from '@videodubber/shared';
 import type { EngineEventBus } from './engineBus.js';
 import type { EnginePackStore } from './enginePackStore.js';
-import { findPack } from './enginePackCatalog.js';
+import { findPack, packRunsOn } from './enginePackCatalog.js';
 import { resolveUvPath, UV_PYTHON_VERSION } from './uv.js';
+import { resolveUvRequirements } from './uvRequirements.js';
 
 /**
- * Locked Python requirement sets per uv-env pack id (the engine "manifest").
- *
- * These provide the THIRD-PARTY deps for each engine; the first-party server
- * module (e.g. `vd_tts_engine`) is loaded from bundled source via PYTHONPATH at
- * launch (see engineManager), so it is intentionally NOT listed here.
- *
- * NOTE (tts-neural / VieNeu): the GGUF CPU stack below is the documented path,
- * but `llama-cpp-python` ships platform-specific wheels and `neucodec` pulls a
- * large torch dependency — these versions should be pinned to a known-good set
- * per OS/arch after validating an install on each platform. `neuttsair` (the
- * NeuTTS Air inference code VieNeu builds on, Apache-2.0) is fetched from its
- * git repo as it is not published to PyPI.
+ * The locked, per-platform Python requirement sets live in `uvRequirements.ts`
+ * (the engine "manifest"). They provide the THIRD-PARTY deps; the first-party
+ * server module (e.g. `vd_tts_engine`) is loaded from bundled source via
+ * PYTHONPATH at launch (see engineManager), so it is intentionally not listed.
  */
-const UV_ENV_REQUIREMENTS: Record<string, string[]> = {
-  'tts-neural': [
-    'llama-cpp-python>=0.3',
-    'neucodec>=0.0.4',
-    'phonemizer>=3.2',
-    'soundfile>=0.12',
-    'numpy>=1.26',
-    'huggingface-hub>=0.24',
-    'neuttsair @ git+https://github.com/neuphonic/neutts-air.git',
-    'fastapi>=0.110',
-    'uvicorn>=0.29',
-  ],
-  'separation-audio': ['audio-separator>=0.18', 'onnxruntime>=1.20', 'fastapi>=0.110', 'uvicorn>=0.29'],
-  'alignment-whisperx': ['whisperx>=3.8', 'fastapi>=0.110', 'uvicorn>=0.29'],
-};
 
 export interface EngineInstallerDeps {
   store: EnginePackStore;
@@ -198,8 +176,20 @@ export class EngineInstaller {
    * clear remediation if it's absent so the rest of the app keeps working).
    */
   private async materializeUvEnv(pack: EnginePackInfo, artifact: EnginePackArtifact, packDir: string): Promise<void> {
-    const reqs = UV_ENV_REQUIREMENTS[pack.id];
-    if (!reqs) {
+    // Fail fast with a clear reason on an unsupported platform/arch (e.g. the
+    // VieNeu pack on Intel macOS, which has no torch wheel) instead of an opaque
+    // `uv pip install` error deep in the resolve.
+    if (!packRunsOn(pack, process.platform, process.arch)) {
+      throw new AppErrorException(
+        'ENGINE_PACK_FAILED',
+        `${pack.displayName} is not supported on ${process.platform}/${process.arch}.`,
+        { remediation: 'This engine has no build for your platform/architecture. Use a cloud provider for this phase instead.' },
+      );
+    }
+    // Per-platform pinned set (e.g. tts-neural routes torch to the CPU index on
+    // Linux/Windows). Resolved for the current platform/arch.
+    const resolved = resolveUvRequirements(pack.id, process.platform, process.arch);
+    if (!resolved) {
       throw new AppErrorException('ENGINE_PACK_FAILED', `No requirement set defined for uv pack "${pack.id}".`);
     }
     // Prefer the bundled uv (VIDEODUBBER_UV_PATH); fall back to PATH. With the
@@ -217,9 +207,18 @@ export class EngineInstaller {
     // the machine has none, so this works on a clean system with no Python.
     await this.run(uv, ['venv', '--python', UV_PYTHON_VERSION, venvDir]);
     const reqFile = path.join(packDir, 'requirements.txt');
-    await fsp.writeFile(reqFile, `${reqs.join('\n')}\n`, 'utf8');
+    await fsp.writeFile(reqFile, `${resolved.requirements.join('\n')}\n`, 'utf8');
+    // Extra index URLs (e.g. the PyTorch CPU wheel index) precede `-r`. uv's
+    // default `first-index` strategy would pin EVERY package present on an extra
+    // index to that index (the PyTorch index mirrors numpy etc.), so we request
+    // pip-like merge semantics (`unsafe-best-match`) when an extra index is used,
+    // keeping non-torch deps resolving from PyPI at their pinned versions.
+    const indexArgs = resolved.extraIndexUrls.flatMap((u) => ['--extra-index-url', u]);
+    if (resolved.extraIndexUrls.length > 0) {
+      indexArgs.push('--index-strategy', 'unsafe-best-match');
+    }
     this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `Installing ${pack.displayName} dependencies (this can take a few minutes)…` });
-    await this.run(uv, ['pip', 'install', '--python', venvDir, '-r', reqFile]);
+    await this.run(uv, ['pip', 'install', '--python', venvDir, ...indexArgs, '-r', reqFile]);
   }
 
   /** Run a subprocess, rejecting on non-zero exit (stderr captured into the error). */

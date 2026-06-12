@@ -375,10 +375,18 @@
       @if (showVoicePicker()) {
         <fieldset>
           <legend>Voice (text to speech)</legend>
-          <p class="hint">
-            Choose the Piper voice for {{ targetLanguageLabel() }}. Any voice not yet
-            on this machine is downloaded automatically when you select it.
-          </p>
+          @if (voiceEngine() === 'neural') {
+            <p class="hint">
+              Choose a VieNeu voice for {{ targetLanguageLabel() }}. These ship with the
+              VieNeu engine pack — if it isn't installed yet, you'll be prompted to
+              install it when the dub starts.
+            </p>
+          } @else {
+            <p class="hint">
+              Choose the Piper voice for {{ targetLanguageLabel() }}. Any voice not yet
+              on this machine is downloaded automatically when you select it.
+            </p>
+          }
           @if (voicesLoading()) {
             <p class="muted">Loading voices for {{ targetLanguageLabel() }}…</p>
           } @else if (availableVoices().length > 0) {
@@ -393,8 +401,11 @@
               >
                 @for (v of availableVoices(); track v.id) {
                   <option [value]="v.id">
-                    {{ v.label }}{{ v.recommended ? ' — recommended' : '' }} —
-                    {{ installedVoiceIds().has(v.id) ? 'installed' : '≈ ' + v.approxSizeMb + ' MB download' }}
+                    {{ v.label }}{{ v.recommended ? ' — recommended' : '' }}{{
+                      voiceEngine() === 'neural'
+                        ? ''
+                        : ' — ' + (installedVoiceIds().has(v.id) ? 'installed' : '≈ ' + v.approxSizeMb + ' MB download')
+                    }}
                   </option>
                 }
               </select>
@@ -409,6 +420,12 @@
                 dub starts (or pick it again to fetch it now).
               </p>
             }
+          } @else if (voiceEngine() === 'neural') {
+            <p class="muted">
+              VieNeu currently provides Vietnamese voices only. For
+              {{ targetLanguageLabel() }}, pick Piper or a cloud provider in
+              “Processing engines” above.
+            </p>
           } @else {
             <p class="muted">
               Piper has no prebuilt voice for {{ targetLanguageLabel() }} yet — dubbing

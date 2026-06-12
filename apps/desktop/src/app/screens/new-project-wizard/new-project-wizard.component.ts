@@ -143,11 +143,23 @@ export class NewProjectWizardComponent implements OnInit {
   /** Download percent of the in-flight voice (0..100, or null = indeterminate). */
   protected readonly voiceDownloadPercent = signal<number | null>(null);
 
-  /** Show the voice picker only when the TTS phase runs the local Piper engine. */
-  protected readonly showVoicePicker = computed(() => this.settings().ttsProviderId === 'piper-local');
+  /** Show the voice picker for the local Piper engine or the VieNeu neural engine. */
+  protected readonly showVoicePicker = computed(() => {
+    const id = this.settings().ttsProviderId;
+    return id === 'piper-local' || id === 'neural-tts';
+  });
 
-  /** True when the currently-pinned voice still needs downloading. */
+  /** Which voice catalog to list: VieNeu presets vs downloadable Piper voices. */
+  protected readonly voiceEngine = computed<'piper' | 'neural'>(() =>
+    this.settings().ttsProviderId === 'neural-tts' ? 'neural' : 'piper',
+  );
+
+  /**
+   * True when the currently-pinned voice still needs downloading. Neural (VieNeu)
+   * voices ship bundled in the engine pack, so they are never per-voice downloads.
+   */
   protected readonly selectedVoiceNeedsDownload = computed(() => {
+    if (this.voiceEngine() === 'neural') return false;
     const id = this.settings().ttsVoiceId;
     return Boolean(id) && !this.installedVoiceIds().has(id as string);
   });
@@ -330,9 +342,9 @@ export class NewProjectWizardComponent implements OnInit {
   ): void {
     this.patchSettings(key, providerId);
     this.syncProcessingMode();
-    // Switching the TTS engine to local Piper reveals the per-language voice
-    // picker — populate it for the current target language.
-    if (key === 'ttsProviderId' && providerId === 'piper-local') {
+    // Switching the TTS engine to Piper or VieNeu reveals the per-language voice
+    // picker — populate it (with the right voice catalog) for the target language.
+    if (key === 'ttsProviderId' && (providerId === 'piper-local' || providerId === 'neural-tts')) {
       void this.loadVoicesForTarget();
     }
   }
@@ -351,11 +363,13 @@ export class NewProjectWizardComponent implements OnInit {
    */
   private async loadVoicesForTarget(): Promise<void> {
     const language = this.settings().targetLanguage;
+    const engine = this.voiceEngine();
     this.voicesLoading.set(true);
     try {
       const [voices, status] = await Promise.all([
-        this.ipc.setupListVoices(language),
-        this.ipc.setupGetStatus().catch(() => null),
+        this.ipc.setupListVoices(language, engine),
+        // Only Piper voices are tracked as individually installed.
+        engine === 'piper' ? this.ipc.setupGetStatus().catch(() => null) : Promise.resolve(null),
       ]);
       this.availableVoices.set(voices);
       this.installedVoiceIds.set(new Set(status?.installed.piperVoices ?? []));
@@ -383,6 +397,9 @@ export class NewProjectWizardComponent implements OnInit {
    */
   protected async onSelectVoice(voiceId: string): Promise<void> {
     this.patchSettings('ttsVoiceId', voiceId);
+    // Neural (VieNeu) voices come with the engine pack — nothing to download per
+    // voice; the run-start gate prompts to install the pack if it isn't yet.
+    if (this.voiceEngine() === 'neural') return;
     if (!voiceId || this.installedVoiceIds().has(voiceId) || this.voiceDownloading()) return;
     await this.downloadVoice(voiceId);
   }

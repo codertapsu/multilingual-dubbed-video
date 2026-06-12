@@ -54,6 +54,7 @@ import type { PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog, findPiperVoice } from './setup/catalog.js';
 import { listVoicesForLanguage } from './setup/voicesCatalog.js';
+import { listNeuralVoicesForLanguage } from './setup/neuralVoicesCatalog.js';
 import { runPreflight } from './setup/preflight.js';
 import { SetupEventBus } from './setup/setupBus.js';
 import { SetupInstaller } from './setup/installer.js';
@@ -291,22 +292,31 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // `recommended` so the UI can show them first / pre-select. Voices not yet on
   // disk are downloaded on demand when selected (POST /setup/install-voice, or
   // automatically via /projects/:id/ensure-resources once pinned).
-  app.get('/setup/voices', async (req: FastifyRequest<{ Querystring: { language?: string } }>, reply) => {
-    try {
-      const language = (req.query.language ?? '').trim();
-      if (!language) {
-        return reply.status(400).send({ error: { code: 'UNKNOWN', message: 'Query parameter "language" is required.' } });
+  app.get(
+    '/setup/voices',
+    async (req: FastifyRequest<{ Querystring: { language?: string; engine?: string } }>, reply) => {
+      try {
+        const language = (req.query.language ?? '').trim();
+        if (!language) {
+          return reply.status(400).send({ error: { code: 'UNKNOWN', message: 'Query parameter "language" is required.' } });
+        }
+        // engine=neural lists the VieNeu preset voices (bundled in the tts-neural
+        // pack); the default (Piper) lists per-voice downloadable voices.
+        const engine = (req.query.engine ?? '').trim().toLowerCase();
+        if (engine === 'neural') {
+          return { language, engine: 'neural', voices: listNeuralVoicesForLanguage(language) };
+        }
+        const voices = listVoicesForLanguage(language).map((v) => ({
+          ...v,
+          // A curated default for the language gets the `recommended` badge.
+          recommended: v.recommended ?? Boolean(findPiperVoice(v.id)),
+        }));
+        return { language, engine: 'piper', voices };
+      } catch (err) {
+        return sendError(reply, err);
       }
-      const voices = listVoicesForLanguage(language).map((v) => ({
-        ...v,
-        // A curated default for the language gets the `recommended` badge.
-        recommended: v.recommended ?? Boolean(findPiperVoice(v.id)),
-      }));
-      return { language, voices };
-    } catch (err) {
-      return sendError(reply, err);
-    }
-  });
+    },
+  );
 
   app.post('/setup/install', async (req: FastifyRequest<{ Body: SetupInstallRequest }>, reply) => {
     try {

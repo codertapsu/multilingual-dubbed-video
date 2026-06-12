@@ -22,7 +22,8 @@ param(
   [switch]$SkipWorkers,
   [switch]$SkipOrchestrator,
   [switch]$SkipFfmpeg,
-  [switch]$SkipUv
+  [switch]$SkipUv,
+  [switch]$SkipEngineSrc
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,6 +83,16 @@ if (-not $SkipUv) {
   # Non-fatal: a missing uv only disables the optional Python engine packs.
   try { & (Join-Path $ScriptDir "fetch-uv.ps1") -TargetTriple $Triple }
   catch { Write-Warning "uv fetch failed; Python engine packs will be unavailable until uv is bundled or installed. $_" }
+}
+
+if (-not $SkipEngineSrc) {
+  Write-Host "`n### Engine-pack worker source (vd_tts_engine) ##############"
+  # Bundled as an app resource so the packaged app can run the VieNeu neural-TTS
+  # pack with nothing for the user to install. Same Node script as the POSIX path,
+  # so the `resources/engine-src` Tauri resource exists on Windows too (without it
+  # `tauri build` fails on the missing declared resource).
+  & node (Join-Path $ScriptDir "stage-engine-src.mjs")
+  if ($LASTEXITCODE -ne 0) { throw "stage-engine-src.mjs failed ($LASTEXITCODE)" }
 }
 
 Write-Host "`n############################################################"

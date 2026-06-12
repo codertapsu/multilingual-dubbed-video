@@ -78,7 +78,8 @@ if [[ "${SKIP_ENGINE_SRC:-0}" != "1" ]]; then
   echo ""; echo "### Engine-pack worker source (vd_tts_engine) ##############"
   # Cheap (copies a few Python files). Bundled as an app resource so the packaged
   # app can run the VieNeu neural-TTS pack with nothing for the user to install.
-  bash "${SCRIPT_DIR}/stage-engine-src.sh"
+  # Node script (cross-platform) so POSIX + Windows stage it identically.
+  node "${SCRIPT_DIR}/stage-engine-src.mjs"
 fi
 
 echo ""

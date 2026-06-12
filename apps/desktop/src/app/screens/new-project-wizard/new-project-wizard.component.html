@@ -375,7 +375,7 @@
       @if (showVoicePicker()) {
         <fieldset>
           <legend>Voice (text to speech)</legend>
-          @if (voiceEngine() === 'neural') {
+          @if (voiceEngine() !== 'piper') {
             <p class="hint">
               Choose a VieNeu voice for {{ targetLanguageLabel() }}. These ship with the
               VieNeu engine pack — if it isn't installed yet, you'll be prompted to
@@ -402,7 +402,7 @@
                 @for (v of availableVoices(); track v.id) {
                   <option [value]="v.id">
                     {{ v.label }}{{ v.recommended ? ' — recommended' : '' }}{{
-                      voiceEngine() === 'neural'
+                      voiceEngine() !== 'piper'
                         ? ''
                         : ' — ' + (installedVoiceIds().has(v.id) ? 'installed' : '≈ ' + v.approxSizeMb + ' MB download')
                     }}
@@ -420,7 +420,7 @@
                 dub starts (or pick it again to fetch it now).
               </p>
             }
-          } @else if (voiceEngine() === 'neural') {
+          } @else if (voiceEngine() !== 'piper') {
             <p class="muted">
               VieNeu currently provides Vietnamese voices only. For
               {{ targetLanguageLabel() }}, pick Piper or a cloud provider in

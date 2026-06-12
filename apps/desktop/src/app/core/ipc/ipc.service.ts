@@ -293,7 +293,7 @@ export class IpcService {
    * best-first, with the curated default flagged `recommended`. Consumed over
    * HTTP in both modes (no Rust command needed; same as /providers below).
    */
-  async setupListVoices(language: string, engine?: 'piper' | 'neural'): Promise<PiperVoiceInfo[]> {
+  async setupListVoices(language: string, engine?: 'piper' | 'neural-v2' | 'neural-v3'): Promise<PiperVoiceInfo[]> {
     const eng = engine ? `&engine=${engine}` : '';
     const res = await this.http<{ language: string; voices: PiperVoiceInfo[] }>(
       'GET',

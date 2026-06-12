@@ -1,11 +1,24 @@
 # VieNeu neural voice (Vietnamese) — setup guide
 
-VideoDubber can dub Vietnamese with **VieNeu‑TTS v3‑Turbo**, a neural voice that
-sounds far more natural than the built‑in Piper voice. It is **optional and
-advanced**: Piper is the fast, always‑available default, and you only need this
-if you want the higher‑quality Vietnamese voice.
+VideoDubber can dub Vietnamese with **VieNeu‑TTS**, a neural voice that sounds far
+more natural than the built‑in Piper voice. It's **optional and advanced**: Piper
+is the fast, always‑available default, and you only need this for a higher‑quality
+Vietnamese voice.
 
-This guide walks you through enabling it, step by step.
+There are **two separate options** (each a one‑click install in Settings →
+Engines):
+
+| | **VieNeu v2** | **VieNeu v3** |
+|---|---|---|
+| Quality / rate | Mature, 24 kHz | Newest, 48 kHz |
+| Voices | 7 reference voices (North/South, M/F) | 10 preset voices |
+| **License** | backbone Apache‑2.0, **but the bundled voices are CC‑BY‑NC 4.0 — non‑commercial** | **Apache‑2.0** (commercial OK) |
+| Maturity | settled | early‑access preview |
+| Default for Vietnamese? | **Yes (when installed)** | no |
+
+> **Which should I pick?** For most Vietnamese dubbing, **v2** is the default and a
+> good choice. Pick **v3** if you want 48 kHz / the newest model, or if you need a
+> **commercial‑use** license (v2's bundled voices are non‑commercial — see below).
 
 ---
 
@@ -13,21 +26,20 @@ This guide walks you through enabling it, step by step.
 
 | | |
 |---|---|
-| **What it is** | VieNeu‑TTS v3‑Turbo — a 48 kHz Vietnamese neural voice (10 preset speakers). |
-| **Cost** | Free, Apache‑2.0, runs **fully offline after a one‑time download**. |
-| **Disk** | ~0.5–1 GB (model) + a small Python environment. |
+| **What it is** | VieNeu‑TTS — a Vietnamese neural voice (v2 = 24 kHz / 7 voices; v3 = 48 kHz / 10 voices). |
+| **Cost** | Free; runs **fully offline after a one‑time download**. |
+| **Disk** | ~0.3–1 GB (model) + a small Python environment. |
 | **RAM** | ~1.5–2 GB while dubbing. CPU‑only — no GPU needed. |
-| **Languages** | Vietnamese (and English code‑switching). |
-| **Default?** | No. Piper stays the default; turn VieNeu on per project. |
+| **Languages** | Vietnamese (v3 also code‑switches English). |
+| **Default?** | For Vietnamese, the wizard pre‑selects **v2 once its pack is installed**; otherwise Piper (so it works out of the box). |
 
-> **Which version?** The app uses **v3‑Turbo** (the newest line). You don't pick
-> "v2" vs "v3" — selecting *VieNeu Neural TTS* always uses v3‑Turbo. VieNeu‑TTS‑v2
-> is an older 24 kHz line and is not offered as a separate choice.
+> ⚠️ **Licensing — read this for v2.** VieNeu **v2**'s engine + model weights are
+> Apache‑2.0, but its **7 bundled reference voices are CC‑BY‑NC 4.0 — for
+> non‑commercial use only**, with attribution to *pnnbao‑ump*. If you dub
+> **commercially**, use **v3** (fully Apache‑2.0) or supply your own voice. v3 is
+> brand‑new (early access) and we haven't certified its long‑video speed yet.
 
-> ⚠️ **Status — early access.** VieNeu v3‑Turbo is brand‑new and we have not yet
-> certified its speed on long videos. Treat it as a preview: great for shorter
-> clips, and keep Piper for very long videos until you've tried it on your
-> machine. Its output also carries an inaudible AI‑audio watermark.
+> Both engines watermark their output with an inaudible AI‑audio marker.
 
 ---
 
@@ -83,26 +95,30 @@ uv --version
 ## Step 2 — Install the VieNeu engine
 
 1. Open **Settings → Engines**.
-2. Find **“VieNeu Neural TTS (Vietnamese)”** in the list.
+2. Find **“VieNeu Neural TTS v2 (Vietnamese)”** (recommended default) — or
+   **“… v3 (Vietnamese)”** if you prefer 48 kHz / a commercial‑use license.
+   Read each one's license note shown right there before installing.
 3. Click **Install**. A progress bar appears while it builds the Python
    environment and downloads the packages (a few minutes the first time).
 4. When it flips to **“installed”**, you're done here.
 
-> The voice **model** itself (~0.5–1 GB) is downloaded the **first time you
+> The voice **model** itself (~0.3–1 GB) is downloaded the **first time you
 > actually dub** with VieNeu, not during this step — so the first dub takes a bit
-> longer while it downloads once, then it's cached for good.
+> longer while it downloads once, then it's cached for good. You can install both
+> v2 and v3 if you want to compare.
 
 ---
 
 ## Step 3 — Use a VieNeu voice in a project
 
 1. Start a **New project** and set your **target language to Vietnamese**.
-2. In **Processing engines → Text to speech**, choose
-   **“VieNeu Neural TTS (Vietnamese)”**.
+2. In **Processing engines → Text to speech**, choose **“VieNeu Neural TTS v2”**
+   (or **v3**). For Vietnamese, the wizard pre‑selects **v2 automatically once its
+   pack is installed**.
    - If it's greyed out and says **“needs engine pack (Settings → Engines)”**, go
      back and finish Step 2.
-3. A **Voice** picker appears with 10 preset voices (Ngọc Lan is the default).
-   Pick one.
+3. A **Voice** picker appears — v2 lists its 7 reference voices (Trúc Ly is the
+   default), v3 lists its 10 presets. Pick one.
 4. Click **Start dubbing**. On the very first run it downloads the model, then
    synthesizes your video.
 

@@ -138,12 +138,14 @@ hash it, and pin it (GitHub release assets are immutable per tag).
 
 `tts-neural`, `separation-audio`, and `alignment-whisperx` use `uv-env://…`
 markers, not downloads. The bundled **`uv`** builds a self-contained Python
-environment from a locked requirement set (in
-[`engineInstaller.ts`](../packages/node-orchestrator/src/engines/engineInstaller.ts),
-`UV_ENV_REQUIREMENTS`) and `uv` fetches its own CPython — so there is nothing to
-host. To change what these install, edit the requirement lists there. The model
-weights (voices, separation/alignment checkpoints) download from their hubs on
-first use, like the Whisper models. uv docs: <https://docs.astral.sh/uv/>.
+environment from a locked, per-platform requirement set (in
+[`uvRequirements.ts`](../packages/node-orchestrator/src/engines/uvRequirements.ts))
+and `uv` fetches its own CPython — so there is nothing to host. To change what
+these install, edit the requirement sets there. The model weights (voices,
+separation/alignment checkpoints) download from their hubs on first use, like the
+Whisper models. `tts-neural` is VieNeu‑TTS v3‑Turbo via the `vieneu` PyPI package
+(torch‑free ONNX); end‑user setup is in
+[`VIENEU_TTS_SETUP.md`](VIENEU_TTS_SETUP.md). uv docs: <https://docs.astral.sh/uv/>.
 
 ---
 

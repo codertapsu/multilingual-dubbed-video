@@ -77,6 +77,8 @@ VideoDubber flips that model:
 - Local text-to-speech via **Piper**, with graceful fallbacks to **system TTS**
   (macOS `say`, Linux `espeak-ng`) and a **dev silent/sine** generator so the pipeline
   always completes.
+- Optional higher-quality **Vietnamese neural voice** (VieNeu‑TTS v3‑Turbo) as a
+  downloadable engine pack — see the [VieNeu setup guide](docs/VIENEU_TTS_SETUP.md).
 - Smart **time alignment**: stretches/compresses TTS within configurable speed/overflow
   limits and flags segments that need review.
 - **Audio mixing** with optional original background audio, ducking, and TTS gain.

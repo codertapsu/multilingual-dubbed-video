@@ -17,7 +17,8 @@ import { IpcService } from '../../core/ipc/ipc.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { formatTimecode } from '../../core/util/format';
-import type { AppError } from '../../core/models';
+import type { AppError, ProjectSettings } from '../../core/models';
+import type { PiperVoiceInfo } from '../../core/models/setup';
 import type { EditorSegmentVm, SegmentWithAlignment } from '../../core/models/view-models';
 
 /** Soft cap for "long subtitle" warning (≈ 2 lines × 42 chars). */
@@ -63,6 +64,25 @@ export class EditorComponent implements OnInit {
   /** Segment ids currently being (re)synthesized. */
   protected readonly synthesizing = signal<ReadonlySet<string>>(new Set());
 
+  /** The project's settings (provider + default voice + target language). */
+  protected readonly projectSettings = signal<ProjectSettings | null>(null);
+  /** Voices available for the project's target language (local Piper provider). */
+  protected readonly availableVoices = signal<PiperVoiceInfo[]>([]);
+  /** Per-segment voice override (segmentId -> voiceId); empty = project default. */
+  protected readonly segmentVoiceOverrides = signal<Record<string, string>>({});
+
+  /** Show the per-segment voice override only for the local Piper engine. */
+  protected readonly showVoicePicker = computed(
+    () => this.projectSettings()?.ttsProviderId === 'piper-local' && this.availableVoices().length > 0,
+  );
+
+  /** Label for the project's default voice (shown as the "Default" option). */
+  protected readonly defaultVoiceLabel = computed(() => {
+    const id = this.projectSettings()?.ttsVoiceId;
+    if (!id) return 'auto';
+    return this.availableVoices().find((v) => v.id === id)?.label ?? id;
+  });
+
   /** Derived per-row view models with computed warnings. */
   protected readonly rows = computed<EditorSegmentVm[]>(() => {
     const drafts = this.drafts();
@@ -106,10 +126,29 @@ export class EditorComponent implements OnInit {
       }
       this.drafts.set(drafts);
       this.dirty.set(false);
+      void this.loadProjectAndVoices();
     } catch (err) {
       this.error.set(toAppError(err));
     } finally {
       this.loading.set(false);
+    }
+  }
+
+  /**
+   * Load the project settings and, for the local Piper engine, the voices for
+   * its target language — so each segment can be re-synthesized with a different
+   * voice (e.g. to give a second speaker a distinct voice). Best-effort: a
+   * failure here just hides the per-segment voice picker.
+   */
+  private async loadProjectAndVoices(): Promise<void> {
+    try {
+      const { project } = await this.ipc.getProject(this.id());
+      this.projectSettings.set(project.settings);
+      if (project.settings.ttsProviderId === 'piper-local') {
+        this.availableVoices.set(await this.ipc.setupListVoices(project.settings.targetLanguage));
+      }
+    } catch {
+      // Non-fatal: the editor still works without the voice override.
     }
   }
 
@@ -154,8 +193,12 @@ export class EditorComponent implements OnInit {
     this.error.set(null);
     try {
       const text = this.drafts()[segmentId] ?? segment.translatedText ?? '';
+      // An empty override means "use the project's default voice" (the backend
+      // falls back to project.settings.ttsVoiceId when voiceId is undefined).
+      const voiceId = this.segmentVoiceOverrides()[segmentId] || undefined;
       const result = await this.ipc.synthesizeSingleSegment(this.id(), segmentId, {
         text: text.length > 0 ? text : undefined,
+        voiceId,
       });
       // Replace the segment's alignment with the fresh result so the warnings
       // and the preview <audio> (cache-busted via generatedDurationMs) update.
@@ -193,6 +236,21 @@ export class EditorComponent implements OnInit {
 
   protected isSynthesizing(segmentId: string): boolean {
     return this.synthesizing().has(segmentId);
+  }
+
+  /** The chosen voice override for a segment ('' = project default). */
+  protected segmentVoice(segmentId: string): string {
+    return this.segmentVoiceOverrides()[segmentId] ?? '';
+  }
+
+  /** Set (or clear, with '') a segment's voice override; takes effect on regenerate. */
+  protected onSegmentVoiceChange(segmentId: string, voiceId: string): void {
+    this.segmentVoiceOverrides.update((o) => {
+      const next = { ...o };
+      if (voiceId) next[segmentId] = voiceId;
+      else delete next[segmentId];
+      return next;
+    });
   }
 
   /**

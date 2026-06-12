@@ -100,6 +100,24 @@
             } @else {
               <span class="hint">No audio yet</span>
             }
+            @if (showVoicePicker()) {
+              <label class="visually-hidden" [attr.for]="'voice-' + row.segment.id">
+                Voice for segment {{ row.segment.index + 1 }}
+              </label>
+              <select
+                class="seg-voice"
+                [id]="'voice-' + row.segment.id"
+                [ngModel]="segmentVoice(row.segment.id)"
+                (ngModelChange)="onSegmentVoiceChange(row.segment.id, $event)"
+                [disabled]="isSynthesizing(row.segment.id)"
+                title="Voice used when you regenerate this segment"
+              >
+                <option value="">Default voice ({{ defaultVoiceLabel() }})</option>
+                @for (v of availableVoices(); track v.id) {
+                  <option [value]="v.id">{{ v.label }}</option>
+                }
+              </select>
+            }
             <button
               type="button"
               class="btn btn-sm"

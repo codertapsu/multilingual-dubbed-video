@@ -11,6 +11,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
 import { IpcService } from '../../core/ipc/ipc.service';
+import { SetupEventsService } from '../../core/ipc/setup-events.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import {
@@ -27,13 +28,14 @@ import {
 import type {
   AppError,
   CreateProjectInput,
+  LanguageCode,
   MediaInfo,
   OriginalAudioMode,
   ProjectSettings,
   RenderQuality,
   SubtitleExportMode,
 } from '../../core/models';
-import type { ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
+import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
 
 /** Wizard step index. */
 type WizardStep = 1 | 2;
@@ -93,6 +95,7 @@ export class NewProjectWizardComponent implements OnInit {
   private readonly ipc = inject(IpcService);
   private readonly router = inject(Router);
   private readonly store = inject(ProjectStore);
+  protected readonly setupEvents = inject(SetupEventsService);
 
   // Static label maps for the template.
   protected readonly subtitleModes = ALL_SUBTITLE_EXPORT_MODES;
@@ -128,6 +131,27 @@ export class NewProjectWizardComponent implements OnInit {
     return phases;
   });
 
+  // -------- Piper voice picker (per target language) --------
+  /** Voices available for the current target language (best-first). */
+  protected readonly availableVoices = signal<PiperVoiceInfo[]>([]);
+  /** Voice ids already downloaded on this machine. */
+  protected readonly installedVoiceIds = signal<ReadonlySet<string>>(new Set());
+  /** True while (re)loading the per-language voice list. */
+  protected readonly voicesLoading = signal(false);
+  /** True while a selected voice downloads on demand. */
+  protected readonly voiceDownloading = signal(false);
+  /** Download percent of the in-flight voice (0..100, or null = indeterminate). */
+  protected readonly voiceDownloadPercent = signal<number | null>(null);
+
+  /** Show the voice picker only when the TTS phase runs the local Piper engine. */
+  protected readonly showVoicePicker = computed(() => this.settings().ttsProviderId === 'piper-local');
+
+  /** True when the currently-pinned voice still needs downloading. */
+  protected readonly selectedVoiceNeedsDownload = computed(() => {
+    const id = this.settings().ttsVoiceId;
+    return Boolean(id) && !this.installedVoiceIds().has(id as string);
+  });
+
   // -------- async state --------
   protected readonly busy = signal(false);
   protected readonly error = signal<AppError | null>(null);
@@ -152,7 +176,13 @@ export class NewProjectWizardComponent implements OnInit {
 
   ngOnInit(): void {
     void this.loadLanguages();
-    void this.loadProvidersAndDefaults();
+    void this.init();
+  }
+
+  /** Load the provider catalog + saved defaults, then the per-language voices. */
+  private async init(): Promise<void> {
+    await this.loadProvidersAndDefaults();
+    if (this.showVoicePicker()) await this.loadVoicesForTarget();
   }
 
   private async loadLanguages(): Promise<void> {
@@ -300,6 +330,96 @@ export class NewProjectWizardComponent implements OnInit {
   ): void {
     this.patchSettings(key, providerId);
     this.syncProcessingMode();
+    // Switching the TTS engine to local Piper reveals the per-language voice
+    // picker — populate it for the current target language.
+    if (key === 'ttsProviderId' && providerId === 'piper-local') {
+      void this.loadVoicesForTarget();
+    }
+  }
+
+  /** Target language changed — re-patch and reload the per-language voices. */
+  protected setTargetLanguage(code: LanguageCode): void {
+    this.patchSettings('targetLanguage', code);
+    if (this.showVoicePicker()) void this.loadVoicesForTarget();
+  }
+
+  /**
+   * Load the Piper voices for the current target language and reconcile the
+   * selection: keep the user's pinned voice if it's still offered, else pick the
+   * recommended (curated default), else the best-ranked, else none. Also reads
+   * which voices are already on disk so the UI can label "downloads on select".
+   */
+  private async loadVoicesForTarget(): Promise<void> {
+    const language = this.settings().targetLanguage;
+    this.voicesLoading.set(true);
+    try {
+      const [voices, status] = await Promise.all([
+        this.ipc.setupListVoices(language),
+        this.ipc.setupGetStatus().catch(() => null),
+      ]);
+      this.availableVoices.set(voices);
+      this.installedVoiceIds.set(new Set(status?.installed.piperVoices ?? []));
+
+      // Reconcile the pinned voice against what's actually offered.
+      const current = this.settings().ttsVoiceId;
+      const stillOffered = current && voices.some((v) => v.id === current);
+      if (!stillOffered) {
+        const pick = voices.find((v) => v.recommended) ?? voices[0];
+        this.patchSettings('ttsVoiceId', pick?.id);
+      }
+    } catch {
+      // Offline / backend down: leave the picker empty. The run-start readiness
+      // gate + ensure-resources still cover the pinned voice.
+      this.availableVoices.set([]);
+    } finally {
+      this.voicesLoading.set(false);
+    }
+  }
+
+  /**
+   * The user picked a voice. Pin it on the project and, if it isn't on disk yet,
+   * download it immediately (lazy, on-select) with visible progress. A failed or
+   * skipped download here isn't fatal — the run is gated on the voice at start.
+   */
+  protected async onSelectVoice(voiceId: string): Promise<void> {
+    this.patchSettings('ttsVoiceId', voiceId);
+    if (!voiceId || this.installedVoiceIds().has(voiceId) || this.voiceDownloading()) return;
+    await this.downloadVoice(voiceId);
+  }
+
+  /** Download a single Piper voice on demand, streaming progress over setup SSE. */
+  private async downloadVoice(voiceId: string): Promise<void> {
+    this.voiceDownloading.set(true);
+    this.voiceDownloadPercent.set(null);
+    this.error.set(null);
+    try {
+      // Reuse the global setup SSE channel for live progress, then start the job.
+      this.setupEvents.connect();
+      await this.ipc.setupInstallVoice(voiceId);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 500));
+        const item = this.setupEvents.items().find((i) => i.item === `piper:${voiceId}`);
+        if (item) this.voiceDownloadPercent.set(item.percent);
+        const err = this.setupEvents.error();
+        if (err) {
+          this.error.set(err);
+          return;
+        }
+        if (this.setupEvents.done() || item?.done) break;
+      }
+      this.installedVoiceIds.update((s) => new Set(s).add(voiceId));
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.setupEvents.disconnect();
+      this.voiceDownloading.set(false);
+    }
+  }
+
+  /** Human label for the current target language (falls back to the raw code). */
+  protected targetLanguageLabel(): string {
+    const code = this.settings().targetLanguage;
+    return this.languages().find((l) => l.code === code)?.label ?? code;
   }
 
   /**

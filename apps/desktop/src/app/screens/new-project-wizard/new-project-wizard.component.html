@@ -90,7 +90,7 @@
               id="tgtLang"
               name="tgtLang"
               [ngModel]="settings().targetLanguage"
-              (ngModelChange)="patchSettings('targetLanguage', $event)"
+              (ngModelChange)="setTargetLanguage($event)"
             >
               @for (lang of languages(); track lang.code) {
                 <option [value]="lang.code">{{ lang.label }}</option>
@@ -372,14 +372,61 @@
         }
       </fieldset>
 
+      @if (showVoicePicker()) {
+        <fieldset>
+          <legend>Voice (text to speech)</legend>
+          <p class="hint">
+            Choose the Piper voice for {{ targetLanguageLabel() }}. Any voice not yet
+            on this machine is downloaded automatically when you select it.
+          </p>
+          @if (voicesLoading()) {
+            <p class="muted">Loading voices for {{ targetLanguageLabel() }}…</p>
+          } @else if (availableVoices().length > 0) {
+            <div class="field">
+              <label for="ttsVoice">Voice</label>
+              <select
+                id="ttsVoice"
+                name="ttsVoice"
+                [ngModel]="settings().ttsVoiceId"
+                (ngModelChange)="onSelectVoice($event)"
+                [disabled]="voiceDownloading()"
+              >
+                @for (v of availableVoices(); track v.id) {
+                  <option [value]="v.id">
+                    {{ v.label }}{{ v.recommended ? ' — recommended' : '' }} —
+                    {{ installedVoiceIds().has(v.id) ? 'installed' : '≈ ' + v.approxSizeMb + ' MB download' }}
+                  </option>
+                }
+              </select>
+            </div>
+            @if (voiceDownloading()) {
+              <div class="badge" role="status" aria-live="polite">
+                ⬇ Downloading voice… {{ voiceDownloadPercent() === null ? '' : voiceDownloadPercent() + '%' }}
+              </div>
+            } @else if (selectedVoiceNeedsDownload()) {
+              <p class="hint">
+                This voice isn't installed yet — it downloads automatically when the
+                dub starts (or pick it again to fetch it now).
+              </p>
+            }
+          } @else {
+            <p class="muted">
+              Piper has no prebuilt voice for {{ targetLanguageLabel() }} yet — dubbing
+              will fall back to an available voice. To get a natural voice, switch
+              Text to speech to a cloud provider in “Processing engines” above.
+            </p>
+          }
+        </fieldset>
+      }
+
       <div class="row row-between">
         <span class="hint">A workspace is created when you continue.</span>
         <button
           type="submit"
           class="btn btn-primary"
-          [disabled]="!step1Valid() || busy()"
+          [disabled]="!step1Valid() || busy() || voiceDownloading()"
         >
-          {{ busy() ? 'Creating…' : 'Continue →' }}
+          {{ busy() ? 'Creating…' : voiceDownloading() ? 'Downloading voice…' : 'Continue →' }}
         </button>
       </div>
     </form>

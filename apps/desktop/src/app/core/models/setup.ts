@@ -41,6 +41,14 @@ export interface PiperVoiceInfo {
   approxSizeMb: number;
   url: string;
   configUrl: string;
+  /** Quality tier — x_low < low < medium < high (when known). */
+  quality?: 'x_low' | 'low' | 'medium' | 'high';
+  /** Speaker count; >1 needs a speaker index the dub doesn't pass, so avoid as a default. */
+  numSpeakers?: number;
+  /** Raw Piper language code, e.g. "vi_VN" (for grouping/labels). */
+  languageCode?: string;
+  /** True for the curated default voice for its language (shown first). */
+  recommended?: boolean;
 }
 
 /** A from -> to Argos translation pair. */

@@ -22,6 +22,7 @@ import type {
   CloudCredentialInfo,
   CloudServiceId,
   CredentialTestResult,
+  PiperVoiceInfo,
   PreflightResult,
   ProvidersResponse,
   RunPreflightResult,
@@ -285,6 +286,28 @@ export class IpcService {
   /** POST /setup/complete — marks first run as done (writes setup.json). */
   setupComplete(): Promise<{ ok: boolean }> {
     return this.call<{ ok: boolean }>('setup_complete', {}, 'POST', '/setup/complete');
+  }
+
+  /**
+   * GET /setup/voices?language= — every Piper voice for a target language,
+   * best-first, with the curated default flagged `recommended`. Consumed over
+   * HTTP in both modes (no Rust command needed; same as /providers below).
+   */
+  async setupListVoices(language: string): Promise<PiperVoiceInfo[]> {
+    const res = await this.http<{ language: string; voices: PiperVoiceInfo[] }>(
+      'GET',
+      `/setup/voices?language=${encodeURIComponent(language)}`,
+    );
+    return res.voices ?? [];
+  }
+
+  /**
+   * POST /setup/install-voice — download a single Piper voice on demand (used
+   * when the user selects a voice that isn't installed yet). Returns once the
+   * job is started (202); progress streams over /setup/events.
+   */
+  setupInstallVoice(voiceId: string): Promise<{ started: boolean; voiceId: string }> {
+    return this.http<{ started: boolean; voiceId: string }>('POST', '/setup/install-voice', { voiceId });
   }
 
   // ------------------------------------------------------------------ //

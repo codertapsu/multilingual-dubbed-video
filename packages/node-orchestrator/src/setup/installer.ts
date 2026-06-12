@@ -30,6 +30,7 @@ import {
 import type { OrchestratorConfig } from '../config.js';
 import { postWorkerJson } from '../providers/workerHttp.js';
 import { findPiperVoice } from './catalog.js';
+import { resolvePiperVoice } from './voicesCatalog.js';
 import type { SetupEventBus } from './setupBus.js';
 import type { SetupStore } from './setupStore.js';
 
@@ -159,10 +160,13 @@ export class SetupInstaller {
   /** Download a Piper voice (.onnx + .onnx.json) into <modelsDir>/piper. */
   private async installPiperVoice(voiceId: string): Promise<void> {
     const item = `piper:${voiceId}`;
-    const voice = findPiperVoice(voiceId);
+    // Curated voices first; otherwise resolve ANY voice from the full
+    // rhasspy/piper-voices catalog so users can lazily download any voice for
+    // their target language. Both yield .onnx + .onnx.json URLs.
+    const voice = findPiperVoice(voiceId) ?? resolvePiperVoice(voiceId);
     if (!voice) {
       throw new AppErrorException('TTS_VOICE_MISSING', `Unknown Piper voice id "${voiceId}".`, {
-        remediation: 'Pick a voice from the catalog returned by GET /setup/catalog.',
+        remediation: 'Pick a voice from GET /setup/catalog (curated) or GET /setup/voices?language=… (full).',
       });
     }
 

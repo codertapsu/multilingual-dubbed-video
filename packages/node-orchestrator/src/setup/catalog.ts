@@ -78,13 +78,24 @@ function piperUrls(filePath: string): { url: string; configUrl: string } {
   return { url, configUrl: `${url}.json` };
 }
 
-/** Curated Piper voices (incl. the Vietnamese vais1000 medium voice). */
+/**
+ * Curated DEFAULT Piper voices — the recommended single-speaker, medium-quality
+ * voice per common target language (the best widely-used model for each). These
+ * are the "instant, offline" defaults shown first; the FULL per-language catalog
+ * (any voice) lives in `voicesCatalog.ts` and is downloaded on demand.
+ *
+ * Vietnamese note: `vi_VN-vais1000-medium` is the ONLY medium-quality Vietnamese
+ * voice Piper ships (the alternatives are low / x_low; `vivos` is also 65-speaker
+ * which the dub can't address), so it's the clear VI default.
+ */
 export const PIPER_VOICES: readonly PiperVoiceInfo[] = [
   {
     id: 'vi_VN-vais1000-medium',
     language: 'vi-VN',
     label: 'Vietnamese — vais1000 (medium)',
     approxSizeMb: 64,
+    quality: 'medium',
+    recommended: true,
     ...piperUrls('vi/vi_VN/vais1000/medium/vi_VN-vais1000-medium.onnx'),
   },
   {
@@ -92,13 +103,26 @@ export const PIPER_VOICES: readonly PiperVoiceInfo[] = [
     language: 'en-US',
     label: 'English (US) — lessac (medium)',
     approxSizeMb: 64,
+    quality: 'medium',
+    recommended: true,
     ...piperUrls('en/en_US/lessac/medium/en_US-lessac-medium.onnx'),
+  },
+  {
+    id: 'en_GB-alan-medium',
+    language: 'en-GB',
+    label: 'English (GB) — alan (medium)',
+    approxSizeMb: 64,
+    quality: 'medium',
+    recommended: true,
+    ...piperUrls('en/en_GB/alan/medium/en_GB-alan-medium.onnx'),
   },
   {
     id: 'es_ES-davefx-medium',
     language: 'es',
     label: 'Spanish (ES) — davefx (medium)',
     approxSizeMb: 64,
+    quality: 'medium',
+    recommended: true,
     ...piperUrls('es/es_ES/davefx/medium/es_ES-davefx-medium.onnx'),
   },
   {
@@ -106,6 +130,8 @@ export const PIPER_VOICES: readonly PiperVoiceInfo[] = [
     language: 'fr',
     label: 'French — siwis (medium)',
     approxSizeMb: 64,
+    quality: 'medium',
+    recommended: true,
     ...piperUrls('fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx'),
   },
   {
@@ -113,7 +139,18 @@ export const PIPER_VOICES: readonly PiperVoiceInfo[] = [
     language: 'de',
     label: 'German — thorsten (medium)',
     approxSizeMb: 64,
+    quality: 'medium',
+    recommended: true,
     ...piperUrls('de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx'),
+  },
+  {
+    id: 'zh_CN-huayan-medium',
+    language: 'zh-CN',
+    label: 'Chinese (CN) — huayan (medium)',
+    approxSizeMb: 64,
+    quality: 'medium',
+    recommended: true,
+    ...piperUrls('zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx'),
   },
 ] as const;
 

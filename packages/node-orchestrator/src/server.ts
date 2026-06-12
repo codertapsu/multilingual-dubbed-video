@@ -52,7 +52,8 @@ import { OllamaPullManager, listOllamaModels } from './providers/ollamaModels.js
 import { computeRequiredResources, hasRequiredResources } from './setup/requiredResources.js';
 import type { PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
-import { buildCatalog } from './setup/catalog.js';
+import { buildCatalog, findPiperVoice } from './setup/catalog.js';
+import { listVoicesForLanguage } from './setup/voicesCatalog.js';
 import { runPreflight } from './setup/preflight.js';
 import { SetupEventBus } from './setup/setupBus.js';
 import { SetupInstaller } from './setup/installer.js';
@@ -285,12 +286,50 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
+  // Full per-language Piper voice list (every voice for the target language),
+  // best-first. The curated default(s) for the language are flagged
+  // `recommended` so the UI can show them first / pre-select. Voices not yet on
+  // disk are downloaded on demand when selected (POST /setup/install-voice, or
+  // automatically via /projects/:id/ensure-resources once pinned).
+  app.get('/setup/voices', async (req: FastifyRequest<{ Querystring: { language?: string } }>, reply) => {
+    try {
+      const language = (req.query.language ?? '').trim();
+      if (!language) {
+        return reply.status(400).send({ error: { code: 'UNKNOWN', message: 'Query parameter "language" is required.' } });
+      }
+      const voices = listVoicesForLanguage(language).map((v) => ({
+        ...v,
+        // A curated default for the language gets the `recommended` badge.
+        recommended: v.recommended ?? Boolean(findPiperVoice(v.id)),
+      }));
+      return { language, voices };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
   app.post('/setup/install', async (req: FastifyRequest<{ Body: SetupInstallRequest }>, reply) => {
     try {
       const request = req.body ?? {};
       // Kick off asynchronously; progress is observed via GET /setup/events.
       void installer.run(request);
       return reply.status(202).send({ started: true });
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // On-demand download of a single Piper voice (any id from the full catalog).
+  // Used when the user selects a voice that isn't installed yet — the same
+  // install pipeline + SSE progress as /setup/install, scoped to one voice.
+  app.post('/setup/install-voice', async (req: FastifyRequest<{ Body: { voiceId?: string } }>, reply) => {
+    try {
+      const voiceId = (req.body?.voiceId ?? '').trim();
+      if (!voiceId) {
+        return reply.status(400).send({ error: { code: 'UNKNOWN', message: 'Body field "voiceId" is required.' } });
+      }
+      void installer.run({ piperVoices: [voiceId] });
+      return reply.status(202).send({ started: true, voiceId });
     } catch (err) {
       return sendError(reply, err);
     }

@@ -154,9 +154,15 @@ fn management_enabled() -> bool {
 
 /// Decide whether we are running as a packaged/bundled app (production path).
 ///
-/// True when `VIDEODUBBER_BUNDLED` is set to a truthy value, OR when no source
-/// checkout (`pnpm-workspace.yaml`) can be found — i.e. an installed app on an
-/// end user's machine with no repo around it.
+/// Priority:
+///   1. `VIDEODUBBER_BUNDLED` override (truthy => bundled, falsey => dev).
+///   2. A real bundled build (NOT `tauri dev`) is ALWAYS the production path —
+///      `tauri::is_dev()` is a compile-time flag, so this is true even when the
+///      freshly-built `.app` happens to sit inside the source tree (a developer
+///      double-clicking their own build). This is the bug fix: previously we
+///      walked up from the executable, found the repo's `pnpm-workspace.yaml`,
+///      and wrongly took the dev path — so the bundled sidecars never launched.
+///   3. In a dev build, bundled only if no source checkout can be found.
 fn is_bundled() -> bool {
     if let Ok(v) = std::env::var("VIDEODUBBER_BUNDLED") {
         let v = v.trim().to_ascii_lowercase();
@@ -168,7 +174,11 @@ fn is_bundled() -> bool {
             return false;
         }
     }
-    // No explicit override: bundled iff we cannot find a source checkout.
+    // A compiled bundle (anything other than `tauri dev`) is production.
+    if !tauri::is_dev() {
+        return true;
+    }
+    // Dev build: bundled only if we cannot find a source checkout.
     resolve_repo_dir().is_none()
 }
 

@@ -1,11 +1,14 @@
-"""VieNeu-TTS v3-Turbo synthesis, via the `vieneu` PyPI package.
+"""VieNeu-TTS synthesis (v2 or v3) via the `vieneu` PyPI package.
 
-v3-Turbo is an original architecture (model_type ``vieneu_v3_turbo``) that runs
-torch-free on CPU via ONNX Runtime: a small speech-LLM backbone predicts
-MOSS-Audio-Tokenizer-Nano codec tokens, decoded to a 48 kHz waveform. Voice
-identity comes from named preset voices (no reference clip needed). Vietnamese/
-English G2P is the bundled sea-g2p (Rust) — there is NO espeak-ng dependency.
-Output carries an imperceptible Resemble Perth watermark (AI-audio disclosure).
+The variant is chosen by the engine pack through the ``VIENEU_VARIANT`` env var:
+
+  - "v3" (default): VieNeu-TTS v3-Turbo — 48 kHz, torch-free ONNX. Loaded with a
+    bare ``Vieneu()`` (its default engine on vieneu>=3); preset voices addressed
+    by display name via ``infer(voice="Ngọc Lan")``.
+  - "v2": VieNeu-TTS v2 (standard) — 24 kHz, GGUF backbone + NeuCodec. Loaded with
+    ``Vieneu(mode="standard")`` (or a bare ``Vieneu()`` on vieneu 2.x, where
+    standard is the default); reference voices addressed via
+    ``get_preset_voice(id)`` -> ``infer(voice=voice_data)``.
 
 The `vieneu` SDK is imported LAZILY so this module loads (and /health + /voices
 work) even before the engine pack's venv has it; ``synth()`` then raises
@@ -20,9 +23,13 @@ import logging
 import threading
 
 from . import voices
-from .wavio import NEURAL_SAMPLE_RATE, write_pcm16_wav
+from .wavio import write_pcm16_wav
 
 logger = logging.getLogger("vd_tts_engine.engine")
+
+# Native output rate per variant (the SDK's own save() uses it; we mirror it for
+# the silent-fallback clip so placeholder audio matches).
+_SAMPLE_RATE = {"v2": 24000, "v3": 48000}
 
 
 class EngineUnavailable(RuntimeError):
@@ -30,13 +37,22 @@ class EngineUnavailable(RuntimeError):
 
 
 class VieNeuEngine:
-    """Lazy VieNeu v3-Turbo synthesizer. Thread-safe load; sequential synth."""
+    """Lazy VieNeu synthesizer (v2 or v3). Thread-safe load; sequential synth."""
 
     name = voices.ENGINE_NAME
 
-    def __init__(self) -> None:
+    def __init__(self, variant: str | None = None) -> None:
+        self._variant = variant or voices.current_variant()
         self._backend = None  # the loaded vieneu.Vieneu instance
         self._lock = threading.Lock()
+
+    @property
+    def variant(self) -> str:
+        return self._variant
+
+    @property
+    def sample_rate(self) -> int:
+        return _SAMPLE_RATE.get(self._variant, 48000)
 
     def available(self) -> bool:
         """Best-effort: True if the vieneu SDK can be imported in this venv.
@@ -62,45 +78,62 @@ class VieNeuEngine:
             try:
                 from vieneu import Vieneu  # type: ignore
 
-                # The `vieneu` version is pinned in the engine pack (uvRequirements.ts)
-                # so the default engine is deterministically v3-Turbo (CPU -> ONNX,
-                # torch-free). First init downloads the model into HF_HOME.
-                logger.info("Loading VieNeu v3-Turbo (vieneu SDK)…")
-                self._backend = Vieneu()
+                if self._variant == "v2":
+                    logger.info("Loading VieNeu v2 (standard)…")
+                    try:
+                        self._backend = Vieneu(mode="standard")
+                    except TypeError:
+                        # vieneu 2.x: `standard` (v2) is the default; no mode arg.
+                        self._backend = Vieneu()
+                else:
+                    logger.info("Loading VieNeu v3-Turbo…")
+                    self._backend = Vieneu()
             except Exception as exc:  # noqa: BLE001
                 raise EngineUnavailable(
                     f"VieNeu SDK could not be loaded (install the VieNeu engine pack): {exc}"
                 ) from exc
 
     def synth(self, text: str, out_path: str, voice_id: str | None, speed: float) -> None:
-        """Synthesize `text` to a 48 kHz WAV at `out_path`. Raises on failure.
+        """Synthesize `text` to a WAV at `out_path`. Raises on failure.
 
         `speed` is intentionally unused — VieNeu synthesizes at natural rate and
         the orchestrator's alignment/ffmpeg stage time-stretches to the window.
         """
         self._ensure_loaded()
-        voice = voices.resolve(voice_id)
+        voice = voices.resolve(self._variant, voice_id)
         clean = (text or "").strip()
         if not clean:
             raise ValueError("empty text")
 
-        # Preset voices are addressed by their SDK name. If the SDK rejects a
-        # name (e.g. the preset set drifted upstream), retry with its default so
-        # one stale name can't silence the whole dub.
+        audio = self._infer(clean, voice)
+        _save_via_backend_or_pcm(self._backend, audio, out_path, self.sample_rate)
+
+    def _infer(self, text: str, voice: "voices.NeuralVoice") -> object:
+        """Run inference for the active variant. Falls back to the default voice
+        if a preset name is rejected so one stale name can't silence the dub."""
+        backend = self._backend
+        if self._variant == "v2":
+            try:
+                get_preset = getattr(backend, "get_preset_voice", None)
+                if callable(get_preset):
+                    return backend.infer(text, voice=get_preset(voice.sdk_name))  # type: ignore[union-attr]
+                return backend.infer(text, voice=voice.sdk_name)  # type: ignore[union-attr]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("VieNeu v2 voice '%s' failed (%s); using the default voice.", voice.sdk_name, exc)
+                return backend.infer(text)  # type: ignore[union-attr]
+        # v3: preset addressed by display name.
         try:
-            audio = self._backend.infer(clean, voice=voice.sdk_name)  # type: ignore[union-attr]
+            return backend.infer(text, voice=voice.sdk_name)  # type: ignore[union-attr]
         except Exception as exc:  # noqa: BLE001
-            logger.warning("VieNeu voice '%s' failed (%s); using the default voice.", voice.sdk_name, exc)
-            audio = self._backend.infer(clean)  # type: ignore[union-attr]
-
-        _save_via_backend_or_pcm(self._backend, audio, out_path)
+            logger.warning("VieNeu v3 voice '%s' failed (%s); using the default voice.", voice.sdk_name, exc)
+            return backend.infer(text)  # type: ignore[union-attr]
 
 
-def _save_via_backend_or_pcm(backend: object, audio: object, out_path: str) -> None:
-    """Write the synthesized audio: prefer the SDK's own save (handles the
-    48 kHz rate); fall back to a PCM-16 writer for array-like output."""
+def _save_via_backend_or_pcm(backend: object, audio: object, out_path: str, sample_rate: int) -> None:
+    """Write the synthesized audio: prefer the SDK's own save (handles the rate);
+    fall back to a PCM-16 writer for array-like output."""
     save = getattr(backend, "save", None)
     if callable(save):
         save(audio, out_path)
         return
-    write_pcm16_wav(out_path, audio, NEURAL_SAMPLE_RATE)
+    write_pcm16_wav(out_path, audio, sample_rate)

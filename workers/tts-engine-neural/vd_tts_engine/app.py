@@ -96,7 +96,7 @@ def health() -> HealthResponse:
 def list_voices(language: str | None = None) -> VoicesResponse:
     items = [
         Voice(id=v.id, language=voices.ENGINE_LANGUAGE, displayName=v.display_name, engine=voices.ENGINE_NAME)
-        for v in voices.voices_for_language(language)
+        for v in voices.voices_for_language(_engine.variant, language)
     ]
     return VoicesResponse(voices=items)
 
@@ -117,7 +117,7 @@ def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
         except Exception as exc:  # noqa: BLE001
             # Graceful fallback: silence sized to the segment window.
             logger.warning("Neural synth failed for %s (%s); writing silence.", seg.id, exc)
-            write_silent_wav(out_path, window_ms or 1000)
+            write_silent_wav(out_path, window_ms or 1000, sample_rate=_engine.sample_rate)
             fallback_count += 1
 
         results.append(

@@ -29,6 +29,11 @@ apps/desktop/src-tauri/binaries/*
 !apps/desktop/src-tauri/binaries/.gitkeep
 !apps/desktop/src-tauri/binaries/README.md
 
+# ===== Staged engine-pack worker source (apps/desktop/src-tauri/resources) =====
+# Copied from workers/tts-engine-neural/ by scripts/package/stage-engine-src.sh
+# and bundled as a Tauri resource. Build artifact — never commit.
+apps/desktop/src-tauri/resources/
+
 # ===== Python workers =====
 .venv/
 venv/

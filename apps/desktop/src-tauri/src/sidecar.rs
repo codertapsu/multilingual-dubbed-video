@@ -298,6 +298,14 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
         } else {
             log_info("bundled 'vd-uv' not found; Python engine packs will require uv on PATH.");
         }
+        // The first-party engine-pack worker source (vd_tts_engine, the VieNeu
+        // neural-TTS server). It runs inside the uv venv and is imported from
+        // PYTHONPATH; bundling it as a resource means the user installs nothing.
+        if let Some(src) = resolve_engine_src_dir(app) {
+            env.push(("VIDEODUBBER_ENGINE_SRC_DIR", src));
+        } else {
+            log_info("bundled engine-src not found; the neural-TTS pack will fall back to the repo path (dev only).");
+        }
         spawn_one(app, "videodubber-orchestrator", &env);
     }
 
@@ -377,6 +385,23 @@ fn resolve_sidecar_bin(base: &str) -> Option<String> {
     let bin = dir.join(base);
 
     bin.exists().then(|| bin.to_string_lossy().into_owned())
+}
+
+/// Resolve the bundled engine-pack worker SOURCE dir — the parent of
+/// `vd_tts_engine/` — to hand the orchestrator as VIDEODUBBER_ENGINE_SRC_DIR.
+///
+/// Bundled via tauri.conf `resources` (staged by scripts/package/stage-engine-src.sh).
+/// Tauri's exact on-disk resource layout can differ (it may or may not preserve
+/// the `resources/` prefix), so we try the likely locations and accept the first
+/// that actually contains the `vd_tts_engine` package. Returns `None` when the
+/// resource isn't bundled (e.g. a build made without staging it).
+fn resolve_engine_src_dir(app: &AppHandle) -> Option<String> {
+    let res = app.path().resource_dir().ok()?;
+    let candidates = [res.join("engine-src"), res.join("resources").join("engine-src")];
+    candidates
+        .into_iter()
+        .find(|c| c.join("vd_tts_engine").is_dir())
+        .map(|c| c.to_string_lossy().into_owned())
 }
 
 /// Resolve the app config dir per the SHARED CONTRACT: `VIDEODUBBER_CONFIG_DIR`

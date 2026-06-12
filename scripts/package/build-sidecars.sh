@@ -74,6 +74,13 @@ if [[ "${SKIP_UV:-0}" != "1" ]]; then
   bash "${SCRIPT_DIR}/fetch-uv.sh" || echo "WARNING: uv fetch failed; Python engine packs (neural TTS / separation / alignment) will be unavailable until uv is bundled or installed." >&2
 fi
 
+if [[ "${SKIP_ENGINE_SRC:-0}" != "1" ]]; then
+  echo ""; echo "### Engine-pack worker source (vd_tts_engine) ##############"
+  # Cheap (copies a few Python files). Bundled as an app resource so the packaged
+  # app can run the VieNeu neural-TTS pack with nothing for the user to install.
+  bash "${SCRIPT_DIR}/stage-engine-src.sh"
+fi
+
 echo ""
 echo "############################################################"
 echo "# Done. Sidecars in ${BIN_DIR}:"

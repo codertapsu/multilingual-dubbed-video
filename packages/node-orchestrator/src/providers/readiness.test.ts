@@ -3,6 +3,7 @@ import { AppErrorException, type Project } from '@videodubber/shared';
 import type { CredentialsStore } from '../credentials/credentialsStore.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
 import { assertRunReady, checkProviderReadiness, type OllamaProbe } from './readiness.js';
+import { availablePacks } from '../engines/enginePackCatalog.js';
 import { ProviderRegistry } from './registry.js';
 import { FakeSttProvider, FakeTtsProvider } from '../test/fixtures.js';
 import type { TranslationInput, TranslationResult, TranslationProvider } from '@videodubber/shared';
@@ -109,6 +110,51 @@ describe('checkProviderReadiness', () => {
       enginePackStore: noPacks,
     });
     expect(results.every((r) => r.ready)).toBe(true);
+  });
+
+  it('gates the neural-TTS provider on espeak-ng even when the pack is installed', async () => {
+    const installedPacks = { isInstalled: async () => true } as unknown as EnginePackStore;
+    const r = new ProviderRegistry();
+    r.registerStt(new FakeSttProvider([]));
+    r.registerTranslation(fakeTranslation({ id: 'argos' }));
+    r.registerTts({
+      id: 'neural-tts',
+      displayName: 'VieNeu Neural TTS',
+      isLocal: true,
+      requiresEnginePack: 'neural-tts',
+    } as unknown as Parameters<ProviderRegistry['registerTts']>[0]);
+    const project = {
+      settings: { sttProviderId: 'faster-whisper', translationProviderId: 'argos', ttsProviderId: 'neural-tts' },
+    } as unknown as Project;
+
+    // On a host where the neural pack can't run at all (e.g. Intel macOS), the
+    // earlier engine-pack-missing branch fires instead — the espeak gate only
+    // applies where the pack is installable. Assert the espeak path there.
+    const packSupported = availablePacks(process.platform, process.arch).some((p) => p.id === 'tts-neural');
+
+    // espeak-ng missing -> not ready with a guide remediation (not silent).
+    const missing = await checkProviderReadiness(project, {
+      registry: r,
+      credentials: fakeCreds([]),
+      enginePackStore: installedPacks,
+      probeEspeak: async () => false,
+    });
+    const t1 = missing.find((x) => x.phase === 'tts')!;
+    expect(t1.ready).toBe(false);
+    if (packSupported) {
+      expect(t1.status).toBe('model-missing');
+      expect(t1.action?.kind).toBe('guide');
+      expect(t1.message).toMatch(/espeak-ng/);
+
+      // espeak-ng present -> ready.
+      const ok = await checkProviderReadiness(project, {
+        registry: r,
+        credentials: fakeCreds([]),
+        enginePackStore: installedPacks,
+        probeEspeak: async () => true,
+      });
+      expect(ok.find((x) => x.phase === 'tts')!.ready).toBe(true);
+    }
   });
 
   it('only checks phases at-or-after the retry step', async () => {

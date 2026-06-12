@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import voices
 from .engine import VieNeuEngine
+from .prereqs import espeak_ng_available
 from .wavio import read_wav_duration_ms, write_silent_wav
 
 logger = logging.getLogger("vd_tts_engine")
@@ -82,6 +83,8 @@ class VoicesResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     engines: dict[str, bool]
+    # System prerequisites the neural path needs (espeak-ng for phonemization).
+    prerequisites: dict[str, bool] = Field(default_factory=dict)
 
 
 # ---- routes ----------------------------------------------------------------
@@ -89,7 +92,10 @@ class HealthResponse(BaseModel):
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(engines={voices.ENGINE_NAME: _engine.available(), "fallback": True})
+    return HealthResponse(
+        engines={voices.ENGINE_NAME: _engine.available(), "fallback": True},
+        prerequisites={"espeak_ng": espeak_ng_available()},
+    )
 
 
 @app.get("/voices", response_model=VoicesResponse)

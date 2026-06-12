@@ -32,6 +32,7 @@ import threading
 from pathlib import Path
 
 from . import voices
+from .prereqs import espeak_ng_available
 from .wavio import NEURAL_SAMPLE_RATE, write_pcm16_wav
 
 logger = logging.getLogger("vd_tts_engine.engine")
@@ -61,11 +62,14 @@ class VieNeuEngine:
     # -- availability ---------------------------------------------------------
 
     def available(self) -> bool:
-        """Best-effort: True if a neural backend can be imported in this venv."""
+        """Best-effort: True if a neural backend can be imported in this venv.
+
+        Deliberately does NOT short-circuit on a prior `_load_failed`: deps (or
+        espeak-ng) may be installed in the background after an early failed synth,
+        and /health should reflect that without a worker restart.
+        """
         if self._backend is not None:
             return True
-        if self._load_failed is not None:
-            return False
         try:
             import importlib.util as _u  # noqa: PLC0415
 
@@ -91,6 +95,18 @@ class VieNeuEngine:
                 return
             except Exception as exc:  # noqa: BLE001
                 logger.info("VieNeu SDK unavailable (%s); trying NeuTTS Air.", exc)
+
+            # NeuTTS Air phonemizes via espeak-ng — refuse early (clear message)
+            # if it's missing rather than producing broken pronunciation. The
+            # VieNeu high-level SDK uses sea-g2p, so it doesn't hit this branch.
+            if not espeak_ng_available():
+                self._load_failed = "espeak-ng not found"
+                raise EngineUnavailable(
+                    "espeak-ng is required for VieNeu/NeuTTS phonemization but was not found on PATH. "
+                    "Install it (macOS: `brew install espeak-ng`; Debian/Ubuntu: `apt install espeak-ng`; "
+                    "Windows: install eSpeak NG and add its folder, e.g. `C:\\Program Files\\eSpeak NG`, "
+                    "to PATH), then restart."
+                )
 
             # Fallback: NeuTTS Air GGUF CPU path.
             try:

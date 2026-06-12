@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from vd_tts_engine import voices
+from vd_tts_engine import prereqs, voices
 from vd_tts_engine.app import (
     SegmentIn,
     SynthesizeRequest,
@@ -44,6 +44,24 @@ def test_health_reports_fallback_always_true():
     assert h.status == "ok"
     assert h.engines["fallback"] is True
     assert "vieneu" in h.engines
+
+
+def test_health_reports_espeak_prerequisite():
+    h = health()
+    assert "espeak_ng" in h.prerequisites
+    assert isinstance(h.prerequisites["espeak_ng"], bool)
+    # The standalone helper agrees with what /health reports.
+    assert h.prerequisites["espeak_ng"] == prereqs.espeak_ng_available()
+
+
+def test_engine_refuses_neutts_path_without_espeak(monkeypatch):
+    # With no neural backend AND no espeak-ng, synth raises (-> caller fallback).
+    import vd_tts_engine.engine as engine_mod
+
+    monkeypatch.setattr(engine_mod, "espeak_ng_available", lambda: False)
+    eng = engine_mod.VieNeuEngine()
+    with pytest.raises(engine_mod.EngineUnavailable):
+        eng.synth("Xin chào", "/tmp/should-not-write.wav", "vieneu-ngoc-huyen", 1.0)
 
 
 def test_list_voices_endpoint():

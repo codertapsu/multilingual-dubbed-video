@@ -44,14 +44,29 @@ install.
 - Synthesis is at natural rate (`speedRatio: 1.0`); the orchestrator's
   alignment/ffmpeg stage time-stretches each clip to its window.
 
+## Prerequisites
+
+- **uv** — bundled with the packaged app (materializes the venv). Surfaced at
+  `GET /engines/prerequisites`.
+- **espeak-ng** — required by NeuTTS phonemization. Checked in three places:
+  this server's `GET /health` (`prerequisites.espeak_ng`), the orchestrator's
+  `GET /engines/prerequisites` (`espeakNg.available`, shown as a warning on the
+  pack in Settings → Engines), and at load time — the NeuTTS path **refuses**
+  (→ silent fallback with a clear message) when espeak-ng is absent. Install it:
+  macOS `brew install espeak-ng`, Debian/Ubuntu `apt install espeak-ng`,
+  Windows install eSpeak NG.
+
+The dependency set is **pinned per platform** in the orchestrator's
+`uvRequirements.ts` — Linux/Windows pull the CPU `torch` from the PyTorch CPU
+wheel index; macOS uses the default wheel.
+
 ## ⚠️ Validation status
 
-The HTTP contract, voice catalog, batching, WAV I/O and silent-fallback are
-unit-tested (`tests/`, no heavy deps). The **neural inference path** (loading the
-GGUF backbone + NeuCodec and resolving a preset's reference clip from the model's
-`voices.json`) requires the pack venv + model download (~0.5 GB) and `espeak-ng`
-on the system, and has **not** been executed in CI. Before shipping, validate an
-install on each target OS/arch and **pin** exact dependency versions + a model
-revision (llama-cpp-python wheels and the upstream `voices.json` schema vary).
-`espeak-ng` is a required system binary for phonemization — bundle it or add a
-prerequisite check.
+The HTTP contract, voice catalog, batching, WAV I/O, silent-fallback and the
+espeak-ng refusal are unit-tested (`tests/`, no heavy deps). The **neural
+inference path** (loading the GGUF backbone + NeuCodec and resolving a preset's
+reference clip from the model's `voices.json`) requires the pack venv + model
+download (~0.5 GB) and `espeak-ng`, and has **not** been executed in CI. Before
+shipping, validate an install on each target OS/arch, confirm every pinned
+version resolves (and wheels are accelerated where expected), and replace the
+`neuttsair @ git+…@main` ref with a pinned commit/tag.

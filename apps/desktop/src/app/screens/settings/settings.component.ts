@@ -99,6 +99,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return pack.packKind === 'python-uv';
   }
 
+  /** True for the VieNeu neural-TTS pack, which needs espeak-ng at runtime. */
+  protected needsEspeak(pack: EnginePackInfo): boolean {
+    return pack.providerId === 'neural-tts';
+  }
+
   protected readonly ramLabel = computed(() => {
     const profile = this.system()?.profile;
     return profile ? `${Math.round(profile.totalRamMb / 1024)} GB RAM` : '';

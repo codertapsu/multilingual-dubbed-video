@@ -36,7 +36,7 @@ import { EngineManager } from './engines/engineManager.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
 import { recommendEnginePacks } from './engines/engineRecommendation.js';
-import { resolveUvPath } from './engines/uv.js';
+import { commandOnPath, resolveUvPath } from './engines/uv.js';
 import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 import { EventBusRegistry } from './events.js';
@@ -534,13 +534,20 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // user-run daemon (the llama.cpp engine pack is the no-daemon alternative).
   app.get('/engines/prerequisites', async (_req, reply) => {
     try {
-      const uvPath = await resolveUvPath();
-      const ollamaOk = await fetch(`${OLLAMA_URL}/models`, { signal: AbortSignal.timeout(1500) })
-        .then((r) => r.ok)
-        .catch(() => false);
+      const [uvPath, espeakPath, ollamaOk] = await Promise.all([
+        resolveUvPath(),
+        commandOnPath('espeak-ng'),
+        fetch(`${OLLAMA_URL}/models`, { signal: AbortSignal.timeout(1500) })
+          .then((r) => r.ok)
+          .catch(() => false),
+      ]);
+      // Compare against the TRIMMED env var (resolveUvPath returns the trimmed
+      // path), so surrounding whitespace doesn't yield a false "not bundled".
+      const bundledUv = process.env.VIDEODUBBER_UV_PATH?.trim();
       return {
-        uv: { available: uvPath !== null, bundled: Boolean(process.env.VIDEODUBBER_UV_PATH && uvPath === process.env.VIDEODUBBER_UV_PATH) },
+        uv: { available: uvPath !== null, bundled: Boolean(bundledUv && uvPath === bundledUv) },
         ollama: { available: ollamaOk },
+        espeakNg: { available: espeakPath !== null },
       };
     } catch (err) {
       return sendError(reply, err);

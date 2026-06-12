@@ -13,14 +13,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The heavy neural stack — installed into the pack venv at install time, NOT here.
+# The neural stack — installed into the pack venv at install time, NOT here.
+# v3-Turbo runs torch-free on CPU via ONNX through the `vieneu` SDK.
 neural = [
-  "llama-cpp-python>=0.3",
-  "neucodec>=0.0.4",
-  "phonemizer>=3.2",
+  "vieneu>=3.0.5",
   "soundfile>=0.12",
   "numpy>=1.26",
-  "huggingface-hub>=0.24",
 ]
 dev = [
   "pytest>=8.0",

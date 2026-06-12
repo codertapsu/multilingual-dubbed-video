@@ -11,8 +11,9 @@ from __future__ import annotations
 import wave
 from pathlib import Path
 
-# NeuCodec decodes to 24 kHz. Kept here so writers/fallbacks stay consistent.
-NEURAL_SAMPLE_RATE = 24000
+# VieNeu v3-Turbo synthesizes at 48 kHz. Used by the silent fallback and the
+# PCM writer so placeholder/array output matches the engine's native rate.
+NEURAL_SAMPLE_RATE = 48000
 
 
 def _ms_to_frames(duration_ms: int, sample_rate: int) -> int:

@@ -28,12 +28,12 @@ function profile(o: Partial<SystemProfile> = {}): SystemProfile {
 describe('engine pack catalog', () => {
   it('filters packs by platform/arch', () => {
     const macArm = availablePacks('darwin', 'arm64').map((p) => p.id);
-    expect(macArm).toContain('whisper-cpp-metal');
+    expect(macArm).toContain('llama-cpp-metal'); // Apple Silicon translation
     expect(macArm).not.toContain('whisper-cpp-cuda'); // win/linux x64 only
 
     const winx64 = availablePacks('win32', 'x64').map((p) => p.id);
     expect(winx64).toContain('whisper-cpp-cuda');
-    expect(winx64).not.toContain('whisper-cpp-metal');
+    expect(winx64).not.toContain('llama-cpp-metal');
   });
 
   it('cross-platform packs (uv-env) run everywhere', () => {
@@ -129,10 +129,9 @@ describe('hardware-aware engine recommendations', () => {
     expect(packFitsMachine(findPack('llama-cpp-metal')!, big)).toBe(true);
   });
 
-  it('recommends Metal whisper + local LLM + neural TTS on a 32 GB Mac', () => {
+  it('recommends local LLM + neural TTS on a 32 GB Mac', () => {
     const p = profile({ totalRamMb: 32 * 1024 });
     const recs = recommendEnginePacks(p, recommendSetup(p), 'darwin', 'arm64').map((r) => r.packId);
-    expect(recs).toContain('whisper-cpp-metal');
     expect(recs).toContain('llama-cpp-metal');
     expect(recs).toContain('tts-neural');
     // 32 GB is workstation-class: separation + alignment too.

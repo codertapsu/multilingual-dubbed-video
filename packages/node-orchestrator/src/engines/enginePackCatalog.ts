@@ -17,13 +17,14 @@
  * ── WHAT IS UPSTREAM vs SELF-HOSTED ──────────────────────────────────────
  *  - llama.cpp publishes prebuilt server binaries for every platform we ship,
  *    so the `llama-cpp-*` packs point straight at ggml-org's GitHub releases.
- *  - whisper.cpp publishes prebuilt binaries ONLY for Windows. The macOS Metal
- *    server has NO upstream binary, so `whisper-cpp-metal` points at
- *    SELF_HOSTED_BASE — YOU build it once and upload it to your own GitHub
- *    Release (recipe in docs/ENGINE_PACKS.md), then set codertapsu/multilingual-dubbed-video + the tag.
- *  - The Python packs (`tts-neural`, `separation-audio`, `alignment-whisperx`)
- *    have NO download URL — they install from PyPI via the bundled `uv`
- *    (`uv-env://` markers; the per-platform requirement sets live in
+ *  - whisper.cpp publishes prebuilt binaries ONLY for Windows (the CUDA pack).
+ *    There is NO upstream macOS/Linux server binary; rather than offer an Install
+ *    button that 404s, we DON'T ship a macOS Metal whisper.cpp pack — macOS STT
+ *    uses the bundled faster-whisper (CPU). To add a Metal pack, build + host the
+ *    binary (recipe in docs/ENGINE_PACKS.md) and add an entry with its URL.
+ *  - The Python packs (`tts-neural`, `tts-neural-v2`, `separation-audio`,
+ *    `alignment-whisperx`) have NO download URL — they install from PyPI via the
+ *    bundled `uv` (`uv-env://` markers; the per-platform requirement sets live in
  *    engines/uvRequirements.ts).
  */
 import type { EnginePackInfo } from '@videodubber/shared';
@@ -38,57 +39,24 @@ const LLAMA_DL = `https://github.com/ggml-org/llama.cpp/releases/download/${LLAM
 const WHISPER_DL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP}`;
 
 /**
- * Base URL for binaries with NO upstream prebuilt (currently: the macOS Metal
- * whisper.cpp server). Replace codertapsu/multilingual-dubbed-video and the tag with your own GitHub
- * Release once you've built + uploaded the asset (see docs/ENGINE_PACKS.md).
- * Until then, installing `whisper-cpp-metal` fails with a clear network error
- * — every OTHER engine (llama.cpp, neural TTS, separation, alignment) works.
- */
-const SELF_HOSTED_BASE =
-  process.env.VIDEODUBBER_ENGINE_BASE?.trim() ||
-  'https://github.com/codertapsu/multilingual-dubbed-video/releases/download/engine-packs-v1';
-
-/**
- * The full curated set. `availablePacks()` filters by platform/arch.
+ * The full curated set. `availablePacks()` filters by platform/arch. Every pack
+ * here has a reachable artifact (binary URL or uv-env), so its Install works.
  *
  * Engines covered (see docs/TECH_STACK_RESEARCH.md):
- *   STT:         whisper.cpp (Metal/CUDA/Vulkan/CPU) — fast accelerated Whisper.
+ *   STT:         whisper.cpp CUDA (Windows) — accelerated Whisper (macOS/Linux
+ *                use the bundled faster-whisper on CPU).
  *   translation: llama.cpp server (Metal/CUDA/Vulkan/CPU) — local LLM MT.
- *   tts:         neural TTS python env (Kokoro/VieNeu/Chatterbox/Qwen3-TTS).
+ *   tts:         VieNeu neural TTS python env (v2 + v3-Turbo).
  *   separation:  audio-separator python env (Demucs / MDX / RoFormer).
  *   alignment:   WhisperX python env (forced alignment + diarization).
  */
 export const ENGINE_PACKS: readonly EnginePackInfo[] = [
   // --- whisper.cpp (STT acceleration) --------------------------------------
-  // whisper.cpp ships prebuilt binaries for WINDOWS ONLY. macOS Metal has no
-  // upstream server build, so that pack is self-hosted (build recipe in
-  // docs/ENGINE_PACKS.md). Everywhere else, the bundled faster-whisper already
-  // covers CPU, and Windows NVIDIA is covered by the cuBLAS pack below.
-  {
-    id: 'whisper-cpp-metal',
-    kind: 'stt',
-    packKind: 'binary',
-    displayName: 'whisper.cpp (Apple Metal)',
-    description:
-      'Accelerated Whisper for Apple Silicon (Metal GPU). ~10× realtime for large-v3-turbo — the macOS speed fix, since CTranslate2 has no Metal backend. Self-hosted binary (see docs/ENGINE_PACKS.md).',
-    providerId: 'whisper-cpp',
-    platforms: ['darwin'],
-    arch: ['arm64'],
-    accel: 'metal',
-    tier: 'balanced',
-    approxSizeMb: 14,
-    artifacts: [
-      {
-        // No upstream macOS server binary — built + uploaded to your own release.
-        url: `${SELF_HOSTED_BASE}/whisper-cpp-${WHISPER_CPP}-macos-arm64.tar.gz`,
-        sha256: '',
-        approxSizeMb: 14,
-        destPath: '.',
-        archive: true,
-      },
-    ],
-    licenseNote: 'MIT (whisper.cpp + ggml).',
-  },
+  // whisper.cpp ships prebuilt server binaries for WINDOWS ONLY. There's no
+  // upstream macOS Metal / Linux server build, so we don't offer one (a 404
+  // Install button is worse than none) — macOS/Linux use the bundled
+  // faster-whisper on CPU. To add a Metal pack, build + host the binary (recipe
+  // in docs/ENGINE_PACKS.md) and add an entry pointing at its URL.
   {
     id: 'whisper-cpp-cuda',
     kind: 'stt',

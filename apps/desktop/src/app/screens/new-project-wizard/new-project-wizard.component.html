@@ -316,7 +316,7 @@
               >
                 @for (p of provs.stt; track p.id) {
                   <option [value]="p.id" [disabled]="!p.available">
-                    {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+                    {{ p.displayName }}{{ providerHint(p) }}
                   </option>
                 }
               </select>
@@ -331,7 +331,7 @@
               >
                 @for (p of provs.translation; track p.id) {
                   <option [value]="p.id" [disabled]="!p.available">
-                    {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+                    {{ p.displayName }}{{ providerHint(p) }}
                   </option>
                 }
               </select>
@@ -346,7 +346,7 @@
               >
                 @for (p of provs.tts; track p.id) {
                   <option [value]="p.id" [disabled]="!p.available">
-                    {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+                    {{ p.displayName }}{{ providerHint(p) }}
                   </option>
                 }
               </select>

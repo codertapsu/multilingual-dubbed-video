@@ -31,7 +31,7 @@ interface WorkerSynthesizeResponse {
 
 export class NeuralTtsProvider implements TtsProvider {
   readonly id = 'neural-tts';
-  readonly displayName = 'Neural TTS (Kokoro / VieNeu / Chatterbox / Qwen3-TTS)';
+  readonly displayName = 'VieNeu Neural TTS (Vietnamese)';
   readonly isLocal = true;
   readonly requiresEnginePack = 'neural-tts';
 

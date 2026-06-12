@@ -439,6 +439,23 @@ export class NewProjectWizardComponent implements OnInit {
     return this.languages().find((l) => l.code === code)?.label ?? code;
   }
 
+  /** Why an unavailable provider can't be picked (shown after its name). */
+  protected providerHint(p: ProviderInfo): string {
+    if (p.available) return '';
+    switch (p.readinessStatus) {
+      case 'engine-pack-missing':
+        return ' — needs engine pack (Settings → Engines)';
+      case 'cloud-key-missing':
+        return ' — needs API key';
+      case 'daemon-unreachable':
+        return ' — service not running';
+      case 'model-missing':
+        return ' — needs a model';
+      default:
+        return ' — unavailable';
+    }
+  }
+
   /**
    * processingMode is DERIVED: "cloud-enhanced" iff any phase routes to a
    * non-local provider. Persisted on the project for transparency/reporting.

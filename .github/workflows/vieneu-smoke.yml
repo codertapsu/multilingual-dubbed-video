@@ -1,0 +1,89 @@
+name: VieNeu smoke test
+
+# Real install + synth of the VieNeu (tts-neural) engine pack on every runner OS,
+# so we catch — automatically — the two things we can't verify locally:
+#   1. the pinned `vieneu` set actually resolves/installs per OS/arch, and
+#   2. a bare `Vieneu()` still defaults to v3-Turbo (asserted via 48 kHz output).
+# Heavy (downloads the model), so it runs on relevant changes, weekly (to catch
+# upstream SDK/model drift), or on demand — not on every push.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+  push:
+    paths:
+      - 'packages/node-orchestrator/src/engines/uvRequirements.ts'
+      - 'workers/tts-engine-neural/**'
+      - 'scripts/print-uv-requirements.mjs'
+      - '.github/workflows/vieneu-smoke.yml'
+  pull_request:
+    paths:
+      - 'packages/node-orchestrator/src/engines/uvRequirements.ts'
+      - 'workers/tts-engine-neural/**'
+      - 'scripts/print-uv-requirements.mjs'
+      - '.github/workflows/vieneu-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: vieneu-smoke (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, label: linux-x64 }
+          - { os: macos-14, label: macos-arm64 } # Apple Silicon
+          - { os: macos-13, label: macos-x64 } # Intel mac (no torch needed now)
+          - { os: windows-latest, label: windows-x64 }
+    env:
+      HF_HOME: ${{ github.workspace }}/.hf-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Resolve the pinned requirements (single source of truth)
+        shell: bash
+        run: |
+          node scripts/print-uv-requirements.mjs tts-neural > requirements-neural.txt
+          echo '--- requirements-neural.txt ---'
+          cat requirements-neural.txt
+
+      - name: Cache HuggingFace model downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.hf-cache
+          key: vieneu-hf-${{ matrix.os }}-${{ hashFiles('packages/node-orchestrator/src/engines/uvRequirements.ts') }}
+          restore-keys: |
+            vieneu-hf-${{ matrix.os }}-
+
+      - name: Create venv + install the pinned set (mirrors engineInstaller)
+        shell: bash
+        run: |
+          uv venv --python 3.12 .venv-neural
+          uv pip install --python .venv-neural -r requirements-neural.txt
+
+      - name: Synthesize one sentence via our engine.py path
+        shell: bash
+        run: |
+          if [ -f .venv-neural/bin/python ]; then PY=.venv-neural/bin/python; else PY=.venv-neural/Scripts/python.exe; fi
+          PYTHONPATH="workers/tts-engine-neural" "$PY" workers/tts-engine-neural/scripts/smoke_test.py
+
+      - name: Upload the synthesized sample
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vieneu-smoke-${{ matrix.label }}
+          path: smoke_out.wav
+          if-no-files-found: ignore

@@ -112,7 +112,7 @@ describe('checkProviderReadiness', () => {
     expect(results.every((r) => r.ready)).toBe(true);
   });
 
-  it('gates the neural-TTS provider on espeak-ng even when the pack is installed', async () => {
+  it('reports a neural-TTS provider ready once its engine pack is installed', async () => {
     const installedPacks = { isInstalled: async () => true } as unknown as EnginePackStore;
     const r = new ProviderRegistry();
     r.registerStt(new FakeSttProvider([]));
@@ -127,34 +127,17 @@ describe('checkProviderReadiness', () => {
       settings: { sttProviderId: 'faster-whisper', translationProviderId: 'argos', ttsProviderId: 'neural-tts' },
     } as unknown as Project;
 
-    // On a host where the neural pack can't run at all (e.g. Intel macOS), the
-    // earlier engine-pack-missing branch fires instead — the espeak gate only
-    // applies where the pack is installable. Assert the espeak path there.
+    // The neural pack runs on every platform (torch-free), so it's installable
+    // on the test host; with it installed the provider is ready (no espeak gate).
     const packSupported = availablePacks(process.platform, process.arch).some((p) => p.id === 'tts-neural');
+    expect(packSupported).toBe(true);
 
-    // espeak-ng missing -> not ready with a guide remediation (not silent).
-    const missing = await checkProviderReadiness(project, {
+    const results = await checkProviderReadiness(project, {
       registry: r,
       credentials: fakeCreds([]),
       enginePackStore: installedPacks,
-      probeEspeak: async () => false,
     });
-    const t1 = missing.find((x) => x.phase === 'tts')!;
-    expect(t1.ready).toBe(false);
-    if (packSupported) {
-      expect(t1.status).toBe('model-missing');
-      expect(t1.action?.kind).toBe('guide');
-      expect(t1.message).toMatch(/espeak-ng/);
-
-      // espeak-ng present -> ready.
-      const ok = await checkProviderReadiness(project, {
-        registry: r,
-        credentials: fakeCreds([]),
-        enginePackStore: installedPacks,
-        probeEspeak: async () => true,
-      });
-      expect(ok.find((x) => x.phase === 'tts')!.ready).toBe(true);
-    }
+    expect(results.find((x) => x.phase === 'tts')!.ready).toBe(true);
   });
 
   it('only checks phases at-or-after the retry step', async () => {

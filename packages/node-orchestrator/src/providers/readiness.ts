@@ -27,7 +27,6 @@ import {
 import type { CredentialsStore } from '../credentials/credentialsStore.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
 import { pickInstalledPack } from '../engines/packSelection.js';
-import { commandOnPath } from '../engines/uv.js';
 import { OLLAMA_MODEL, OLLAMA_URL, type ProviderRegistry } from './registry.js';
 
 /** Why a provider is (not) ready. `ready` means usable right now. */
@@ -71,13 +70,6 @@ export interface ReadinessDeps {
   enginePackStore: EnginePackStore;
   /** Injectable Ollama probe (defaults to the real /v1/models check). */
   probeOllama?: (model: string) => Promise<OllamaProbe>;
-  /** Injectable espeak-ng probe (defaults to a PATH lookup). */
-  probeEspeak?: () => Promise<boolean>;
-}
-
-/** Real espeak-ng probe: the binary is on PATH. */
-async function defaultProbeEspeak(): Promise<boolean> {
-  return (await commandOnPath('espeak-ng')) !== null;
 }
 
 /** Just the provider fields readiness cares about (instances + descriptors satisfy this). */
@@ -163,34 +155,15 @@ export async function describeProviderReadiness(
 
   if (provider.requiresEnginePack) {
     const pack = await pickInstalledPack(deps.enginePackStore, provider.requiresEnginePack);
-    if (!pack) {
-      return {
-        ...base,
-        status: 'engine-pack-missing',
-        ready: false,
-        message: `${name} needs the "${provider.requiresEnginePack}" engine pack.`,
-        remediation: 'Install it in Settings → Engines, or pick a different provider for this phase.',
-        action: { kind: 'install-pack', ref: provider.requiresEnginePack },
-      };
-    }
-    // The VieNeu neural-TTS pack also needs espeak-ng (a system binary) for
-    // pronunciation. Gate on it so a run can't silently produce a fully SILENT
-    // dub (the worker falls back to silence when espeak-ng is absent).
-    if (provider.requiresEnginePack === 'neural-tts') {
-      const espeakOk = await (deps.probeEspeak ?? defaultProbeEspeak)();
-      if (!espeakOk) {
-        return {
-          ...base,
-          status: 'model-missing',
-          ready: false,
-          message: `${name} needs the espeak-ng system tool for pronunciation.`,
-          remediation:
-            'Install espeak-ng (macOS: `brew install espeak-ng`; Debian/Ubuntu: `apt install espeak-ng`; Windows: install eSpeak NG and add it to PATH), then retry — or pick a different voice engine.',
-          action: { kind: 'guide', ref: 'espeak-ng' },
-        };
-      }
-    }
-    return ready;
+    if (pack) return ready;
+    return {
+      ...base,
+      status: 'engine-pack-missing',
+      ready: false,
+      message: `${name} needs the "${provider.requiresEnginePack}" engine pack.`,
+      remediation: 'Install it in Settings → Engines, or pick a different provider for this phase.',
+      action: { kind: 'install-pack', ref: provider.requiresEnginePack },
+    };
   }
 
   if (provider.id === 'ollama') {

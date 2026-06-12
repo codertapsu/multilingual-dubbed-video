@@ -120,14 +120,6 @@ export interface EnginePrerequisites {
     /** The daemon answered at its local API. */
     available: boolean;
   };
-  /**
-   * espeak-ng system binary, required by the VieNeu neural-TTS pack for
-   * phonemization. Unlike uv, it is NOT bundled — the user installs it.
-   */
-  espeakNg: {
-    /** The `espeak-ng` (or `espeak`) binary was found on PATH. */
-    available: boolean;
-  };
 }
 
 /** GET /engines response: catalog (runnable on this machine) + installed set. */

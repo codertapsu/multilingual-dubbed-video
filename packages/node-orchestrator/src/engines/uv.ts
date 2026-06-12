@@ -59,15 +59,3 @@ function which(bin: string): Promise<string | null> {
     child.on('close', (code) => resolve(code === 0 ? out.trim().split(/\r?\n/)[0] || null : null));
   });
 }
-
-/**
- * Resolve the first of `bins` found on PATH (for system-tool prerequisite
- * checks like espeak-ng). Returns the path, or null if none are present.
- */
-export async function commandOnPath(...bins: string[]): Promise<string | null> {
-  for (const bin of bins) {
-    const found = await which(bin);
-    if (found) return found;
-  }
-  return null;
-}

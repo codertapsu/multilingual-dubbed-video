@@ -254,13 +254,6 @@
         @if (pack.licenseNote) {
           <span class="hint mono">{{ pack.licenseNote }}</span>
         }
-        @if (needsEspeak(pack) && prerequisites() && !prerequisites()!.espeakNg.available) {
-          <span class="hint test-fail">
-            ⚠ Needs <span class="mono">espeak-ng</span> at runtime (macOS:
-            <span class="mono">brew install espeak-ng</span>; Debian/Ubuntu:
-            <span class="mono">apt install espeak-ng</span>). You can install the pack now and add it before dubbing.
-          </span>
-        }
         @if (engineProgressFor(pack.id); as prog) {
           <div class="install-progress">
             <span class="hint">{{ prog.message }}</span>

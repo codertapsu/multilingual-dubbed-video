@@ -1,0 +1,35 @@
+[project]
+name = "vd-tts-engine"
+version = "0.1.0"
+description = "VideoDubber neural-TTS engine (VieNeu / NeuTTS Air) for the optional tts-neural engine pack"
+requires-python = ">=3.10"
+# Runtime deps are provided by the engine pack's uv venv (see the orchestrator's
+# engineInstaller UV_ENV_REQUIREMENTS['tts-neural']); this package is loaded from
+# bundled source via PYTHONPATH, not pip-installed. Listed here for reference /
+# standalone dev only.
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+# The heavy neural stack — installed into the pack venv at install time, NOT here.
+neural = [
+  "llama-cpp-python>=0.3",
+  "neucodec>=0.0.4",
+  "phonemizer>=3.2",
+  "soundfile>=0.12",
+  "numpy>=1.26",
+  "huggingface-hub>=0.24",
+]
+dev = [
+  "pytest>=8.0",
+  "httpx>=0.27",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["vd_tts_engine"]

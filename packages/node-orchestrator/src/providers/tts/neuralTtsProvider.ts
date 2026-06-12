@@ -1,10 +1,14 @@
 /**
- * Neural TTS provider backed by the `tts-neural` engine pack — higher-quality
- * multilingual voices (Kokoro, Chatterbox, Qwen3-TTS) and the Vietnamese
- * VieNeu upgrade over Piper. The pack runs a small FastAPI server (`vd_tts_engine`)
- * exposing the SAME `/synthesize-segments` contract as the bundled local TTS
- * worker, so the orchestrator code path is identical — only the base URL differs
- * (resolved on demand via the EngineManager).
+ * Neural TTS provider backed by a VieNeu engine pack — a higher-quality
+ * Vietnamese voice than Piper. Parameterized so the registry can register the
+ * two variants as SEPARATE options:
+ *   - id "neural-tts"    -> VieNeu v3-Turbo (pack "tts-neural", 48 kHz, Apache-2.0)
+ *   - id "neural-tts-v2" -> VieNeu v2       (pack "tts-neural-v2", 24 kHz; preset
+ *                            voices are CC BY-NC 4.0 / non-commercial)
+ * Each pack runs the same FastAPI server (`vd_tts_engine`) selecting its variant
+ * via VIENEU_VARIANT, exposing the SAME `/synthesize-segments` + `/voices`
+ * contract as the bundled local TTS worker — only the base URL differs (resolved
+ * on demand via the EngineManager).
  *
  * Stock/preset voices only; any zero-shot cloning inputs the underlying models
  * expose are not surfaced (policy).
@@ -30,12 +34,12 @@ interface WorkerSynthesizeResponse {
 }
 
 export class NeuralTtsProvider implements TtsProvider {
-  readonly id = 'neural-tts';
-  readonly displayName = 'VieNeu Neural TTS (Vietnamese)';
   readonly isLocal = true;
-  readonly requiresEnginePack = 'neural-tts';
 
   constructor(
+    readonly id: string,
+    readonly displayName: string,
+    readonly requiresEnginePack: string,
     private readonly engines: EngineManager,
     private readonly store: EnginePackStore,
     private readonly timeoutMs: number,
@@ -70,7 +74,7 @@ export class NeuralTtsProvider implements TtsProvider {
       endMs: s.endMs,
       speedRatio: s.speedRatio,
     }));
-    return { segments, engine: data.engine ?? 'neural-tts', fallbackSegments: data.fallbackSegments };
+    return { segments, engine: data.engine ?? this.id, fallbackSegments: data.fallbackSegments };
   }
 
   /** List voices the engine offers for a language (UI voice picker). */

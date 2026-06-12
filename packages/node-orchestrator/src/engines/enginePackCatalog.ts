@@ -228,12 +228,36 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     licenseNote: 'MIT.',
   },
 
-  // --- neural TTS: VieNeu (uv-managed Python env) --------------------------
+  // --- neural TTS: VieNeu v2 (uv-managed Python env) -----------------------
+  {
+    id: 'tts-neural-v2',
+    kind: 'tts',
+    packKind: 'python-uv',
+    displayName: 'VieNeu Neural TTS v2 (Vietnamese)',
+    description:
+      'A far more natural Vietnamese voice than Piper, via VieNeu-TTS v2 (24 kHz): a GGUF speech model + NeuCodec run on CPU through the `vieneu` SDK. Ships 7 reference voices (North/South, male/female); the model (~0.3–0.7 GB) downloads on first use. Optional and CPU-only — Piper stays the fast default. Output carries an imperceptible AI-audio watermark.',
+    providerId: 'neural-tts-v2',
+    accel: 'cpu',
+    tier: 'performance',
+    minRamMb: 4096,
+    approxSizeMb: 1200,
+    artifacts: [
+      {
+        url: 'uv-env://tts-neural-v2',
+        approxSizeMb: 1200,
+        destPath: 'venv',
+      },
+    ],
+    licenseNote:
+      'Engine code + backbone weights Apache-2.0, BUT the 7 bundled reference voices are CC BY-NC 4.0 — NON-COMMERCIAL use only, attribution to pnnbao-ump. For commercial dubbing use your own voices or VieNeu v3. Output is watermarked.',
+  },
+
+  // --- neural TTS: VieNeu v3-Turbo (uv-managed Python env) -----------------
   {
     id: 'tts-neural',
     kind: 'tts',
     packKind: 'python-uv',
-    displayName: 'VieNeu Neural TTS (Vietnamese, v3-Turbo)',
+    displayName: 'VieNeu Neural TTS v3 (Vietnamese)',
     description:
       'A far more natural Vietnamese voice than Piper, via VieNeu-TTS v3-Turbo: a 48 kHz speech model that runs torch-free on CPU through ONNX (the `vieneu` SDK). Ships 10 preset Vietnamese voices; the model (~0.5–1 GB) downloads on first use. Optional and CPU-only — Piper stays the fast default. Output carries an imperceptible AI-audio watermark.',
     providerId: 'neural-tts',

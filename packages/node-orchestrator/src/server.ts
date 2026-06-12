@@ -300,11 +300,15 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         if (!language) {
           return reply.status(400).send({ error: { code: 'UNKNOWN', message: 'Query parameter "language" is required.' } });
         }
-        // engine=neural lists the VieNeu preset voices (bundled in the tts-neural
-        // pack); the default (Piper) lists per-voice downloadable voices.
+        // engine=neural-v2 / neural-v3 (or legacy "neural" = v3) lists the VieNeu
+        // preset voices bundled in that pack; the default (Piper) lists per-voice
+        // downloadable voices.
         const engine = (req.query.engine ?? '').trim().toLowerCase();
-        if (engine === 'neural') {
-          return { language, engine: 'neural', voices: listNeuralVoicesForLanguage(language) };
+        if (engine === 'neural-v2') {
+          return { language, engine: 'neural-v2', voices: listNeuralVoicesForLanguage(language, 'v2') };
+        }
+        if (engine === 'neural-v3' || engine === 'neural') {
+          return { language, engine: 'neural-v3', voices: listNeuralVoicesForLanguage(language, 'v3') };
         }
         const voices = listVoicesForLanguage(language).map((v) => ({
           ...v,

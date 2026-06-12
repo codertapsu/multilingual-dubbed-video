@@ -45,6 +45,20 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
       'uvicorn==0.34.0',
     ],
   },
+  // VieNeu-TTS v2 (24 kHz): pin vieneu 2.7.0, the last release where v2 is the
+  // native default and llama-cpp-python + the ONNX NeuCodec decoder are CORE deps
+  // (so preset-voice synthesis is CPU + torch-free). The extra index serves CPU
+  // wheels for llama-cpp-python==0.3.16 (avoids a from-source build, esp. Windows).
+  'tts-neural-v2': {
+    base: [
+      'vieneu==2.7.0',
+      'soundfile==0.13.1',
+      'numpy==2.1.3',
+      'fastapi==0.115.6',
+      'uvicorn==0.34.0',
+    ],
+    extraIndexUrls: ['https://pnnbao97.github.io/llama-cpp-python-v0.3.16/cpu/'],
+  },
   // Other uv packs — kept at their existing (loose) sets.
   'separation-audio': {
     base: ['audio-separator>=0.18', 'onnxruntime>=1.20', 'fastapi>=0.110', 'uvicorn>=0.29'],

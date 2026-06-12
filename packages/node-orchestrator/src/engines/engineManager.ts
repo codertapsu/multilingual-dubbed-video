@@ -45,6 +45,17 @@ function prependPath(dir: string, existing: string | undefined): string {
   return [dir, existing].filter(Boolean).join(path.delimiter);
 }
 
+/** Env for a VieNeu `vd_tts_engine` sidecar: bundled module on PYTHONPATH, the
+ * model cache pinned to the pack dir, and the variant (v2/v3) selector. */
+function neuralTtsEnv(packDir: string, variant: 'v2' | 'v3'): Record<string, string> {
+  return {
+    PYTHONPATH: prependPath(engineSrcDir(), process.env.PYTHONPATH),
+    VD_PACK_DIR: packDir,
+    HF_HOME: path.join(packDir, 'hf'),
+    VIENEU_VARIANT: variant,
+  };
+}
+
 /** A running engine instance. */
 export interface RunningEngine {
   packId: string;
@@ -86,17 +97,20 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     healthPath: '/health',
     heavy: true,
   },
+  // Both VieNeu variants run the same bundled `vd_tts_engine` server; the venv
+  // (per pack) supplies the deps, PYTHONPATH supplies our module, HF_HOME points
+  // model downloads into the pack dir, and VIENEU_VARIANT picks v2 vs v3.
   'neural-tts': {
     pythonModule: 'vd_tts_engine',
     args: ({ port }) => ['--port', String(port)],
-    // The venv supplies the deps; PYTHONPATH supplies our bundled server module.
-    // HF_HOME points model downloads (VieNeu GGUF + NeuCodec) into the pack dir
-    // so they are removed when the pack is uninstalled.
-    env: ({ packDir }) => ({
-      PYTHONPATH: prependPath(engineSrcDir(), process.env.PYTHONPATH),
-      VD_PACK_DIR: packDir,
-      HF_HOME: path.join(packDir, 'hf'),
-    }),
+    env: ({ packDir }) => neuralTtsEnv(packDir, 'v3'),
+    healthPath: '/health',
+    heavy: false,
+  },
+  'neural-tts-v2': {
+    pythonModule: 'vd_tts_engine',
+    args: ({ port }) => ['--port', String(port)],
+    env: ({ packDir }) => neuralTtsEnv(packDir, 'v2'),
     healthPath: '/health',
     heavy: false,
   },
@@ -229,6 +243,7 @@ export class EngineManager {
     if (packId.startsWith('whisper-cpp')) return 'whisper-cpp';
     if (packId.startsWith('llama-cpp')) return 'local-llm';
     if (packId === 'tts-neural') return 'neural-tts';
+    if (packId === 'tts-neural-v2') return 'neural-tts-v2';
     if (packId === 'separation-audio') return 'audio-separator';
     if (packId === 'alignment-whisperx') return 'whisperx';
     return packId;

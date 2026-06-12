@@ -194,7 +194,14 @@ export function createDefaultRegistry(
         timeoutMs: timeout,
       }),
     );
-    registry.registerTts(new NeuralTtsProvider(engines, store, timeout));
+    // Two SEPARATE VieNeu options. v2 (24 kHz; preset voices CC BY-NC) and
+    // v3-Turbo (48 kHz; Apache-2.0) each have their own pack + venv.
+    registry.registerTts(
+      new NeuralTtsProvider('neural-tts-v2', 'VieNeu Neural TTS v2 (Vietnamese)', 'neural-tts-v2', engines, store, timeout),
+    );
+    registry.registerTts(
+      new NeuralTtsProvider('neural-tts', 'VieNeu Neural TTS v3 (Vietnamese)', 'neural-tts', engines, store, timeout),
+    );
   }
 
   return registry;

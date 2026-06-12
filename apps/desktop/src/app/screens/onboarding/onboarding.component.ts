@@ -19,6 +19,7 @@ import type { AppError, LanguageCode } from '../../core/models';
 import type {
   ArgosPair,
   CommonLanguage,
+  PiperVoiceInfo,
   PreflightResult,
   SetupCatalog,
   SetupInstallRequest,
@@ -82,22 +83,20 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   protected readonly whisperModel = signal<string>('small');
   protected readonly fetchPiperVoice = signal(true);
 
+  /** Every Piper voice for the chosen target language (best-first). */
+  protected readonly voices = signal<PiperVoiceInfo[]>([]);
+  /** The voice id the user picked to download (defaults to the recommended one). */
+  protected readonly selectedVoiceId = signal<string>('');
+  protected readonly voicesLoading = signal(false);
+
   // -------- step 4: install --------
   protected readonly installing = signal(false);
   protected readonly completing = signal(false);
 
-  /** The Piper voice (if any) available for the chosen target language. */
-  protected readonly targetPiperVoice = computed(() => {
-    const cat = this.catalog();
-    if (!cat) return null;
-    const target = this.targetLanguage();
-    const base = baseLang(target);
-    return (
-      cat.piperVoices.find((v) => v.language === target) ??
-      cat.piperVoices.find((v) => baseLang(v.language) === base) ??
-      null
-    );
-  });
+  /** The resolved info for the currently-selected voice (for the size label). */
+  protected readonly selectedVoice = computed(
+    () => this.voices().find((v) => v.id === this.selectedVoiceId()) ?? null,
+  );
 
   /** Whether the chosen Argos pair appears in the catalog's available list. */
   protected readonly argosPairAvailable = computed(() => {
@@ -129,7 +128,12 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   );
 
   ngOnInit(): void {
-    void this.loadCatalog();
+    void this.init();
+  }
+
+  private async init(): Promise<void> {
+    await this.loadCatalog();
+    await this.loadVoicesForTarget();
   }
 
   ngOnDestroy(): void {
@@ -205,6 +209,31 @@ export class OnboardingComponent implements OnInit, OnDestroy {
 
   protected setTargetLanguage(code: LanguageCode): void {
     this.targetLanguage.set(code);
+    void this.loadVoicesForTarget();
+  }
+
+  /**
+   * Load every Piper voice for the chosen target language (best-first) and
+   * pre-select the recommended one. Offline / no-voice languages leave the list
+   * empty, and the "download a voice" toggle simply becomes a no-op.
+   */
+  private async loadVoicesForTarget(): Promise<void> {
+    this.voicesLoading.set(true);
+    try {
+      const voices = await this.ipc.setupListVoices(this.targetLanguage());
+      this.voices.set(voices);
+      const current = this.selectedVoiceId();
+      const stillOffered = current && voices.some((v) => v.id === current);
+      if (!stillOffered) {
+        this.selectedVoiceId.set((voices.find((v) => v.recommended) ?? voices[0])?.id ?? '');
+      }
+    } catch {
+      // Offline / backend down: no per-language voices; user can add one later.
+      this.voices.set([]);
+      this.selectedVoiceId.set('');
+    } finally {
+      this.voicesLoading.set(false);
+    }
   }
 
   protected setWhisperModel(id: string): void {
@@ -229,9 +258,8 @@ export class OnboardingComponent implements OnInit, OnDestroy {
       req.argosPairs = [pair];
     }
 
-    const voice = this.targetPiperVoice();
-    if (this.fetchPiperVoice() && voice) {
-      req.piperVoices = [voice.id];
+    if (this.fetchPiperVoice() && this.selectedVoiceId()) {
+      req.piperVoices = [this.selectedVoiceId()];
     }
 
     return req;

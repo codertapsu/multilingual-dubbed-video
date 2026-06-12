@@ -215,7 +215,9 @@
 
       <fieldset>
         <legend>Target voice (text-to-speech)</legend>
-        @if (targetPiperVoice(); as voice) {
+        @if (voicesLoading()) {
+          <p class="muted">Loading voices for {{ languageLabel(targetLanguage()) }}…</p>
+        } @else if (voices().length > 0) {
           <label class="radio-row check-toggle">
             <input
               type="checkbox"
@@ -224,13 +226,33 @@
               (ngModelChange)="toggleFetchPiperVoice($event)"
             />
             <span class="radio-body">
-              <span class="radio-title">Download {{ voice.label }}</span>
+              <span class="radio-title">Download a Piper voice for {{ languageLabel(targetLanguage()) }}</span>
               <span class="hint"
-                >≈ {{ voice.approxSizeMb }} MB — a natural Piper voice for
-                {{ languageLabel(targetLanguage()) }}.</span
+                >A natural offline voice. You can pick a different voice (or add more)
+                later from Settings.</span
               >
             </span>
           </label>
+          @if (fetchPiperVoice()) {
+            <div class="field">
+              <label for="onbVoice">Voice</label>
+              <select
+                id="onbVoice"
+                name="onbVoice"
+                [ngModel]="selectedVoiceId()"
+                (ngModelChange)="selectedVoiceId.set($event)"
+              >
+                @for (v of voices(); track v.id) {
+                  <option [value]="v.id">
+                    {{ v.label }}{{ v.recommended ? ' — recommended' : '' }} — ≈ {{ v.approxSizeMb }} MB
+                  </option>
+                }
+              </select>
+              @if (selectedVoice(); as sv) {
+                <span class="hint">≈ {{ sv.approxSizeMb }} MB download.</span>
+              }
+            </div>
+          }
         } @else {
           <p class="muted">
             No bundled Piper voice is listed for

@@ -20,8 +20,30 @@ import { createServer } from 'node:net';
 import type { Dirent } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AppErrorException } from '@videodubber/shared';
 import type { EnginePackStore } from './enginePackStore.js';
+
+/**
+ * Directory holding the bundled first-party engine-pack worker source (e.g. the
+ * `vd_tts_engine` package). The uv venv provides the heavy third-party deps; our
+ * small server module is loaded from here via PYTHONPATH so it can be updated
+ * with the app without reinstalling the venv. The packaged shell sets
+ * VIDEODUBBER_ENGINE_SRC_DIR to the bundled location; a source build falls back
+ * to `<repo>/workers/tts-engine-neural`.
+ */
+function engineSrcDir(): string {
+  const fromEnv = process.env.VIDEODUBBER_ENGINE_SRC_DIR;
+  if (fromEnv) return fromEnv;
+  // This module lives at packages/node-orchestrator/{src,dist}/engines/.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, '../../../../workers/tts-engine-neural');
+}
+
+/** Prepend `dir` to an existing PATH-style value (PYTHONPATH). */
+function prependPath(dir: string, existing: string | undefined): string {
+  return [dir, existing].filter(Boolean).join(path.delimiter);
+}
 
 /** A running engine instance. */
 export interface RunningEngine {
@@ -67,6 +89,14 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
   'neural-tts': {
     pythonModule: 'vd_tts_engine',
     args: ({ port }) => ['--port', String(port)],
+    // The venv supplies the deps; PYTHONPATH supplies our bundled server module.
+    // HF_HOME points model downloads (VieNeu GGUF + NeuCodec) into the pack dir
+    // so they are removed when the pack is uninstalled.
+    env: ({ packDir }) => ({
+      PYTHONPATH: prependPath(engineSrcDir(), process.env.PYTHONPATH),
+      VD_PACK_DIR: packDir,
+      HF_HOME: path.join(packDir, 'hf'),
+    }),
     healthPath: '/health',
     heavy: false,
   },

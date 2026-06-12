@@ -26,9 +26,32 @@ import type { EnginePackStore } from './enginePackStore.js';
 import { findPack } from './enginePackCatalog.js';
 import { resolveUvPath, UV_PYTHON_VERSION } from './uv.js';
 
-/** Locked Python requirement sets per uv-env pack id (the engine "manifest"). */
+/**
+ * Locked Python requirement sets per uv-env pack id (the engine "manifest").
+ *
+ * These provide the THIRD-PARTY deps for each engine; the first-party server
+ * module (e.g. `vd_tts_engine`) is loaded from bundled source via PYTHONPATH at
+ * launch (see engineManager), so it is intentionally NOT listed here.
+ *
+ * NOTE (tts-neural / VieNeu): the GGUF CPU stack below is the documented path,
+ * but `llama-cpp-python` ships platform-specific wheels and `neucodec` pulls a
+ * large torch dependency — these versions should be pinned to a known-good set
+ * per OS/arch after validating an install on each platform. `neuttsair` (the
+ * NeuTTS Air inference code VieNeu builds on, Apache-2.0) is fetched from its
+ * git repo as it is not published to PyPI.
+ */
 const UV_ENV_REQUIREMENTS: Record<string, string[]> = {
-  'tts-neural': ['kokoro-onnx>=0.4', 'soundfile>=0.12', 'numpy>=1.26', 'fastapi>=0.110', 'uvicorn>=0.29'],
+  'tts-neural': [
+    'llama-cpp-python>=0.3',
+    'neucodec>=0.0.4',
+    'phonemizer>=3.2',
+    'soundfile>=0.12',
+    'numpy>=1.26',
+    'huggingface-hub>=0.24',
+    'neuttsair @ git+https://github.com/neuphonic/neutts-air.git',
+    'fastapi>=0.110',
+    'uvicorn>=0.29',
+  ],
   'separation-audio': ['audio-separator>=0.18', 'onnxruntime>=1.20', 'fastapi>=0.110', 'uvicorn>=0.29'],
   'alignment-whisperx': ['whisperx>=3.8', 'fastapi>=0.110', 'uvicorn>=0.29'],
 };

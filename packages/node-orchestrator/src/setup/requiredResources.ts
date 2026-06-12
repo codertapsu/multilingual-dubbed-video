@@ -14,7 +14,7 @@
  * intentionally skipped here.
  */
 import {
-  toArgosLanguage,
+  argosPivotLegs,
   type InstalledModels,
   type ProjectSettings,
   type SetupInstallRequest,
@@ -33,13 +33,13 @@ export function computeRequiredResources(
     if (model && !installed.whisperModels.includes(model)) request.whisperModel = model;
   }
 
-  // Translation — the local Argos source->target pair.
+  // Translation — the local Argos packages. Argos pivots through English, so a
+  // non-English pair (e.g. zh->vi) needs BOTH legs (zh->en, en->vi), not a
+  // single direct package Argos doesn't publish.
   if (settings.translationProviderId === 'argos') {
-    const from = toArgosLanguage(settings.sourceLanguage);
-    const to = toArgosLanguage(settings.targetLanguage);
-    if (from && to && from !== to && !installed.argosPairs.some((p) => p.from === from && p.to === to)) {
-      request.argosPairs = [{ from, to }];
-    }
+    const legs = argosPivotLegs(settings.sourceLanguage, settings.targetLanguage);
+    const missing = legs.filter((l) => !installed.argosPairs.some((p) => p.from === l.from && p.to === l.to));
+    if (missing.length > 0) request.argosPairs = missing;
   }
 
   // TTS — an explicitly-chosen Piper voice. Auto-select degrades gracefully, so

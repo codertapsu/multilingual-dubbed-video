@@ -9,6 +9,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
+import { argosPivotLegs } from '@videodubber/shared';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { SetupEventsService } from '../../core/ipc/setup-events.service';
 import { FirstRunService } from '../../core/guards/first-run.guard';
@@ -250,12 +251,11 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   private buildInstallRequest(): SetupInstallRequest {
     const req: SetupInstallRequest = { whisperModel: this.whisperModel() };
 
-    if (this.languagesDiffer()) {
-      const pair: ArgosPair = {
-        from: baseLang(this.sourceLanguage()),
-        to: baseLang(this.targetLanguage()),
-      };
-      req.argosPairs = [pair];
+    // Argos translates through English, so a non-English pair (e.g. zh->vi) needs
+    // BOTH pivot legs — not a single direct package Argos doesn't publish.
+    const legs = argosPivotLegs(this.sourceLanguage(), this.targetLanguage());
+    if (legs.length > 0) {
+      req.argosPairs = legs as ArgosPair[];
     }
 
     if (this.fetchPiperVoice() && this.selectedVoiceId()) {

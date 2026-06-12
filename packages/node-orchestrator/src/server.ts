@@ -52,7 +52,7 @@ import { OllamaPullManager, listOllamaModels } from './providers/ollamaModels.js
 import { computeRequiredResources, hasRequiredResources } from './setup/requiredResources.js';
 import type { PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
-import { buildCatalog, findPiperVoice } from './setup/catalog.js';
+import { buildCatalog, findPiperVoice, translatableLanguages } from './setup/catalog.js';
 import { listVoicesForLanguage } from './setup/voicesCatalog.js';
 import { listNeuralVoicesForLanguage } from './setup/neuralVoicesCatalog.js';
 import { runPreflight } from './setup/preflight.js';
@@ -256,6 +256,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     const worker = await orchestrator.listTranslationLanguages();
     return {
       common: COMMON_LANGUAGES,
+      // Only languages the local Argos engine can actually translate (reach
+      // English in the curated pairs) — the dropdowns use this to avoid offering
+      // a pair Argos can't do.
+      translatable: translatableLanguages(),
       installed: worker.installed,
       available: worker.available ?? [],
     };

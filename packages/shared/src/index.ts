@@ -140,6 +140,7 @@ export {
   normalizeLanguageCode,
   toWhisperLanguage,
   toArgosLanguage,
+  argosPivotLegs,
   isValidLanguageCode,
   COMMON_LANGUAGES,
 } from './language/normalize.js';

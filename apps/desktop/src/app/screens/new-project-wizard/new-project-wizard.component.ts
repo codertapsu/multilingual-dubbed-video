@@ -206,8 +206,11 @@ export class NewProjectWizardComponent implements OnInit {
   private async loadLanguages(): Promise<void> {
     try {
       const resp = await this.ipc.getLanguages();
-      if (resp.common && resp.common.length > 0) {
-        this.languages.set(resp.common);
+      // Prefer the translatable set (only languages Argos can do) so the user
+      // can't pick a pair that errors; fall back to the full common list.
+      const langs = resp.translatable?.length ? resp.translatable : resp.common;
+      if (langs && langs.length > 0) {
+        this.languages.set(langs);
       }
     } catch {
       // Offline / orchestrator down: keep the bundled fallback list silently.

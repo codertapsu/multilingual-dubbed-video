@@ -14,7 +14,7 @@
  *   - Piper voices resolve to the rhasspy/piper-voices HuggingFace repo using
  *     the `/resolve/main/...` download URLs (the `.onnx` model + `.onnx.json`).
  */
-import { COMMON_LANGUAGES, type ArgosPair, type PiperVoiceInfo, type SetupCatalog, type WhisperModelInfo } from '@videodubber/shared';
+import { COMMON_LANGUAGES, type ArgosPair, type CommonLanguage, type PiperVoiceInfo, type SetupCatalog, type WhisperModelInfo } from '@videodubber/shared';
 
 /** Base URL for raw file downloads from the rhasspy/piper-voices repo. */
 const PIPER_VOICES_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
@@ -71,6 +71,23 @@ export const ARGOS_AVAILABLE: readonly ArgosPair[] = [
   { from: 'en', to: 'id' },
   { from: 'id', to: 'en' },
 ] as const;
+
+/**
+ * Languages the local Argos engine can translate to/from (the dropdowns should
+ * only offer these, so users can't pick a pair Argos can't do). A language is
+ * translatable iff it reaches English in {@link ARGOS_AVAILABLE} (the hub) — any
+ * two such languages then work via the English pivot. Returns the curated
+ * {@link COMMON_LANGUAGES} filtered to that set.
+ */
+export function translatableLanguages(): CommonLanguage[] {
+  const hub = new Set<string>(['en']);
+  for (const p of ARGOS_AVAILABLE) {
+    if (p.from === 'en') hub.add(p.to);
+    if (p.to === 'en') hub.add(p.from);
+  }
+  const base = (code: string) => (code.split('-')[0] ?? '').toLowerCase();
+  return COMMON_LANGUAGES.filter((l) => hub.has(base(l.code)));
+}
 
 /** Build the `.onnx` + `.onnx.json` resolve URLs for a piper voice file path. */
 function piperUrls(filePath: string): { url: string; configUrl: string } {
@@ -158,7 +175,8 @@ export const PIPER_VOICES: readonly PiperVoiceInfo[] = [
 export function buildCatalog(): SetupCatalog {
   return {
     whisperModels: [...WHISPER_MODELS],
-    languages: [...COMMON_LANGUAGES],
+    // Only languages Argos can translate (the onboarding dropdowns use these).
+    languages: translatableLanguages(),
     argosAvailable: [...ARGOS_AVAILABLE],
     piperVoices: [...PIPER_VOICES],
   };

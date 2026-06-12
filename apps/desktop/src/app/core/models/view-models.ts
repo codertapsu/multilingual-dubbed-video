@@ -60,6 +60,9 @@ export interface LanguagesResponse {
   available?: LanguagePair[];
   /** Curated common languages for the source/target selects. */
   common: CommonLanguage[];
+  /** Languages Argos can actually translate (English-hub reachable) — the
+   * dropdowns prefer these so users can't pick an untranslatable pair. */
+  translatable?: CommonLanguage[];
 }
 
 /**

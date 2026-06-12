@@ -102,6 +102,30 @@ export function toArgosLanguage(code: string): string {
 }
 
 /**
+ * The Argos translation packages needed for a directed pair, using English as
+ * the pivot.
+ *
+ * Argos only publishes packages TO/FROM English, so a pair where neither side is
+ * English needs TWO legs — `from->en` and `en->to` — and Argos composes the
+ * pivot translation automatically once both are installed. A pair touching
+ * English needs just the one direct package. Inputs are reduced to Argos base
+ * subtags; returns `[]` when `from === to` or either is empty (e.g. en->en).
+ *
+ * This is the fix for "No installed Argos package for zh -> vi": such pairs were
+ * (wrongly) treated as a single direct package that Argos doesn't publish.
+ */
+export function argosPivotLegs(from: string, to: string): { from: string; to: string }[] {
+  const a = toArgosLanguage(from);
+  const b = toArgosLanguage(to);
+  if (!a || !b || a === b) return [];
+  if (a === 'en' || b === 'en') return [{ from: a, to: b }];
+  return [
+    { from: a, to: 'en' },
+    { from: 'en', to: b },
+  ];
+}
+
+/**
  * Basic BCP-47-ish validity check.
  *
  * Accepts a 2-3 letter primary subtag, optionally followed by a 4-letter

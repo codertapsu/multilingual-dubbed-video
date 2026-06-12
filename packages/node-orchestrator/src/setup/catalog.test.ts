@@ -18,9 +18,17 @@ describe('setup catalog shape', () => {
     expect(catalog.piperVoices.length).toBeGreaterThan(0);
   });
 
-  it('exposes the COMMON_LANGUAGES list as catalog.languages', () => {
+  it('exposes the Argos-translatable languages as catalog.languages', () => {
     const catalog = buildCatalog();
-    expect(catalog.languages).toEqual([...COMMON_LANGUAGES]);
+    // A subset of COMMON_LANGUAGES (only languages Argos can translate) — every
+    // entry must be a known common language, and untranslatable ones (e.g. Thai,
+    // not in the curated Argos pairs) are excluded.
+    const commonCodes = new Set(COMMON_LANGUAGES.map((l) => l.code));
+    expect(catalog.languages.length).toBeGreaterThan(0);
+    expect(catalog.languages.every((l) => commonCodes.has(l.code))).toBe(true);
+    expect(catalog.languages.some((l) => l.code === 'vi-VN')).toBe(true);
+    expect(catalog.languages.some((l) => l.code === 'zh')).toBe(true);
+    expect(catalog.languages.some((l) => l.code === 'th')).toBe(false); // not Argos-translatable
   });
 
   it('returns fresh array copies (not the frozen module constants)', () => {

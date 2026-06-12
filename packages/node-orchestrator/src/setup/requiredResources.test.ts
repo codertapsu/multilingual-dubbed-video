@@ -62,4 +62,18 @@ describe('computeRequiredResources', () => {
     const req = computeRequiredResources(settings({ sourceLanguage: 'en-US', targetLanguage: 'en-GB' }), empty);
     expect(req.argosPairs).toBeUndefined();
   });
+
+  it('installs BOTH English-pivot legs for a non-English pair (zh -> vi)', () => {
+    const req = computeRequiredResources(settings({ sourceLanguage: 'zh', targetLanguage: 'vi-VN' }), empty);
+    expect(req.argosPairs).toEqual([
+      { from: 'zh', to: 'en' },
+      { from: 'en', to: 'vi' },
+    ]);
+  });
+
+  it('only installs the missing pivot leg', () => {
+    const installed: InstalledModels = { whisperModels: [], argosPairs: [{ from: 'en', to: 'vi' }], piperVoices: [] };
+    const req = computeRequiredResources(settings({ sourceLanguage: 'zh', targetLanguage: 'vi-VN' }), installed);
+    expect(req.argosPairs).toEqual([{ from: 'zh', to: 'en' }]); // en->vi already there
+  });
 });

@@ -69,6 +69,13 @@ export interface EnginePackInfo {
   platforms?: NodeJS.Platform[];
   /** Target CPU architectures (Node `process.arch`); empty = all. */
   arch?: string[];
+  /**
+   * Specific platform+arch combinations this pack CANNOT run on, beyond the
+   * coarse `platforms`/`arch` filters (which are ANDed independently and can't
+   * express a combination). E.g. Intel macOS, where a required wheel (torch) has
+   * no x86_64 build. A machine matching any entry is excluded.
+   */
+  excludePlatformArch?: { platform: NodeJS.Platform; arch: string }[];
   /** Hardware acceleration this build uses. */
   accel: EngineAccel;
   /** Files to download. */
@@ -111,6 +118,14 @@ export interface EnginePrerequisites {
   /** Ollama daemon for the optional `ollama` local-LLM translation provider. */
   ollama: {
     /** The daemon answered at its local API. */
+    available: boolean;
+  };
+  /**
+   * espeak-ng system binary, required by the VieNeu neural-TTS pack for
+   * phonemization. Unlike uv, it is NOT bundled — the user installs it.
+   */
+  espeakNg: {
+    /** The `espeak-ng` (or `espeak`) binary was found on PATH. */
     available: boolean;
   };
 }

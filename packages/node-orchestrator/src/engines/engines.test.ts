@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { SystemProfile } from '@videodubber/shared';
+import type { EnginePackInfo, SystemProfile } from '@videodubber/shared';
 import { EnginePackStore } from './enginePackStore.js';
 import { availablePacks, findPack, packRunsOn } from './enginePackCatalog.js';
 import { packsForProvider, pickInstalledPack, requireInstalledPack } from './packSelection.js';
@@ -36,13 +36,21 @@ describe('engine pack catalog', () => {
     expect(winx64).not.toContain('whisper-cpp-metal');
   });
 
-  it('cross-platform packs (uv-env) run everywhere except excluded combos', () => {
+  it('cross-platform packs (uv-env) run everywhere', () => {
+    // VieNeu v3-Turbo is torch-free ONNX, so it runs on every platform/arch,
+    // Intel macOS included.
     expect(packRunsOn(findPack('tts-neural')!, 'win32', 'x64')).toBe(true);
     expect(packRunsOn(findPack('tts-neural')!, 'linux', 'x64')).toBe(true);
     expect(packRunsOn(findPack('tts-neural')!, 'darwin', 'arm64')).toBe(true);
-    // Intel macOS is excluded (no torch x86_64 wheel) and not offered there.
-    expect(packRunsOn(findPack('tts-neural')!, 'darwin', 'x64')).toBe(false);
-    expect(availablePacks('darwin', 'x64').map((p) => p.id)).not.toContain('tts-neural');
+    expect(packRunsOn(findPack('tts-neural')!, 'darwin', 'x64')).toBe(true);
+    expect(availablePacks('darwin', 'x64').map((p) => p.id)).toContain('tts-neural');
+  });
+
+  it('excludePlatformArch excludes a specific platform+arch combo', () => {
+    const pack = { excludePlatformArch: [{ platform: 'darwin', arch: 'x64' }] } as EnginePackInfo;
+    expect(packRunsOn(pack, 'darwin', 'x64')).toBe(false);
+    expect(packRunsOn(pack, 'darwin', 'arm64')).toBe(true);
+    expect(packRunsOn(pack, 'linux', 'x64')).toBe(true);
   });
 });
 

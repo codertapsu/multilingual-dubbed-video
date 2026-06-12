@@ -233,33 +233,30 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     id: 'tts-neural',
     kind: 'tts',
     packKind: 'python-uv',
-    displayName: 'VieNeu Neural TTS (Vietnamese)',
+    displayName: 'VieNeu Neural TTS (Vietnamese, v3-Turbo)',
     description:
-      'A far more natural Vietnamese voice than Piper, via VieNeu-TTS (a NeuTTS Air fine-tune): a ~0.5B speech LLM + NeuCodec, running on CPU in a self-contained Python environment. Ships preset Vietnamese voices; the model weights (~0.5 GB) download on first use. Optional and CPU-only — Piper stays the fast default.',
+      'A far more natural Vietnamese voice than Piper, via VieNeu-TTS v3-Turbo: a 48 kHz speech model that runs torch-free on CPU through ONNX (the `vieneu` SDK). Ships 10 preset Vietnamese voices; the model (~0.5–1 GB) downloads on first use. Optional and CPU-only — Piper stays the fast default. Output carries an imperceptible AI-audio watermark.',
     providerId: 'neural-tts',
     accel: 'cpu',
     tier: 'performance',
-    // Intel macOS is excluded: torch (pulled by neucodec) ships no x86_64 macOS
-    // wheel, so the venv can't be built there. Linux/Windows x64 + Apple Silicon
-    // are fine.
-    excludePlatformArch: [{ platform: 'darwin', arch: 'x64' }],
-    // CPU-feasible at ~1.5–2 GB working RAM (Q4 backbone + NeuCodec).
+    // CPU-feasible at ~1.5–2 GB working RAM. No torch/GGUF, so it runs on every
+    // platform — including Intel macOS.
     minRamMb: 4096,
-    approxSizeMb: 2000,
+    approxSizeMb: 1500,
     artifacts: [
       {
         // The pack ships a locked requirements set; the installer materializes a
         // uv-managed venv from it (see engineInstaller). The first-party
         // `vd_tts_engine` server is loaded from bundled source via PYTHONPATH
-        // (see engineManager). VieNeu weights download on first use, like
+        // (see engineManager). The VieNeu v3 model downloads on first use, like
         // Whisper models.
         url: 'uv-env://tts-neural',
-        approxSizeMb: 2000,
+        approxSizeMb: 1500,
         destPath: 'venv',
       },
     ],
     licenseNote:
-      'Apache-2.0 — engine code (VieNeu-TTS + NeuTTS Air) and weights (incl. NeuCodec). Bundled preset Vietnamese voices; no voice-cloning inputs are surfaced.',
+      'Apache-2.0 — VieNeu-TTS v3 code + weights. Uses the MOSS-Audio-Tokenizer-Nano codec and sea-g2p (verify their licenses). Preset voices only; output is watermarked.',
   },
 
   // --- vocal separation (uv-managed Python env) ----------------------------

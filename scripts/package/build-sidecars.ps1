@@ -74,6 +74,15 @@ if (-not $SkipWorkers) {
   Write-Host "`n### Python workers #########################################"
   & (Join-Path $ScriptDir "build-workers.ps1") -TargetTriple $Triple
 }
+
+# `resources/workers` is a DECLARED Tauri resource (one-dir stt/translation/tts
+# trees). It MUST exist at `tauri build` time even if SkipWorkers was set, or the
+# bundle step aborts on the missing declared resource. Guarantee it.
+$WorkersRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\workers"
+New-Item -ItemType Directory -Force -Path $WorkersRes | Out-Null
+if (-not (Get-ChildItem -Path $WorkersRes -ErrorAction SilentlyContinue)) {
+  Set-Content -Path (Join-Path $WorkersRes "README.txt") -Value "One-dir Python worker trees (vd-stt/translation/tts-worker) are staged here at build time."
+}
 if (-not $SkipFfmpeg) {
   Write-Host "`n### FFmpeg / ffprobe #######################################"
   & (Join-Path $ScriptDir "fetch-ffmpeg.ps1") -TargetTriple $Triple
@@ -117,9 +126,15 @@ if (-not $SkipEngineSrc) {
 Write-Host "`n############################################################"
 Write-Host "# Done. Sidecars in $BinDir :"
 Write-Host "############################################################"
-$bases = @("videodubber-orchestrator","vd-stt-worker","vd-translation-worker","vd-tts-worker","vd-piper","vd-uv","ffmpeg","ffprobe")
+# Single-file externalBin sidecars (the 3 server workers are one-dir, below).
+$bases = @("videodubber-orchestrator","vd-piper","vd-uv","ffmpeg","ffprobe")
 foreach ($b in $bases) {
   $f = Join-Path $BinDir "$b-$Triple.exe"
   if (Test-Path $f) { Write-Host "    $b-$Triple.exe" }
   else { Write-Host "NOTE: missing $f (skipped or failed?)." }
+}
+foreach ($b in @("vd-stt-worker","vd-translation-worker","vd-tts-worker")) {
+  $exe = Join-Path (Join-Path $WorkersRes $b) "$b.exe"
+  if (Test-Path $exe) { Write-Host "    resources\workers\$b\ (one-dir)" }
+  else { Write-Host "NOTE: missing one-dir worker $exe (skipped or failed?)." }
 }

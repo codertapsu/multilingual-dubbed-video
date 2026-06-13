@@ -37,6 +37,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." >/dev/null 2>&1 && pwd)"
 BIN_DIR="${REPO_ROOT}/apps/desktop/src-tauri/binaries"
 PYI_TMP="${BIN_DIR}/.pyi"
+# One-dir worker trees ship as a Tauri *resource* folder (externalBin only holds
+# single files). The desktop shell launches each worker exe from here.
+RES_WORKERS="${REPO_ROOT}/apps/desktop/src-tauri/resources/workers"
 
 # ---------------------------------------------------------------------------
 # Resolve the Rust target triple (Tauri externalBin suffix).
@@ -69,11 +72,14 @@ mkdir -p "${BIN_DIR}"
 # worker key | venv subdir | spec file | output base name
 # NOTE: "piper" is not a worker service — it's the frozen piper-tts CLI the TTS
 # worker spawns per segment. It builds from the TTS worker's venv.
+# key | venv subdir | output base name | bundle mode (onedir|onefile)
+# The 3 server workers are one-dir (fast start, no per-launch extraction). piper
+# is the on-demand CLI the TTS worker spawns by path — kept one-file (externalBin).
 WORKERS=(
-  "stt|stt-worker|vd-stt-worker"
-  "translation|translation-worker|vd-translation-worker"
-  "tts|tts-worker|vd-tts-worker"
-  "piper|tts-worker|vd-piper"
+  "stt|stt-worker|vd-stt-worker|onedir"
+  "translation|translation-worker|vd-translation-worker|onedir"
+  "tts|tts-worker|vd-tts-worker|onedir"
+  "piper|tts-worker|vd-piper|onefile"
 )
 
 ONLY="${ONLY:-stt,translation,tts,piper}"
@@ -81,7 +87,7 @@ ONLY="${ONLY:-stt,translation,tts,piper}"
 want() { [[ ",${ONLY}," == *",$1,"* ]]; }
 
 build_one() {
-  local key="$1" subdir="$2" base="$3"
+  local key="$1" subdir="$2" base="$3" mode="$4"
   local worker_dir="${REPO_ROOT}/workers/${subdir}"
   local venv="${worker_dir}/.venv"
   local spec="${SCRIPT_DIR}/${base}.spec"
@@ -121,22 +127,38 @@ build_one() {
       --workpath "${work}" \
       "${spec}" )
 
-  local produced="${dist}/${base}${EXE_SUFFIX}"
-  if [[ ! -f "${produced}" ]]; then
-    echo "ERROR: expected ${produced} but it was not produced." >&2
-    exit 1
+  if [[ "${mode}" == "onedir" ]]; then
+    # COLLECT output: ${dist}/${base}/ (the exe + its _internal/ libs). Ship the
+    # whole tree as a resource folder; the desktop shell launches the exe by path.
+    local produced_dir="${dist}/${base}"
+    local produced_exe="${produced_dir}/${base}${EXE_SUFFIX}"
+    if [[ ! -f "${produced_exe}" ]]; then
+      echo "ERROR: expected ${produced_exe} but it was not produced." >&2
+      exit 1
+    fi
+    local target_dir="${RES_WORKERS}/${base}"
+    mkdir -p "${RES_WORKERS}"
+    rm -rf "${target_dir}"
+    cp -R "${produced_dir}" "${target_dir}"
+    chmod +x "${target_dir}/${base}${EXE_SUFFIX}" || true
+    echo "    -> ${target_dir}/ (one-dir)"
+  else
+    local produced="${dist}/${base}${EXE_SUFFIX}"
+    if [[ ! -f "${produced}" ]]; then
+      echo "ERROR: expected ${produced} but it was not produced." >&2
+      exit 1
+    fi
+    local target="${BIN_DIR}/${base}-${TRIPLE}${EXE_SUFFIX}"
+    cp -f "${produced}" "${target}"
+    chmod +x "${target}" || true
+    echo "    -> ${target}"
   fi
-
-  local target="${BIN_DIR}/${base}-${TRIPLE}${EXE_SUFFIX}"
-  cp -f "${produced}" "${target}"
-  chmod +x "${target}" || true
-  echo "    -> ${target}"
 }
 
 for entry in "${WORKERS[@]}"; do
-  IFS='|' read -r key subdir base <<<"${entry}"
+  IFS='|' read -r key subdir base mode <<<"${entry}"
   if want "${key}"; then
-    build_one "${key}" "${subdir}" "${base}"
+    build_one "${key}" "${subdir}" "${base}" "${mode}"
   else
     echo "==> [${key}] skipped (ONLY=${ONLY})"
   fi
@@ -145,3 +167,5 @@ done
 echo ""
 echo "==> Worker sidecars built:"
 ls -1 "${BIN_DIR}"/vd-*-"${TRIPLE}"${EXE_SUFFIX} 2>/dev/null || true
+echo "    one-dir worker trees:"
+ls -1d "${RES_WORKERS}"/*/ 2>/dev/null || true

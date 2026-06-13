@@ -86,12 +86,17 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# ONE-DIR build: keep binaries/datas OUT of the exe and COLLECT them into a
+# directory tree. One-file would re-extract the whole bundle (incl. ctranslate2)
+# to a temp dir on EVERY launch — measured ~25s cold start for the 3 workers. A
+# one-dir tree starts without extraction. It ships as a Tauri *resource* folder
+# (Tauri externalBin only holds single files); the desktop shell launches the exe
+# from there. See scripts/package/build-workers.* and src-tauri/src/sidecar.rs.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="vd-stt-worker",
     debug=False,
     bootloader_ignore_signals=False,
@@ -102,4 +107,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="vd-stt-worker",
 )

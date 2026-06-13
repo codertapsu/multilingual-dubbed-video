@@ -27,6 +27,9 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot  = Resolve-Path (Join-Path $ScriptDir "..\..")
 $BinDir    = Join-Path $RepoRoot "apps\desktop\src-tauri\binaries"
 $PyiTmp    = Join-Path $BinDir ".pyi"
+# One-dir worker trees ship as a Tauri resource folder (externalBin holds single
+# files only). The desktop shell launches each worker exe from here.
+$ResWorkers = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\workers"
 
 function Resolve-Triple {
   if ($TargetTriple) { return $TargetTriple }
@@ -48,10 +51,10 @@ New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 # NOTE: "piper" is not a worker service — it's the frozen piper-tts CLI the TTS
 # worker spawns per segment. It builds from the TTS worker's venv.
 $Workers = @(
-  @{ key="stt";         subdir="stt-worker";         base="vd-stt-worker" },
-  @{ key="translation"; subdir="translation-worker"; base="vd-translation-worker" },
-  @{ key="tts";         subdir="tts-worker";         base="vd-tts-worker" },
-  @{ key="piper";       subdir="tts-worker";         base="vd-piper" }
+  @{ key="stt";         subdir="stt-worker";         base="vd-stt-worker";         mode="onedir" },
+  @{ key="translation"; subdir="translation-worker"; base="vd-translation-worker"; mode="onedir" },
+  @{ key="tts";         subdir="tts-worker";         base="vd-tts-worker";         mode="onedir" },
+  @{ key="piper";       subdir="tts-worker";         base="vd-piper";              mode="onefile" }
 )
 
 $Wanted = $Only.Split(",") | ForEach-Object { $_.Trim() }
@@ -88,12 +91,24 @@ function Build-One($w) {
     Pop-Location
   }
 
-  $produced = Join-Path $dist ($w.base + ".exe")
-  if (-not (Test-Path $produced)) { throw "expected $produced but it was not produced." }
-
-  $target = Join-Path $BinDir ("$($w.base)-$Triple.exe")
-  Copy-Item -Force $produced $target
-  Write-Host "    -> $target"
+  if ($w.mode -eq "onedir") {
+    # COLLECT output: $dist\$base\ (exe + _internal\). Ship the whole tree as a
+    # resource folder; the desktop shell launches the exe from there.
+    $producedDir = Join-Path $dist $w.base
+    $producedExe = Join-Path $producedDir ($w.base + ".exe")
+    if (-not (Test-Path $producedExe)) { throw "expected $producedExe but it was not produced." }
+    $targetDir = Join-Path $ResWorkers $w.base
+    New-Item -ItemType Directory -Force -Path $ResWorkers | Out-Null
+    if (Test-Path $targetDir) { Remove-Item -Recurse -Force $targetDir }
+    Copy-Item -Recurse -Force $producedDir $targetDir
+    Write-Host "    -> $targetDir\ (one-dir)"
+  } else {
+    $produced = Join-Path $dist ($w.base + ".exe")
+    if (-not (Test-Path $produced)) { throw "expected $produced but it was not produced." }
+    $target = Join-Path $BinDir ("$($w.base)-$Triple.exe")
+    Copy-Item -Force $produced $target
+    Write-Host "    -> $target"
+  }
 }
 
 foreach ($w in $Workers) {

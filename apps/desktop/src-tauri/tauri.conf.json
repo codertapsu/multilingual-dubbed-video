@@ -41,9 +41,6 @@
     "createUpdaterArtifacts": false,
     "externalBin": [
       "binaries/videodubber-orchestrator",
-      "binaries/vd-stt-worker",
-      "binaries/vd-translation-worker",
-      "binaries/vd-tts-worker",
       "binaries/vd-piper",
       "binaries/vd-uv",
       "binaries/ffmpeg",
@@ -51,7 +48,8 @@
     ],
     "resources": [
       "resources/engine-src",
-      "resources/python"
+      "resources/python",
+      "resources/workers"
     ],
     "icon": [
       "icons/32x32.png",

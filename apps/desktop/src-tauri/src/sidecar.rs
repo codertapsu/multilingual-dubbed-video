@@ -44,7 +44,7 @@
 //!   production sidecar children.
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
 use tauri::{AppHandle, Manager};
@@ -224,7 +224,7 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
     const LOOPBACK: &str = "127.0.0.1";
 
     // --- STT worker (5101) -------------------------------------------------
-    spawn_one(
+    spawn_worker(
         app,
         "vd-stt-worker",
         &[
@@ -238,7 +238,7 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
     );
 
     // --- Translation worker (5102) ----------------------------------------
-    spawn_one(
+    spawn_worker(
         app,
         "vd-translation-worker",
         &[
@@ -267,7 +267,7 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
         } else {
             log_info("bundled 'vd-piper' not found; the TTS worker will use system/fallback voices only.");
         }
-        spawn_one(app, "vd-tts-worker", &env);
+        spawn_worker(app, "vd-tts-worker", &env);
     }
 
     // --- Orchestrator (5100) ----------------------------------------------
@@ -398,6 +398,67 @@ fn spawn_one(app: &AppHandle, name: &str, env: &[(&str, String)]) {
             "failed to launch sidecar '{name}': {e} (the UI will show it as unavailable)."
         )),
     }
+}
+
+/// Launch a ONE-DIR Python worker (stt/translation/tts) from its bundled resource
+/// tree at `resources/workers/<name>/<name>[.exe]`.
+///
+/// One-dir workers can't be Tauri `externalBin` (those are single files), so they
+/// ship as a resource folder and we launch the exe directly via std `Command`.
+/// Launching by its real path lets the PyInstaller bootloader find its sibling
+/// `_internal/` dir — and avoids the per-launch one-file extraction (~25s for the
+/// three workers together) that prompted this. Mirrors `spawn_one`'s env
+/// (UTF-8 stdio, OS trust store) + the per-sidecar env, and tracks the child for
+/// shutdown. The `env` is the same `(key, value)` list `spawn_one` takes.
+fn spawn_worker(app: &AppHandle, name: &str, env: &[(&str, String)]) {
+    let exe = match resolve_worker_exe(app, name) {
+        Some(p) => p,
+        None => {
+            log_info(&format!(
+                "one-dir worker '{name}' not found under resources/workers (the UI will show it as unavailable)."
+            ));
+            return;
+        }
+    };
+
+    let mut cmd = Command::new(&exe);
+    // UTF-8 stdio + OS trust store, same as spawn_one gives the shell sidecars.
+    cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
+    if let Some(ca) = system_ca_bundle() {
+        cmd.env("SSL_CERT_FILE", ca).env("REQUESTS_CA_BUNDLE", ca);
+    }
+    for (key, value) in env {
+        cmd.env(*key, value);
+    }
+    // No console window / its own process group (Windows: CREATE_NO_WINDOW |
+    // CREATE_NEW_PROCESS_GROUP; unix: setpgid) so we can kill the tree on exit.
+    // Null stdio: we don't surface worker logs in the webview, and a valid (null)
+    // handle keeps the windowed build's sys.stdout/stderr non-None.
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    configure_process_group(&mut cmd);
+
+    match cmd.spawn() {
+        Ok(child) => {
+            app.state::<SidecarManager>().track(child);
+            log_info(&format!("launched one-dir worker '{name}'."));
+        }
+        Err(e) => log_info(&format!(
+            "failed to launch one-dir worker '{name}': {e} (the UI will show it as unavailable)."
+        )),
+    }
+}
+
+/// Resolve the launchable executable of a bundled one-dir worker, trying the
+/// layouts Tauri may use for a declared `resources/workers` resource.
+fn resolve_worker_exe(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    let res = app.path().resource_dir().ok()?;
+    let exe_name = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
+    [
+        res.join("workers").join(name).join(&exe_name),
+        res.join("resources").join("workers").join(name).join(&exe_name),
+    ]
+    .into_iter()
+    .find(|p| p.is_file())
 }
 
 /// Resolve the bundled `ffmpeg`/`ffprobe` sidecar paths to hand to the
@@ -612,8 +673,11 @@ fn configure_process_group(cmd: &mut Command) {
 #[cfg(windows)]
 fn configure_process_group(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
+    // New process group so we can taskkill /T the whole tree on exit; CREATE_NO_WINDOW
+    // so a one-dir worker (or the dev launcher) never flashes a console window.
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
 }
 
 /// Terminate the process group led by `pid`.

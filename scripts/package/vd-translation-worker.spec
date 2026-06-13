@@ -83,7 +83,11 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[RT_HOOK],
-    excludes=["tkinter", "matplotlib", "pytest"],
+    # spacy is optional in argostranslate.sbd (try/except) and unused by the
+    # default sentencizer — verified an en->vi translation works without it.
+    # torch/onnxruntime, by contrast, are hard-required (stanza/minisbd), so they
+    # stay. Dropping spacy shaves ~24 MB.
+    excludes=["tkinter", "matplotlib", "pytest", "spacy"],
     cipher=block_cipher,
     noarchive=False,
 )
@@ -93,9 +97,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="vd-translation-worker",
     debug=False,
     bootloader_ignore_signals=False,
@@ -106,4 +109,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="vd-translation-worker",
 )

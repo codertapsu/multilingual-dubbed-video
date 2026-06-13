@@ -62,6 +62,14 @@ if [[ "${SKIP_WORKERS:-0}" != "1" ]]; then
   bash "${SCRIPT_DIR}/build-workers.sh"
 fi
 
+# `resources/workers` is a DECLARED Tauri resource (the one-dir stt/translation/tts
+# trees land here). It MUST exist at `tauri build` time even if SKIP_WORKERS was set,
+# or the bundle step aborts on the missing declared resource. Guarantee it.
+WORKERS_RES="${REPO_ROOT}/apps/desktop/src-tauri/resources/workers"
+mkdir -p "${WORKERS_RES}"
+[[ -n "$(ls -A "${WORKERS_RES}" 2>/dev/null)" ]] || \
+  echo "One-dir Python worker trees (vd-stt/translation/tts-worker) are staged here at build time." > "${WORKERS_RES}/README.txt"
+
 if [[ "${SKIP_FFMPEG:-0}" != "1" ]]; then
   echo ""; echo "### FFmpeg / ffprobe #######################################"
   bash "${SCRIPT_DIR}/fetch-ffmpeg.sh"
@@ -104,14 +112,21 @@ echo ""
 echo "############################################################"
 echo "# Done. Sidecars in ${BIN_DIR}:"
 echo "############################################################"
-ls -1 "${BIN_DIR}" | grep -E "^(videodubber-orchestrator|vd-(stt|translation|tts)-worker|vd-piper|vd-uv|ffmpeg|ffprobe)-" || {
+ls -1 "${BIN_DIR}" | grep -E "^(videodubber-orchestrator|vd-piper|vd-uv|ffmpeg|ffprobe)-" || {
   echo "WARNING: no sidecars matched the expected naming. Check the logs above." >&2
 }
+echo "# One-dir worker trees in resources/workers:"
+ls -1d "${REPO_ROOT}/apps/desktop/src-tauri/resources/workers"/*/ 2>/dev/null || echo "  (none)"
 
-# Sanity: warn if any expected base is missing for this triple.
+# Sanity: warn if any expected base is missing for this triple. The 3 server
+# workers are one-dir trees under resources/workers/<base>/ (not single files).
 EXE_SUFFIX=""
 case "${TRIPLE}" in *windows*) EXE_SUFFIX=".exe" ;; esac
-for base in videodubber-orchestrator vd-stt-worker vd-translation-worker vd-tts-worker vd-piper vd-uv ffmpeg ffprobe; do
+for base in videodubber-orchestrator vd-piper vd-uv ffmpeg ffprobe; do
   f="${BIN_DIR}/${base}-${TRIPLE}${EXE_SUFFIX}"
   [[ -f "${f}" ]] || echo "NOTE: missing ${f} (skipped or failed?)."
+done
+for base in vd-stt-worker vd-translation-worker vd-tts-worker; do
+  d="${REPO_ROOT}/apps/desktop/src-tauri/resources/workers/${base}"
+  [[ -x "${d}/${base}${EXE_SUFFIX}" ]] || echo "NOTE: missing one-dir worker ${d}/${base}${EXE_SUFFIX} (skipped or failed?)."
 done

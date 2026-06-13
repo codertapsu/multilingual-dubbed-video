@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for the main VideoDubber window. Grants: core window/event/path access; the dialog + opener plugins; the self-updater (`updater:default` for check/download/install + `process:default`/`process:allow-restart` to relaunch after install); and `shell:allow-execute`/`shell:allow-spawn` SCOPED to the bundled externalBin sidecars (orchestrator + 3 workers) so src/sidecar.rs can launch them in production. Each shell scope entry sets `sidecar:true` with a `name` matching the bundle.externalBin base name (Tauri resolves the per-target-triple binary) and `args:false` because every sidecar is configured purely via environment variables — never CLI args.",
+  "description": "Default capability set for the main VideoDubber window. Grants: core window/event/path access; the dialog + opener plugins; the self-updater (`updater:default` for check/download/install + `process:default`/`process:allow-restart` to relaunch after install); and `shell:allow-execute`/`shell:allow-spawn` SCOPED to the bundled orchestrator externalBin sidecar so src/sidecar.rs can launch it in production. The 3 Python workers are now ONE-DIR resource trees launched directly by Rust (std::process::Command, see spawn_worker) — not via the shell plugin — so they need no shell scope here. The scope entry sets `sidecar:true` with a `name` matching the bundle.externalBin base name and `args:false` because the orchestrator is configured purely via environment variables — never CLI args.",
   "windows": [
     "main"
   ],
@@ -26,21 +26,6 @@
           "name": "binaries/videodubber-orchestrator",
           "sidecar": true,
           "args": false
-        },
-        {
-          "name": "binaries/vd-stt-worker",
-          "sidecar": true,
-          "args": false
-        },
-        {
-          "name": "binaries/vd-translation-worker",
-          "sidecar": true,
-          "args": false
-        },
-        {
-          "name": "binaries/vd-tts-worker",
-          "sidecar": true,
-          "args": false
         }
       ]
     },
@@ -49,21 +34,6 @@
       "allow": [
         {
           "name": "binaries/videodubber-orchestrator",
-          "sidecar": true,
-          "args": false
-        },
-        {
-          "name": "binaries/vd-stt-worker",
-          "sidecar": true,
-          "args": false
-        },
-        {
-          "name": "binaries/vd-translation-worker",
-          "sidecar": true,
-          "args": false
-        },
-        {
-          "name": "binaries/vd-tts-worker",
           "sidecar": true,
           "args": false
         }

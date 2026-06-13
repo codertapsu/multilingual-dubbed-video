@@ -614,9 +614,13 @@ fn terminate_group(pid: u32) {
 
 #[cfg(windows)]
 fn terminate_group(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW: don't flash a console window for the kill on app quit.
     // /T kills the whole process tree; /F forces it.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let _ = Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
         .status();
 }
 
@@ -641,6 +645,10 @@ fn sweep_service_ports() {
 
 #[cfg(windows)]
 fn sweep_service_ports() {
+    use std::os::windows::process::CommandExt;
+    // CREATE_NO_WINDOW: this runs on app quit; without it each port sweep flashes
+    // a PowerShell console window (the "CMD windows flashing when closing" report).
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     for port in SERVICE_PORTS {
         let _ = Command::new("powershell")
             .args([
@@ -651,6 +659,7 @@ fn sweep_service_ports() {
                      ForEach-Object {{ taskkill /PID $_.OwningProcess /T /F }}"
                 ),
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .status();
     }
 }

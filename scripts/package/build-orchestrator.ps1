@@ -52,10 +52,15 @@ Push-Location $RepoRoot
 try { & pnpm --filter '@videodubber/node-orchestrator...' build } finally { Pop-Location }
 
 Write-Host "==> [2/4] esbuild bundle -> orchestrator.cjs"
+# Bundle orchestrator-entry.mjs (NOT dist/server.js): server.js only auto-starts
+# behind an isMain() guard (`fileURLToPath(import.meta.url) === process.argv[1]`)
+# that never fires inside a Node SEA binary, so bundling it directly yields an exe
+# that exits without ever binding :5100. The entry shim calls startServer()
+# unconditionally — must stay in lockstep with build-orchestrator.sh.
 $Bundle = Join-Path $SeaDir "orchestrator.cjs"
 Push-Location $RepoRoot
 try {
-  & npx --yes esbuild (Join-Path $OrchDir "dist\server.js") `
+  & npx --yes esbuild (Join-Path $ScriptDir "orchestrator-entry.mjs") `
     --bundle --platform=node --format=cjs --target=node20 `
     --outfile=$Bundle `
     --banner:js="// VideoDubber orchestrator - bundled for Node SEA. Do not edit."

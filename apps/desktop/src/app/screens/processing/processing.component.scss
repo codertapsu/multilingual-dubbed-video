@@ -106,3 +106,10 @@
 .log-empty {
   color: #94a3b8;
 }
+
+/* Live service-health warning (a bundled service dropped mid-run). */
+.banner-warning {
+  color: var(--vd-warning);
+  background: var(--vd-warning-bg);
+  border: 1px solid var(--vd-warning);
+}

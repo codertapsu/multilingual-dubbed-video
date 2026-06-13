@@ -24,6 +24,16 @@
 
   <vd-error-banner [error]="displayError()" (dismiss)="dismissError()" />
 
+  <!-- Live service-health: warn if a required bundled service drops mid-run. -->
+  @if (degradedServices().length > 0) {
+    <div class="card banner-warning" role="alert">
+      ⚠ {{ degradedServices().join(', ') }}
+      {{ degradedServices().length === 1 ? 'service is' : 'services are' }}
+      currently unavailable. The run may stall on the affected step until the
+      service is back — services start a few seconds after launch.
+    </div>
+  }
+
   <!-- Overall progress -->
   <div class="card stack">
     <div class="row row-between">

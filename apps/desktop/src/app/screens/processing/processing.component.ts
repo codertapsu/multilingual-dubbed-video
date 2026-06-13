@@ -18,12 +18,16 @@ import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { StatusBadgeComponent } from '../../shared/status-badge/status-badge.component';
 import { PIPELINE_STEP_LABELS } from '../../core/util/format';
+import type { WorkersHealth } from '../../core/models/view-models';
 import type {
   AppError,
   PipelineState,
   PipelineStepId,
   PipelineStepState,
 } from '../../core/models';
+
+/** How often to re-probe the bundled services' health while on this screen. */
+const WORKERS_HEALTH_POLL_MS = 5000;
 
 /**
  * ProcessingComponent (route "project/:id/processing").
@@ -54,6 +58,23 @@ export class ProcessingComponent implements OnInit, OnDestroy {
 
   protected readonly actionError = signal<AppError | null>(null);
   protected readonly cancelling = signal(false);
+
+  /** Live health of the bundled services (polled while on this screen). */
+  protected readonly workersHealth = signal<WorkersHealth | null>(null);
+  private workersHealthTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Names of services that are currently unavailable (for the live indicator). */
+  protected readonly degradedServices = computed<string[]>(() => {
+    const h = this.workersHealth();
+    if (!h) return [];
+    const entries: [string, boolean][] = [
+      ['Speech-to-text', h.stt.available],
+      ['Translation', h.translation.available],
+      ['Text-to-speech', h.tts.available],
+      ['FFmpeg', h.ffmpeg.available],
+    ];
+    return entries.filter(([, ok]) => !ok).map(([name]) => name);
+  });
 
   /**
    * Effective pipeline state: prefer the live SSE state; fall back to the
@@ -104,10 +125,23 @@ export class ProcessingComponent implements OnInit, OnDestroy {
     // then open the live event stream.
     void this.store.loadProject(projectId);
     this.events.connect(projectId);
+    // Live service-health: probe once now, then poll. Surfaces a service that
+    // drops mid-run (the run-gate already ensured they were up at start).
+    void this.refreshWorkersHealth();
+    this.workersHealthTimer = setInterval(() => void this.refreshWorkersHealth(), WORKERS_HEALTH_POLL_MS);
   }
 
   ngOnDestroy(): void {
     this.events.disconnect();
+    if (this.workersHealthTimer) clearInterval(this.workersHealthTimer);
+  }
+
+  private async refreshWorkersHealth(): Promise<void> {
+    try {
+      this.workersHealth.set(await this.ipc.getWorkersHealth());
+    } catch {
+      // Non-fatal: leave the last known health; the pipeline errors surface real failures.
+    }
   }
 
   protected async cancel(): Promise<void> {

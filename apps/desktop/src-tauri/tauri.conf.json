@@ -50,7 +50,8 @@
       "binaries/ffprobe"
     ],
     "resources": [
-      "resources/engine-src"
+      "resources/engine-src",
+      "resources/python"
     ],
     "icon": [
       "icons/32x32.png",

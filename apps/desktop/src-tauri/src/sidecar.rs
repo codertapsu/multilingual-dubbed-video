@@ -316,6 +316,17 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
         } else {
             log_info("bundled engine-src not found; the neural-TTS pack will fall back to the repo path (dev only).");
         }
+        // Point uv at the BUNDLED standalone CPython so engine-pack installs don't
+        // download an interpreter from GitHub at runtime (which fails on flaky
+        // international links). Staged into resources/python by fetch-python.*.
+        // only-managed + downloads=never => uv uses ONLY the bundled runtime.
+        if let Some(py_dir) = resolve_bundled_python_dir(app) {
+            env.push(("UV_PYTHON_INSTALL_DIR", py_dir));
+            env.push(("UV_PYTHON_DOWNLOADS", "never".to_string()));
+            env.push(("UV_PYTHON_PREFERENCE", "only-managed".to_string()));
+        } else {
+            log_info("bundled Python runtime not found; uv will download CPython on first engine-pack install (needs network).");
+        }
         spawn_one(app, "videodubber-orchestrator", &env);
     }
 
@@ -422,6 +433,31 @@ fn resolve_engine_src_dir(app: &AppHandle) -> Option<String> {
         .into_iter()
         .find(|c| c.join("vd_tts_engine").is_dir())
         .map(|c| c.to_string_lossy().into_owned())
+}
+
+/// Resolve the bundled standalone-CPython install dir — a `UV_PYTHON_INSTALL_DIR`
+/// uv can use offline — staged by scripts/package/fetch-python.* into
+/// `resources/python`. Returns the dir that contains a `cpython-*` runtime, or
+/// `None` when it isn't bundled (dev build, or the optional pre-install was
+/// skipped/failed — the runtime then has uv download CPython on first use).
+fn resolve_bundled_python_dir(app: &AppHandle) -> Option<String> {
+    let res = app.path().resource_dir().ok()?;
+    let candidates = [res.join("python"), res.join("resources").join("python")];
+    candidates
+        .into_iter()
+        .find(|c| dir_has_cpython(c))
+        .map(|c| c.to_string_lossy().into_owned())
+}
+
+/// True if `dir` directly contains a `cpython-*` entry (the python-build-standalone
+/// runtime uv installs), i.e. it's usable as a UV_PYTHON_INSTALL_DIR.
+fn dir_has_cpython(dir: &Path) -> bool {
+    std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with("cpython-"))
+        })
+        .unwrap_or(false)
 }
 
 /// Resolve the app config dir per the SHARED CONTRACT: `VIDEODUBBER_CONFIG_DIR`

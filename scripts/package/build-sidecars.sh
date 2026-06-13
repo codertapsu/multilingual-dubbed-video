@@ -74,6 +74,24 @@ if [[ "${SKIP_UV:-0}" != "1" ]]; then
   bash "${SCRIPT_DIR}/fetch-uv.sh" || echo "WARNING: uv fetch failed; Python engine packs (neural TTS / separation / alignment) will be unavailable until uv is bundled or installed." >&2
 fi
 
+if [[ "${SKIP_PYTHON:-0}" != "1" ]]; then
+  echo ""; echo "### Bundled CPython for uv (offline engine-pack installs) ###"
+  # Non-fatal: if this fails, uv falls back to downloading CPython on first pack
+  # install (needs network). Bundling it lets pack installs work on flaky links.
+  bash "${SCRIPT_DIR}/fetch-python.sh" || echo "WARNING: python pre-install failed; engine packs will have uv download CPython on first install (needs a reliable connection to GitHub)." >&2
+fi
+
+# `resources/python` is a DECLARED Tauri resource (tauri.conf.json), so it MUST
+# exist at `tauri build` time even if the optional pre-install above was skipped
+# or failed — otherwise the bundle step aborts. Guarantee it (a placeholder keeps
+# it non-empty; the runtime treats "no cpython-* inside" as "not bundled" and has
+# uv download CPython on first use).
+PY_RES="${REPO_ROOT}/apps/desktop/src-tauri/resources/python"
+mkdir -p "${PY_RES}"
+if ! find "${PY_RES}" -maxdepth 1 -name 'cpython-*' | grep -q .; then
+  echo "Bundled CPython for uv is staged here by fetch-python at build time. If absent, the app downloads CPython on first engine-pack install." > "${PY_RES}/README.txt"
+fi
+
 if [[ "${SKIP_ENGINE_SRC:-0}" != "1" ]]; then
   echo ""; echo "### Engine-pack worker source (vd_tts_engine) ##############"
   # Cheap (copies a few Python files). Bundled as an app resource so the packaged

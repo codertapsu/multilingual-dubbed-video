@@ -23,6 +23,7 @@ param(
   [switch]$SkipOrchestrator,
   [switch]$SkipFfmpeg,
   [switch]$SkipUv,
+  [switch]$SkipPython,
   [switch]$SkipEngineSrc
 )
 
@@ -83,6 +84,24 @@ if (-not $SkipUv) {
   # Non-fatal: a missing uv only disables the optional Python engine packs.
   try { & (Join-Path $ScriptDir "fetch-uv.ps1") -TargetTriple $Triple }
   catch { Write-Warning "uv fetch failed; Python engine packs will be unavailable until uv is bundled or installed. $_" }
+}
+
+if (-not $SkipPython) {
+  Write-Host "`n### Bundled CPython for uv (offline engine-pack installs) ###"
+  # Non-fatal: if this fails, uv falls back to downloading CPython on first pack
+  # install (needs network). Bundling it lets pack installs work on flaky links.
+  try { & (Join-Path $ScriptDir "fetch-python.ps1") -TargetTriple $Triple }
+  catch { Write-Warning "python pre-install failed; engine packs will have uv download CPython on first install (needs a reliable connection to GitHub). $_" }
+}
+
+# `resources/python` is a DECLARED Tauri resource (tauri.conf.json), so it MUST
+# exist at `tauri build` time even if the optional pre-install above was skipped
+# or failed -- otherwise the bundle step aborts. Guarantee it (a placeholder keeps
+# it non-empty; the runtime treats "no cpython-* inside" as "not bundled").
+$PyRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\python"
+New-Item -ItemType Directory -Force -Path $PyRes | Out-Null
+if (-not (Get-ChildItem -Path $PyRes -Filter "cpython-*" -ErrorAction SilentlyContinue)) {
+  Set-Content -Path (Join-Path $PyRes "README.txt") -Value "Bundled CPython for uv is staged here by fetch-python at build time. If absent, the app downloads CPython on first engine-pack install."
 }
 
 if (-not $SkipEngineSrc) {

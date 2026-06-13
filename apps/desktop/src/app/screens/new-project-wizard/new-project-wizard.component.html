@@ -202,15 +202,17 @@
             name="forcedAlignment"
             [ngModel]="settings().forcedAlignment ?? false"
             (ngModelChange)="toggleForcedAlignment($event)"
-            [disabled]="!whisperxReady()"
           />
           <span class="radio-body">
             <span class="radio-title">Word-accurate timing (forced alignment)</span>
             <span class="hint"
               >Tightens subtitle/dub sync to ~50 ms using the “Forced alignment +
               diarization” engine.
-              @if (!whisperxReady()) {
-                <strong>Install the “Forced alignment + diarization” engine in Settings → Engines to enable this.</strong>
+              @if (whisperxReady()) {
+                Active.
+              } @else {
+                Not installed — falls back to the default timestamps (install the
+                engine in Settings → Engines for word-accurate timing).
               }</span
             >
           </span>

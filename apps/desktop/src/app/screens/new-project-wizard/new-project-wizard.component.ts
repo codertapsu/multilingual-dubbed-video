@@ -294,8 +294,10 @@ export class NewProjectWizardComponent implements OnInit {
         next.originalAudioMode = 'keep';
         next.includeOriginalBackgroundAudio = true;
       }
+      // Forced alignment degrades gracefully to the default timestamps without the
+      // WhisperX pack, so it stays enabled. Diarization has no fallback (it'd be a
+      // silent no-op), so it's forced off until the pack is installed.
       if (!this.whisperxReady()) {
-        next.forcedAlignment = false;
         next.diarize = false;
       }
       return next;

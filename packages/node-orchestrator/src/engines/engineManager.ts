@@ -183,7 +183,13 @@ export class EngineManager {
 
     const exe = await this.resolveExecutable(rec.path, spec);
     const port = await (this.deps.allocatePort ?? allocateEphemeralPort)();
-    const args = spec.args({ exe, port, packDir: rec.path });
+    // For uv-env packs the executable is the venv's `python`; it must be invoked
+    // as `python -m <module> …`. The spec's `args` carry only the server flags
+    // (e.g. --port), so prepend `-m <module>` here — without it the worker is
+    // launched as `python --port <n>`, which Python rejects ("unknown option")
+    // and exits instantly, surfacing as "engine did not become healthy in time".
+    const specArgs = spec.args({ exe, port, packDir: rec.path });
+    const args = spec.pythonModule ? ['-m', spec.pythonModule, ...specArgs] : specArgs;
     // Force UTF-8 stdio for the Python worker: on Windows the default console
     // encoding (cp1252) raises UnicodeEncodeError when the worker or its deps
     // print a non-Latin-1 string (e.g. a Vietnamese voice name), killing the
@@ -202,6 +208,21 @@ export class EngineManager {
     const spawnImpl = this.deps.spawnImpl ?? defaultSpawn;
     const child = spawnImpl(exe, args, env);
 
+    // Capture the worker's stderr + exit so a startup crash (missing dep, a native
+    // lib that won't load, a bad port bind, …) is SURFACED in the timeout error
+    // instead of the opaque "did not become healthy". Bounded so we never buffer
+    // unboundedly. The exit handler also clears the running entry.
+    let stderrTail = '';
+    child.stderr?.on('data', (d: Buffer) => {
+      stderrTail = (stderrTail + d.toString()).slice(-4000);
+    });
+    let exitNote = '';
+    child.on?.('exit', (code: number | null, signal: string | null) => {
+      if (code != null && code !== 0) exitNote = ` (process exited with code ${code})`;
+      else if (signal) exitNote = ` (process killed by ${signal})`;
+      this.running.delete(packId);
+    });
+
     const baseUrl = `http://127.0.0.1:${port}`;
     const stop = async (): Promise<void> => {
       try {
@@ -211,7 +232,6 @@ export class EngineManager {
       }
       this.running.delete(packId);
     };
-    child.on?.('exit', () => this.running.delete(packId));
 
     // Wait for health (the engine may take a moment to load its model).
     const probe = this.deps.healthProbe ?? httpHealthProbe;
@@ -219,7 +239,17 @@ export class EngineManager {
     const ready = await waitFor(() => probe(healthUrl), this.deps.startTimeoutMs ?? 60_000);
     if (!ready) {
       await stop();
-      throw new AppErrorException('ENGINE_UNAVAILABLE', `Engine "${packId}" did not become healthy in time.`);
+      const tail = stderrTail.trim();
+      const detail = tail ? ` Last engine output:\n${tail.slice(-1200)}` : exitNote;
+      this.deps.logger?.warn(`Engine "${packId}" failed to become healthy.${detail}`);
+      throw new AppErrorException(
+        'ENGINE_UNAVAILABLE',
+        `Engine "${packId}" did not become healthy in time.${detail}`,
+        {
+          remediation:
+            'The local engine process failed to start or respond. Reinstall the engine pack in Settings → Engines, or switch this phase to a local CPU provider (e.g. Piper for TTS).',
+        },
+      );
     }
 
     const instance: RunningEngine = { packId, baseUrl, port, stop };

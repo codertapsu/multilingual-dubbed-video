@@ -202,6 +202,74 @@ describe('EngineManager lifecycle policy', () => {
     await manager.stopAll();
     await rm(dir, { recursive: true, force: true });
   });
+
+  it('launches a uv-env pack as `python -m <module>` with the server flags', async () => {
+    // Regression: the launch spec carries `pythonModule`, but the argv must be
+    // `python -m vd_tts_engine --port <n>`. A prior version spawned the venv
+    // python with only `['--port', n]`, so Python rejected `--port` as an unknown
+    // option and exited instantly -> "engine did not become healthy in time".
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-mgr-py-'));
+    const store = new EnginePackStore(dir);
+    const p = store.packDir('tts-neural');
+    const pyRel =
+      process.platform === 'win32'
+        ? path.join('venv', 'Scripts', 'python.exe')
+        : path.join('venv', 'bin', 'python');
+    const pyAbs = path.join(p, pyRel);
+    await mkdir(path.dirname(pyAbs), { recursive: true });
+    await writeFile(pyAbs, '');
+    await store.add({ id: 'tts-neural', path: p, installedAt: '2026-01-01T00:00:00Z' });
+
+    let capturedArgs: string[] = [];
+    const manager = new EngineManager({
+      store,
+      allocatePort: async () => 51234,
+      healthProbe: async () => true,
+      spawnImpl: (_cmd, args) => {
+        capturedArgs = args;
+        return { on: () => undefined, stderr: { on: () => undefined }, kill: () => true } as never;
+      },
+      startTimeoutMs: 1000,
+    });
+
+    await manager.ensureRunning('tts-neural');
+    expect(capturedArgs).toEqual(['-m', 'vd_tts_engine', '--port', '51234']);
+
+    await manager.stopAll();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('surfaces the worker stderr when an engine never becomes healthy', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-mgr-crash-'));
+    const store = new EnginePackStore(dir);
+    const p = store.packDir('tts-neural');
+    const pyRel =
+      process.platform === 'win32'
+        ? path.join('venv', 'Scripts', 'python.exe')
+        : path.join('venv', 'bin', 'python');
+    const pyAbs = path.join(p, pyRel);
+    await mkdir(path.dirname(pyAbs), { recursive: true });
+    await writeFile(pyAbs, '');
+    await store.add({ id: 'tts-neural', path: p, installedAt: '2026-01-01T00:00:00Z' });
+
+    const manager = new EngineManager({
+      store,
+      allocatePort: async () => 51235,
+      healthProbe: async () => false, // never healthy
+      spawnImpl: () =>
+        ({
+          on: () => undefined,
+          // Emit a crash trace synchronously; it must reach the timeout error.
+          stderr: { on: (_e: string, cb: (d: Buffer) => void) => cb(Buffer.from('ModuleNotFoundError: No module named "fastapi"\n')) },
+          kill: () => true,
+        }) as never,
+      startTimeoutMs: 50,
+    });
+
+    await expect(manager.ensureRunning('tts-neural')).rejects.toThrow(/ModuleNotFoundError/);
+
+    await rm(dir, { recursive: true, force: true });
+  });
 });
 
 describe('uv resolution (bundled vs PATH)', () => {

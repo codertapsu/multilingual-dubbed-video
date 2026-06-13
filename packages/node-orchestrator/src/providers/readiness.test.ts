@@ -162,8 +162,36 @@ describe('checkProviderReadiness', () => {
       registry: r,
       credentials: fakeCreds([]),
       enginePackStore: installedPacks,
+      packUsable: async () => true, // venv present + runnable
     });
     expect(results.find((x) => x.phase === 'tts')!.ready).toBe(true);
+  });
+
+  it('reports an installed-but-broken pack (missing venv) as engine-pack-missing', async () => {
+    const installedPacks = { isInstalled: async () => true } as unknown as EnginePackStore;
+    const r = new ProviderRegistry();
+    r.registerStt(new FakeSttProvider([]));
+    r.registerTranslation(fakeTranslation({ id: 'argos' }));
+    r.registerTts({
+      id: 'neural-tts',
+      displayName: 'VieNeu Neural TTS',
+      isLocal: true,
+      requiresEnginePack: 'neural-tts',
+    } as unknown as Parameters<ProviderRegistry['registerTts']>[0]);
+    const project = {
+      settings: { sttProviderId: 'faster-whisper', translationProviderId: 'argos', ttsProviderId: 'neural-tts' },
+    } as unknown as Project;
+
+    const results = await checkProviderReadiness(project, {
+      registry: r,
+      credentials: fakeCreds([]),
+      enginePackStore: installedPacks,
+      packUsable: async () => false, // recorded but venv missing/broken
+    });
+    const tts = results.find((x) => x.phase === 'tts')!;
+    expect(tts.ready).toBe(false);
+    expect(tts.status).toBe('engine-pack-missing');
+    expect(tts.message).toContain('incomplete');
   });
 
   it('only checks phases at-or-after the retry step', async () => {

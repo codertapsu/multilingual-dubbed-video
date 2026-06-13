@@ -26,7 +26,7 @@ import {
 } from '@videodubber/shared';
 import type { CredentialsStore } from '../credentials/credentialsStore.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
-import { pickInstalledPack } from '../engines/packSelection.js';
+import { isPackUsable, pickInstalledPack } from '../engines/packSelection.js';
 import { OLLAMA_MODEL, OLLAMA_URL, type ProviderRegistry } from './registry.js';
 
 /** Why a provider is (not) ready. `ready` means usable right now. */
@@ -86,6 +86,12 @@ export interface ReadinessDeps {
    * usable. Omitted (e.g. in unit tests) => local providers are assumed ready.
    */
   probeWorker?: (phase: ProviderPhase) => Promise<boolean>;
+  /**
+   * Verify a recorded engine pack is RUNNABLE (venv/binary present), not just
+   * recorded. Defaults to the real {@link isPackUsable}; unit tests inject a
+   * simple boolean so they don't need a real venv on disk.
+   */
+  packUsable?: (packId: string) => Promise<boolean>;
 }
 
 /** Just the provider fields readiness cares about (instances + descriptors satisfy this). */
@@ -183,13 +189,25 @@ export async function describeProviderReadiness(
 
   if (provider.requiresEnginePack) {
     const pack = await pickInstalledPack(deps.enginePackStore, provider.requiresEnginePack);
-    if (pack) return ready;
+    // "Installed" isn't enough — the pack must be RUNNABLE (its venv/binary
+    // present). A recorded-but-broken pack (e.g. a venv whose bundled-Python
+    // target moved on reinstall, or a half-finished install) is reported missing
+    // so the UI offers re-install and the run gate refuses, instead of the run
+    // dying mid-step with "Python venv missing".
+    const usable = pack
+      ? await (deps.packUsable ?? ((id: string) => isPackUsable(deps.enginePackStore, id)))(pack)
+      : false;
+    if (pack && usable) return ready;
     return {
       ...base,
       status: 'engine-pack-missing',
       ready: false,
-      message: `${name} needs the "${provider.requiresEnginePack}" engine pack.`,
-      remediation: 'Install it in Settings → Engines, or pick a different provider for this phase.',
+      message: pack
+        ? `${name}'s "${provider.requiresEnginePack}" engine pack is installed but incomplete.`
+        : `${name} needs the "${provider.requiresEnginePack}" engine pack.`,
+      remediation: pack
+        ? 'Reinstall it in Settings → Engines (the previous install was interrupted or its files moved).'
+        : 'Install it in Settings → Engines, or pick a different provider for this phase.',
       action: { kind: 'install-pack', ref: provider.requiresEnginePack },
     };
   }

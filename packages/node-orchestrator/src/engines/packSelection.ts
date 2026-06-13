@@ -6,9 +6,46 @@
  * (cuda > metal > vulkan > coreml > mps > cpu) among the packs that both run on
  * this platform AND are installed.
  */
+import fsp from 'node:fs/promises';
+import path from 'node:path';
 import { AppErrorException, type EngineAccel, type EnginePackInfo } from '@videodubber/shared';
-import { availablePacks } from './enginePackCatalog.js';
+import { availablePacks, findPack } from './enginePackCatalog.js';
 import type { EnginePackStore } from './enginePackStore.js';
+
+/**
+ * Is a recorded pack actually RUNNABLE — not merely present on disk?
+ *
+ * `EnginePackStore.isInstalled` only checks the pack DIRECTORY still exists, so a
+ * pack whose venv is missing/broken (e.g. its venv `python` symlink points at a
+ * bundled CPython that moved when the app was reinstalled, or a half-finished
+ * install) reads as "installed", is offered as available, then fails at run with
+ * "Python venv missing". This verifies the real launch artifact:
+ *   - uv-env (python-uv) packs → the venv's python executable resolves (stat
+ *     follows the symlink, so a dangling target correctly fails);
+ *   - binary packs → the extracted directory is enough.
+ */
+export async function isPackUsable(store: EnginePackStore, packId: string): Promise<boolean> {
+  const rec = await store.get(packId);
+  if (!rec) return false;
+  const dirOk = await fsp
+    .stat(rec.path)
+    .then((s) => s.isDirectory())
+    .catch(() => false);
+  if (!dirOk) return false;
+
+  const pack = findPack(packId);
+  const isUvEnv = pack?.artifacts.some((a) => a.url.startsWith('uv-env://')) ?? false;
+  if (!isUvEnv) return true;
+
+  const venvPython =
+    process.platform === 'win32'
+      ? path.join(rec.path, 'venv', 'Scripts', 'python.exe')
+      : path.join(rec.path, 'venv', 'bin', 'python');
+  return fsp
+    .stat(venvPython)
+    .then((s) => s.isFile())
+    .catch(() => false);
+}
 
 /** Higher = preferred. */
 const ACCEL_RANK: Record<EngineAccel, number> = {

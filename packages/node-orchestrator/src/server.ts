@@ -35,6 +35,7 @@ import { EngineInstaller } from './engines/engineInstaller.js';
 import { EngineManager } from './engines/engineManager.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
+import { isPackUsable } from './engines/packSelection.js';
 import { recommendEnginePacks } from './engines/engineRecommendation.js';
 import { resolveUvPath } from './engines/uv.js';
 import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
@@ -201,7 +202,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           : config.ttsWorkerUrl;
     return (await probeWorkerHealth(url, `${phase} worker`)).available;
   };
-  const readinessDeps = (): ReadinessDeps => ({ registry, credentials, enginePackStore, probeWorker });
+  const readinessDeps = (): ReadinessDeps => ({
+    registry,
+    credentials,
+    enginePackStore,
+    probeWorker,
+    packUsable: (id) => isPackUsable(enginePackStore, id),
+  });
 
   const orchestrator =
     options.orchestrator ??
@@ -537,7 +544,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   app.get('/engines', async (_req, reply) => {
     try {
-      return { available: availablePacks(), installed: await enginePackStore.list() };
+      // Report only USABLE packs as installed: one whose venv/binary is broken
+      // (e.g. a venv whose bundled-Python target moved on reinstall) drops out of
+      // "installed" so it reappears as installable — a re-install repairs it —
+      // instead of looking installed but failing at run with "venv missing".
+      const recorded = await enginePackStore.list();
+      const usable = await Promise.all(recorded.map((r) => isPackUsable(enginePackStore, r.id)));
+      const installed = recorded.filter((_, i) => usable[i]);
+      return { available: availablePacks(), installed };
     } catch (err) {
       return sendError(reply, err);
     }

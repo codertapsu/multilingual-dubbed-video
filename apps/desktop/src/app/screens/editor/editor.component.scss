@@ -90,3 +90,22 @@
     display: none;
   }
 }
+
+/* ---- Final-video result card (preview + open folder) -------------------- */
+.result-card .label {
+  font-weight: 650;
+  color: var(--vd-text-muted);
+}
+
+.video-preview {
+  width: 100%;
+  max-height: 50vh;
+  background: #000;
+  border-radius: var(--vd-radius-sm);
+}
+
+.preview-note {
+  align-self: flex-start;
+  white-space: normal;
+  line-height: 1.4;
+}

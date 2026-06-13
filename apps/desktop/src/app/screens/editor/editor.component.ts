@@ -9,6 +9,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 
 import { splitSubtitleLines } from '@videodubber/shared';
 
@@ -17,7 +18,7 @@ import { IpcService } from '../../core/ipc/ipc.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { formatTimecode } from '../../core/util/format';
-import type { AppError, ProjectSettings } from '../../core/models';
+import type { AppError, Project, ProjectSettings } from '../../core/models';
 import type { PiperVoiceInfo } from '../../core/models/setup';
 import type { EditorSegmentVm, SegmentWithAlignment } from '../../core/models/view-models';
 
@@ -40,7 +41,7 @@ const MAX_SUBTITLE_LINES = 2;
   selector: 'vd-editor',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent],
+  imports: [FormsModule, RouterLink, ErrorBannerComponent],
   templateUrl: './editor.component.html',
   styleUrl: './editor.component.scss',
 })
@@ -81,6 +82,31 @@ export class EditorComponent implements OnInit {
     const id = this.projectSettings()?.ttsVoiceId;
     if (!id) return 'auto';
     return this.availableVoices().find((v) => v.id === id)?.label ?? id;
+  });
+
+  // -------- rendered result (preview + open folder) ----------------------------
+  /** The loaded project (for outputDir + the result preview). */
+  protected readonly project = signal<Project | null>(null);
+  /** True once the pipeline's render step has produced the final video. */
+  protected readonly rendered = signal(false);
+  protected readonly opening = signal(false);
+  protected readonly resultPreviewFailed = signal(false);
+
+  /** Absolute path of the rendered video (same convention as the export screen). */
+  protected readonly outputPath = computed<string | null>(() => {
+    const p = this.project();
+    return p ? `${p.outputDir}/output.mp4` : null;
+  });
+
+  /**
+   * Best-effort in-app preview URL for the final video, via the orchestrator's
+   * `/file?path=` route (browsers can't load `file://` from an http origin).
+   * Same approach as the export screen; falls back to "open folder" on error.
+   */
+  protected readonly resultPreviewUrl = computed<string | null>(() => {
+    const path = this.outputPath();
+    if (!path) return null;
+    return `${environment.orchestratorUrl}/file?path=${encodeURIComponent(path)}`;
   });
 
   /** Derived per-row view models with computed warnings. */
@@ -142,8 +168,13 @@ export class EditorComponent implements OnInit {
    */
   private async loadProjectAndVoices(): Promise<void> {
     try {
-      const { project } = await this.ipc.getProject(this.id());
+      const { project, pipeline } = await this.ipc.getProject(this.id());
+      this.project.set(project);
       this.projectSettings.set(project.settings);
+      // The result preview/open-folder only make sense once a final video exists,
+      // i.e. the render step finished (project may also be marked completed).
+      const renderDone = pipeline?.steps.some((s) => s.id === 'render' && s.status === 'completed');
+      this.rendered.set(renderDone === true || project.status === 'completed');
       if (project.settings.ttsProviderId === 'piper-local') {
         const [voices, status] = await Promise.all([
           this.ipc.setupListVoices(project.settings.targetLanguage),
@@ -284,6 +315,25 @@ export class EditorComponent implements OnInit {
 
   protected reload(): void {
     void this.load();
+  }
+
+  /** Open the project's output folder in the OS file manager. */
+  protected async openFolder(): Promise<void> {
+    const dir = this.project()?.outputDir;
+    if (!dir || this.opening()) return;
+    this.opening.set(true);
+    this.error.set(null);
+    try {
+      await this.ipc.openOutputFolder(dir);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.opening.set(false);
+    }
+  }
+
+  protected onResultPreviewError(): void {
+    this.resultPreviewFailed.set(true);
   }
 
   protected dismissError(): void {

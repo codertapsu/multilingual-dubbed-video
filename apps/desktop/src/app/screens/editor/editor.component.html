@@ -8,6 +8,11 @@
       </p>
     </div>
     <div class="row">
+      @if (rendered()) {
+        <button type="button" class="btn" (click)="openFolder()" [disabled]="opening()">
+          {{ opening() ? 'Opening…' : 'Open output folder' }}
+        </button>
+      }
       <button type="button" class="btn" (click)="reload()" [disabled]="loading()">
         Reload
       </button>
@@ -23,6 +28,38 @@
   </div>
 
   <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
+
+  <!-- Final video: preview the rendered result + jump to export options. Shown
+       only once the render step has produced a video. -->
+  @if (rendered()) {
+    <div class="card stack result-card">
+      <div class="row row-between">
+        <h2>Final video</h2>
+        <a class="btn btn-sm" [routerLink]="['/project', id(), 'export']">
+          Subtitle &amp; export options →
+        </a>
+      </div>
+      @if (outputPath(); as path) {
+        <p><span class="label">Output:</span> <span class="mono">{{ path }}</span></p>
+      }
+      @if (resultPreviewUrl(); as url) {
+        @if (!resultPreviewFailed()) {
+          <video
+            class="video-preview"
+            controls
+            preload="metadata"
+            [src]="url"
+            (error)="onResultPreviewError()"
+          ></video>
+        } @else {
+          <div class="badge badge-pending preview-note">
+            In-app preview is unavailable here (the browser cannot load local
+            files directly). Use "Open output folder" to play the video.
+          </div>
+        }
+      }
+    </div>
+  }
 
   @if (anyWarnings()) {
     <div class="badge badge-warning warnings-hint">

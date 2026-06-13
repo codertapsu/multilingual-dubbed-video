@@ -208,24 +208,50 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           rm -f certificate.p12
 
-      # --- Build + publish the Tauri app (draft Release) -------------------
-      # tauri-action runs `tauri build`, signs, and uploads bundles + the
-      # updater latest.json (because bundle.createUpdaterArtifacts is true).
-      - name: Build & release (tauri-action)
-        uses: tauri-apps/tauri-action@v0
+      # Provide the Apple signing vars to tauri-action ONLY when a certificate is
+      # actually configured. If they are passed unconditionally (e.g. APPLE_CERTIFICATE:
+      # ${{ secrets.APPLE_CERTIFICATE }} with the secret unset), GitHub exports them as
+      # present-but-EMPTY strings, and Tauri's macOS bundler then treats APPLE_CERTIFICATE
+      # as "present" and tries to `security import` an empty cert -> it dies with
+      # "SecKeychainItemImport: ... parameters ... not valid". Writing them to $GITHUB_ENV
+      # behind the HAS_APPLE_CERT gate keeps them genuinely ABSENT for unsigned builds, so
+      # macOS produces an unsigned .app/.dmg (the release notes already tell users to
+      # right-click -> Open). Windows tolerates an empty cert, so it stays inline below.
+      - name: Provide Apple signing env (only when a cert is configured)
+        if: startsWith(matrix.os, 'macos') && env.HAS_APPLE_CERT == 'true'
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Updater signing (required so latest.json carries a valid signature).
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS notarization (only used on macos runners).
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows Authenticode (optional).
+        run: |
+          {
+            echo "APPLE_CERTIFICATE<<__VD_CERT_EOF__"
+            echo "$APPLE_CERTIFICATE"
+            echo "__VD_CERT_EOF__"
+            echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
+            echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
+            echo "APPLE_ID=$APPLE_ID"
+            echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+          } >> "$GITHUB_ENV"
+
+      # --- Build + publish the Tauri app (draft Release) -------------------
+      # tauri-action runs `tauri build`, signs (only if the Apple env above was
+      # provided), and uploads the bundles. Apple vars are intentionally NOT listed
+      # here — they arrive via $GITHUB_ENV only when a cert exists (see above).
+      - name: Build & release (tauri-action)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing (empty unless auto-update is enabled; harmless while
+          # createUpdaterArtifacts is false).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Windows Authenticode (optional; Windows tolerates an empty cert).
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:

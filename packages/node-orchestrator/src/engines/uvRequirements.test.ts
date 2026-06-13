@@ -27,6 +27,8 @@ describe('resolveUvRequirements', () => {
       const r = resolveUvRequirements('tts-neural-v2', platform)!;
       expect(r.requirements).toContain('vieneu==2.7.0');
       expect(r.requirements).not.toContain('vieneu==3.0.5');
+      // Pinned to the exact version the CPU extra-index ships a prebuilt wheel for.
+      expect(r.requirements).toContain('llama-cpp-python==0.3.16');
       expect(r.extraIndexUrls).toContain('https://pnnbao97.github.io/llama-cpp-python-v0.3.16/cpu/');
       expect(r.requirements.filter((x) => x.includes('>=') || x.includes('~='))).toEqual([]);
     }

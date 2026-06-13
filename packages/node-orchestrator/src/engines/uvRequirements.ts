@@ -52,6 +52,10 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
   'tts-neural-v2': {
     base: [
       'vieneu==2.7.0',
+      // Pin the exact version the CPU extra-index below provides a prebuilt wheel
+      // for, so uv installs that wheel instead of attempting a from-source build
+      // (which needs a C++ toolchain — a guaranteed failure on a clean Windows box).
+      'llama-cpp-python==0.3.16',
       'soundfile==0.13.1',
       'numpy==2.1.3',
       'fastapi==0.115.6',

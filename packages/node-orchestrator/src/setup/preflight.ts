@@ -41,7 +41,7 @@ export interface PreflightDeps {
    * boot on first launch — one-file extraction + heavy imports (ctranslate2,
    * argostranslate). Without this, the first self-check fires before they're up
    * and shows a scary "not reachable" that turns green on the next re-check.
-   * Retrying makes the first check simply wait. Default 25000; tests pass 0.
+   * Retrying makes the first check simply wait. Default 45000; tests pass 0.
    */
   workerReadyTimeoutMs?: number;
   /** Poll interval (ms) between worker readiness re-probes. Default 1000. */
@@ -168,7 +168,10 @@ export async function runPreflight(
   // Give still-booting workers a window to come up before failing them (see
   // workerReadyTimeoutMs). Each worker check retries independently in parallel,
   // so the self-check returns as soon as all three are up (or the timeout hits).
-  const workerTimeout = deps.workerReadyTimeoutMs ?? 25000;
+  // 45s: measured one-file PyInstaller cold start is ~26s (3 workers extracting
+  // to temp at once); leave headroom for slower disks. One-dir builds boot far
+  // faster, so this ceiling is then only hit on a genuine failure.
+  const workerTimeout = deps.workerReadyTimeoutMs ?? 45000;
   const workerPoll = deps.workerPollIntervalMs ?? 1000;
 
   const [ffmpeg, ffprobe, stt, translation, tts, reachable, freeMb] = await Promise.all([

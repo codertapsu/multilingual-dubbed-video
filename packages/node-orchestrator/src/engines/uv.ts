@@ -50,7 +50,7 @@ async function resolve(): Promise<string | null> {
 function which(bin: string): Promise<string | null> {
   return new Promise((resolve) => {
     const finder = process.platform === 'win32' ? 'where' : 'which';
-    const child = spawn(finder, [bin], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn(finder, [bin], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     let out = '';
     child.stdout?.on('data', (d: Buffer) => {
       out += d.toString();

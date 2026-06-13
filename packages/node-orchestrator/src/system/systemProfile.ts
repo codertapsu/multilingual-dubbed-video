@@ -34,7 +34,7 @@ async function detectGpus(platform: string): Promise<GpuInfo[]> {
       const { stdout } = await execFileAsync(
         'system_profiler',
         ['SPDisplaysDataType', '-json'],
-        { timeout: DETECT_TIMEOUT_MS },
+        { timeout: DETECT_TIMEOUT_MS, windowsHide: true },
       );
       const parsed = JSON.parse(stdout) as {
         SPDisplaysDataType?: { sppci_model?: string; spdisplays_vram?: string }[];
@@ -54,7 +54,7 @@ async function detectGpus(platform: string): Promise<GpuInfo[]> {
     const { stdout } = await execFileAsync(
       'nvidia-smi',
       ['--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
-      { timeout: DETECT_TIMEOUT_MS },
+      { timeout: DETECT_TIMEOUT_MS, windowsHide: true },
     );
     return stdout
       .trim()

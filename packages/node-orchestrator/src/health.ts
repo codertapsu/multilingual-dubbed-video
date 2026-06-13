@@ -39,7 +39,7 @@ export function probeBinary(binPath: string, timeoutMs = 3000): Promise<Availabi
 
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(binPath, ['-version'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      child = spawn(binPath, ['-version'], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
     } catch (err) {
       finish({ available: false, detail: err instanceof Error ? err.message : String(err) });
       return;

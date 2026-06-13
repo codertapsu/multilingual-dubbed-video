@@ -224,7 +224,7 @@ export class EngineInstaller {
   /** Run a subprocess, rejecting on non-zero exit (stderr captured into the error). */
   private run(cmd: string, args: string[]): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
       let stderr = '';
       child.stderr?.on('data', (d: Buffer) => {
         stderr += d.toString();

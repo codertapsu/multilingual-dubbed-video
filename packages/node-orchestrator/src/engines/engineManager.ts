@@ -345,5 +345,6 @@ async function httpHealthProbe(url: string): Promise<boolean> {
 }
 
 function defaultSpawn(cmd: string, args: string[], env: Record<string, string>): ChildProcess {
-  return spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], env });
+  // windowsHide: don't pop a console window for each spawned worker on Windows.
+  return spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], env, windowsHide: true });
 }

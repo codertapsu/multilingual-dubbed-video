@@ -27,7 +27,7 @@ export function openCommandFor(targetPath: string): { command: string; args: str
 export async function openPath(targetPath: string): Promise<void> {
   const { command, args } = openCommandFor(targetPath);
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'ignore', detached: true });
+    const child = spawn(command, args, { stdio: 'ignore', detached: true, windowsHide: true });
     child.on('error', (err) => {
       reject(
         new AppErrorException('UNKNOWN', `Failed to open path: ${targetPath}`, {

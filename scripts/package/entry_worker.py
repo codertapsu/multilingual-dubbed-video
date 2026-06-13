@@ -30,6 +30,21 @@ import os
 import sys
 
 
+def _ensure_stdio() -> None:
+    """Guarantee sys.stdout/sys.stderr are writable.
+
+    The frozen workers are built windowed (console=False) so they don't pop a
+    console window on Windows. In that mode, if a process is launched without
+    inherited stdio handles, Python leaves sys.stdout/sys.stderr as ``None`` —
+    and both this launcher and uvicorn write to stderr, which would crash with
+    ``AttributeError: 'NoneType' object has no attribute 'write'``. The Tauri
+    shell DOES pipe stdio (so this is normally a no-op), but guard regardless.
+    """
+    for _name in ("stdout", "stderr"):
+        if getattr(sys, _name, None) is None:
+            setattr(sys, _name, open(os.devnull, "w", encoding="utf-8"))
+
+
 # (worker key) -> (host env var, port env var, default port)
 _WORKER_NET = {
     "stt": ("STT_HOST", "STT_PORT", 5101),
@@ -50,6 +65,7 @@ def _resolve_worker() -> str:
 
 
 def main() -> None:
+    _ensure_stdio()
     worker = _resolve_worker()
     host_env, port_env, default_port = _WORKER_NET[worker]
 

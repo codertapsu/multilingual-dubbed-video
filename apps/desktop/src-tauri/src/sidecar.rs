@@ -45,7 +45,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use tauri::{AppHandle, Manager};
 // Shell plugin: `ShellExt` adds `app.shell()`; `Command::spawn()` returns
@@ -365,6 +365,20 @@ fn spawn_one(app: &AppHandle, name: &str, env: &[(&str, String)]) {
     sidecar = sidecar.env("PYTHONUTF8", "1");
     sidecar = sidecar.env("PYTHONIOENCODING", "utf-8");
 
+    // Trust the OS certificate store for outbound HTTPS. uv (rustls), Node, and
+    // Python all ship their OWN bundled CA roots and ignore the Windows store, so
+    // behind a proxy / antivirus that does HTTPS inspection — whose CA is in the
+    // Windows store but not in those bundled roots — downloads fail with "invalid
+    // peer certificate" even though the browser works. Export the Windows store
+    // once and point Node (NODE_EXTRA_CA_CERTS, additive to its roots) and Python
+    // (SSL_CERT_FILE / REQUESTS_CA_BUNDLE) at it. Engine-pack workers + uv inherit
+    // it via the orchestrator; uv additionally uses UV_NATIVE_TLS. No-op off Windows.
+    if let Some(ca) = system_ca_bundle() {
+        sidecar = sidecar.env("NODE_EXTRA_CA_CERTS", ca);
+        sidecar = sidecar.env("SSL_CERT_FILE", ca);
+        sidecar = sidecar.env("REQUESTS_CA_BUNDLE", ca);
+    }
+
     // `Command::env(key, value)` (tauri-plugin-shell 2.x) takes `self` by value
     // and returns the builder, so we rebind on each call. Chained per-var sets
     // are the most version-stable form of the shell `Command` env API.
@@ -662,6 +676,59 @@ fn sweep_service_ports() {
             .creation_flags(CREATE_NO_WINDOW)
             .status();
     }
+}
+
+/// A PEM bundle of the OS trust store, exported once per run and cached. Lets the
+/// bundled Node + Python downloaders trust a locally-installed HTTPS-inspection CA
+/// (corporate proxy / antivirus) that lives in the OS store but not in their
+/// bundled roots. Returns `None` off Windows (the platform defaults already
+/// consult the system store there) or if the export fails.
+fn system_ca_bundle() -> Option<&'static str> {
+    static BUNDLE: OnceLock<Option<String>> = OnceLock::new();
+    BUNDLE.get_or_init(export_system_ca_bundle).as_deref()
+}
+
+#[cfg(windows)]
+fn export_system_ca_bundle() -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::env::temp_dir().join("videodubber-system-ca.pem");
+    // PowerShell: concatenate every cert in the user + machine Root/CA stores into
+    // a PEM. `\` continuations keep it a single command line; `__OUT__` is replaced
+    // with the (single-quote-escaped) output path so no format-brace juggling.
+    let template = "\
+$ErrorActionPreference='SilentlyContinue'; \
+$sb=New-Object System.Text.StringBuilder; \
+foreach($s in 'Cert:\\LocalMachine\\Root','Cert:\\CurrentUser\\Root','Cert:\\LocalMachine\\CA','Cert:\\CurrentUser\\CA'){ \
+  Get-ChildItem $s -ErrorAction SilentlyContinue | ForEach-Object { \
+    [void]$sb.AppendLine('-----BEGIN CERTIFICATE-----'); \
+    [void]$sb.AppendLine([Convert]::ToBase64String($_.RawData,'InsertLineBreaks')); \
+    [void]$sb.AppendLine('-----END CERTIFICATE-----') } }; \
+[IO.File]::WriteAllText('__OUT__', $sb.ToString())";
+    let script = template.replace("__OUT__", &out.to_string_lossy().replace('\'', "''"));
+
+    let ok = Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    let nonempty = out.metadata().map(|m| m.len() > 0).unwrap_or(false);
+    if ok && nonempty {
+        log_info(&format!("exported OS trust store for Node/Python TLS -> {}", out.display()));
+        Some(out.to_string_lossy().into_owned())
+    } else {
+        log_info("could not export the OS trust store; downloads behind an HTTPS-inspecting proxy/AV may fail with a certificate error.");
+        None
+    }
+}
+
+#[cfg(not(windows))]
+fn export_system_ca_bundle() -> Option<String> {
+    // macOS/Linux: Node, Python, and uv resolve the platform trust store well
+    // enough for our downloads without an explicit export, so there's nothing to do.
+    None
 }
 
 /// Minimal logging to stdout (visible in `tauri dev` / the app's console).

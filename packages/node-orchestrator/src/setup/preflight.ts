@@ -40,7 +40,9 @@ export interface PreflightDeps {
 /** Default network probe: a HEAD request with a short timeout. Never throws. */
 async function defaultProbeNetwork(url: string): Promise<boolean> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 4000);
+  // 8s (not 4s): on slow/flaky international links a short timeout false-negatives
+  // as "offline". This is only a warning, so erring toward patience is cheap.
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
     const res = await fetch(url, { method: 'HEAD', signal: controller.signal, redirect: 'follow' });
     return res.ok || res.status < 500;

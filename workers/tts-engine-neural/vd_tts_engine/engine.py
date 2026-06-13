@@ -45,6 +45,7 @@ class VieNeuEngine:
         self._variant = variant or voices.current_variant()
         self._backend = None  # the loaded vieneu.Vieneu instance
         self._lock = threading.Lock()
+        self._load_error: str | None = None  # last warm-up failure, surfaced via /health
 
     @property
     def variant(self) -> str:
@@ -68,6 +69,31 @@ class VieNeuEngine:
             return _u.find_spec("vieneu") is not None
         except Exception:
             return False
+
+    def loaded(self) -> bool:
+        """True once the model is RESIDENT (warm) — synthesis will be fast.
+
+        Distinct from ``available()`` (SDK importable): the model is downloaded
+        (first use) + loaded lazily, which is the expensive part. The orchestrator
+        waits for this before a long run so the one-time load isn't charged to the
+        /synthesize-segments timeout budget.
+        """
+        return self._backend is not None
+
+    @property
+    def load_error(self) -> str | None:
+        """Last warm-up/load failure message (so callers fail fast vs. timing out)."""
+        return self._load_error
+
+    def warmup(self) -> None:
+        """Eagerly load the model (downloading it on first use). Records the failure
+        for /health and re-raises so the background warm-up can log it."""
+        try:
+            self._ensure_loaded()
+            self._load_error = None
+        except Exception as exc:  # noqa: BLE001
+            self._load_error = str(exc)
+            raise
 
     def _ensure_loaded(self) -> None:
         if self._backend is not None:

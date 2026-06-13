@@ -64,6 +64,23 @@ def test_health_reports_fallback_always_true():
     assert h.status == "ok"
     assert h.engines["fallback"] is True
     assert "vieneu" in h.engines
+    # The model isn't warmed in-process here (no uvicorn lifespan), so /health
+    # reports it not-yet-resident — this is the signal the orchestrator waits on
+    # before a long run so the load isn't charged to the synth timeout.
+    assert h.loaded is False
+    assert h.loadError is None
+
+
+def test_warmup_records_error_when_sdk_missing():
+    # vieneu isn't installed in CI, so warm-up fails: loaded stays False and the
+    # error is recorded for /health.loadError (lets the orchestrator fail fast).
+    eng = VieNeuEngine("v3")
+    assert eng.loaded() is False
+    assert eng.load_error is None
+    with pytest.raises(Exception):
+        eng.warmup()
+    assert eng.loaded() is False
+    assert eng.load_error is not None
 
 
 def test_list_voices_endpoint_uses_default_variant_v3():

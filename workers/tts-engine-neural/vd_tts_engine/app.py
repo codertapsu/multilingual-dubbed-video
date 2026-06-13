@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -29,8 +31,32 @@ from .wavio import read_wav_duration_ms, write_silent_wav
 
 logger = logging.getLogger("vd_tts_engine")
 
-app = FastAPI(title="VideoDubber Neural TTS (VieNeu)", version="0.1.0")
 _engine = VieNeuEngine()
+
+
+def _warmup() -> None:
+    """Load the model in the background so /health + /voices answer immediately
+    while the (one-time, possibly large) download/load proceeds — keeping the
+    heavy load OUT of the first /synthesize-segments request's timeout budget.
+    Failures are stored on the engine (surfaced via /health.loadError) so the
+    orchestrator can fail fast instead of waiting out the synth timeout."""
+    try:
+        _engine.warmup()
+        logger.info("VieNeu %s warm: model resident.", _engine.variant)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("VieNeu %s warm-up failed: %s", _engine.variant, exc)
+
+
+@asynccontextmanager
+async def _lifespan(_app: "FastAPI"):
+    # Kick off the load AFTER uvicorn binds the port (so /health is reachable at
+    # once) but as early as possible — typically when the wizard lists voices,
+    # well before a run starts.
+    threading.Thread(target=_warmup, name="vieneu-warmup", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="VideoDubber Neural TTS (VieNeu)", version="0.1.0", lifespan=_lifespan)
 
 
 # ---- schemas (mirror tts-worker app/schemas.py) ----------------------------
@@ -82,6 +108,13 @@ class VoicesResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     engines: dict[str, bool]
+    # True once the model is resident (warm). The orchestrator waits for this
+    # before a long synthesis so the one-time model load isn't charged to the
+    # /synthesize-segments timeout. (The bundled Piper worker has no load step,
+    # so it omits this field — readers must treat a missing value as "unknown".)
+    loaded: bool = False
+    # Set if the background warm-up failed, so callers fail fast vs. timing out.
+    loadError: str | None = None
 
 
 # ---- routes ----------------------------------------------------------------
@@ -89,7 +122,11 @@ class HealthResponse(BaseModel):
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
-    return HealthResponse(engines={voices.ENGINE_NAME: _engine.available(), "fallback": True})
+    return HealthResponse(
+        engines={voices.ENGINE_NAME: _engine.available(), "fallback": True},
+        loaded=_engine.loaded(),
+        loadError=_engine.load_error,
+    )
 
 
 @app.get("/voices", response_model=VoicesResponse)

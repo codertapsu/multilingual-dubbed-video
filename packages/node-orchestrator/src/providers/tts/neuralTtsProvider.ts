@@ -13,7 +13,13 @@
  * Stock/preset voices only; any zero-shot cloning inputs the underlying models
  * expose are not surfaced (policy).
  */
-import { type TtsInput, type TtsProvider, type TtsResult, type TtsSegment } from '@videodubber/shared';
+import {
+  AppErrorException,
+  type TtsInput,
+  type TtsProvider,
+  type TtsResult,
+  type TtsSegment,
+} from '@videodubber/shared';
 import { getWorkerJson, postWorkerJson } from '../workerHttp.js';
 import type { EngineManager } from '../../engines/engineManager.js';
 import type { EnginePackStore } from '../../engines/enginePackStore.js';
@@ -50,8 +56,58 @@ export class NeuralTtsProvider implements TtsProvider {
     return this.engines.ensureRunning(packId);
   }
 
+  /**
+   * Block until the engine reports its model RESIDENT (`/health.loaded === true`),
+   * so the one-time download/load happens OUTSIDE the synth request's timeout. A
+   * reported `loadError` fails fast (no point waiting); polling is bounded by
+   * `timeoutMs` (the first-run model download can take minutes). Health bodies
+   * without a `loaded` field (e.g. the bundled Piper worker) are treated as ready
+   * immediately, so this is a no-op for non-lazy backends.
+   */
+  private async waitUntilWarm(base: string, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + this.timeoutMs;
+    for (;;) {
+      if (signal?.aborted) throw new AppErrorException('CANCELLED', 'Cancelled while loading the neural TTS model.');
+      let health: { loaded?: boolean; loadError?: string | null } | undefined;
+      try {
+        health = await getWorkerJson<{ loaded?: boolean; loadError?: string | null }>(`${base}/health`, {
+          timeoutMs: 5_000,
+          workerName: 'Neural TTS engine',
+          signal,
+        });
+      } catch (err) {
+        if (signal?.aborted) throw err; // run cancelled — propagate
+        // else: engine still booting / transient — keep polling until the deadline
+      }
+      if (health && health.loaded !== false) return; // loaded, or a backend that omits the field
+      if (health?.loadError) {
+        throw new AppErrorException(
+          'ENGINE_UNAVAILABLE',
+          `The neural TTS model failed to load: ${health.loadError}`,
+          {
+            remediation:
+              'Reinstall the engine pack in Settings → Engines, or switch this phase to a local CPU provider (e.g. Piper).',
+          },
+        );
+      }
+      if (Date.now() >= deadline) {
+        throw new AppErrorException('WORKER_TIMEOUT', 'The neural TTS model did not finish loading in time.', {
+          remediation:
+            'The first run downloads the voice model — check your connection and retry, or switch to a local CPU provider (Piper).',
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
+
   async synthesizeSegments(input: TtsInput, signal?: AbortSignal): Promise<TtsResult> {
     const base = (await this.baseUrl()).replace(/\/$/, '');
+    // The engine loads its (large, first-run-downloaded) model lazily. Wait for it
+    // to become RESIDENT before the synth request, so the one-time load isn't
+    // charged to the synth timeout — over 200+ segments that overrun would abort
+    // the whole run with WORKER_TIMEOUT. /voices does NOT wait, so the wizard's
+    // voice picker stays responsive (and starts this warm-up early).
+    await this.waitUntilWarm(base, signal);
     const data = await postWorkerJson<WorkerSynthesizeResponse>(
       `${base}/synthesize-segments`,
       {

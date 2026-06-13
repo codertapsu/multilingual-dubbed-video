@@ -14,6 +14,8 @@ function okDeps(): PreflightDeps {
     probeWorkerHealth: async () => ({ available: true, detail: 'ok' }),
     probeNetwork: async () => true,
     freeSpaceMb: async () => 50_000,
+    // No retry in tests: an unreachable worker should fail fast, not block ~25s.
+    workerReadyTimeoutMs: 0,
   };
 }
 
@@ -56,6 +58,25 @@ describe('runPreflight', () => {
     });
     expect(result.ok).toBe(false);
     expect(result.checks.find((c) => c.id === 'stt-worker')?.status).toBe('fail');
+  });
+
+  it('retries a still-booting worker and passes once it comes up', async () => {
+    // Simulates the PyInstaller cold-start: STT is down on the first probe, then
+    // up. With retry enabled it should resolve to "ok", not a transient "fail".
+    let sttProbes = 0;
+    const result = await runPreflight(config, {
+      ...okDeps(),
+      workerReadyTimeoutMs: 1000,
+      workerPollIntervalMs: 10,
+      probeWorkerHealth: async (_url, name) => {
+        if (!name.includes('STT')) return { available: true, detail: 'ok' };
+        sttProbes += 1;
+        return sttProbes >= 2 ? { available: true, detail: 'ok' } : { available: false, detail: 'starting' };
+      },
+    });
+    expect(result.checks.find((c) => c.id === 'stt-worker')?.status).toBe('ok');
+    expect(sttProbes).toBeGreaterThanOrEqual(2);
+    expect(result.ok).toBe(true);
   });
 
   it('treats no network as a warning (not a hard failure)', async () => {

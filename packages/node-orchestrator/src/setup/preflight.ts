@@ -35,6 +35,22 @@ export interface PreflightDeps {
   probeNetwork?: (url: string) => Promise<boolean>;
   /** Free-space probe for a directory, in megabytes (or undefined if unknown). */
   freeSpaceMb?: (dir: string) => Promise<number | undefined>;
+  /**
+   * How long (ms) to keep re-probing an unreachable worker before failing it.
+   * The bundled Python workers (PyInstaller one-file) take several seconds to
+   * boot on first launch — one-file extraction + heavy imports (ctranslate2,
+   * argostranslate). Without this, the first self-check fires before they're up
+   * and shows a scary "not reachable" that turns green on the next re-check.
+   * Retrying makes the first check simply wait. Default 25000; tests pass 0.
+   */
+  workerReadyTimeoutMs?: number;
+  /** Poll interval (ms) between worker readiness re-probes. Default 1000. */
+  workerPollIntervalMs?: number;
+}
+
+/** Resolve after `ms` (never throws). */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Default network probe: a HEAD request with a short timeout. Never throws. */
@@ -105,15 +121,26 @@ async function checkBinary(
   };
 }
 
-/** Build a single worker health check result. */
+/** Build a single worker health check result.
+ *
+ * Re-probes until the worker is reachable or `timeoutMs` elapses, so a worker
+ * still booting on first launch resolves to "ok" rather than a transient "fail".
+ */
 async function checkWorker(
   id: string,
   label: string,
   url: string,
   workerName: string,
   probe: typeof probeWorkerHealth,
+  timeoutMs: number,
+  pollMs: number,
 ): Promise<PreflightCheck> {
-  const result = await probe(url, workerName);
+  let result = await probe(url, workerName);
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (!result.available && Date.now() < deadline) {
+    await delay(Math.max(1, pollMs));
+    result = await probe(url, workerName);
+  }
   if (result.available) {
     return { id, label, status: 'ok', detail: result.detail };
   }
@@ -138,13 +165,18 @@ export async function runPreflight(
   const workerProbe = deps.probeWorkerHealth ?? probeWorkerHealth;
   const netProbe = deps.probeNetwork ?? defaultProbeNetwork;
   const freeProbe = deps.freeSpaceMb ?? defaultFreeSpaceMb;
+  // Give still-booting workers a window to come up before failing them (see
+  // workerReadyTimeoutMs). Each worker check retries independently in parallel,
+  // so the self-check returns as soon as all three are up (or the timeout hits).
+  const workerTimeout = deps.workerReadyTimeoutMs ?? 25000;
+  const workerPoll = deps.workerPollIntervalMs ?? 1000;
 
   const [ffmpeg, ffprobe, stt, translation, tts, reachable, freeMb] = await Promise.all([
     checkBinary('ffmpeg', 'FFmpeg', config.ffmpegPath, 'ffmpeg', binProbe),
     checkBinary('ffprobe', 'FFprobe', config.ffprobePath, 'ffprobe', binProbe),
-    checkWorker('stt-worker', 'Speech-to-text service', config.sttWorkerUrl, 'STT worker', workerProbe),
-    checkWorker('translation-worker', 'Translation service', config.translationWorkerUrl, 'Translation worker', workerProbe),
-    checkWorker('tts-worker', 'Text-to-speech service', config.ttsWorkerUrl, 'TTS worker', workerProbe),
+    checkWorker('stt-worker', 'Speech-to-text service', config.sttWorkerUrl, 'STT worker', workerProbe, workerTimeout, workerPoll),
+    checkWorker('translation-worker', 'Translation service', config.translationWorkerUrl, 'Translation worker', workerProbe, workerTimeout, workerPoll),
+    checkWorker('tts-worker', 'Text-to-speech service', config.ttsWorkerUrl, 'TTS worker', workerProbe, workerTimeout, workerPoll),
     netProbe(NETWORK_PROBE_URL),
     freeProbe(config.modelsDir),
   ]);

@@ -47,7 +47,8 @@ import { openPath } from './openPath.js';
 import { LocalJobOrchestrator } from './orchestrator.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { createDefaultRegistry, OLLAMA_MODEL } from './providers/registry.js';
-import { buildReadinessContext, checkProviderReadiness, describeProviderReadiness } from './providers/readiness.js';
+import { buildReadinessContext, checkProviderReadiness, describeProviderReadiness, type ReadinessDeps } from './providers/readiness.js';
+import { probeWorkerHealth } from './providers/workerHttp.js';
 import { OllamaPullManager, listOllamaModels } from './providers/ollamaModels.js';
 import { computeRequiredResources, hasRequiredResources } from './setup/requiredResources.js';
 import type { PipelineMediaService } from './media.js';
@@ -187,6 +188,21 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     options.registry ?? createDefaultRegistry(config, credentials, engineManager, enginePackStore);
   const bus = options.bus ?? new EventBusRegistry();
 
+  // Probe the bundled worker backing a local provider's phase. The readiness
+  // contract uses this to block a run while a worker is still booting — so a run
+  // can't start and then fail against a not-yet-listening faster-whisper/argos/
+  // piper worker. Same source of truth feeds /providers + run-preflight + the gate.
+  const probeWorker = async (phase: 'stt' | 'translation' | 'tts'): Promise<boolean> => {
+    const url =
+      phase === 'stt'
+        ? config.sttWorkerUrl
+        : phase === 'translation'
+          ? config.translationWorkerUrl
+          : config.ttsWorkerUrl;
+    return (await probeWorkerHealth(url, `${phase} worker`)).available;
+  };
+  const readinessDeps = (): ReadinessDeps => ({ registry, credentials, enginePackStore, probeWorker });
+
   const orchestrator =
     options.orchestrator ??
     new LocalJobOrchestrator({
@@ -200,8 +216,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // Gate runs on provider readiness so an unready provider (e.g. Ollama with
       // no daemon, a missing engine pack, or an unconfigured cloud key) fails
       // fast with remediation instead of dying mid-pipeline.
-      checkReadiness: (project, fromStep) =>
-        checkProviderReadiness(project, { registry, credentials, enginePackStore }, fromStep),
+      checkReadiness: (project, fromStep) => checkProviderReadiness(project, readinessDeps(), fromStep),
     });
 
   // Tracks background Ollama model pulls (lazy on-demand for the large, optional
@@ -431,7 +446,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // as available that a run would then reject (the Ollama "always available"
       // bug). Build the shared context once, then describe every provider.
       const described = registry.describe();
-      const rdeps = { registry, credentials, enginePackStore };
+      const rdeps = readinessDeps();
       const ctx = await buildReadinessContext(rdeps);
       const decorate = (phase: 'stt' | 'translation' | 'tts', list: typeof described.stt) =>
         Promise.all(
@@ -463,7 +478,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   app.get('/projects/:id/run-preflight', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     try {
       const project = await store.getProject(req.params.id);
-      const providers = await checkProviderReadiness(project, { registry, credentials, enginePackStore });
+      const providers = await checkProviderReadiness(project, readinessDeps());
       return { ok: providers.every((p) => p.ready), providers };
     } catch (err) {
       return sendError(reply, err);

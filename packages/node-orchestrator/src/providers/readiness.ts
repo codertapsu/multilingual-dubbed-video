@@ -35,7 +35,16 @@ export type ReadinessStatus =
   | 'cloud-key-missing'
   | 'engine-pack-missing'
   | 'daemon-unreachable'
-  | 'model-missing';
+  | 'model-missing'
+  /** A local provider's bundled worker (STT/translation/TTS) is still booting. */
+  | 'worker-loading';
+
+/** Human phase labels for messages. */
+const PHASE_LABEL: Record<ProviderPhase, string> = {
+  stt: 'speech-to-text',
+  translation: 'translation',
+  tts: 'text-to-speech',
+};
 
 /** A UI affordance that would make a not-ready provider ready. */
 export interface ReadinessAction {
@@ -70,6 +79,13 @@ export interface ReadinessDeps {
   enginePackStore: EnginePackStore;
   /** Injectable Ollama probe (defaults to the real /v1/models check). */
   probeOllama?: (model: string) => Promise<OllamaProbe>;
+  /**
+   * Probe whether the bundled worker backing a LOCAL provider is reachable
+   * (true = up). The base workers (faster-whisper :5101, argos :5102, piper :5103)
+   * take a few seconds to boot on launch; until then a local provider isn't
+   * usable. Omitted (e.g. in unit tests) => local providers are assumed ready.
+   */
+  probeWorker?: (phase: ProviderPhase) => Promise<boolean>;
 }
 
 /** Just the provider fields readiness cares about (instances + descriptors satisfy this). */
@@ -115,6 +131,8 @@ function providerFor(phase: ProviderPhase, registry: ProviderRegistry, project: 
 export interface ReadinessContext {
   configured: Set<CloudServiceId>;
   ollama: () => Promise<OllamaProbe>;
+  /** Memoized per-phase worker reachability (true if up, or if no probe wired). */
+  worker: (phase: ProviderPhase) => Promise<boolean>;
 }
 
 /**
@@ -127,7 +145,17 @@ export async function buildReadinessContext(deps: ReadinessDeps): Promise<Readin
   const configured = new Set(creds.filter((c) => c.configured).map((c) => c.service));
   const probe = deps.probeOllama ?? defaultProbeOllama;
   let ollamaPromise: Promise<OllamaProbe> | undefined;
-  return { configured, ollama: () => (ollamaPromise ??= probe(OLLAMA_MODEL)) };
+  const workerCache = new Map<ProviderPhase, Promise<boolean>>();
+  const worker = (phase: ProviderPhase): Promise<boolean> => {
+    if (!deps.probeWorker) return Promise.resolve(true); // no gating when unwired
+    let p = workerCache.get(phase);
+    if (!p) {
+      p = deps.probeWorker(phase);
+      workerCache.set(phase, p);
+    }
+    return p;
+  };
+  return { configured, ollama: () => (ollamaPromise ??= probe(OLLAMA_MODEL)), worker };
 }
 
 /** Readiness of a single provider (cloud key / engine pack / Ollama daemon+model). */
@@ -192,9 +220,21 @@ export async function describeProviderReadiness(
     return ready;
   }
 
-  // Default local providers (faster-whisper / argos / piper-local) and any other
-  // local engine are treated as ready here. Precise model/voice-presence gating
-  // arrives with the background-installer + setupStore tracking stage.
+  // Default local providers (faster-whisper / argos / piper-local) run inside a
+  // bundled worker for this phase. If that worker is still booting (a few seconds
+  // after launch), the provider isn't usable yet — block the run with a clear
+  // "still starting" message instead of letting it fail deep in a step.
+  if (!(await ctx.worker(phase))) {
+    return {
+      ...base,
+      status: 'worker-loading',
+      ready: false,
+      message: `The ${PHASE_LABEL[phase]} service is still starting.`,
+      remediation: 'It loads in the background shortly after launch — try again in a few seconds.',
+      action: { kind: 'guide', ref: 'worker-loading' },
+    };
+  }
+  // Precise model/voice-presence gating arrives with the background-installer stage.
   return ready;
 }
 
@@ -223,6 +263,7 @@ const STATUS_CODE: Record<Exclude<ReadinessStatus, 'ready'>, ErrorCode> = {
   'engine-pack-missing': 'ENGINE_PACK_MISSING',
   'daemon-unreachable': 'ENGINE_UNAVAILABLE',
   'model-missing': 'ENGINE_UNAVAILABLE',
+  'worker-loading': 'ENGINE_UNAVAILABLE',
 };
 
 /**

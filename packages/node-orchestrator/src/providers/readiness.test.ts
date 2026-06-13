@@ -66,6 +66,32 @@ describe('checkProviderReadiness', () => {
     expect(results.find((r) => r.phase === 'tts')?.ready).toBe(true);
   });
 
+  it('flags a local provider whose worker is still booting, and the run gate blocks', async () => {
+    const results = await checkProviderReadiness(projectWith('argos'), {
+      registry: registryWith(fakeTranslation({ id: 'argos' })),
+      credentials: fakeCreds([]),
+      enginePackStore: noPacks,
+      probeWorker: async (phase) => phase !== 'stt', // STT worker still booting; others up
+    });
+    const stt = results.find((r) => r.phase === 'stt')!;
+    expect(stt.ready).toBe(false);
+    expect(stt.status).toBe('worker-loading');
+    expect(results.find((r) => r.phase === 'translation')?.ready).toBe(true);
+    expect(results.find((r) => r.phase === 'tts')?.ready).toBe(true);
+    // The run-start gate refuses to begin while a mandatory worker is loading.
+    expect(() => assertRunReady(results)).toThrow(AppErrorException);
+  });
+
+  it('treats local providers as ready when no worker probe is wired (back-compat)', async () => {
+    const results = await checkProviderReadiness(projectWith('argos'), {
+      registry: registryWith(fakeTranslation({ id: 'argos' })),
+      credentials: fakeCreds([]),
+      enginePackStore: noPacks,
+      // no probeWorker
+    });
+    expect(results.every((r) => r.ready)).toBe(true);
+  });
+
   it('flags Ollama when the daemon is up but the model is not pulled', async () => {
     const results = await checkProviderReadiness(projectWith('ollama'), {
       registry: registryWith(fakeTranslation({ id: 'ollama' })),

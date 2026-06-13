@@ -344,6 +344,16 @@ fn spawn_one(app: &AppHandle, name: &str, env: &[(&str, String)]) {
         }
     };
 
+    // Force UTF-8 stdio for every sidecar. Windows defaults the Python console
+    // encoding to cp1252, which raises UnicodeEncodeError the moment a worker (or
+    // a dependency like the VieNeu SDK) prints a non-Latin-1 string — e.g. a
+    // Vietnamese voice name "Ngọc Lan" or a "…" — crashing the process. PYTHONUTF8
+    // and PYTHONIOENCODING make stdout/stderr UTF-8 on every platform; harmless
+    // for the Node orchestrator, which also passes them to the engine-pack Python
+    // workers it spawns. Set first so explicit per-sidecar env can still override.
+    sidecar = sidecar.env("PYTHONUTF8", "1");
+    sidecar = sidecar.env("PYTHONIOENCODING", "utf-8");
+
     // `Command::env(key, value)` (tauri-plugin-shell 2.x) takes `self` by value
     // and returns the builder, so we rebind on each call. Chained per-var sets
     // are the most version-stable form of the shell `Command` env API.

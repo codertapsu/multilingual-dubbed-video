@@ -42,6 +42,12 @@ jobs:
           - { os: windows-latest, label: windows-x64 }
     env:
       HF_HOME: ${{ github.workspace }}/.hf-cache
+      # Windows' default console encoding (cp1252) can't encode the Vietnamese
+      # voice names / "…" our engine prints, so a bare print() raises
+      # UnicodeEncodeError before synth. Force UTF-8 stdio on every runner —
+      # exactly what the bundled app sets for the worker process.
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
     steps:
       - uses: actions/checkout@v4
 

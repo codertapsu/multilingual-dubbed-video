@@ -184,7 +184,19 @@ export class EngineManager {
     const exe = await this.resolveExecutable(rec.path, spec);
     const port = await (this.deps.allocatePort ?? allocateEphemeralPort)();
     const args = spec.args({ exe, port, packDir: rec.path });
-    const env = { ...process.env, ...(spec.env ? spec.env({ port, packDir: rec.path }) : {}) } as Record<string, string>;
+    // Force UTF-8 stdio for the Python worker: on Windows the default console
+    // encoding (cp1252) raises UnicodeEncodeError when the worker or its deps
+    // print a non-Latin-1 string (e.g. a Vietnamese voice name), killing the
+    // process. In the bundled app the Tauri sidecar already sets these on the
+    // orchestrator (so they flow in via process.env); set them here too so
+    // `npm run dev` and any host without the flag are covered. Our defaults come
+    // first so an inherited value (if present) still wins.
+    const env = {
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
+      ...process.env,
+      ...(spec.env ? spec.env({ port, packDir: rec.path }) : {}),
+    } as Record<string, string>;
 
     this.deps.logger?.info(`Starting engine "${packId}" on port ${port}.`);
     const spawnImpl = this.deps.spawnImpl ?? defaultSpawn;

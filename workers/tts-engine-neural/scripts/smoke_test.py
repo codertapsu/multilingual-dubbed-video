@@ -23,6 +23,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# Force UTF-8 stdio before any print(): Windows defaults the console to cp1252,
+# which raises UnicodeEncodeError on the Vietnamese voice names / "…" we print.
+# The CI job and the bundled app set PYTHONUTF8=1 too; this makes the script
+# robust even when run directly without that env.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    except (AttributeError, ValueError):
+        pass
+
 from vd_tts_engine import voices
 from vd_tts_engine.engine import VieNeuEngine
 

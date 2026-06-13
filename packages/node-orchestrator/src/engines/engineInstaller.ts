@@ -210,6 +210,12 @@ export class EngineInstaller {
     // to the orchestrator binary, which is robust regardless of Tauri's resource
     // layout. only-managed + downloads=never => uv uses ONLY the bundled runtime.
     const uvEnv: NodeJS.ProcessEnv = { ...process.env };
+    // Use the OS-native TLS stack (system trust store) instead of uv's bundled
+    // rustls/webpki roots. Behind a corporate/ISP proxy or an antivirus that does
+    // HTTPS/SSL inspection, the intercepting CA lives in the OS store but NOT in
+    // uv's bundled roots, so downloads fail with "invalid peer certificate". The
+    // native store trusts that CA, unblocking PyPI + the extra wheel indexes.
+    uvEnv.UV_NATIVE_TLS = '1';
     const bundledPyDir = resolveBundledPythonDir();
     if (bundledPyDir) {
       uvEnv.UV_PYTHON_INSTALL_DIR = bundledPyDir;

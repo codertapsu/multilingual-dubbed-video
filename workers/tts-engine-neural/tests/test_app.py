@@ -19,6 +19,7 @@ from vd_tts_engine.app import (
     SynthesizeRequest,
     health,
     list_voices,
+    segment_filename,
     synthesize_segments,
 )
 
@@ -89,6 +90,9 @@ def test_synthesize_falls_back_to_sized_silence(tmp_path: Path):
     resp = synthesize_segments(req)
     assert resp.fallbackSegments == 2
     assert resp.engine == "fallback"
+    # Files MUST be named segment_NNNN.wav (not seg_NNNN.wav) so the orchestrator
+    # can probe them at alignment and read them at audio-mix.
+    assert [Path(s.audioPath).name for s in resp.segments] == ["segment_0001.wav", "segment_0002.wav"]
     for seg, expected_ms in zip(resp.segments, (1000, 1500)):
         out = Path(seg.audioPath)
         assert out.is_file()
@@ -98,7 +102,17 @@ def test_synthesize_falls_back_to_sized_silence(tmp_path: Path):
             assert w.getframerate() == 48000
 
 
-def test_segment_id_is_sanitized_into_filename(tmp_path: Path):
+def test_segment_filename_matches_orchestrator_convention():
+    # Mirrors the bundled Piper worker + the orchestrator's segmentIdToIndex():
+    # the TRAILING digit group decides the number; missing -> 1-based ordinal.
+    assert segment_filename("seg_0001", 99) == "segment_0001.wav"
+    assert segment_filename("seg_0042", 1) == "segment_0042.wav"
+    assert segment_filename("intro", 7) == "segment_0007.wav"  # no digits -> ordinal
+    assert segment_filename("seg_001_v2", 5) == "segment_0002.wav"  # trailing group wins
+
+
+def test_segment_filename_is_traversal_safe(tmp_path: Path):
+    # A hostile id resolves to a canonical, digit-only filename inside out_dir.
     req = SynthesizeRequest(
         language="vi-VN",
         outputDir=str(tmp_path),
@@ -107,7 +121,7 @@ def test_segment_id_is_sanitized_into_filename(tmp_path: Path):
     resp = synthesize_segments(req)
     out = Path(resp.segments[0].audioPath)
     assert out.parent == tmp_path
-    assert "/" not in out.name and ".." not in out.name
+    assert out.name == "segment_0007.wav"
 
 
 if __name__ == "__main__":

@@ -109,8 +109,8 @@ def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
     results: list[SegmentOut] = []
     fallback_count = 0
 
-    for seg in req.segments:
-        out_path = out_dir / f"{_safe_name(seg.id)}.wav"
+    for ordinal, seg in enumerate(req.segments, start=1):
+        out_path = out_dir / segment_filename(seg.id, ordinal)
         window_ms = max(0, seg.endMs - seg.startMs)
         try:
             _engine.synth(seg.text, str(out_path), req.voiceId, req.speed)
@@ -136,6 +136,19 @@ def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
     return SynthesizeResponse(segments=results, engine=engine_name, fallbackSegments=fallback_count)
 
 
-def _safe_name(segment_id: str) -> str:
-    """Filesystem-safe basename from a segment id (no dots/slashes/traversal)."""
-    return re.sub(r"[^A-Za-z0-9_-]", "_", segment_id) or "segment"
+# Pull the TRAILING digits out of an id like "seg_0001" -> 1, falling back to the
+# 1-based ordinal if the id has no number. This MUST match BOTH the orchestrator's
+# segmentIdToIndex() (/(\d+)\s*$/) and the bundled Piper tts-worker, so every TTS
+# backend writes the SAME `segment_NNNN.wav` the orchestrator later probes at
+# alignment and reads at audio-mix. (Naming files by the raw id, e.g.
+# "seg_0001.wav", is why mixing failed with "input file does not exist".)
+_DIGITS_RE = re.compile(r"(\d+)\s*$")
+
+
+def segment_filename(segment_id: str, ordinal: int) -> str:
+    """Map a segment id to its WAV filename `segment_<4-digit>.wav` (e.g.
+    "seg_0007" -> "segment_0007.wav"); falls back to the 1-based ordinal when the
+    id has no digits."""
+    match = _DIGITS_RE.search(segment_id or "")
+    number = int(match.group(1)) if match else ordinal
+    return f"segment_{number:04d}.wav"

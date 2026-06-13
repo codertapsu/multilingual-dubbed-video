@@ -140,7 +140,10 @@ fetch_linux() {
   # johnvansickle.com which rate-limits / blocks datacenter IPs (curl exit 22 in
   # CI). The -gpl build is static and includes libass (subtitles) + libx264/x265
   # (H.264/HEVC render). Binaries live under bin/ in a single ffmpeg-* top dir.
-  local url="${FFMPEG_URL:-https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz}"
+  # Use the explicit `latest` TAG (releases/download/latest/), not the date-sorted
+  # "latest release" (releases/latest/download/) — a newer dated autobuild has only
+  # versioned asset names, so the stable ffmpeg-master-latest-* name 404s there.
+  local url="${FFMPEG_URL:-https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz}"
   echo "==> Downloading ${url}"
   curl -fsSL "${url}" -o "${WORK}/ffmpeg.tar.xz"
   tar -xJf "${WORK}/ffmpeg.tar.xz" -C "${WORK}"
@@ -157,7 +160,9 @@ fetch_windows() {
   # BtbN GitHub builds: a .zip (no 7z needed) with libass + libx264/x265. gyan.dev
   # ships the *full* build only as .7z; its *.zip is 'essentials'. This branch is
   # the Git Bash / WSL path; fetch-ffmpeg.ps1 is the native Windows-runner path.
-  local url="${FFMPEG_URL:-https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip}"
+  # Explicit `latest` TAG (releases/download/latest/) — see fetch_linux for why the
+  # date-sorted releases/latest/download/ form 404s on dated autobuilds.
+  local url="${FFMPEG_URL:-https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip}"
   echo "==> Downloading ${url}"
   curl -fsSL "${url}" -o "${WORK}/ffmpeg.zip"
   unzip -o -q "${WORK}/ffmpeg.zip" -d "${WORK}/ff"

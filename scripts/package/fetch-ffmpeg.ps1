@@ -84,8 +84,16 @@ if ($LocalFfmpeg -and $LocalFfprobe -and (Test-Path $LocalFfmpeg) -and (Test-Pat
 # open with no extra tool, and a -gpl build that includes libass (subtitles) plus
 # libx264/x265. NOTE: gyan.dev ships the *full* build only as .7z — its *.zip is
 # 'essentials', so the previously-used ffmpeg-release-full.zip URL is a 404.
+#
+# Use the explicit `latest` TAG (releases/download/latest/…), NOT GitHub's
+# date-sorted "latest release" (releases/latest/download/…). BtbN publishes a
+# rolling `latest`-tagged release that always carries the stable-named
+# `ffmpeg-master-latest-*` assets, PLUS dated `autobuild-YYYY-…` releases whose
+# assets are versioned (ffmpeg-N-…). When a dated autobuild is the most recent
+# by date, releases/latest/download/ffmpeg-master-latest-win64-gpl.zip 404s
+# (the stable name doesn't exist there) — which broke a Windows release build.
 if (-not $FfmpegUrl) {
-  $FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
+  $FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 }
 
 $Zip = Join-Path $Work "ffmpeg.zip"

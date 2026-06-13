@@ -151,7 +151,9 @@ export type ProviderReadinessStatus =
   | 'cloud-key-missing'
   | 'engine-pack-missing'
   | 'daemon-unreachable'
-  | 'model-missing';
+  | 'model-missing'
+  /** A local provider's bundled worker is still booting (briefly, after launch). */
+  | 'worker-loading';
 
 /** A one-click affordance that would make a not-ready provider ready. */
 export interface ProviderReadinessAction {

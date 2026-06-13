@@ -145,7 +145,21 @@ export class EditorComponent implements OnInit {
       const { project } = await this.ipc.getProject(this.id());
       this.projectSettings.set(project.settings);
       if (project.settings.ttsProviderId === 'piper-local') {
-        this.availableVoices.set(await this.ipc.setupListVoices(project.settings.targetLanguage));
+        const [voices, status] = await Promise.all([
+          this.ipc.setupListVoices(project.settings.targetLanguage),
+          this.ipc.setupGetStatus().catch(() => null),
+        ]);
+        // Only offer voices already on disk for a per-segment override — never a
+        // voice that isn't installed (it would fail/stall at synth). The project's
+        // default voice is always installed, so keep it. If the installed set
+        // can't be read, fall back to the full list (best-effort, non-blocking).
+        const usable = status
+          ? voices.filter(
+              (v) =>
+                status.installed.piperVoices.includes(v.id) || v.id === project.settings.ttsVoiceId,
+            )
+          : voices;
+        this.availableVoices.set(usable);
       }
     } catch {
       // Non-fatal: the editor still works without the voice override.

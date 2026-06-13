@@ -118,6 +118,15 @@ export class NewProjectWizardComponent implements OnInit {
   /** Per-phase provider catalog (local + cloud, with availability flags). */
   protected readonly providers = signal<ProvidersResponse | null>(null);
 
+  /** Ids of engine packs currently installed — gates the optional feature toggles
+   * (a feature whose pack isn't installed is disabled with an "Install" hint, so
+   * the user can't enable something that would silently no-op during the run). */
+  protected readonly installedPacks = signal<ReadonlySet<string>>(new Set<string>());
+  /** Vocal-separation pack ("replace original vocals" mix mode) is installed. */
+  protected readonly vocalSeparationReady = computed(() => this.installedPacks().has('separation-audio'));
+  /** WhisperX pack (forced alignment + diarization) is installed. */
+  protected readonly whisperxReady = computed(() => this.installedPacks().has('alignment-whisperx'));
+
   /** Phases currently routed to a cloud provider (drives the privacy note). */
   protected readonly cloudPhases = computed(() => {
     const provs = this.providers();
@@ -224,11 +233,16 @@ export class NewProjectWizardComponent implements OnInit {
    */
   private async loadProvidersAndDefaults(): Promise<void> {
     try {
-      const [provs, prefs] = await Promise.all([
+      const [provs, prefs, engines] = await Promise.all([
         this.ipc.getProviders(),
         this.ipc.getAppPreferences(),
+        this.ipc.getEngines().catch(() => null),
       ]);
       this.providers.set(provs);
+      if (engines) {
+        this.installedPacks.set(new Set(engines.installed.map((p) => p.id)));
+        this.resetUnavailableFeatureToggles();
+      }
       const d = prefs.providerDefaults;
       if (d) {
         const usable = (list: ProviderInfo[], id?: string) =>
@@ -265,6 +279,27 @@ export class NewProjectWizardComponent implements OnInit {
       this.patchSettings('ttsProviderId', 'neural-tts-v2');
       this.syncProcessingMode();
     }
+  }
+
+  /**
+   * Keep settings consistent with what's installed: a feature whose engine pack
+   * isn't present is forced off (replace-vocals → keep; forced alignment +
+   * diarization → off). So a saved default or earlier choice can't leave the user
+   * having "selected" a feature that would silently no-op during the run.
+   */
+  private resetUnavailableFeatureToggles(): void {
+    this.settings.update((s) => {
+      const next = { ...s };
+      if (!this.vocalSeparationReady() && next.originalAudioMode === 'replace-vocals') {
+        next.originalAudioMode = 'keep';
+        next.includeOriginalBackgroundAudio = true;
+      }
+      if (!this.whisperxReady()) {
+        next.forcedAlignment = false;
+        next.diarize = false;
+      }
+      return next;
+    });
   }
 
   // ----------------------------- Step 1 -----------------------------
@@ -482,6 +517,8 @@ export class NewProjectWizardComponent implements OnInit {
         return ' — service not running';
       case 'model-missing':
         return ' — needs a model';
+      case 'worker-loading':
+        return ' — service starting…';
       default:
         return ' — unavailable';
     }

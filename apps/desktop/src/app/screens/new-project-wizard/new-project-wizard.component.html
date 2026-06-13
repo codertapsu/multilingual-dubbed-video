@@ -147,14 +147,16 @@
               value="replace-vocals"
               [checked]="settings().originalAudioMode === 'replace-vocals'"
               (change)="setOriginalAudioMode('replace-vocals')"
+              [disabled]="!vocalSeparationReady()"
             />
             <span class="radio-body">
               <span class="radio-title">Replace voices, keep music &amp; effects</span>
               <span class="hint"
                 >Studio-style: the original voices are separated out and replaced
                 by the dub, while the music &amp; effects play at full volume.
-                Requires the “Vocal separation” engine (Settings → Engines); falls
-                back to ducking if it isn’t installed.</span
+                @if (!vocalSeparationReady()) {
+                  <strong>Install the “Vocal separation” engine in Settings → Engines to enable this.</strong>
+                }</span
               >
             </span>
           </label>
@@ -200,12 +202,16 @@
             name="forcedAlignment"
             [ngModel]="settings().forcedAlignment ?? false"
             (ngModelChange)="toggleForcedAlignment($event)"
+            [disabled]="!whisperxReady()"
           />
           <span class="radio-body">
             <span class="radio-title">Word-accurate timing (forced alignment)</span>
             <span class="hint"
               >Tightens subtitle/dub sync to ~50 ms using the “Forced alignment +
-              diarization” engine. Skipped if that engine isn’t installed.</span
+              diarization” engine.
+              @if (!whisperxReady()) {
+                <strong>Install the “Forced alignment + diarization” engine in Settings → Engines to enable this.</strong>
+              }</span
             >
           </span>
         </label>
@@ -215,12 +221,16 @@
             name="diarize"
             [ngModel]="settings().diarize ?? false"
             (ngModelChange)="toggleDiarize($event)"
+            [disabled]="!whisperxReady()"
           />
           <span class="radio-body">
             <span class="radio-title">Detect speakers (diarization)</span>
             <span class="hint"
               >Splits the transcript per speaker so multi-speaker videos can use a
-              distinct voice per person. Uses the same engine pack.</span
+              distinct voice per person. Uses the same engine pack.
+              @if (!whisperxReady()) {
+                <strong>Install the “Forced alignment + diarization” engine in Settings → Engines to enable this.</strong>
+              }</span
             >
           </span>
         </label>

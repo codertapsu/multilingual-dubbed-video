@@ -24,7 +24,7 @@ import { AppErrorException, type EnginePackArtifact, type EnginePackInfo, type I
 import type { EngineEventBus } from './engineBus.js';
 import type { EnginePackStore } from './enginePackStore.js';
 import { findPack, packRunsOn } from './enginePackCatalog.js';
-import { resolveUvPath, UV_PYTHON_VERSION } from './uv.js';
+import { resolveBundledPythonDir, resolveUvPath, UV_PYTHON_VERSION } from './uv.js';
 import { resolveUvRequirements } from './uvRequirements.js';
 
 /**
@@ -158,9 +158,11 @@ export class EngineInstaller {
   private async extractArchive(archivePath: string, destDir: string): Promise<void> {
     const lower = archivePath.toLowerCase();
     if (lower.endsWith('.zip')) {
-      // `unzip` on POSIX; PowerShell Expand-Archive on Windows.
       if (process.platform === 'win32') {
-        await this.run('powershell', ['-NoProfile', '-Command', `Expand-Archive -Force -Path "${archivePath}" -DestinationPath "${destDir}"`]);
+        // Windows 10+ ships bsdtar, which extracts .zip too. Use it (paths passed
+        // as argv) instead of PowerShell Expand-Archive — no shell-string to break
+        // on special characters in the path, and no PowerShell process to spawn.
+        await this.run('tar', ['-xf', archivePath, '-C', destDir]);
       } else {
         await this.run('unzip', ['-o', archivePath, '-d', destDir]);
       }
@@ -202,10 +204,39 @@ export class EngineInstaller {
       });
     }
     const venvDir = path.join(packDir, artifact.destPath);
+
+    // Use the BUNDLED standalone CPython if present so uv does NOT download an
+    // interpreter from GitHub at runtime (fails on flaky links). Resolved relative
+    // to the orchestrator binary, which is robust regardless of Tauri's resource
+    // layout. only-managed + downloads=never => uv uses ONLY the bundled runtime.
+    const uvEnv: NodeJS.ProcessEnv = { ...process.env };
+    const bundledPyDir = resolveBundledPythonDir();
+    if (bundledPyDir) {
+      uvEnv.UV_PYTHON_INSTALL_DIR = bundledPyDir;
+      uvEnv.UV_PYTHON_DOWNLOADS = 'never';
+      uvEnv.UV_PYTHON_PREFERENCE = 'only-managed';
+      this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `Using the bundled Python runtime (no download) for ${pack.displayName}…` });
+    } else {
+      this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `No bundled Python found; uv will download a runtime (needs internet) for ${pack.displayName}…` });
+    }
+
     this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `Creating Python environment for ${pack.displayName}…` });
-    // `--python <version>` makes uv install a managed standalone CPython when
-    // the machine has none, so this works on a clean system with no Python.
-    await this.run(uv, ['venv', '--python', UV_PYTHON_VERSION, venvDir]);
+    // `--python <version>` resolves to the bundled runtime (UV_PYTHON_INSTALL_DIR)
+    // when present, else uv downloads a managed standalone CPython.
+    try {
+      await this.run(uv, ['venv', '--python', UV_PYTHON_VERSION, venvDir], uvEnv);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new AppErrorException(
+        'ENGINE_PACK_FAILED',
+        `Could not create the Python environment for ${pack.displayName}: ${detail}`,
+        {
+          remediation: bundledPyDir
+            ? `The bundled Python at "${bundledPyDir}" could not be used. Please report this with the message above.`
+            : `No bundled Python runtime was found next to the app, so uv tried to download one from GitHub and the network blocked it. Reinstall the latest build (it bundles Python), or retry on a more reliable connection.`,
+        },
+      );
+    }
     const reqFile = path.join(packDir, 'requirements.txt');
     await fsp.writeFile(reqFile, `${resolved.requirements.join('\n')}\n`, 'utf8');
     // Extra index URLs (e.g. the PyTorch CPU wheel index) precede `-r`. uv's
@@ -218,13 +249,13 @@ export class EngineInstaller {
       indexArgs.push('--index-strategy', 'unsafe-best-match');
     }
     this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `Installing ${pack.displayName} dependencies (this can take a few minutes)…` });
-    await this.run(uv, ['pip', 'install', '--python', venvDir, ...indexArgs, '-r', reqFile]);
+    await this.run(uv, ['pip', 'install', '--python', venvDir, ...indexArgs, '-r', reqFile], uvEnv);
   }
 
   /** Run a subprocess, rejecting on non-zero exit (stderr captured into the error). */
-  private run(cmd: string, args: string[]): Promise<void> {
+  private run(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {
-      const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+      const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true, env: env ?? process.env });
       let stderr = '';
       child.stderr?.on('data', (d: Buffer) => {
         stderr += d.toString();

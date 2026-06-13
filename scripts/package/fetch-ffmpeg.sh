@@ -132,6 +132,31 @@ fetch_macos() {
     "$(find "${WORK}/fp" -name ffprobe -type f | head -n1)"
 }
 
+# Resolve the newest PERMANENT dated-autobuild asset URL via the GitHub API.
+# BtbN's rolling `latest` release DELETES + re-uploads its assets on every
+# rebuild (~hourly), so any releases/{latest/download,download/latest}/ URL 404s
+# during that window. Dated `autobuild-*` releases are immutable once published,
+# so we pick the newest one carrying the requested asset. $1 = filename suffix
+# (e.g. "linux64-gpl.tar.xz"). Honors GITHUB_TOKEN to dodge API rate limits.
+resolve_btbn_asset() {
+  local suffix="$1"; local auth=()
+  [ -n "${GITHUB_TOKEN:-}" ] && auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=15" \
+    | python3 -c '
+import sys, json
+suffix = sys.argv[1]
+for rel in json.load(sys.stdin):
+    if not rel["tag_name"].startswith("autobuild-"):  # skip the rolling `latest`
+        continue
+    for a in rel.get("assets", []):
+        n = a["name"]
+        if n.endswith(suffix) and "shared" not in n:
+            print(a["browser_download_url"]); sys.exit(0)
+sys.exit(1)
+' "$suffix"
+}
+
 # ---------------------------------------------------------------------------
 # Linux: johnvansickle static release (amd64) — single tarball has both bins.
 # ---------------------------------------------------------------------------
@@ -140,12 +165,11 @@ fetch_linux() {
   # johnvansickle.com which rate-limits / blocks datacenter IPs (curl exit 22 in
   # CI). The -gpl build is static and includes libass (subtitles) + libx264/x265
   # (H.264/HEVC render). Binaries live under bin/ in a single ffmpeg-* top dir.
-  # Use the explicit `latest` TAG (releases/download/latest/), not the date-sorted
-  # "latest release" (releases/latest/download/) — a newer dated autobuild has only
-  # versioned asset names, so the stable ffmpeg-master-latest-* name 404s there.
-  local url="${FFMPEG_URL:-https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz}"
+  # Resolve a permanent dated-autobuild asset via the API (see resolve_btbn_asset).
+  local url="${FFMPEG_URL:-$(resolve_btbn_asset linux64-gpl.tar.xz)}"
+  if [ -z "${url}" ]; then echo "ERROR: could not resolve a BtbN linux64-gpl asset from the GitHub API." >&2; exit 1; fi
   echo "==> Downloading ${url}"
-  curl -fsSL "${url}" -o "${WORK}/ffmpeg.tar.xz"
+  curl -fsSL --retry 3 --retry-delay 5 "${url}" -o "${WORK}/ffmpeg.tar.xz"
   tar -xJf "${WORK}/ffmpeg.tar.xz" -C "${WORK}"
   local dir; dir="$(find "${WORK}" -maxdepth 1 -type d -name 'ffmpeg-*' | head -n1)"
   verify_and_stage "${dir}/bin/ffmpeg" "${dir}/bin/ffprobe"
@@ -160,11 +184,11 @@ fetch_windows() {
   # BtbN GitHub builds: a .zip (no 7z needed) with libass + libx264/x265. gyan.dev
   # ships the *full* build only as .7z; its *.zip is 'essentials'. This branch is
   # the Git Bash / WSL path; fetch-ffmpeg.ps1 is the native Windows-runner path.
-  # Explicit `latest` TAG (releases/download/latest/) — see fetch_linux for why the
-  # date-sorted releases/latest/download/ form 404s on dated autobuilds.
-  local url="${FFMPEG_URL:-https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip}"
+  # Resolve a permanent dated-autobuild asset via the API (see resolve_btbn_asset).
+  local url="${FFMPEG_URL:-$(resolve_btbn_asset win64-gpl.zip)}"
+  if [ -z "${url}" ]; then echo "ERROR: could not resolve a BtbN win64-gpl asset from the GitHub API." >&2; exit 1; fi
   echo "==> Downloading ${url}"
-  curl -fsSL "${url}" -o "${WORK}/ffmpeg.zip"
+  curl -fsSL --retry 3 --retry-delay 5 "${url}" -o "${WORK}/ffmpeg.zip"
   unzip -o -q "${WORK}/ffmpeg.zip" -d "${WORK}/ff"
   local dir; dir="$(find "${WORK}/ff" -maxdepth 1 -type d -name 'ffmpeg-*' | head -n1)"
   verify_and_stage "${dir}/bin/ffmpeg.exe" "${dir}/bin/ffprobe.exe"

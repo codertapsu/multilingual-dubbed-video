@@ -85,20 +85,28 @@ if ($LocalFfmpeg -and $LocalFfprobe -and (Test-Path $LocalFfmpeg) -and (Test-Pat
 # libx264/x265. NOTE: gyan.dev ships the *full* build only as .7z — its *.zip is
 # 'essentials', so the previously-used ffmpeg-release-full.zip URL is a 404.
 #
-# Use the explicit `latest` TAG (releases/download/latest/…), NOT GitHub's
-# date-sorted "latest release" (releases/latest/download/…). BtbN publishes a
-# rolling `latest`-tagged release that always carries the stable-named
-# `ffmpeg-master-latest-*` assets, PLUS dated `autobuild-YYYY-…` releases whose
-# assets are versioned (ffmpeg-N-…). When a dated autobuild is the most recent
-# by date, releases/latest/download/ffmpeg-master-latest-win64-gpl.zip 404s
-# (the stable name doesn't exist there) — which broke a Windows release build.
+# Resolve a PERMANENT dated-autobuild asset via the GitHub API instead of any
+# "latest" URL. BtbN's rolling `latest`-tagged release DELETES + re-uploads its
+# `ffmpeg-master-latest-*` assets on every rebuild (~hourly), so BOTH
+# releases/latest/download/ and releases/download/latest/ 404 during that window
+# (each broke a Windows release build). The dated `autobuild-YYYY-MM-DD-*`
+# releases are immutable once published, so we pick the newest one that has a
+# win64-gpl (non-shared) asset and download it by its permanent URL.
 if (-not $FfmpegUrl) {
-  $FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+  $headers = @{ 'User-Agent' = 'videodubber-ci'; 'Accept' = 'application/vnd.github+json' }
+  if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $env:GITHUB_TOKEN" }
+  $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=15' -Headers $headers
+  foreach ($rel in $releases) {
+    if (-not $rel.tag_name.StartsWith('autobuild-')) { continue }  # skip the rolling `latest`
+    $asset = $rel.assets | Where-Object { $_.name -match 'win64-gpl\.zip$' -and $_.name -notmatch 'shared' } | Select-Object -First 1
+    if ($asset) { $FfmpegUrl = $asset.browser_download_url; break }
+  }
+  if (-not $FfmpegUrl) { throw 'fetch-ffmpeg: could not resolve a BtbN win64-gpl asset from the GitHub API.' }
 }
 
 $Zip = Join-Path $Work "ffmpeg.zip"
 Write-Host "==> Downloading $FfmpegUrl"
-Invoke-WebRequest -Uri $FfmpegUrl -OutFile $Zip -UseBasicParsing
+Invoke-WebRequest -Uri $FfmpegUrl -OutFile $Zip -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 5
 Write-Host "==> Extracting..."
 Expand-Archive -Path $Zip -DestinationPath (Join-Path $Work "ff") -Force
 

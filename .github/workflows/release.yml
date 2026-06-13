@@ -172,10 +172,13 @@ jobs:
         shell: bash
         env:
           TARGET_TRIPLE: ${{ matrix.rust-target }}
+          # Authenticate fetch-ffmpeg's BtbN release API lookup (avoids the 60/hr
+          # unauthenticated rate limit on shared CI runner IPs).
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # No .env on CI, so fetch-ffmpeg downloads a STATIC, libass-enabled,
-          # portable ffmpeg (macOS: Martin-Riedl; Linux: johnvansickle) — the
-          # resulting installers are fully self-contained.
+          # portable ffmpeg (macOS: Martin-Riedl; Linux: BtbN dated autobuild) —
+          # the resulting installers are fully self-contained.
           bash scripts/package/build-sidecars.sh
 
       - name: Build sidecars (Windows)
@@ -183,6 +186,7 @@ jobs:
         shell: pwsh
         env:
           TARGET_TRIPLE: ${{ matrix.rust-target }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pwsh scripts/package/build-sidecars.ps1 -TargetTriple $env:TARGET_TRIPLE
 

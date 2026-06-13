@@ -323,6 +323,21 @@ describe('tts-timeline', () => {
     expect(f).toContain('[out]');
   });
 
+  it('resets each delayed clip PTS after adelay (so atempo cannot break amix alignment)', () => {
+    // Regression: with atempo present, un-reset PTS made amix collapse all clips
+    // to the front and silence the rest of the timeline. Each delayed clip must
+    // be re-stamped with asetpts=N/SR/TB BEFORE it feeds amix.
+    const clips: TimelineClip[] = [
+      { audioPath: '/a.wav', startMs: 0, speedRatio: 1.5 },
+      { audioPath: '/b.wav', startMs: 2000 },
+    ];
+    const f = buildTimelineFilterComplex(clips, 10000);
+    expect(f).toContain('adelay=0|0,asetpts=N/SR/TB');
+    expect(f).toContain('adelay=2000|2000,asetpts=N/SR/TB');
+    // atempo still applied for the stretched clip, BEFORE the delay.
+    expect(f).toMatch(/atempo=[\d.]+,adelay=0\|0/);
+  });
+
   it('emits a silence-only graph when there are no clips', () => {
     const f = buildTimelineFilterComplex([], 4000);
     expect(f).toContain('atrim=0:4.000');

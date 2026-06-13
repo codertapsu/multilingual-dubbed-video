@@ -151,9 +151,17 @@ export function buildTimelineFilterComplex(
     const delay = Math.max(0, Math.round(clip.startMs));
     // adelay needs one value per channel; resample/format to a common layout
     // first so amix never has to reconcile mismatched sample rates/layouts.
+    //
+    // CRITICAL: reset PTS with `asetpts=N/SR/TB` AFTER adelay. When `atempo` is
+    // present it emits frames whose timestamps break `amix`'s alignment — amix
+    // then collapses every clip to the front of the timeline and ends early, so
+    // the dub piles all voices on top of each other in the first stretch and
+    // goes silent for the rest. Re-stamping each delayed clip on a clean,
+    // sample-count PTS base lets amix place them at their true offsets. (Without
+    // any atempo it already works, but the reset is harmless and uniform.)
     parts.push(
       `[${i}:a]aresample=${SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `${buildAtempoChain(clip.speedRatio)}adelay=${delay}|${delay}[${label}]`,
+        `${buildAtempoChain(clip.speedRatio)}adelay=${delay}|${delay},asetpts=N/SR/TB[${label}]`,
     );
     delayedLabels.push(`[${label}]`);
   });

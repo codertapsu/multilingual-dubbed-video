@@ -70,6 +70,13 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
   'alignment-whisperx': {
     base: ['whisperx>=3.8', 'fastapi>=0.110', 'uvicorn>=0.29'],
   },
+  // LibreTranslate: a self-hosted HTTP server whose engine IS Argos Translate.
+  // It reuses the argostranslate packages already installed on the machine
+  // (shared default data dir), so it serves the same pairs as the built-in
+  // Argos provider — no separate model index here.
+  'translation-libretranslate': {
+    base: ['libretranslate>=1.6.0'],
+  },
 };
 
 /**

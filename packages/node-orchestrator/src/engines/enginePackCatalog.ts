@@ -285,6 +285,26 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     licenseNote:
       'WhisperX BSD-2; English/EU aligners permissive; pyannote pipeline CC-BY-4.0 (gated). Vietnamese-source word alignment falls back to DTW.',
   },
+
+  // --- LibreTranslate server (uv-managed Python env) -----------------------
+  {
+    id: 'translation-libretranslate',
+    kind: 'translation',
+    packKind: 'python-uv',
+    displayName: 'LibreTranslate (local server)',
+    description:
+      "A self-hosted LibreTranslate API server for offline translation. Its engine IS Argos Translate, so quality matches the built-in Argos provider — it reuses the language packs you've already installed (Settings → Translation packs / onboarding), so no extra model download. Optional; Argos stays the default.",
+    providerId: 'libretranslate',
+    accel: 'cpu',
+    // Light: it's Argos + a Flask server (CTranslate2 on CPU), so it runs on
+    // essentially any machine that runs the app — not a performance-class engine.
+    tier: 'balanced',
+    minRamMb: 2048,
+    approxSizeMb: 700,
+    artifacts: [{ url: 'uv-env://translation-libretranslate', approxSizeMb: 700, destPath: 'venv' }],
+    licenseNote:
+      'LibreTranslate is AGPL-3.0; its engine Argos Translate is MIT. Installed on demand from PyPI; it serves your already-installed Argos language packs.',
+  },
 ] as const;
 
 /** True if a pack can run on the given platform/arch. */

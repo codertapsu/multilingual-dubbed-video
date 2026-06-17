@@ -29,6 +29,7 @@ import { FasterWhisperProvider } from './stt/fasterWhisperProvider.js';
 import { OpenAiSttProvider } from './stt/openaiSttProvider.js';
 import { WhisperCppProvider } from './stt/whisperCppProvider.js';
 import { ArgosTranslationProvider } from './translation/argosProvider.js';
+import { LibreTranslateProvider } from './translation/libreTranslateProvider.js';
 import { LlmTranslationProvider } from './translation/llmTranslationProvider.js';
 import { LocalLlmTranslationProvider } from './translation/localLlmTranslationProvider.js';
 import { LocalTtsProvider } from './tts/localTtsProvider.js';
@@ -194,6 +195,9 @@ export function createDefaultRegistry(
         timeoutMs: timeout,
       }),
     );
+    // LibreTranslate (optional engine pack). Same engine as Argos (so not the
+    // default); offered for users who want the LibreTranslate server.
+    registry.registerTranslation(new LibreTranslateProvider(engines, store, timeout));
     // Two SEPARATE VieNeu options. v2 (24 kHz; preset voices CC BY-NC) and
     // v3-Turbo (48 kHz; Apache-2.0) each have their own pack + venv.
     registry.registerTts(

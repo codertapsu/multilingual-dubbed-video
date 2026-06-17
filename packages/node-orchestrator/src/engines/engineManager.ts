@@ -114,6 +114,16 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     healthPath: '/health',
     heavy: false,
   },
+  // LibreTranslate: a self-hosted Flask server launched via its `libretranslate`
+  // console script (no `python -m` entrypoint). Headless (--disable-web-ui) and
+  // WITHOUT --update-models, so it serves only the Argos packs already installed
+  // on the machine (shared default data dir) — mirroring the Argos provider.
+  libretranslate: {
+    binaryNames: ['libretranslate', 'libretranslate.exe'],
+    args: ({ port }) => ['--host', '127.0.0.1', '--port', String(port), '--disable-web-ui'],
+    healthPath: '/languages',
+    heavy: true,
+  },
   'audio-separator': {
     pythonModule: 'vd_separator',
     args: ({ port }) => ['--port', String(port)],
@@ -288,6 +298,7 @@ export class EngineManager {
     if (packId === 'tts-neural-v2') return 'neural-tts-v2';
     if (packId === 'separation-audio') return 'audio-separator';
     if (packId === 'alignment-whisperx') return 'whisperx';
+    if (packId === 'translation-libretranslate') return 'libretranslate';
     return packId;
   }
 

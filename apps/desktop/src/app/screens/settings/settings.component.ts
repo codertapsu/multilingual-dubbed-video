@@ -99,6 +99,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected readonly enginePacks = signal<EnginePackInfo[]>([]);
   protected readonly installedEngines = signal<InstalledEnginePack[]>([]);
   protected readonly recommendedEngineIds = signal<Set<string>>(new Set());
+  /** Packs this machine's hardware can run (local-first fit check). null = the
+   * backend didn't report fit (older build) -> assume everything fits. */
+  protected readonly engineFits = signal<Set<string> | null>(null);
   protected readonly engineProgress = signal<Record<string, { percent: number | null; message: string }>>({});
   protected readonly prerequisites = signal<EnginePrerequisites | null>(null);
   private engineEvents: EventSource | null = null;
@@ -260,7 +263,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
         .catch(() => undefined),
       this.ipc
         .getRecommendedEngines()
-        .then((r) => this.recommendedEngineIds.set(new Set(r.recommendations.map((x) => x.packId))))
+        .then((r) => {
+          this.recommendedEngineIds.set(new Set(r.recommendations.map((x) => x.packId)));
+          this.engineFits.set(r.fits ? new Set(r.fits) : null);
+        })
         .catch(() => undefined),
       this.ipc
         .getEnginePrerequisites()
@@ -275,6 +281,18 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   protected isEngineRecommended(packId: string): boolean {
     return this.recommendedEngineIds().has(packId);
+  }
+
+  /** True if this machine's hardware can run the pack (or fit is unknown). */
+  protected isEngineFit(packId: string): boolean {
+    const fits = this.engineFits();
+    return fits === null || fits.has(packId);
+  }
+
+  /** Short "needs ~N GB RAM" hint for a pack the machine can't comfortably run. */
+  protected engineRamHint(pack: EnginePackInfo): string {
+    const gb = pack.minRamMb ? Math.round(pack.minRamMb / 1024) : 0;
+    return gb > 0 ? `Needs ~${gb} GB RAM` : 'May be heavy for this machine';
   }
 
   protected engineProgressFor(packId: string): { percent: number | null; message: string } | undefined {

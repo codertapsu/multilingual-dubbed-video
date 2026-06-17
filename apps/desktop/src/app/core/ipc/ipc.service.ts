@@ -443,8 +443,11 @@ export class IpcService {
   }
 
   /** GET /engines/recommended — hardware-aware suggested packs. */
-  getRecommendedEngines(): Promise<{ recommendations: { packId: string; reason: string }[] }> {
-    return this.http<{ recommendations: { packId: string; reason: string }[] }>('GET', '/engines/recommended');
+  getRecommendedEngines(): Promise<{ recommendations: { packId: string; reason: string }[]; fits?: string[] }> {
+    return this.http<{ recommendations: { packId: string; reason: string }[]; fits?: string[] }>(
+      'GET',
+      '/engines/recommended',
+    );
   }
 
   /** GET /engines/prerequisites — uv (bundled?) + Ollama availability. */

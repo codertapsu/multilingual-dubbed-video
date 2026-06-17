@@ -251,6 +251,11 @@
           <span class="chip">{{ pack.approxSizeMb >= 1000 ? (pack.approxSizeMb / 1000).toFixed(1) + ' GB' : pack.approxSizeMb + ' MB' }}</span>
         </div>
         <span class="hint">{{ pack.description }}</span>
+        @if (isEngineFit(pack.id)) {
+          <span class="hint test-ok">✓ Your hardware can run this locally</span>
+        } @else {
+          <span class="hint test-fail">⚠ {{ engineRamHint(pack) }} — may run slowly on this machine</span>
+        }
         @if (pack.licenseNote) {
           <span class="hint mono">{{ pack.licenseNote }}</span>
         }

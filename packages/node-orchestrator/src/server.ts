@@ -38,7 +38,7 @@ import { EngineManager } from './engines/engineManager.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
 import { isPackUsable } from './engines/packSelection.js';
-import { recommendEnginePacks } from './engines/engineRecommendation.js';
+import { packFitsMachine, recommendEnginePacks } from './engines/engineRecommendation.js';
 import { resolveUvPath } from './engines/uv.js';
 import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
@@ -632,7 +632,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   app.get('/engines/recommended', async (_req, reply) => {
     try {
       const { profile, recommendation } = await buildSystemResponse();
-      return { recommendations: recommendEnginePacks(profile, recommendation) };
+      // `fits` = packs this machine's RAM/VRAM can actually run (local-first:
+      // "if the hardware can run it, allow it"). `recommendations` is the subset
+      // worth installing as a quality upgrade. The UI badges each accordingly.
+      const fits = availablePacks()
+        .filter((p) => packFitsMachine(p, profile))
+        .map((p) => p.id);
+      return { recommendations: recommendEnginePacks(profile, recommendation), fits };
     } catch (err) {
       return sendError(reply, err);
     }

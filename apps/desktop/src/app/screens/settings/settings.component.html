@@ -279,6 +279,82 @@
     }
   </div>
 
+  <!-- ===================== Translation packs (Argos) ===================== -->
+  <div class="card stack">
+    <h2>Translation packs</h2>
+    <p class="muted">
+      Offline Argos Translate language packs, downloaded from the Argos index on
+      demand. Non-English pairs translate via English (e.g. Chinese → Vietnamese
+      uses Chinese → English + English → Vietnamese), so install both legs for
+      such a pair. Ollama / cloud translation are not limited to these.
+    </p>
+
+    <div class="row argos-toolbar">
+      <button
+        type="button"
+        class="btn btn-sm"
+        (click)="loadArgosPackages(true)"
+        [disabled]="argosRefreshing()"
+      >
+        {{ argosRefreshing() ? 'Loading index…' : 'Browse available packs' }}
+      </button>
+      @if (argosRows().length > 8) {
+        <input
+          type="search"
+          class="argos-filter"
+          placeholder="Filter languages…"
+          [ngModel]="argosFilter()"
+          (ngModelChange)="argosFilter.set($event)"
+          aria-label="Filter translation packs"
+        />
+      }
+    </div>
+
+    @if (argosRows().length === 0) {
+      @if (argosRefreshing()) {
+        <p class="hint">Loading the Argos package index…</p>
+      } @else {
+        <p class="hint">
+          Installed packs appear here. Click “Browse available packs” to see
+          everything you can install.
+        </p>
+      }
+    }
+
+    @for (row of argosRows(); track row.key) {
+      <div class="cred-row stack-sm">
+        <div class="cred-head">
+          <span class="cred-name">{{ row.fromName }} → {{ row.toName }}</span>
+          <span class="chip mono">{{ row.from }}→{{ row.to }}</span>
+          @if (row.installed) {
+            <span class="badge badge-completed">installed</span>
+          }
+        </div>
+        <div class="cred-controls">
+          @if (row.installed) {
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              (click)="removeArgosPair(row)"
+              [disabled]="argosBusy() !== null"
+            >
+              {{ argosBusy() === row.key ? 'Removing…' : 'Remove' }}
+            </button>
+          } @else {
+            <button
+              type="button"
+              class="btn btn-sm"
+              (click)="installArgosPair(row)"
+              [disabled]="argosBusy() !== null"
+            >
+              {{ argosBusy() === row.key ? 'Installing…' : 'Install' }}
+            </button>
+          }
+        </div>
+      </div>
+    }
+  </div>
+
   <!-- ============================ Updates ============================ -->
   <div class="card stack">
     <h2>Updates</h2>

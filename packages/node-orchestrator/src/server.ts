@@ -16,7 +16,9 @@ import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import {
   ALL_CLOUD_SERVICES,
+  AppErrorException,
   COMMON_LANGUAGES,
+  type ArgosPair,
   type CloudServiceId,
   type CreateProjectInput,
   type PipelineStepId,
@@ -49,7 +51,7 @@ import { LocalJobOrchestrator } from './orchestrator.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { createDefaultRegistry, OLLAMA_MODEL } from './providers/registry.js';
 import { buildReadinessContext, checkProviderReadiness, describeProviderReadiness, type ReadinessDeps } from './providers/readiness.js';
-import { probeWorkerHealth } from './providers/workerHttp.js';
+import { getWorkerJson, postWorkerJson, probeWorkerHealth } from './providers/workerHttp.js';
 import { OllamaPullManager, listOllamaModels } from './providers/ollamaModels.js';
 import { computeRequiredResources, hasRequiredResources } from './setup/requiredResources.js';
 import type { PipelineMediaService } from './media.js';
@@ -539,6 +541,76 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       return sendError(reply, err);
     }
   });
+
+  // ---- Argos translation packs (browse the full index + remove) ------------
+  // Listing/removal proxy the Translation worker (the source of truth for what's
+  // installed). Installation reuses POST /setup/install with `argosPairs` (SSE
+  // progress via /setup/events), so there is no separate install route here.
+  const trWorker = (): string => config.translationWorkerUrl.replace(/\/$/, '');
+
+  app.get(
+    '/providers/argos/packages',
+    async (req: FastifyRequest<{ Querystring: { refresh?: string } }>, reply) => {
+      try {
+        const refresh = req.query?.refresh === 'true' || req.query?.refresh === '1';
+        const data = await getWorkerJson<{ installed?: ArgosPair[]; available?: ArgosPair[] }>(
+          `${trWorker()}/packages${refresh ? '?refresh=true' : ''}`,
+          { timeoutMs: config.workerRequestTimeoutMs, workerName: 'Translation worker' },
+        );
+        return { installed: data.installed ?? [], available: data.available ?? [] };
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  app.post(
+    '/providers/argos/packages/ensure',
+    async (req: FastifyRequest<{ Body: { from?: string; to?: string } }>, reply) => {
+      try {
+        const from = req.body?.from?.trim();
+        const to = req.body?.to?.trim();
+        if (!from || !to) {
+          throw new AppErrorException('INVALID_LANGUAGE', 'Both "from" and "to" are required.');
+        }
+        // Synchronous (download held open) so the Settings UI just shows a
+        // per-row spinner; onboarding's bulk install still uses /setup/install.
+        const data = await postWorkerJson<{ ok?: boolean; installed?: boolean }>(
+          `${trWorker()}/packages/ensure`,
+          { from, to },
+          { timeoutMs: config.workerRequestTimeoutMs, workerName: 'Translation worker' },
+        );
+        if (data?.ok) await setupStore.addArgosPair({ from, to });
+        return { ok: data?.ok ?? false, installed: data?.installed ?? false };
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  app.post(
+    '/providers/argos/packages/remove',
+    async (req: FastifyRequest<{ Body: { from?: string; to?: string } }>, reply) => {
+      try {
+        const from = req.body?.from?.trim();
+        const to = req.body?.to?.trim();
+        if (!from || !to) {
+          throw new AppErrorException('INVALID_LANGUAGE', 'Both "from" and "to" are required.');
+        }
+        const data = await postWorkerJson<{ ok?: boolean; removed?: boolean }>(
+          `${trWorker()}/packages/remove`,
+          { from, to },
+          { timeoutMs: config.workerRequestTimeoutMs, workerName: 'Translation worker' },
+        );
+        // Keep the setup inventory in sync so required-resource checks re-request
+        // the pair for a future run instead of assuming it's still installed.
+        if (data?.removed) await setupStore.removeArgosPair({ from, to });
+        return { ok: data?.ok ?? false, removed: data?.removed ?? false };
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
 
   // ---- Engine packs (download/manage optional accelerated engines) ---------
 

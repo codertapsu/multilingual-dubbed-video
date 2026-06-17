@@ -99,6 +99,19 @@ class PackagesResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     installed: list[LanguagePair] = Field(default_factory=list)
+    #: Full Argos index (downloadable pairs). Populated only when the caller
+    #: asks for a network refresh (GET /packages?refresh=true); else empty.
+    available: list[LanguagePair] = Field(default_factory=list)
+
+
+class RemovePackageResponse(BaseModel):
+    """Body for a successful ``POST /packages/remove``."""
+
+    ok: bool = True
+    removed: bool = Field(
+        ...,
+        description="True if a package was uninstalled (False if it wasn't installed).",
+    )
 
 
 class HealthResponse(BaseModel):

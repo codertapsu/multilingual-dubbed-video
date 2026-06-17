@@ -33,12 +33,24 @@ class FakeBackend:
         self.installed = installed if installed is not None else {("en", "vi")}
         self.calls: list[tuple[str, str, str]] = []
         self.ensure_calls: list[tuple[str, str]] = []
+        self.remove_calls: list[tuple[str, str]] = []
+        self.index_refreshed = False
 
     def installed_pairs(self) -> list[tuple[str, str]]:
         return sorted(self.installed)
 
     def available_pairs(self) -> list[tuple[str, str]]:
-        return [("en", "es"), ("en", "fr")]
+        return [("en", "es"), ("en", "fr"), ("zh", "en")]
+
+    def refresh_index(self) -> None:
+        self.index_refreshed = True
+
+    def remove_pair(self, from_lang: str, to_lang: str) -> bool:
+        self.remove_calls.append((from_lang, to_lang))
+        if (from_lang, to_lang) in self.installed:
+            self.installed.discard((from_lang, to_lang))
+            return True
+        return False
 
     def ensure_pair(self, from_lang: str, to_lang: str) -> bool:
         """Mimic the real install flow against the fake ``available_pairs``.

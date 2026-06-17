@@ -57,6 +57,15 @@ export interface ArgosPair {
   to: LanguageCode;
 }
 
+/**
+ * GET /providers/argos/packages — installed pairs always; `available` (the full
+ * downloadable Argos index) is populated only when called with `refresh=true`.
+ */
+export interface ArgosPackagesResponse {
+  installed: ArgosPair[];
+  available: ArgosPair[];
+}
+
 /** A curated common language entry (code + human label). */
 export interface CommonLanguage {
   code: LanguageCode;

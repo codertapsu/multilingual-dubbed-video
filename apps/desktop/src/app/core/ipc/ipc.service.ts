@@ -19,6 +19,8 @@ import type {
   WorkersHealth,
 } from '../models/view-models';
 import type {
+  ArgosPackagesResponse,
+  ArgosPair,
   CloudCredentialInfo,
   CloudServiceId,
   CredentialTestResult,
@@ -390,6 +392,37 @@ export class IpcService {
   /** GET /providers — selectable providers per phase, with availability + readiness. */
   getProviders(): Promise<ProvidersResponse> {
     return this.http<ProvidersResponse>('GET', '/providers');
+  }
+
+  // ----- Argos translation packs (browse the full index + install/remove) -----
+
+  /**
+   * GET /providers/argos/packages — installed pairs always; pass `refresh=true`
+   * to also fetch the full downloadable Argos index (a network call).
+   */
+  getArgosPackages(refresh = false): Promise<ArgosPackagesResponse> {
+    return this.http<ArgosPackagesResponse>(
+      'GET',
+      `/providers/argos/packages${refresh ? '?refresh=true' : ''}`,
+    );
+  }
+
+  /** POST /providers/argos/packages/ensure — download+install one pair (synchronous). */
+  ensureArgosPackage(pair: ArgosPair): Promise<{ ok: boolean; installed: boolean }> {
+    return this.http<{ ok: boolean; installed: boolean }>(
+      'POST',
+      '/providers/argos/packages/ensure',
+      pair,
+    );
+  }
+
+  /** POST /providers/argos/packages/remove — uninstall one pair. */
+  removeArgosPackage(pair: ArgosPair): Promise<{ ok: boolean; removed: boolean }> {
+    return this.http<{ ok: boolean; removed: boolean }>(
+      'POST',
+      '/providers/argos/packages/remove',
+      pair,
+    );
   }
 
   /** GET /system — hardware profile + hardware-aware recommendation. */

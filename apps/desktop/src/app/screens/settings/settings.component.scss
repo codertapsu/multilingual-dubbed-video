@@ -165,3 +165,15 @@
     height: 6px;
   }
 }
+
+/* ---- Translation packs (Argos) toolbar ---------------------------------- */
+.argos-toolbar {
+  align-items: center;
+  gap: var(--vd-sp-2);
+}
+
+.argos-filter {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 22rem;
+}

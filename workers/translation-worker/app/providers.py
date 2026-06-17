@@ -46,6 +46,14 @@ class TranslationBackend(Protocol):
         """Return downloadable/available ``(from_base, to_base)`` pairs (may be empty)."""
         ...
 
+    def refresh_index(self) -> None:
+        """Refresh the remote package index so ``available_pairs`` is populated."""
+        ...
+
+    def remove_pair(self, from_lang: str, to_lang: str) -> bool:
+        """Uninstall a ``(from_lang, to_lang)`` package. ``True`` if one was removed."""
+        ...
+
     def ensure_pair(self, from_lang: str, to_lang: str) -> bool:
         """Ensure a ``(from_lang, to_lang)`` package is installed.
 
@@ -112,6 +120,76 @@ class ArgosBackend:
         self._loaded = False
         self._languages = []
         self._ensure_loaded()
+
+    def refresh_index(self) -> None:
+        """Update the remote Argos package index (network) so :meth:`available_pairs`
+        reflects the full published catalog. Raises a structured error if the
+        index can't be reached, so the pack-manager UI can surface it."""
+        try:
+            from argostranslate import package as argos_package  # type: ignore
+
+            argos_package.update_package_index()
+        except Exception as exc:  # noqa: BLE001
+            raise AppErrorException.make(
+                code="TRANSLATION_PACKAGE_MISSING",
+                message="Could not update the Argos package index.",
+                status_code=503,
+                cause=str(exc),
+                remediation=(
+                    "Check your network connection and retry — the package index "
+                    "is fetched from the Argos servers."
+                ),
+                docs_ref=_MODEL_SETUP_DOC,
+            ) from exc
+
+    def remove_pair(self, from_lang: str, to_lang: str) -> bool:
+        """Uninstall the Argos package for ``from_lang -> to_lang``.
+
+        Returns ``True`` if a package was removed, ``False`` if none was
+        installed (idempotent). Raises a structured error if the library is
+        missing or the uninstall fails.
+        """
+        try:
+            from argostranslate import package as argos_package  # type: ignore
+
+            installed = argos_package.get_installed_packages()
+        except Exception as exc:  # noqa: BLE001
+            raise AppErrorException.make(
+                code="TRANSLATION_PACKAGE_MISSING",
+                message="Argos Translate is not installed in this environment.",
+                status_code=503,
+                cause=str(exc),
+                remediation="Install the translation engine: `pip install argostranslate`.",
+                docs_ref=_MODEL_SETUP_DOC,
+            ) from exc
+
+        match = next(
+            (
+                pkg
+                for pkg in installed
+                if getattr(pkg, "from_code", None) == from_lang
+                and getattr(pkg, "to_code", None) == to_lang
+            ),
+            None,
+        )
+        if match is None:
+            return False
+        try:
+            argos_package.uninstall(match)
+        except Exception as exc:  # noqa: BLE001
+            raise AppErrorException.make(
+                code="TRANSLATION_PACKAGE_MISSING",
+                message=f"Failed to remove the Argos package for '{from_lang}' -> '{to_lang}'.",
+                status_code=500,
+                cause=str(exc),
+                remediation="Retry, or delete it from the Argos packages directory manually.",
+                docs_ref=_MODEL_SETUP_DOC,
+            ) from exc
+
+        # Drop the cached language graph so the next list/translate reflects it.
+        self.refresh()
+        logger.info("Argos: removed pair %s->%s.", from_lang, to_lang)
+        return True
 
     # -- introspection ----------------------------------------------------
 
@@ -347,6 +425,14 @@ class _UnimplementedCloudBackend:
 
     def available_pairs(self) -> list[tuple[str, str]]:
         return []
+
+    def refresh_index(self) -> None:
+        # Cloud backends have no local package index to refresh.
+        return None
+
+    def remove_pair(self, from_lang: str, to_lang: str) -> bool:  # noqa: ARG002
+        # Nothing to uninstall for a cloud backend.
+        return False
 
     def ensure_pair(self, from_lang: str, to_lang: str) -> bool:  # noqa: ARG002
         # Cloud backends have nothing to download — every supported pair is

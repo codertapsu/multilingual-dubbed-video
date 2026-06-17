@@ -29,6 +29,7 @@ from .providers import ArgosBackend, TranslationBackend
 from .schemas import (
     LanguagePair,
     LanguagesResponse,
+    PackagesResponse,
     ResultSegment,
     Segment,
     TranslateResponse,
@@ -101,6 +102,42 @@ def list_installed_pairs() -> list[LanguagePair]:
     """Installed language pairs only (for ``GET /packages``)."""
     backend = get_backend()
     return _dedupe_pairs(backend.installed_pairs())
+
+
+def list_packages(refresh: bool = False) -> PackagesResponse:
+    """Installed pairs, plus the full downloadable index when ``refresh`` is set.
+
+    The available list needs a network index update, so it is only fetched when
+    the caller opts in (the Settings pack manager); the fast/offline path
+    (first-run setup) returns installed-only.
+    """
+    backend = get_backend()
+    if refresh:
+        backend.refresh_index()
+    installed = _dedupe_pairs(backend.installed_pairs())
+    available = _dedupe_pairs(backend.available_pairs()) if refresh else []
+    return PackagesResponse(installed=installed, available=available)
+
+
+def remove_package(from_code: str, to_code: str) -> bool:
+    """Uninstall the Argos package for ``from_code -> to_code`` (idempotent).
+
+    Returns ``True`` if a package was removed. Raises ``INVALID_LANGUAGE`` if a
+    code can't be reduced to a base subtag.
+    """
+    from_lang = to_argos_language(from_code)
+    to_lang = to_argos_language(to_code)
+    if not from_lang or not to_lang:
+        raise AppErrorException.make(
+            code="INVALID_LANGUAGE",
+            message=(
+                f"Could not resolve a base language subtag from "
+                f"from='{from_code}', to='{to_code}'."
+            ),
+            status_code=400,
+            remediation="Provide BCP-47 codes such as 'en' / 'vi' (or 'en-US' / 'vi-VN').",
+        )
+    return get_backend().remove_pair(from_lang, to_lang)
 
 
 def ensure_package(from_code: str, to_code: str) -> bool:

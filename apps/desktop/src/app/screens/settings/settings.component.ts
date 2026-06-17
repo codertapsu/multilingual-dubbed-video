@@ -14,6 +14,7 @@ import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.com
 import { environment } from '../../core/environment';
 import type { AppError, EnginePackInfo, EnginePrerequisites, InstalledEnginePack } from '../../core/models';
 import type {
+  ArgosPair,
   CloudCredentialInfo,
   CloudServiceId,
   CredentialTestResult,
@@ -22,6 +23,14 @@ import type {
   SystemProfileResponse,
   UpdateInfo,
 } from '../../core/models/setup';
+
+/** One row in the Translation-packs manager (a pair + resolved names + state). */
+interface ArgosPackRow extends ArgosPair {
+  key: string;
+  installed: boolean;
+  fromName: string;
+  toName: string;
+}
 
 /** Outcome of the most recent "Check for updates" action. */
 type CheckOutcome = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error';
@@ -99,6 +108,110 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return pack.packKind === 'python-uv';
   }
 
+  // -------- Argos translation packs (browse the full index + install/remove) --
+  protected readonly argosInstalled = signal<ArgosPair[]>([]);
+  protected readonly argosAvailable = signal<ArgosPair[]>([]);
+  protected readonly argosRefreshing = signal(false);
+  /** "from->to" key of the pair currently installing/removing (per-row spinner). */
+  protected readonly argosBusy = signal<string | null>(null);
+  protected readonly argosFilter = signal('');
+
+  private static readonly langDisplay = (() => {
+    try {
+      return new Intl.DisplayNames(['en'], { type: 'language' });
+    } catch {
+      return null;
+    }
+  })();
+
+  /** Human language name for a code (e.g. "zh" -> "Chinese"); falls back to the code. */
+  protected langName(code: string): string {
+    try {
+      return SettingsComponent.langDisplay?.of(code) ?? code;
+    } catch {
+      return code;
+    }
+  }
+
+  private pairKey(p: ArgosPair): string {
+    return `${p.from}->${p.to}`;
+  }
+
+  /** Installed ∪ available pairs as display rows (installed first, then by name),
+   * filtered by the search box. Pure read — safe inside a computed. */
+  protected readonly argosRows = computed<ArgosPackRow[]>(() => {
+    const installedKeys = new Set(this.argosInstalled().map((p) => this.pairKey(p)));
+    const byKey = new Map<string, ArgosPair>();
+    for (const p of this.argosInstalled()) byKey.set(this.pairKey(p), p);
+    for (const p of this.argosAvailable()) byKey.set(this.pairKey(p), p);
+
+    const q = this.argosFilter().trim().toLowerCase();
+    const rows: ArgosPackRow[] = [...byKey.values()].map((p) => ({
+      ...p,
+      key: this.pairKey(p),
+      installed: installedKeys.has(this.pairKey(p)),
+      fromName: this.langName(p.from),
+      toName: this.langName(p.to),
+    }));
+    const filtered = q
+      ? rows.filter((r) => `${r.fromName} ${r.toName} ${r.from} ${r.to}`.toLowerCase().includes(q))
+      : rows;
+    return filtered.sort(
+      (a, b) =>
+        Number(b.installed) - Number(a.installed) ||
+        a.fromName.localeCompare(b.fromName) ||
+        a.toName.localeCompare(b.toName),
+    );
+  });
+
+  /** Load installed pairs (fast); pass `refresh` to also fetch the full index. */
+  protected async loadArgosPackages(refresh = false): Promise<void> {
+    if (refresh) this.argosRefreshing.set(true);
+    this.error.set(null);
+    try {
+      const res = await this.ipc.getArgosPackages(refresh);
+      this.argosInstalled.set(res.installed);
+      // Only a refresh returns the index; a plain reload (after install/remove)
+      // must NOT wipe the browsed list.
+      if (refresh) this.argosAvailable.set(res.available);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      if (refresh) this.argosRefreshing.set(false);
+    }
+  }
+
+  protected async installArgosPair(pair: ArgosPair): Promise<void> {
+    const key = this.pairKey(pair);
+    if (this.argosBusy()) return;
+    this.argosBusy.set(key);
+    this.error.set(null);
+    try {
+      await this.ipc.ensureArgosPackage({ from: pair.from, to: pair.to });
+      await this.loadArgosPackages(false);
+      void this.loadProcessingSetup(); // a newly-installed pair can flip availability
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.argosBusy.set(null);
+    }
+  }
+
+  protected async removeArgosPair(pair: ArgosPair): Promise<void> {
+    const key = this.pairKey(pair);
+    if (this.argosBusy()) return;
+    this.argosBusy.set(key);
+    this.error.set(null);
+    try {
+      await this.ipc.removeArgosPackage({ from: pair.from, to: pair.to });
+      await this.loadArgosPackages(false);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.argosBusy.set(null);
+    }
+  }
+
   protected readonly ramLabel = computed(() => {
     const profile = this.system()?.profile;
     return profile ? `${Math.round(profile.totalRamMb / 1024)} GB RAM` : '';
@@ -126,6 +239,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     void this.loadVersion();
     void this.loadProcessingSetup();
     void this.loadEngines();
+    void this.loadArgosPackages(); // installed-only (fast); index loads on demand
   }
 
   ngOnDestroy(): void {

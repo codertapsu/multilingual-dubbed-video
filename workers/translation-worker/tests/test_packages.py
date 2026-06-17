@@ -30,8 +30,44 @@ def test_packages_lists_installed_only(client: TestClient) -> None:
     # FakeBackend ships en->vi installed; available (en->es/fr) must NOT appear.
     assert {"from": "en", "to": "vi"} in body["installed"]
     assert {"from": "en", "to": "es"} not in body["installed"]
+    # Without ?refresh, the available index is NOT fetched (offline-tolerant).
+    assert body.get("available", []) == []
     for pair in body["installed"]:
         assert set(pair.keys()) == {"from", "to"}
+
+
+def test_packages_refresh_returns_available_index(client: TestClient, fake_backend: FakeBackend) -> None:
+    resp = client.get("/packages?refresh=true")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert fake_backend.index_refreshed is True  # the network index was refreshed
+    assert {"from": "en", "to": "vi"} in body["installed"]
+    # The full downloadable index now appears.
+    assert {"from": "en", "to": "es"} in body["available"]
+    assert {"from": "zh", "to": "en"} in body["available"]
+
+
+# ---------------------------------------------------------------------------
+# POST /packages/remove
+# ---------------------------------------------------------------------------
+def test_remove_uninstalls_installed_pair(client: TestClient, fake_backend: FakeBackend) -> None:
+    resp = client.post("/packages/remove", json={"from": "en", "to": "vi"})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "removed": True}
+    assert {"from": "en", "to": "vi"} not in client.get("/packages").json()["installed"]
+
+
+def test_remove_missing_pair_is_noop(client: TestClient) -> None:
+    resp = client.post("/packages/remove", json={"from": "en", "to": "zz"})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "removed": False}
+
+
+def test_remove_normalizes_region_codes(client: TestClient, fake_backend: FakeBackend) -> None:
+    resp = client.post("/packages/remove", json={"from": "en-US", "to": "vi-VN"})
+    assert resp.status_code == 200
+    assert resp.json()["removed"] is True
+    assert ("en", "vi") in fake_backend.remove_calls
 
 
 # ---------------------------------------------------------------------------

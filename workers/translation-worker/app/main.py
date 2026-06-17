@@ -34,6 +34,7 @@ from .schemas import (
     HealthResponse,
     LanguagesResponse,
     PackagesResponse,
+    RemovePackageResponse,
     TranslateRequest,
     TranslateResponse,
 )
@@ -41,8 +42,9 @@ from .translation_service import (
     ensure_package,
     get_backend,
     installed_pair_count,
-    list_installed_pairs,
     list_languages,
+    list_packages,
+    remove_package,
     translate_segments,
 )
 
@@ -103,9 +105,21 @@ def create_app() -> FastAPI:
         return list_languages()
 
     @app.get("/packages", response_model=PackagesResponse)
-    def packages() -> PackagesResponse:
-        """List installed translation packages (first-run setup wizard)."""
-        return PackagesResponse(installed=list_installed_pairs())
+    def packages(refresh: bool = False) -> PackagesResponse:
+        """List installed translation packages.
+
+        ``?refresh=true`` also fetches the full downloadable Argos index (network)
+        for the Settings pack manager; the default is installed-only (fast,
+        offline-tolerant — used by first-run setup).
+        """
+        return list_packages(refresh=refresh)
+
+    @app.post("/packages/remove", response_model=RemovePackageResponse)
+    def remove_pkg(req: EnsurePackageRequest) -> RemovePackageResponse:
+        """Uninstall an Argos language package (idempotent)."""
+        removed = remove_package(req.from_, req.to)
+        log.info("Removed translation package %s->%s (removed=%s)", req.from_, req.to, removed)
+        return RemovePackageResponse(ok=True, removed=removed)
 
     @app.post("/packages/ensure", response_model=EnsurePackageResponse)
     def ensure_pkg(req: EnsurePackageRequest) -> EnsurePackageResponse:

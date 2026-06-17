@@ -143,6 +143,22 @@ export class SetupStore {
     return next;
   }
 
+  /** Forget an uninstalled Argos pair (idempotent), so required-resource checks
+   * re-request it for a future run instead of assuming it's still present. */
+  async removeArgosPair(pair: ArgosPair): Promise<SetupStatus> {
+    const current = await this.getStatus();
+    if (!current.installed.argosPairs.some((p) => pairsEqual(p, pair))) return current;
+    const next: SetupStatus = {
+      ...current,
+      installed: {
+        ...current.installed,
+        argosPairs: current.installed.argosPairs.filter((p) => !pairsEqual(p, pair)),
+      },
+    };
+    await this.saveStatus(next);
+    return next;
+  }
+
   /** Record a newly-installed Piper voice (idempotent). */
   async addPiperVoice(voiceId: string): Promise<SetupStatus> {
     const current = await this.getStatus();

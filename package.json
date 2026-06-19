@@ -25,7 +25,8 @@
     "lint": "eslint . --ext .ts",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "verify": "tsx scripts/verify-environment.ts"
+    "verify": "tsx scripts/verify-environment.ts",
+    "eval:translation": "tsx scripts/eval-translation.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

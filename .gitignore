@@ -14,6 +14,9 @@ out/
 coverage/
 .vitest/
 
+# Output of `pnpm eval:translation` (the EN<->VI A/B harness).
+eval-translation-output.md
+
 # ===== Angular (apps/desktop) =====
 .angular/
 .angular/cache/

@@ -71,8 +71,11 @@ export interface EngineLaunchSpec {
   binaryNames?: string[];
   /** Python module to run for uv-env packs (via `<venv>/bin/python -m <module>`). */
   pythonModule?: string;
-  /** Build argv given the resolved executable, port, and pack dir. */
-  args: (ctx: { exe: string; port: number; packDir: string }) => string[];
+  /**
+   * Build argv given the resolved executable, port, pack dir, and (for the
+   * local-llm runtime) the absolute path of the GGUF model to load.
+   */
+  args: (ctx: { exe: string; port: number; packDir: string; model?: string }) => string[];
   /** Extra environment for the child. */
   env?: (ctx: { port: number; packDir: string }) => Record<string, string>;
   /** Health URL builder; polled until it resolves ok. */
@@ -91,9 +94,24 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
   },
   'local-llm': {
     binaryNames: ['llama-server', 'llama-server.exe'],
-    // Model path is supplied via VD_LLM_MODEL in the env builder.
-    args: ({ port }) => ['--host', '127.0.0.1', '--port', String(port), '-c', '8192'],
-    env: ({ packDir }) => ({ VD_PACK_DIR: packDir }),
+    // The GGUF lives in a SEPARATE `local-llm-model` pack; the registry resolves
+    // its path (resolveLocalLlmModelPath) and threads it in as `model`, so
+    // llama-server loads it with `-m`. Without an installed model pack the
+    // provider throws ENGINE_PACK_MISSING before we get here, so `model` is set
+    // in practice. `-ngl 999` offloads all layers to the GPU on the accelerated
+    // builds (Metal/CUDA/Vulkan) and is a harmless no-op on a CPU-only build.
+    // `-c 8192` is ample headroom — TranslateGemma's input context is ~2K tokens.
+    args: ({ port, model }) => [
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+      '-c',
+      '8192',
+      '-ngl',
+      '999',
+      ...(model ? ['-m', model] : []),
+    ],
     healthPath: '/health',
     heavy: true,
   },
@@ -173,7 +191,7 @@ export class EngineManager {
    * second call returns the existing instance. When `exclusive` is set, other
    * *heavy* engines are stopped first to free RAM/VRAM for sequential phases.
    */
-  async ensureRunning(packId: string, opts: { exclusive?: boolean } = {}): Promise<string> {
+  async ensureRunning(packId: string, opts: { exclusive?: boolean; model?: string } = {}): Promise<string> {
     const existing = this.running.get(packId);
     if (existing) return existing.baseUrl;
 
@@ -198,7 +216,7 @@ export class EngineManager {
     // (e.g. --port), so prepend `-m <module>` here — without it the worker is
     // launched as `python --port <n>`, which Python rejects ("unknown option")
     // and exits instantly, surfacing as "engine did not become healthy in time".
-    const specArgs = spec.args({ exe, port, packDir: rec.path });
+    const specArgs = spec.args({ exe, port, packDir: rec.path, model: opts.model });
     const args = spec.pythonModule ? ['-m', spec.pythonModule, ...specArgs] : specArgs;
     // Force UTF-8 stdio for the Python worker: on Windows the default console
     // encoding (cp1252) raises UnicodeEncodeError when the worker or its deps

@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppErrorException, type Project } from '@videodubber/shared';
 import type { CredentialsStore } from '../credentials/credentialsStore.js';
-import type { EnginePackStore } from '../engines/enginePackStore.js';
+import { EnginePackStore } from '../engines/enginePackStore.js';
+import { recommendedPackFor } from '../engines/packSelection.js';
 import { assertRunReady, checkProviderReadiness, type OllamaProbe } from './readiness.js';
 import { availablePacks } from '../engines/enginePackCatalog.js';
 import { ProviderRegistry } from './registry.js';
@@ -207,6 +211,63 @@ describe('checkProviderReadiness', () => {
       'audio-mix',
     );
     expect(results).toHaveLength(0);
+  });
+});
+
+describe('managed llama.cpp (TranslateGemma) readiness', () => {
+  let dir: string;
+  let store: EnginePackStore;
+  const runtimePackId = recommendedPackFor('local-llm')?.id; // platform-specific (metal/cuda/vulkan/linux)
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(os.tmpdir(), 'vd-rd-llm-'));
+    store = new EnginePackStore(dir);
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const llamaProject = projectWith('llama-cpp');
+  const reg = () => registryWith(fakeTranslation({ id: 'llama-cpp', displayName: 'llama.cpp (local LLM)' }));
+  const installRuntime = async (): Promise<void> => {
+    const p = store.packDir(runtimePackId!);
+    await mkdir(p, { recursive: true });
+    await writeFile(path.join(p, 'llama-server'), '#!/bin/sh\n');
+    await store.add({ id: runtimePackId!, path: p, installedAt: '2026-01-01T00:00:00Z' });
+  };
+  const installModel = async (): Promise<void> => {
+    const p = store.packDir('translategemma-4b');
+    await mkdir(p, { recursive: true });
+    await writeFile(path.join(p, 'model.gguf'), 'x');
+    await store.add({ id: 'translategemma-4b', path: p, installedAt: '2026-01-01T00:00:00Z' });
+  };
+
+  it('flags the runtime engine pack as missing when nothing is installed', async () => {
+    if (!runtimePackId) return; // no llama.cpp pack on this platform
+    const results = await checkProviderReadiness(llamaProject, { registry: reg(), credentials: fakeCreds([]), enginePackStore: store });
+    const t = results.find((r) => r.phase === 'translation')!;
+    expect(t.ready).toBe(false);
+    expect(t.status).toBe('engine-pack-missing');
+    expect(t.message).toMatch(/runtime/);
+  });
+
+  it('flags the MODEL as missing when the runtime is installed but no model pack is', async () => {
+    if (!runtimePackId) return;
+    await installRuntime();
+    const results = await checkProviderReadiness(llamaProject, { registry: reg(), credentials: fakeCreds([]), enginePackStore: store });
+    const t = results.find((r) => r.phase === 'translation')!;
+    expect(t.ready).toBe(false);
+    expect(t.status).toBe('engine-pack-missing');
+    expect(t.message).toMatch(/no TranslateGemma model/i);
+    expect(t.action?.ref).toBe('translategemma-4b');
+  });
+
+  it('is ready once both the runtime and a model pack are installed', async () => {
+    if (!runtimePackId) return;
+    await installRuntime();
+    await installModel();
+    const results = await checkProviderReadiness(llamaProject, { registry: reg(), credentials: fakeCreds([]), enginePackStore: store });
+    expect(results.find((r) => r.phase === 'translation')!.ready).toBe(true);
   });
 });
 

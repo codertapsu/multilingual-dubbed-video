@@ -36,8 +36,8 @@ per project in the new-project wizard — and changed again at any time.
 | STT | `whisper-cpp` | whisper.cpp server (Metal/CUDA/Vulkan) — accelerated Whisper | local | engine pack |
 | STT | `openai-stt` | OpenAI `whisper-1` transcription API | cloud | OpenAI key |
 | Translation | `argos` | Argos Translate (offline neural MT), worker `:5102` | local | — |
-| Translation | `ollama` | Local LLM via Ollama (default `translategemma:12b`) | local | Ollama daemon |
-| Translation | `llama-cpp` | Local LLM via bundled `llama-server` | local | engine pack |
+| Translation | `ollama` | Local LLM via Ollama (default `translategemma:4b`) | local | Ollama daemon |
+| Translation | `llama-cpp` | Local LLM via bundled `llama-server` (TranslateGemma) | local | runtime + model pack |
 | Translation | `openai-translate` | OpenAI chat model (default `gpt-4o-mini`) | cloud | OpenAI key |
 | Translation | `anthropic-translate` | Anthropic Claude (default `claude-haiku-4-5`) | cloud | Anthropic key |
 | Translation | `gemini-translate` | Google Gemini (default `gemini-2.0-flash`) | cloud | Gemini key |
@@ -63,7 +63,8 @@ for the per-hardware-tier matrix behind the recommendations.
 | Pack | Provides | Delivery |
 |---|---|---|
 | `whisper-cpp-metal` / `-cuda` / `-vulkan` | Accelerated STT (`whisper-cpp`) | native binary |
-| `llama-cpp-metal` / `-cuda` / `-vulkan` | Local LLM translation (`llama-cpp`) | native binary + GGUF model |
+| `llama-cpp-metal` / `-cuda` / `-vulkan` | Local LLM translation **runtime** (`llama-cpp`) | native binary |
+| `translategemma-4b` / `-12b` / `-27b` | **TranslateGemma** GGUF weights the runtime loads (4B from 8 GB; 12B/27B with a GPU/Apple-Silicon) | model download |
 | `tts-neural` | Neural multilingual + Vietnamese voices (`neural-tts`) | uv-managed Python env |
 | `separation-audio` | Vocal/M&E separation for the “replace voices” mix | uv-managed Python env |
 | `alignment-whisperx` | Word-accurate timing + speaker diarization | uv-managed Python env |
@@ -81,8 +82,21 @@ How packs run:
 > **Maintainers:** the download URLs live in `enginePackCatalog.ts`. The
 > `llama-cpp-*` packs use upstream binaries; the macOS Metal whisper.cpp binary
 > must be built and self-hosted (ggml-org ships whisper.cpp binaries for Windows
-> only). See **[`ENGINE_PACKS.md`](ENGINE_PACKS.md)** for where to host and how to
-> pin URLs/checksums.
+> only). The `translategemma-*` model packs pin **community GGUF requants** (no
+> official Google GGUF exists) by URL + sha256. See
+> **[`ENGINE_PACKS.md`](ENGINE_PACKS.md)** for where to host and how to pin
+> URLs/checksums.
+
+> **License — TranslateGemma weights:** unlike the MIT/Apache engines, the
+> TranslateGemma GGUFs are under the **Gemma Terms of Use**
+> ([ai.google.dev/gemma/terms](https://ai.google.dev/gemma/terms)), **not**
+> MIT/Apache. Commercial use **is** permitted, but the terms come with Google's
+> **Prohibited Use Policy** that the app must pass through. The catalog flags these
+> packs `licenseCategory: 'commercial-restricted'` and shows the Gemma notice
+> before install; if you redistribute VideoDubber **with** the weights bundled,
+> you must also ship the Gemma Terms + the NOTICE string and reflect the Use Policy
+> in your EULA (see [`../NOTICE.md`](../NOTICE.md)). Argos and LibreTranslate carry
+> no such obligation, which is why they stay the defaults.
 
 The orchestrator's **EngineManager** starts a pack's server on demand, waits for
 health, and — because the dubbing pipeline runs one heavy phase at a time —

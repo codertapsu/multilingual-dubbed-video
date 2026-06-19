@@ -39,13 +39,41 @@ const LLAMA_DL = `https://github.com/ggml-org/llama.cpp/releases/download/${LLAM
 const WHISPER_DL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP}`;
 
 /**
+ * TranslateGemma GGUF weights (the `local-llm-model` packs).
+ *
+ * Google ships TranslateGemma as safetensors ONLY — there is no official Google
+ * GGUF and (as of 2026-06) no bartowski/unsloth/ggml-org build — so we pin
+ * community requants. File names/sizes/sha256 were read from each repo's LFS
+ * pointers on 2026-06-19; the sha256 makes the pin tamper-evident (a re-upload
+ * with different bytes fails the install cleanly rather than loading bad weights,
+ * exactly like our moved-GitHub-URL story). To bump a quant, edit the URL + the
+ * sha256/size below. We pull Q4_K_M (the Ollama default): the best size/quality
+ * trade-off for MT; do not go below Q4. The weights are under the GEMMA TERMS OF
+ * USE (ai.google.dev/gemma/terms) — NOT MIT/Apache — hence `commercial-restricted`
+ * + the licenseNote pass-through (see docs/PROVIDERS.md and NOTICE.md).
+ */
+const TG_4B_URL = 'https://huggingface.co/mradermacher/translategemma-4b-it-GGUF/resolve/main/translategemma-4b-it.Q4_K_M.gguf';
+const TG_12B_URL = 'https://huggingface.co/bullerwins/translategemma-12b-it-GGUF/resolve/main/translategemma-12b-it-Q4_K_M.gguf';
+const TG_27B_URL = 'https://huggingface.co/bullerwins/translategemma-27b-it-GGUF/resolve/main/translategemma-27b-it-Q4_K_M.gguf';
+
+/** The Gemma-license note carried by every TranslateGemma model pack. */
+const GEMMA_LICENSE_NOTE =
+  'TranslateGemma weights are provided under the Gemma Terms of Use ' +
+  '(ai.google.dev/gemma/terms) — NOT MIT/Apache. Commercial use IS permitted, ' +
+  'subject to Google’s Prohibited Use Policy (ai.google.dev/gemma/prohibited_use_policy), ' +
+  'which the app passes through in its notices. Redistributed here as a community ' +
+  'GGUF requant of google/translategemma-*-it. Output translations are yours (Gemma Terms §3.3).';
+
+/**
  * The full curated set. `availablePacks()` filters by platform/arch. Every pack
  * here has a reachable artifact (binary URL or uv-env), so its Install works.
  *
  * Engines covered (see docs/TECH_STACK_RESEARCH.md):
  *   STT:         whisper.cpp CUDA (Windows) — accelerated Whisper (macOS/Linux
  *                use the bundled faster-whisper on CPU).
- *   translation: llama.cpp server (Metal/CUDA/Vulkan/CPU) — local LLM MT.
+ *   translation: llama.cpp server (Metal/CUDA/Vulkan/CPU) — local LLM MT runtime,
+ *                plus the `local-llm-model` GGUF packs (TranslateGemma 4B/12B/27B)
+ *                it loads. Runtime + a model pack together make the provider run.
  *   tts:         VieNeu neural TTS python env (v2 + v3-Turbo).
  *   separation:  audio-separator python env (Demucs / MDX / RoFormer).
  *   alignment:   WhisperX python env (forced alignment + diarization).
@@ -98,7 +126,9 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     arch: ['arm64'],
     accel: 'metal',
     tier: 'performance',
-    minRamMb: 16384,
+    // No RAM gate on the runtime binary itself (it's tiny); the TranslateGemma
+    // model pack carries the real memory requirement, so the 4B model stays
+    // reachable on 8 GB Apple Silicon instead of being blanket-gated at 16 GB.
     approxSizeMb: 30,
     artifacts: [
       {
@@ -157,7 +187,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     arch: ['x64'],
     accel: 'vulkan',
     tier: 'balanced',
-    minRamMb: 16384,
+    // RAM gate lives on the model pack, not the runtime binary (see metal pack).
     approxSizeMb: 40,
     artifacts: [
       {
@@ -182,7 +212,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     arch: ['x64'],
     accel: 'vulkan',
     tier: 'balanced',
-    minRamMb: 16384,
+    // RAM gate lives on the model pack, not the runtime binary (see metal pack).
     approxSizeMb: 50,
     artifacts: [
       {
@@ -194,6 +224,83 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
       },
     ],
     licenseNote: 'MIT.',
+  },
+
+  // --- TranslateGemma GGUF model packs (consumed by the llama.cpp runtime) --
+  // `packKind: 'model'` = weights only; they pair with an installed llama.cpp
+  // runtime pack above (the provider needs BOTH). One model size per pack so the
+  // hardware recommender can offer 4B on CPU/8 GB, 12B on accelerated/16 GB, and
+  // 27B on workstation-class machines. `accel: 'cpu'` + no platform filter = runs
+  // anywhere the runtime does. The model downloads on install (progress-tracked),
+  // then everything is offline — no per-launch network fetch.
+  {
+    id: 'translategemma-4b',
+    kind: 'translation',
+    packKind: 'model',
+    displayName: 'TranslateGemma 4B (local translation model)',
+    description:
+      'Google’s open translation model (Gemma 3 based, 55 languages incl. Vietnamese), Q4_K_M GGUF — a large quality jump over Argos for offline MT. The 4B is the CPU-friendly size (~2.5 GB, runs on 8 GB RAM). Needs a llama.cpp runtime pack (installed automatically alongside).',
+    providerId: 'local-llm-model',
+    accel: 'cpu',
+    tier: 'balanced',
+    minRamMb: 8192,
+    approxSizeMb: 2490,
+    artifacts: [
+      {
+        url: TG_4B_URL,
+        sha256: '81200d03e843d2ec1ece6eeafe7d13cb6e5211e1fcd336ade55790b683a08330',
+        approxSizeMb: 2490,
+        destPath: 'model.gguf',
+      },
+    ],
+    licenseCategory: 'commercial-restricted',
+    licenseNote: GEMMA_LICENSE_NOTE,
+  },
+  {
+    id: 'translategemma-12b',
+    kind: 'translation',
+    packKind: 'model',
+    displayName: 'TranslateGemma 12B (local translation model)',
+    description:
+      'The 12B TranslateGemma (Q4_K_M GGUF, ~7.3 GB) — the quality sweet spot, best on a GPU or Apple Silicon (16 GB+). Usable but slow on CPU-only machines; prefer the 4B there. Needs a llama.cpp runtime pack.',
+    providerId: 'local-llm-model',
+    accel: 'cpu',
+    tier: 'performance',
+    minRamMb: 16384,
+    approxSizeMb: 7301,
+    artifacts: [
+      {
+        url: TG_12B_URL,
+        sha256: '9196d728812afbf5efc10b539298585725edc3a4ecc092c22fdde5bbaf41879e',
+        approxSizeMb: 7301,
+        destPath: 'model.gguf',
+      },
+    ],
+    licenseCategory: 'commercial-restricted',
+    licenseNote: GEMMA_LICENSE_NOTE,
+  },
+  {
+    id: 'translategemma-27b',
+    kind: 'translation',
+    packKind: 'model',
+    displayName: 'TranslateGemma 27B (local translation model)',
+    description:
+      'The 27B TranslateGemma (Q4_K_M GGUF, ~16.5 GB) — maximum local quality, for workstation-class machines (32 GB+ / strong GPU). Impractical CPU-only. Needs a llama.cpp runtime pack.',
+    providerId: 'local-llm-model',
+    accel: 'cpu',
+    tier: 'workstation',
+    minRamMb: 32768,
+    approxSizeMb: 16547,
+    artifacts: [
+      {
+        url: TG_27B_URL,
+        sha256: '475bb629b999b4a197f5f0165503bc935a28e39a34cbeb32f73fc8b683deb5fa',
+        approxSizeMb: 16547,
+        destPath: 'model.gguf',
+      },
+    ],
+    licenseCategory: 'commercial-restricted',
+    licenseNote: GEMMA_LICENSE_NOTE,
   },
 
   // --- neural TTS: VieNeu v2 (uv-managed Python env) -----------------------

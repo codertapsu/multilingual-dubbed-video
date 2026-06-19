@@ -99,6 +99,31 @@ async function defaultPostJson<T>(url: string, headers: Record<string, string>, 
   return (await res.json()) as T;
 }
 
+/** Gemma chat-turn control tokens (the format TranslateGemma was trained on). */
+const GEMMA_END_TURN = '<end_of_turn>';
+
+/**
+ * Wrap an instruction in Gemma's chat turn so we can drive llama.cpp's
+ * `/completion` endpoint directly. We bypass llama-server's OpenAI chat endpoint
+ * on purpose: as of mid-2026 its Jinja parse of TranslateGemma's chat template is
+ * broken (it echoes the source unchanged or aborts), so we render the turn
+ * ourselves rather than trust the server's template.
+ *
+ * Verified against TranslateGemma's published `chat_template.jinja`: the user
+ * content (already trimmed by {@link buildRawTranslationPrompt}) is followed
+ * DIRECTLY by `<end_of_turn>` with NO separating newline, then `\n<start_of_turn>
+ * model\n`. With the matching prompt body this is byte-identical to the official
+ * template output.
+ */
+function wrapGemmaTurn(content: string): string {
+  return `<start_of_turn>user\n${content}${GEMMA_END_TURN}\n<start_of_turn>model\n`;
+}
+
+/** Strip any Gemma turn markers the model echoes back (belt-and-suspenders to the stop token). */
+function stripTurnTokens(text: string): string {
+  return text.replace(/<end_of_turn>/g, '').replace(/<start_of_turn>(?:model|user)?/g, '');
+}
+
 export interface LocalLlmOptions {
   /** Provider id in the registry (e.g. "ollama", "llama-cpp"). */
   id?: string;
@@ -143,7 +168,10 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     this.postJson = opts.postJson ?? defaultPostJson;
     this.concurrency = Math.max(1, opts.concurrency ?? localLlmConcurrencyDefault());
     this.displayName = opts.backend === 'ollama' ? 'Ollama (local LLM)' : 'llama.cpp (local LLM)';
-    if (opts.backend === 'llama-cpp') this.requiresEnginePack = 'llama-cpp';
+    // Matches the runtime packs' providerId ('local-llm'), so the generic
+    // pack-resolution/readiness paths find them. (The model GGUF is a second,
+    // separate 'local-llm-model' pack, checked alongside in readiness.ts.)
+    if (opts.backend === 'llama-cpp') this.requiresEnginePack = 'local-llm';
   }
 
   async translateSegments(input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
@@ -159,7 +187,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     return this.translateBatch(baseUrl, source, target, input, combined);
   }
 
-  /** Chat-JSON-batch mode (general LLMs). */
+  /** Chat-JSON-batch mode (general LLMs via Ollama). */
   private async translateBatch(
     baseUrl: string,
     source: string,
@@ -171,21 +199,8 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     for (let i = 0; i < input.segments.length; i += BATCH_SIZE) {
       const batch = input.segments.slice(i, i + BATCH_SIZE);
       const prompt = buildTranslationPrompt(source, target, batch);
-      const data = await this.postJson<{ choices?: { message?: { content?: string } }[] }>(
-        `${baseUrl}/chat/completions`,
-        {},
-        {
-          model: this.opts.model,
-          messages: [
-            { role: 'system', content: 'You are a professional subtitle/dubbing translator.' },
-            { role: 'user', content: prompt },
-          ],
-          temperature: 0.2,
-          stream: false,
-        },
-        signal,
-      );
-      const byId = parseTranslationReply(data.choices?.[0]?.message?.content ?? '');
+      const reply = await this.complete('You are a professional subtitle/dubbing translator.', prompt, baseUrl, signal);
+      const byId = parseTranslationReply(reply);
       for (const seg of batch) {
         results.push({ id: seg.id, translatedText: byId.get(seg.id) ?? seg.sourceText });
       }
@@ -193,7 +208,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     return { segments: results };
   }
 
-  /** Raw-per-segment mode (translation-specialized models). */
+  /** Raw-per-segment mode (translation-specialized models like TranslateGemma). */
   private async translateRaw(
     baseUrl: string,
     source: string,
@@ -206,20 +221,50 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     // translated strictly one segment at a time. Result order is preserved.
     const segments = await mapWithConcurrency(input.segments, this.concurrency, async (seg) => {
       const prompt = buildRawTranslationPrompt(source, target, seg);
-      const data = await this.postJson<{ choices?: { message?: { content?: string } }[] }>(
-        `${baseUrl}/chat/completions`,
-        {},
-        {
-          model: this.opts.model,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.2,
-          stream: false,
-        },
-        signal,
-      );
-      const text = (data.choices?.[0]?.message?.content ?? '').trim();
+      const reply = await this.complete(undefined, prompt, baseUrl, signal);
+      const text = stripTurnTokens(reply).trim();
       return { id: seg.id, translatedText: text || seg.sourceText } satisfies TranslationResultSegment;
     });
     return { segments };
+  }
+
+  /**
+   * Send one instruction and return the model's text, choosing the transport by
+   * backend (greedy / temperature 0 for deterministic, faithful MT):
+   *   - `ollama`    → POST `<baseUrl>/chat/completions` (Ollama applies the
+   *     model's own baked-in template, so TranslateGemma's chat format works).
+   *   - `llama-cpp` → POST `<baseUrl>/completion` with the prompt pre-wrapped in
+   *     Gemma turn tokens, bypassing llama-server's broken TranslateGemma chat
+   *     template (see {@link wrapGemmaTurn}).
+   */
+  private async complete(
+    system: string | undefined,
+    user: string,
+    baseUrl: string,
+    signal: AbortSignal,
+  ): Promise<string> {
+    if (this.opts.backend === 'llama-cpp') {
+      const prompt = wrapGemmaTurn(system ? `${system}\n\n${user}` : user);
+      const data = await this.postJson<{ content?: string }>(
+        `${baseUrl}/completion`,
+        {},
+        { prompt, temperature: 0, n_predict: 512, cache_prompt: true, stop: [GEMMA_END_TURN] },
+        signal,
+      );
+      return data.content ?? '';
+    }
+    const messages = system
+      ? [
+          { role: 'system', content: system },
+          { role: 'user', content: user },
+        ]
+      : [{ role: 'user', content: user }];
+    const data = await this.postJson<{ choices?: { message?: { content?: string } }[] }>(
+      `${baseUrl}/chat/completions`,
+      {},
+      { model: this.opts.model, messages, temperature: 0, stream: false },
+      signal,
+    );
+    return data.choices?.[0]?.message?.content ?? '';
   }
 }

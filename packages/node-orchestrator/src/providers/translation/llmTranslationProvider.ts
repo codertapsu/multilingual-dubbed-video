@@ -117,7 +117,10 @@ export function buildTranslationPrompt(
         words !== undefined
           ? `  [spoken window: ${((s.endMs! - s.startMs!) / 1000).toFixed(1)}s; target ${words} words or fewer]`
           : '';
-      return `${s.id}: ${s.sourceText}${hint}`;
+      // Collapse any internal line breaks so each segment stays on one line of
+      // the numbered list the model reads.
+      const oneLine = s.sourceText.replace(/\s*\r?\n\s*/g, ' ');
+      return `${s.id}: ${oneLine}${hint}`;
     })
     .join('\n');
   return [
@@ -134,22 +137,62 @@ export function buildTranslationPrompt(
   ].join('\n');
 }
 
+/** Display names for the common dubbing languages (falls back to the code). */
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: 'English', vi: 'Vietnamese', zh: 'Chinese', ja: 'Japanese', ko: 'Korean',
+  es: 'Spanish', fr: 'French', de: 'German', it: 'Italian', pt: 'Portuguese',
+  ru: 'Russian', ar: 'Arabic', hi: 'Hindi', th: 'Thai', id: 'Indonesian',
+  nl: 'Dutch', pl: 'Polish', tr: 'Turkish', uk: 'Ukrainian', cs: 'Czech',
+  ro: 'Romanian', el: 'Greek', sv: 'Swedish', da: 'Danish', fi: 'Finnish',
+  no: 'Norwegian', hu: 'Hungarian', he: 'Hebrew', fa: 'Persian', ms: 'Malay',
+  tl: 'Filipino', km: 'Khmer', lo: 'Lao', my: 'Burmese', bn: 'Bengali',
+};
+
+/** Display name for a language code ("en" -> "English"); falls back to the code. */
+function languageName(code: string): string {
+  const base = code.split('-')[0]!.toLowerCase();
+  return LANGUAGE_NAMES[base] ?? code;
+}
+
 /**
  * Build a single-segment raw-MT prompt for translation-SPECIALIZED models
- * (TranslateGemma, Seed-X, etc.) that expect one source text and return plain
- * translated text rather than chat JSON.
+ * (TranslateGemma, Seed-X, etc.) that take one source text and return plain text.
+ *
+ * This reproduces TranslateGemma's OWN trained chat-template instruction
+ * VERBATIM (verified against the published `chat_template.jinja`: the
+ * "You are a professional <Src> (<src>) to <Tgt> (<tgt>) translator … Please
+ * translate the following <Src> text into <Tgt>:\n\n\n<text>" body). Because we
+ * drive llama.cpp's raw `/completion` endpoint and wrap this in the Gemma turn
+ * ourselves (the server's own TranslateGemma template is broken), matching the
+ * trained text byte-for-byte keeps the model in-distribution. The model card's
+ * template appends `<end_of_turn>` DIRECTLY after the trimmed text (no newline),
+ * which is exactly what {@link wrapGemmaTurn} relies on.
+ *
+ * The one deliberate addition is the dubbing `fit` sentence (a target word
+ * budget) when timing is known. Source text is CRLF-normalized + trimmed (a
+ * stray `\r` is a known cause of garbled local-LLM output, and the template
+ * trims too).
  */
 export function buildRawTranslationPrompt(
   sourceLanguage: string,
   targetLanguage: string,
   segment: PromptSegment,
 ): string {
+  const sName = languageName(sourceLanguage);
+  const tName = languageName(targetLanguage);
   const words = targetWords(segment.startMs, segment.endMs);
   const fit =
     words !== undefined
-      ? ` Keep it to ${words} words or fewer so it fits the spoken timing — for dubbing, prefer a concise line that fits over a longer, more literal one.`
+      ? ` Keep it to ${words} words or fewer so it fits the spoken dubbing timing; prefer a concise line that fits over a longer, more literal one.`
       : '';
-  return `Translate from ${sourceLanguage} to ${targetLanguage}. Output ONLY the translation, no quotes or notes.${fit}\n\n${segment.sourceText}`;
+  const text = segment.sourceText.replace(/\r\n?/g, '\n').trim();
+  return (
+    `You are a professional ${sName} (${sourceLanguage}) to ${tName} (${targetLanguage}) translator. ` +
+    `Your goal is to accurately convey the meaning and nuances of the original ${sName} text while adhering to ` +
+    `${tName} grammar, vocabulary, and cultural sensitivities.\n` +
+    `Produce only the ${tName} translation, without any additional explanations or commentary.${fit} ` +
+    `Please translate the following ${sName} text into ${tName}:\n\n\n${text}`
+  );
 }
 
 /** Parse the model reply into id->text, tolerating fences and stray prose. */

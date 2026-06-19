@@ -37,12 +37,22 @@ import { NeuralTtsProvider } from './tts/neuralTtsProvider.js';
 import { OpenAiTtsProvider } from './tts/openaiTtsProvider.js';
 import type { EngineManager } from '../engines/engineManager.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
-import { requireInstalledPack } from '../engines/packSelection.js';
+import { requireInstalledPack, resolveLocalLlmModelPath } from '../engines/packSelection.js';
 
-/** Default local-LLM models per backend (overridable via env). */
+/**
+ * Default local-LLM models per backend (overridable via env).
+ *
+ * The default is the **4B** TranslateGemma — the only size that is comfortable on
+ * a no-GPU 8–16 GB machine (12B is ~7–8 GB and ~1–5 tok/s CPU-only). Bigger sizes
+ * are an explicit opt-in: for the managed llama.cpp path the user installs a
+ * `translategemma-12b`/`-27b` model pack (the launch uses whichever GGUF is
+ * installed, so it is inherently tier-aware); for Ollama they `ollama pull
+ * translategemma:12b` and set OLLAMA_MODEL. Note the llama.cpp path loads the
+ * model by FILE (resolveLocalLlmModelPath), so LLAMACPP_MODEL is only a label.
+ */
 export const OLLAMA_URL = process.env.OLLAMA_URL?.trim() || 'http://127.0.0.1:11434/v1';
-export const OLLAMA_MODEL = process.env.OLLAMA_MODEL?.trim() || 'translategemma:12b';
-const LLAMACPP_MODEL = process.env.LLAMACPP_MODEL?.trim() || 'translategemma-12b';
+export const OLLAMA_MODEL = process.env.OLLAMA_MODEL?.trim() || 'translategemma:4b';
+const LLAMACPP_MODEL = process.env.LLAMACPP_MODEL?.trim() || 'translategemma-4b';
 
 /** Default provider ids per capability. */
 export const DEFAULT_PROVIDER_IDS = {
@@ -189,8 +199,12 @@ export function createDefaultRegistry(
         backend: 'llama-cpp',
         model: LLAMACPP_MODEL,
         resolveBaseUrl: async () => {
+          // Needs BOTH: a llama.cpp runtime binary pack AND a TranslateGemma model
+          // pack. Resolve the GGUF first so a missing-model install fails fast with
+          // a clear ENGINE_PACK_MISSING instead of starting a model-less server.
           const packId = await requireInstalledPack(store, 'local-llm');
-          return engines.ensureRunning(packId, { exclusive: true });
+          const model = await resolveLocalLlmModelPath(store);
+          return engines.ensureRunning(packId, { exclusive: true, model });
         },
         timeoutMs: timeout,
       }),

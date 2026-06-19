@@ -26,7 +26,12 @@ import {
 } from '@videodubber/shared';
 import type { CredentialsStore } from '../credentials/credentialsStore.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
-import { isPackUsable, pickInstalledPack } from '../engines/packSelection.js';
+import {
+  isPackUsable,
+  pickInstalledLocalLlmModel,
+  pickInstalledPack,
+  recommendedPackFor,
+} from '../engines/packSelection.js';
 import { OLLAMA_MODEL, OLLAMA_URL, type ProviderRegistry } from './registry.js';
 
 /** Why a provider is (not) ready. `ready` means usable right now. */
@@ -185,6 +190,38 @@ export async function describeProviderReadiness(
       remediation: 'Add the API key in Settings → Cloud providers, or pick a local provider for this phase.',
       action: { kind: 'open-credentials', ref: provider.credentialService },
     };
+  }
+
+  // Managed llama.cpp (TranslateGemma) is special: it needs BOTH a runtime
+  // binary pack AND a separate GGUF model pack, each RUNNABLE (not merely
+  // recorded). Checked before the generic requiresEnginePack branch so the
+  // two-part requirement gets its own, more specific remediation.
+  if (provider.id === 'llama-cpp') {
+    const usable = deps.packUsable ?? ((id: string) => isPackUsable(deps.enginePackStore, id));
+    const runtime = await pickInstalledPack(deps.enginePackStore, 'local-llm');
+    if (!runtime || !(await usable(runtime))) {
+      return {
+        ...base,
+        status: 'engine-pack-missing',
+        ready: false,
+        message: `${name} needs the llama.cpp runtime engine pack.`,
+        remediation:
+          'Install the llama.cpp runtime (and a TranslateGemma model) in Settings → Engines, or pick Argos / Ollama for this phase.',
+        action: { kind: 'install-pack', ref: recommendedPackFor('local-llm')?.id ?? 'local-llm' },
+      };
+    }
+    const model = await pickInstalledLocalLlmModel(deps.enginePackStore);
+    if (!model) {
+      return {
+        ...base,
+        status: 'engine-pack-missing',
+        ready: false,
+        message: `${name} has the runtime but no TranslateGemma model installed.`,
+        remediation: 'Install a TranslateGemma model (4B / 12B / 27B) in Settings → Engines.',
+        action: { kind: 'install-pack', ref: 'translategemma-4b' },
+      };
+    }
+    return ready;
   }
 
   if (provider.requiresEnginePack) {

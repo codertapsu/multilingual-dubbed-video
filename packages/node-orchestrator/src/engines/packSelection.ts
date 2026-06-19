@@ -101,3 +101,47 @@ export function recommendedPackFor(
 ): EnginePackInfo | undefined {
   return packsForProvider(providerId, platform, arch)[0];
 }
+
+// --------------------------------------------------------------------------
+// TranslateGemma model packs (consumed by the llama.cpp `local-llm` runtime)
+// --------------------------------------------------------------------------
+
+/** Fixed GGUF filename every `local-llm-model` pack installs (see the catalog). */
+const LOCAL_LLM_MODEL_FILE = 'model.gguf';
+
+/** Model packs, MOST CAPABLE first — we prefer the largest the user installed. */
+const LOCAL_LLM_MODEL_PACKS = ['translategemma-27b', 'translategemma-12b', 'translategemma-4b'] as const;
+
+/**
+ * The best INSTALLED TranslateGemma model pack whose GGUF is actually on disk,
+ * or undefined if none. "Best" = largest (more quality) the user chose to
+ * install; a half-finished download (no model.gguf) is skipped so readiness and
+ * the run gate don't green-light a model that can't load.
+ */
+export async function pickInstalledLocalLlmModel(
+  store: EnginePackStore,
+): Promise<{ packId: string; modelPath: string } | undefined> {
+  for (const packId of LOCAL_LLM_MODEL_PACKS) {
+    const rec = await store.get(packId);
+    if (!rec) continue;
+    const modelPath = path.join(rec.path, LOCAL_LLM_MODEL_FILE);
+    const ok = await fsp
+      .stat(modelPath)
+      .then((s) => s.isFile())
+      .catch(() => false);
+    if (ok) return { packId, modelPath };
+  }
+  return undefined;
+}
+
+/** Resolve the GGUF path of the best installed model pack, or throw ENGINE_PACK_MISSING. */
+export async function resolveLocalLlmModelPath(store: EnginePackStore): Promise<string> {
+  const found = await pickInstalledLocalLlmModel(store);
+  if (!found) {
+    throw new AppErrorException('ENGINE_PACK_MISSING', 'No TranslateGemma model is installed for the local LLM.', {
+      remediation:
+        'Install a TranslateGemma model (4B / 12B / 27B) in Settings → Engines, or switch this project’s Translation provider to Argos (offline, no setup) or Ollama.',
+    });
+  }
+  return found.modelPath;
+}

@@ -4,7 +4,8 @@
  * Given the machine's {@link SystemProfile} + tier, suggest which engine packs
  * would most improve results — so the UI can offer "recommended for your
  * machine" installs (e.g. whisper.cpp Metal on Apple Silicon, llama.cpp +
- * TranslateGemma on 16 GB+, neural TTS, separation on capable machines).
+ * TranslateGemma — the 4B from 8 GB, the 12B/27B with a GPU — neural TTS,
+ * separation on capable machines).
  *
  * Pure: takes the profile + the available packs, returns ranked pack ids with a
  * reason. RAM/VRAM gates from the catalog are respected.
@@ -59,9 +60,34 @@ export function recommendEnginePacks(
     takeBest('whisper-cpp', 'A GPU was detected: accelerated transcription is much faster than CPU.');
   }
 
-  // Local LLM translation: a big quality jump over Argos when RAM allows.
-  if (rec.tier === 'performance') {
-    takeBest('local-llm', 'Enough memory for a local LLM — much better translation quality than the offline default.');
+  // Local LLM translation (TranslateGemma): the runtime binary PLUS the largest
+  // model the machine can comfortably run. 4B is the CPU-friendly floor (8 GB+,
+  // no GPU needed); 12B/27B are only worth it with a GPU/Apple-Silicon to keep
+  // them fast — on pure CPU a 12B is ~1–5 tok/s, too slow to recommend.
+  const accelerated = profile.appleSilicon || profile.gpus.length > 0;
+  const ramGb = profile.totalRamMb / 1024;
+  const modelPackId =
+    ramGb >= 32 && accelerated
+      ? 'translategemma-27b'
+      : ramGb >= 16 && accelerated
+        ? 'translategemma-12b'
+        : ramGb >= 8
+          ? 'translategemma-4b'
+          : undefined;
+  const runtimePack = fitting.find((p) => p.providerId === 'local-llm');
+  const modelPack = modelPackId ? fitting.find((p) => p.id === modelPackId) : undefined;
+  if (runtimePack && modelPack) {
+    out.push({
+      packId: runtimePack.id,
+      reason: 'Runs TranslateGemma locally — a big translation-quality jump over the offline Argos default.',
+    });
+    const why =
+      modelPack.id === 'translategemma-4b'
+        ? 'The CPU-friendly 4B TranslateGemma — much better than Argos, light enough to run without a GPU.'
+        : modelPack.id === 'translategemma-12b'
+          ? 'Your GPU/Apple-Silicon can drive the 12B TranslateGemma — the translation-quality sweet spot.'
+          : 'Workstation-class: the 27B TranslateGemma for the best local translation quality.';
+    out.push({ packId: modelPack.id, reason: why });
   }
 
   // Neural TTS: better voices (incl. the Vietnamese VieNeu upgrade) on capable machines.

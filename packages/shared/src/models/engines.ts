@@ -90,6 +90,21 @@ export interface EnginePackInfo {
   tier?: 'balanced' | 'performance' | 'workstation';
   /** Licensing note shown before install (transparency). */
   licenseNote?: string;
+  /**
+   * Coarse licensing posture, so the UI can badge a pack's weights without
+   * parsing {@link licenseNote}:
+   *   - `permissive`            — MIT/Apache/BSD-class: commercial use, no
+   *                               pass-through obligations (the default — Argos,
+   *                               whisper.cpp, llama.cpp binaries, MADLAD).
+   *   - `commercial-restricted` — commercial use OK BUT carries pass-through
+   *                               obligations / a use policy the app must
+   *                               propagate (e.g. the Gemma Terms of Use for
+   *                               TranslateGemma; OpenRAIL use restrictions).
+   *   - `non-commercial`        — weights are NC (e.g. CC-BY-NC): off-limits for
+   *                               commercial dubbing (VieNeu v2 preset voices).
+   * Omitted is treated as `permissive`.
+   */
+  licenseCategory?: 'permissive' | 'commercial-restricted' | 'non-commercial';
 }
 
 /** Install state of one engine pack on this machine. */

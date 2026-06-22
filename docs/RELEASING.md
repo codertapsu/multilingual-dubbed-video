@@ -156,13 +156,26 @@ shasum -a 256 apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_*_aar
 
 ### Attach + publish
 
-Drag the `.dmg` onto the draft release (Releases → the tag's draft → **Edit** →
-drop into assets), or with the CLI:
+First, drop the macOS "Open Me First" unlock steps **into** the `.dmg` so the
+first-launch instructions ship with the download (CI does this automatically;
+run it manually for a locally-built `.dmg`):
+
+```bash
+pnpm dmg:instructions apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/VideoDubber_*_aarch64.dmg
+```
+
+Then drag the `.dmg` onto the draft release (Releases → the tag's draft →
+**Edit** → drop into assets), or with the CLI:
 
 ```bash
 gh release upload <tag> <path-to-dmg> --clobber
 gh release edit <tag> --draft=false      # publish
 ```
+
+> Until the build is **signed + notarized** (the `APPLE_*` secrets above), the
+> macOS app is quarantined on download. The README + release notes carry the
+> one-time `xattr` unlock, and `pnpm dmg:instructions` puts the same steps inside
+> the `.dmg`. Notarization is the real fix — it removes the step entirely.
 
 Assets can be added to a release **after** publishing, so it's fine to publish the
 platforms you have and attach the rest (Linux from CI, Intel) as they land.

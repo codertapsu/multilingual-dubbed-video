@@ -1,0 +1,24 @@
+VideoDubber — how to open it on macOS (one-time)
+=================================================
+
+This build isn't notarized by Apple yet, so macOS quarantines it and shows
+"VideoDubber cannot be opened because Apple cannot check it for malicious
+software." Clearing that takes one minute, and you only do it ONCE:
+
+  1. Drag "VideoDubber" onto the Applications folder in this window.
+
+  2. Open the Terminal app:
+       press  Command + Space,  type  Terminal,  press  Return.
+
+  3. Copy-paste this line into Terminal exactly, then press Return:
+
+       xattr -dr com.apple.quarantine /Applications/VideoDubber.app
+
+  4. Open VideoDubber from your Applications folder as usual.
+     You won't need to do this again.
+
+Note: the old "right-click -> Open" trick no longer works on macOS Sequoia (15)
+and later — Apple removed it. A future signed + notarized build will let
+VideoDubber open with a normal double-click, with no steps at all.
+
+Questions or trouble?  https://github.com/codertapsu/multilingual-dubbed-video

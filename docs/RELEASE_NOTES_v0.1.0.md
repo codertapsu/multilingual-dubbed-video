@@ -10,13 +10,30 @@ Pick the installer for your OS.
 
 | OS | Installer | First launch |
 |---|---|---|
-| **macOS — Apple Silicon** | `VideoDubber_0.1.0_aarch64.dmg` | Unsigned build: **right-click → Open** (or `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`). |
+| **macOS — Apple Silicon** | `VideoDubber_0.1.0_aarch64.dmg` | Not yet notarized — **one-time unlock** (see *macOS first launch* below). |
 | **Windows (x64)** | `VideoDubber_0.1.0_x64-setup.exe` (or `_x64_en-US.msi`) | Unsigned build: SmartScreen → **More info → Run anyway**. |
 | Linux (x64) | `VideoDubber_0.1.0_amd64.AppImage` / `.deb` | _Coming shortly_ — `chmod +x *.AppImage` then run, or `sudo dpkg -i *.deb`. |
-| macOS — Intel (x64) | `VideoDubber_0.1.0_x64.dmg` | _Coming shortly._ |
+| macOS — Intel (x64) | `VideoDubber_0.1.0_x64.dmg` | _Coming shortly_ — same one-time unlock. |
 
 No Python, Node, or FFmpeg needed — the installer bundles the app, the pipeline
 engine, the speech/translation/voice workers, and FFmpeg.
+
+### macOS first launch
+
+This build isn't notarized by Apple yet, so macOS quarantines it (*"VideoDubber
+cannot be opened because Apple cannot check it for malicious software"*). Clear it
+**once**:
+
+1. Open the `.dmg` and drag **VideoDubber** into **Applications**.
+2. Open **Terminal** (⌘ Space → type `Terminal` → Return).
+3. Paste and run:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/VideoDubber.app
+   ```
+4. Open VideoDubber from Applications normally — you won't need to repeat this.
+
+The old "right-click → Open" no longer works on macOS Sequoia (15)+. A future
+signed + notarized build removes this step.
 
 ### Checksums (SHA-256)
 
@@ -37,8 +54,8 @@ engine, the speech/translation/voice workers, and FFmpeg.
 
 - **Speech-to-text:** faster-whisper (batched, VAD, `large-v3-turbo` default,
   PhoWhisper for Vietnamese-source).
-- **Translation:** Argos offline by default; optional cloud (OpenAI/Claude/Gemini)
-  or local LLM (Ollama / llama.cpp) per phase.
+- **Translation:** Argos offline by default; optional **TranslateGemma** (built-in
+  llama.cpp, or via Ollama) or cloud (OpenAI/Claude/Gemini) per phase.
 - **Text-to-speech:** Piper with per-language voice selection; optional neural
   voices via engine packs.
 - **Mixing/render:** keep-and-duck, remove, or **replace-voices-keep-music** mix
@@ -52,9 +69,11 @@ engine, the speech/translation/voice workers, and FFmpeg.
 - **Platforms:** this release ships **macOS (Apple Silicon)** and **Windows
   (x64)**. Linux (x64) and macOS (Intel) builds are added to this release as they
   finish.
-- **Signing/notarization:** this build is unsigned, so macOS Gatekeeper and
-  Windows SmartScreen show a first-launch warning — bypass as noted above
-  (right-click → **Open** on macOS; "More info → Run anyway" on Windows).
+- **Signing/notarization:** this build is unsigned/un-notarized, so macOS
+  Gatekeeper and Windows SmartScreen show a first-launch warning. macOS: do the
+  one-time **macOS first launch** unlock above (Sequoia removed the old
+  right-click → Open shortcut). Windows: **More info → Run anyway**. A signed +
+  notarized macOS build will let it open with a plain double-click.
 - **Auto-update** is off in v0.1.0; update by downloading a newer release. It
   activates in a later release once builds ship a signed `latest.json`.
 

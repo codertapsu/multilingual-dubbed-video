@@ -248,6 +248,7 @@ jobs:
       # provided), and uploads the bundles. Apple vars are intentionally NOT listed
       # here — they arrive via $GITHUB_ENV only when a cert exists (see above).
       - name: Build & release (tauri-action)
+        id: tauri
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -269,7 +270,10 @@ jobs:
             See the assets below to download and install VideoDubber for your OS.
             First launch downloads the AI models via the in-app setup wizard.
 
-            macOS: if the app isn't notarized, right-click → Open the first time.
+            macOS first launch (one-time, until notarized): drag VideoDubber to
+            Applications, then run this in Terminal —
+            `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`
+            (the old right-click → Open was removed in macOS Sequoia). See the README.
           # Keep as DRAFT so a human reviews + publishes (see docs/RELEASING.md).
           releaseDraft: true
           prerelease: false
@@ -277,3 +281,19 @@ jobs:
           # true in tauri.conf.json + add the TAURI_SIGNING_PRIVATE_KEY secret.
           includeUpdaterJson: false
           args: ${{ matrix.tauri-args }}
+
+      # Drop the "Open Me First" macOS unlock steps INTO the built .dmg so the
+      # first-launch instructions ship with the download (release notes are easy
+      # to miss). Best-effort: the script restores the original installer on any
+      # failure, and continue-on-error means this can never fail the release.
+      - name: Add first-launch instructions to the .dmg (macOS)
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ steps.tauri.outputs.releaseId }}
+        run: |
+          dmgs=$(find apps/desktop/src-tauri/target -path '*/release/bundle/dmg/*.dmg' 2>/dev/null || true)
+          if [ -z "$dmgs" ]; then echo "no .dmg found; skipping"; exit 0; fi
+          bash scripts/package/dmg-add-instructions.sh $dmgs

@@ -173,6 +173,9 @@ describe('TranslateGemma model packs', () => {
     expect(capturedArgs).toContain('-m');
     expect(capturedArgs[capturedArgs.indexOf('-m') + 1]).toBe('/models/tg.gguf');
     expect(capturedArgs).toContain('-ngl');
+    // TranslateGemma's Jinja chat template aborts llama-server at load, so we
+    // must disable Jinja (we drive /completion ourselves).
+    expect(capturedArgs).toContain('--no-jinja');
     await manager.stopAll();
     await rm(dir, { recursive: true, force: true });
   });

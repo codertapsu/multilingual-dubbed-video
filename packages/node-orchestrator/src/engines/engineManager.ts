@@ -101,6 +101,13 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     // in practice. `-ngl 999` offloads all layers to the GPU on the accelerated
     // builds (Metal/CUDA/Vulkan) and is a harmless no-op on a CPU-only build.
     // `-c 8192` is ample headroom — TranslateGemma's input context is ~2K tokens.
+    // `--no-jinja`: TranslateGemma's embedded Jinja chat template is too complex
+    // for llama.cpp's parser, which ABORTS the server at model-load ("chat
+    // template parsing error … exiting due to model loading error") before it
+    // ever serves a request. We don't need that template anyway — the provider
+    // drives the raw `/completion` endpoint with its own Gemma-turn prompt — so
+    // we disable Jinja outright (this is exactly what the server's own error
+    // message recommends). Without it the engine never becomes healthy.
     args: ({ port, model }) => [
       '--host',
       '127.0.0.1',
@@ -110,6 +117,7 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
       '8192',
       '-ngl',
       '999',
+      '--no-jinja',
       ...(model ? ['-m', model] : []),
     ],
     healthPath: '/health',

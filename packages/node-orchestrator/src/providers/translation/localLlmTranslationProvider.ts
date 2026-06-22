@@ -114,6 +114,14 @@ const GEMMA_END_TURN = '<end_of_turn>';
  * DIRECTLY by `<end_of_turn>` with NO separating newline, then `\n<start_of_turn>
  * model\n`. With the matching prompt body this is byte-identical to the official
  * template output.
+ *
+ * NOTE: this relies on the GGUF typing `<start_of_turn>`/`<end_of_turn>` as
+ * CONTROL tokens so the server tokenizes each as a single id (and stops on the
+ * `<end_of_turn>` EOG). Some Gemma-3 requants mis-type them as NORMAL (Unsloth
+ * issue #5070), which would BPE-split the literals and degrade output — a
+ * property of the downloaded weights, not the launch flags. If a model ever
+ * produces garbled/non-stopping output, validate the requant via the server's
+ * `/tokenize` endpoint and switch packs (see enginePackCatalog).
  */
 function wrapGemmaTurn(content: string): string {
   return `<start_of_turn>user\n${content}${GEMMA_END_TURN}\n<start_of_turn>model\n`;
@@ -127,6 +135,8 @@ function stripTurnTokens(text: string): string {
 export interface LocalLlmOptions {
   /** Provider id in the registry (e.g. "ollama", "llama-cpp"). */
   id?: string;
+  /** User-facing name (e.g. "TranslateGemma (built-in)"); defaults by backend. */
+  displayName?: string;
   backend: LocalLlmBackend;
   /**
    * Prompting strategy. Defaults to `raw-segment`: one source line per request,
@@ -167,7 +177,8 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     this.mode = opts.mode ?? 'raw-segment';
     this.postJson = opts.postJson ?? defaultPostJson;
     this.concurrency = Math.max(1, opts.concurrency ?? localLlmConcurrencyDefault());
-    this.displayName = opts.backend === 'ollama' ? 'Ollama (local LLM)' : 'llama.cpp (local LLM)';
+    this.displayName =
+      opts.displayName ?? (opts.backend === 'ollama' ? 'Ollama (local LLM)' : 'llama.cpp (local LLM)');
     // Matches the runtime packs' providerId ('local-llm'), so the generic
     // pack-resolution/readiness paths find them. (The model GGUF is a second,
     // separate 'local-llm-model' pack, checked alongside in readiness.ts.)

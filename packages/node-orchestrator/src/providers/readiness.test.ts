@@ -228,7 +228,7 @@ describe('managed llama.cpp (TranslateGemma) readiness', () => {
   });
 
   const llamaProject = projectWith('llama-cpp');
-  const reg = () => registryWith(fakeTranslation({ id: 'llama-cpp', displayName: 'llama.cpp (local LLM)' }));
+  const reg = () => registryWith(fakeTranslation({ id: 'llama-cpp', displayName: 'TranslateGemma (built-in)' }));
   const installRuntime = async (): Promise<void> => {
     const p = store.packDir(runtimePackId!);
     await mkdir(p, { recursive: true });

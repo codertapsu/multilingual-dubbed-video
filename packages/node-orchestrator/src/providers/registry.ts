@@ -179,6 +179,7 @@ export function createDefaultRegistry(
   registry.registerTranslation(
     new LocalLlmTranslationProvider({
       id: 'ollama',
+      displayName: 'TranslateGemma (via Ollama)',
       backend: 'ollama',
       model: OLLAMA_MODEL,
       resolveBaseUrl: async () => OLLAMA_URL,
@@ -196,6 +197,7 @@ export function createDefaultRegistry(
     registry.registerTranslation(
       new LocalLlmTranslationProvider({
         id: 'llama-cpp',
+        displayName: 'TranslateGemma (built-in)',
         backend: 'llama-cpp',
         model: LLAMACPP_MODEL,
         resolveBaseUrl: async () => {

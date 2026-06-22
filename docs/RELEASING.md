@@ -275,8 +275,16 @@ this, Gatekeeper blocks the app on other Macs ("can't be opened because Apple
 cannot check it for malicious software").
 
 * The CI imports the `.p12` into a temporary keychain before `tauri build`.
+* **Nested binaries:** Tauri does NOT deep-sign Mach-O shipped under
+  `bundle.resources` (our bundled CPython + PyInstaller workers), so a dedicated
+  CI step signs them (hardened runtime + timestamp + entitlements) **before**
+  `tauri-action` bundles + notarizes. Entitlements live in
+  `apps/desktop/src-tauri/entitlements.plist` (`bundle.macOS.entitlements`).
 * Universal vs. per-arch: we build **per-arch** (arm64 on macos-14, x64 on
   macos-13) so each `.dmg` is native. Users download the one for their Mac.
+
+> **Full step-by-step (cert creation, the 7 secrets, the nested-binary fix,
+> verification, troubleshooting):** see **[`APPLE_SIGNING.md`](APPLE_SIGNING.md)**.
 
 ### Windows (Authenticode)
 

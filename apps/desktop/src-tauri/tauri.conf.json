@@ -39,6 +39,9 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": false,
+    "macOS": {
+      "entitlements": "./entitlements.plist"
+    },
     "externalBin": [
       "binaries/videodubber-orchestrator",
       "binaries/vd-piper",

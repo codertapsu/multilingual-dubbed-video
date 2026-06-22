@@ -243,6 +243,39 @@ jobs:
             echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
           } >> "$GITHUB_ENV"
 
+      # Tauri signs the app + externalBin (Contents/MacOS) but does NOT deep-sign
+      # the Mach-O we ship under bundle.resources — the standalone CPython
+      # (resources/python) and the PyInstaller worker trees (resources/workers).
+      # The notary service rejects ANY unsigned/old-timestamp nested binary, so we
+      # sign them HERE — before tauri-action bundles + notarizes, so the copies
+      # inside the .app are already valid. Each Mach-O individually, with the
+      # hardened runtime + a secure timestamp; executables (the interpreter +
+      # frozen worker bootloaders) also get the JIT/library entitlements. Plain
+      # .dylib/.so/bundles are signed without entitlements. See docs/APPLE_SIGNING.md.
+      - name: Deep-sign bundled resource binaries (macOS)
+        if: startsWith(matrix.os, 'macos') && env.HAS_APPLE_CERT == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          RES="apps/desktop/src-tauri/resources"
+          ENT="apps/desktop/src-tauri/entitlements.plist"
+          if [ ! -d "$RES" ]; then echo "no resources dir staged; nothing to sign"; exit 0; fi
+          signed=0
+          while IFS= read -r -d '' f; do
+            case "$(file -b "$f")" in
+              *Mach-O*executable*)
+                codesign --force --options runtime --timestamp \
+                  --entitlements "$ENT" --sign "$APPLE_SIGNING_IDENTITY" "$f" ;;
+              *Mach-O*) # dylib / loadable bundle / shared library — no entitlements
+                codesign --force --options runtime --timestamp \
+                  --sign "$APPLE_SIGNING_IDENTITY" "$f" ;;
+              *) continue ;;
+            esac
+            signed=$((signed + 1))
+          done < <(find "$RES" -type f -print0)
+          echo "Deep-signed $signed Mach-O file(s) under $RES."
+
       # --- Build + publish the Tauri app (draft Release) -------------------
       # tauri-action runs `tauri build`, signs (only if the Apple env above was
       # provided), and uploads the bundles. Apple vars are intentionally NOT listed

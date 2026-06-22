@@ -36,7 +36,13 @@ import type {
   UpdateInfo,
   UpdatePreferences,
 } from '../models/setup';
-import type { EnginePrerequisites, EnginesResponse } from '../models';
+import type {
+  EnginePrerequisites,
+  EnginesResponse,
+  StorageClearRequest,
+  StorageClearResult,
+  StorageInfo,
+} from '../models';
 
 /** HTTP verbs the fetch fallback understands. */
 type HttpMethod = 'GET' | 'POST' | 'PUT';
@@ -463,6 +469,24 @@ export class IpcService {
   /** POST /engines/uninstall — remove an installed pack. */
   uninstallEngine(packId: string): Promise<{ ok: boolean }> {
     return this.http<{ ok: boolean }>('POST', '/engines/uninstall', { packId });
+  }
+
+  /** GET /storage — the app's deletable on-disk footprint (packs/models/caches). */
+  getStorage(): Promise<StorageInfo> {
+    return this.http<StorageInfo>('GET', '/storage');
+  }
+
+  /** POST /storage/clear — delete downloaded packages/models/caches to free space. */
+  clearStorage(req: StorageClearRequest = {}): Promise<StorageClearResult> {
+    return this.http<StorageClearResult>('POST', '/storage/clear', req);
+  }
+
+  /**
+   * Reveal an app-managed folder in the OS file manager (Finder / File Explorer).
+   * Native `open_path` in Tauri; the guarded `/open` endpoint in the browser.
+   */
+  openManagedFolder(path: string): Promise<{ ok: boolean }> {
+    return this.call<{ ok: boolean }>('open_path', { path }, 'POST', '/open', { path });
   }
 
   /** PUT /credentials — set/replace/clear one service's key. */

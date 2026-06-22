@@ -47,6 +47,7 @@ import { checkWorkersHealth } from './health.js';
 import { toHttpError } from './httpErrors.js';
 import { createFfmpegMediaService } from './mediaAdapter.js';
 import { openPath } from './openPath.js';
+import { describeStorage, clearStorage } from './storage.js';
 import { LocalJobOrchestrator } from './orchestrator.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { createDefaultRegistry, OLLAMA_MODEL } from './providers/registry.js';
@@ -716,6 +717,31 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     req.raw.on('error', cleanup);
   });
 
+  // ---- Storage management (free up disk space) -----------------------------
+
+  // The app's deletable, re-downloadable on-disk footprint (engine packs +
+  // downloaded models + caches under the config dir). Projects are NOT included.
+  app.get('/storage', async (_req, reply) => {
+    try {
+      return await describeStorage(config, enginePackStore);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // Delete the requested categories (default: all) and reconcile the stores, so
+  // the next run re-downloads what it needs. Running engines are stopped first.
+  app.post(
+    '/storage/clear',
+    async (req: FastifyRequest<{ Body: { engines?: boolean; models?: boolean; cache?: boolean } }>, reply) => {
+      try {
+        return await clearStorage(req.body ?? {}, { config, enginePackStore, setupStore, engineManager });
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
   // ---- System profile + hardware-aware recommendation ----------------------
 
   app.get('/system', async (_req, reply) => {
@@ -919,11 +945,18 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       if (!target || typeof target !== 'string') {
         return reply.status(400).send({ error: { code: 'UNKNOWN', message: 'Missing "path" in body.' } });
       }
-      // Only open locations the app actually manages: the projects root or a
-      // project's configured output directory — not arbitrary filesystem paths.
+      // Only open locations the app actually manages: the app data dir (its
+      // engine packs / models / caches — for the Settings "open folder"), the
+      // projects root, or a project's configured output directory — never an
+      // arbitrary filesystem path.
       const resolved = resolvePath(target);
       const projectsRoot = resolvePath(config.projectsDir);
-      let permitted = resolved === projectsRoot || resolved.startsWith(projectsRoot + sep);
+      const configRoot = resolvePath(config.configDir);
+      let permitted =
+        resolved === projectsRoot ||
+        resolved.startsWith(projectsRoot + sep) ||
+        resolved === configRoot ||
+        resolved.startsWith(configRoot + sep);
       if (!permitted) {
         const projects = await store.listProjects().catch(() => []);
         permitted = projects.some((p) => {

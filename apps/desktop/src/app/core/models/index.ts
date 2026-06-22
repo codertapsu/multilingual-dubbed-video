@@ -31,6 +31,12 @@ export type {
   EnginePrerequisites,
   EnginesResponse,
   EngineInstallEvent,
+  // Storage management
+  StorageCategory,
+  StorageLocation,
+  StorageInfo,
+  StorageClearRequest,
+  StorageClearResult,
   // Media
   MediaInfo,
   VideoStreamInfo,

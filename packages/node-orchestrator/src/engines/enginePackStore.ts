@@ -73,6 +73,14 @@ export class EnginePackStore {
     await this.writeAtomic(file);
   }
 
+  /**
+   * Forget ALL pack records (used by "free up disk space"). Only resets the
+   * index file; the caller is responsible for deleting the pack directories.
+   */
+  async clear(): Promise<void> {
+    await this.writeAtomic({});
+  }
+
   /** Remove a pack's record and delete its directory. */
   async remove(packId: string): Promise<void> {
     const file = await this.load();

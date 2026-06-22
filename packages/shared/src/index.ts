@@ -54,6 +54,11 @@ export type {
   EnginePackInstallRequest,
   EnginePackUninstallRequest,
   EngineInstallEvent,
+  StorageCategory,
+  StorageLocation,
+  StorageInfo,
+  StorageClearRequest,
+  StorageClearResult,
 } from './models/engines.js';
 
 // ---- Media types -----------------------------------------------------------

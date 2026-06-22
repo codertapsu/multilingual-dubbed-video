@@ -9,10 +9,17 @@ import {
 import { FormsModule } from '@angular/forms';
 
 import { IpcService } from '../../core/ipc/ipc.service';
+import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { environment } from '../../core/environment';
-import type { AppError, EnginePackInfo, EnginePrerequisites, InstalledEnginePack } from '../../core/models';
+import type {
+  AppError,
+  EnginePackInfo,
+  EnginePrerequisites,
+  InstalledEnginePack,
+  StorageInfo,
+} from '../../core/models';
 import type {
   ArgosPair,
   CloudCredentialInfo,
@@ -62,6 +69,7 @@ const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> =
 })
 export class SettingsComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
+  private readonly confirmSvc = inject(ConfirmService);
 
   protected readonly inTauri = this.ipc.inTauri;
   protected readonly serviceMeta = SERVICE_META;
@@ -110,6 +118,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected needsUv(pack: EnginePackInfo): boolean {
     return pack.packKind === 'python-uv';
   }
+
+  // -------- storage (free up disk space) --------
+  protected readonly storage = signal<StorageInfo | null>(null);
+  protected readonly storageLoading = signal(false);
+  protected readonly storageClearing = signal(false);
+  /** Last "freed N" message after a successful clear. */
+  protected readonly storageMessage = signal<string | null>(null);
 
   // -------- Argos translation packs (browse the full index + install/remove) --
   protected readonly argosInstalled = signal<ArgosPair[]>([]);
@@ -203,6 +218,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected async removeArgosPair(pair: ArgosPair): Promise<void> {
     const key = this.pairKey(pair);
     if (this.argosBusy()) return;
+    const ok = await this.confirmSvc.confirm({
+      title: 'Remove translation pack?',
+      message: `Remove the ${this.langName(pair.from)} → ${this.langName(pair.to)} Argos pack? You can re-install it anytime.`,
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
     this.argosBusy.set(key);
     this.error.set(null);
     try {
@@ -242,6 +263,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     void this.loadVersion();
     void this.loadProcessingSetup();
     void this.loadEngines();
+    void this.loadStorage();
     void this.loadArgosPackages(); // installed-only (fast); index loads on demand
   }
 
@@ -352,13 +374,91 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   protected async uninstallEngine(packId: string): Promise<void> {
+    const pack = this.enginePacks().find((p) => p.id === packId);
+    const ok = await this.confirmSvc.confirm({
+      title: 'Remove engine pack?',
+      message: `Remove “${pack?.displayName ?? 'this engine pack'}” and its downloaded files? You can re-install it anytime.`,
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
     this.error.set(null);
     try {
       await this.ipc.uninstallEngine(packId);
       await this.loadEngines();
       await this.loadProcessingSetup();
+      void this.loadStorage();
     } catch (err) {
       this.error.set(toAppError(err));
+    }
+  }
+
+  // ----------------------------- storage -----------------------------
+
+  private async loadStorage(): Promise<void> {
+    this.storageLoading.set(true);
+    try {
+      this.storage.set(await this.ipc.getStorage());
+    } catch {
+      // Non-fatal — leave the panel empty rather than blanking Settings.
+    } finally {
+      this.storageLoading.set(false);
+    }
+  }
+
+  /** Human file size (decimal, matching the engine-pack size chips). */
+  protected formatBytes(bytes: number): string {
+    if (bytes <= 0) return '0 MB';
+    const gb = bytes / 1e9;
+    if (gb >= 1) return `${gb.toFixed(1)} GB`;
+    const mb = bytes / 1e6;
+    if (mb >= 1) return `${mb.toFixed(0)} MB`;
+    return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+  }
+
+  /** OS-specific label for the reveal-folder button. */
+  protected openFolderLabel(): string {
+    const platform = this.system()?.profile.platform;
+    if (platform === 'darwin') return 'Show in Finder';
+    if (platform === 'win32') return 'Show in File Explorer';
+    return 'Open folder';
+  }
+
+  protected async openStorageFolder(): Promise<void> {
+    const root = this.storage()?.root;
+    if (!root) return;
+    this.error.set(null);
+    try {
+      await this.ipc.openManagedFolder(root);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    }
+  }
+
+  /** Delete all downloaded engine packs, models, and caches (with confirm), then refresh. */
+  protected async clearStorage(): Promise<void> {
+    if (this.storageClearing()) return;
+    const s = this.storage();
+    const ok = await this.confirmSvc.confirm({
+      title: 'Delete all downloaded data?',
+      message:
+        `This removes ${s?.installedEnginePacks ?? 0} engine pack(s) and all downloaded models and caches` +
+        `${s ? ` (${this.formatBytes(s.totalBytes)})` : ''}. Your projects are kept. ` +
+        `VideoDubber re-downloads what it needs on demand.`,
+      confirmLabel: 'Delete everything',
+    });
+    if (!ok) return;
+    this.storageClearing.set(true);
+    this.storageMessage.set(null);
+    this.error.set(null);
+    try {
+      const res = await this.ipc.clearStorage();
+      this.storageMessage.set(`Freed ${this.formatBytes(res.freedBytes)}.`);
+      // Refresh everything the wipe affected.
+      await Promise.all([this.loadStorage(), this.loadEngines(), this.loadProcessingSetup()]);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.storageClearing.set(false);
     }
   }
 
@@ -453,6 +553,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   protected async clearKey(service: CloudServiceId): Promise<void> {
     if (this.credBusy()) return;
+    const ok = await this.confirmSvc.confirm({
+      title: 'Remove API key?',
+      message: `Remove the saved ${this.serviceMeta[service].label} API key? Cloud features for this provider stop working until you add a key again.`,
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
     this.credBusy.set(service);
     this.error.set(null);
     try {

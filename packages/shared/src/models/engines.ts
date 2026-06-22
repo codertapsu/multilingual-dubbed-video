@@ -165,3 +165,50 @@ export type EngineInstallEvent =
   | { type: 'log'; level: 'info' | 'warn' | 'error'; message: string }
   | { type: 'done'; packId: string; installed: InstalledEnginePack }
   | { type: 'error'; packId: string; error: AppError };
+
+// ---- Storage management (Settings → free up disk space) --------------------
+
+/** A deletable, re-downloadable category of app-managed disk. */
+export type StorageCategory = 'engines' | 'models' | 'cache';
+
+/** One measured storage location the app owns. */
+export interface StorageLocation {
+  /** Stable key (also the clear-request flag). */
+  key: StorageCategory;
+  /** Human-readable label for the UI. */
+  label: string;
+  /** Absolute path on disk. */
+  path: string;
+  /** Total size in bytes (0 if the directory is missing). */
+  bytes: number;
+}
+
+/** GET /storage — the app's deletable on-disk footprint. */
+export interface StorageInfo {
+  /** App data root (the folder "Open folder" reveals). */
+  root: string;
+  /** Per-category sizes: engine packs, downloaded models, caches. */
+  locations: StorageLocation[];
+  /** Sum of all locations (bytes). */
+  totalBytes: number;
+  /** Free disk space at the root (bytes), or null if the platform can't report it. */
+  freeBytes: number | null;
+  /** Number of installed engine packs (for the confirmation copy). */
+  installedEnginePacks: number;
+}
+
+/** POST /storage/clear body. An omitted/true flag clears that category (default: all). */
+export interface StorageClearRequest {
+  engines?: boolean;
+  models?: boolean;
+  cache?: boolean;
+}
+
+/** POST /storage/clear result. */
+export interface StorageClearResult {
+  ok: true;
+  /** Best-effort bytes freed (measured before deletion). */
+  freedBytes: number;
+  /** Categories that were actually cleared. */
+  cleared: StorageCategory[];
+}

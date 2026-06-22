@@ -174,6 +174,22 @@ export class SetupStore {
     return next;
   }
 
+  /**
+   * Forget the downloaded Whisper models + Piper voices (used by "free up disk
+   * space" after wiping `<config>/models`). Argos pairs live in a separate
+   * package dir and are managed elsewhere, so they're left intact; the
+   * first-run flag is preserved (this frees space, it doesn't reset onboarding).
+   */
+  async clearModelInventory(): Promise<SetupStatus> {
+    const current = await this.getStatus();
+    const next: SetupStatus = {
+      ...current,
+      installed: { ...current.installed, whisperModels: [], piperVoices: [] },
+    };
+    await this.saveStatus(next);
+    return next;
+  }
+
   // ----- preferences.json --------------------------------------------------
 
   /** Load preferences, defaulting to auto-update enabled. */

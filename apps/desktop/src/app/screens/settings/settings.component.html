@@ -361,6 +361,56 @@
   </div>
 
   <!-- ============================ Updates ============================ -->
+  <!-- ===================== Storage (free up disk space) ===================== -->
+  <div class="card stack">
+    <h2>Storage</h2>
+    <p class="muted">
+      Downloaded engine packs, AI models, and caches all live in one app folder.
+      Delete them anytime to free up disk space — VideoDubber re-downloads whatever
+      a project needs on demand. Your projects (the dubbed videos) are never touched.
+    </p>
+
+    @if (storage(); as s) {
+      <div class="cred-row stack-sm">
+        @for (loc of s.locations; track loc.key) {
+          <div class="setting-row">
+            <span class="cred-name">{{ loc.label }}</span>
+            <span class="chip">{{ formatBytes(loc.bytes) }}</span>
+          </div>
+        }
+        <div class="setting-row">
+          <span class="cred-name"><strong>Total downloaded</strong></span>
+          <span class="chip">{{ formatBytes(s.totalBytes) }}</span>
+        </div>
+        @if (s.freeBytes !== null) {
+          <span class="hint">{{ formatBytes(s.freeBytes) }} free on this disk.</span>
+        }
+      </div>
+
+      @if (storageMessage(); as msg) {
+        <p class="hint test-ok">✓ {{ msg }}</p>
+      }
+
+      <div class="cred-controls">
+        <button type="button" class="btn btn-ghost btn-sm" (click)="openStorageFolder()">
+          {{ openFolderLabel() }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-danger btn-sm"
+          (click)="clearStorage()"
+          [disabled]="storageClearing() || s.totalBytes === 0"
+        >
+          {{ storageClearing() ? 'Deleting…' : 'Delete all downloaded data' }}
+        </button>
+      </div>
+    } @else if (storageLoading()) {
+      <p class="hint">Calculating disk usage…</p>
+    } @else {
+      <p class="hint">Storage info is unavailable (the backend may be offline).</p>
+    }
+  </div>
+
   <div class="card stack">
     <h2>Updates</h2>
 

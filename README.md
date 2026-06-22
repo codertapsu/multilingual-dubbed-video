@@ -23,33 +23,25 @@ workers, and FFmpeg.
 
 | Your machine | File to download | First launch |
 |---|---|---|
-| **Mac — Apple Silicon** (M1/M2/M3/M4) | `VideoDubber_<ver>_aarch64.dmg` | One-time unlock — see **[macOS first launch](#macos-first-launch)** below. |
+| **Mac — Apple Silicon** (M1/M2/M3/M4) | `VideoDubber_<ver>_aarch64.dmg` | Double-click to open (signed + notarized). |
 | **Windows (64-bit)** | `VideoDubber_<ver>_x64-setup.exe` (or `_x64_en-US.msi`) | SmartScreen → **More info → Run anyway**. |
 | **Linux (64-bit)** | `VideoDubber_<ver>_amd64.AppImage` / `.deb` | `chmod +x *.AppImage && ./VideoDubber*.AppImage`, or `sudo dpkg -i *.deb`. |
-| **Mac — Intel** | `VideoDubber_<ver>_x64.dmg` | Same one-time unlock — see **[macOS first launch](#macos-first-launch)** below. |
+| **Mac — Intel** | `VideoDubber_<ver>_x64.dmg` | Double-click to open (signed + notarized). |
 
 > **Which Mac do I have?**  → **About This Mac**: "Apple M…" = Apple Silicon, "Intel" = Intel.
 
 ### macOS first launch
 
-This build is **not yet notarized by Apple**, so macOS quarantines it and shows
-*"VideoDubber cannot be opened because Apple cannot check it for malicious
-software."* Clearing this is a **one-time** step:
+The macOS builds are **signed with an Apple Developer ID and notarized by Apple**,
+so VideoDubber opens with a normal **double-click** — no security prompt, no
+Terminal, no right-click:
 
 1. Open the `.dmg` and drag **VideoDubber** into your **Applications** folder.
-2. Open **Terminal** (press **⌘ Space**, type `Terminal`, press **Return**).
-3. Paste this line exactly and press **Return**:
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/VideoDubber.app
-   ```
-4. Open **VideoDubber** from Applications as usual. You won't need to do this again.
+2. Open **VideoDubber** from Applications. That's it.
 
-> **Heads up:** the old "right-click → Open" trick **no longer works** on macOS
-> Sequoia (15) and later — Apple removed it. A GUI route (try to open it, then
-> **System Settings → Privacy & Security → Open Anyway**) sometimes appears, but
-> the Terminal command above is the reliable one. Once we ship a **signed +
-> notarized** build, this step goes away entirely and the app opens with a
-> double-click.
+> Building an unsigned fork (no Apple signing secrets configured)? macOS will
+> quarantine it; the one-time unlock and the full signing/notarization setup are
+> documented in [`docs/APPLE_SIGNING.md`](docs/APPLE_SIGNING.md).
 
 Not every platform is necessarily attached to a given release — builds are added as
 they're ready, so check the Releases page for the installers currently available.

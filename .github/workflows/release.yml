@@ -270,10 +270,9 @@ jobs:
             See the assets below to download and install VideoDubber for your OS.
             First launch downloads the AI models via the in-app setup wizard.
 
-            macOS first launch (one-time, until notarized): drag VideoDubber to
-            Applications, then run this in Terminal —
-            `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`
-            (the old right-click → Open was removed in macOS Sequoia). See the README.
+            macOS: the .dmg is Apple Developer-ID signed + notarized — just
+            double-click to open. Windows: SmartScreen → More info → Run anyway
+            (Windows code-signing is a later addition).
           # Keep as DRAFT so a human reviews + publishes (see docs/RELEASING.md).
           releaseDraft: true
           prerelease: false

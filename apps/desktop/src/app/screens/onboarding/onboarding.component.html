@@ -311,38 +311,7 @@
       }
 
       @if (setupEvents.items().length > 0) {
-        <ul class="dl-list" role="list">
-          @for (item of setupEvents.items(); track item.item) {
-            <li class="dl-row">
-              <div class="dl-head">
-                <span class="dl-name">{{ item.item }}</span>
-                <span class="dl-pct mono">
-                  @if (item.done) {
-                    Done
-                  } @else if (item.percent !== null) {
-                    {{ item.percent }}%
-                  } @else {
-                    Working…
-                  }
-                </span>
-              </div>
-              <div
-                class="progress"
-                [class.indeterminate]="item.percent === null && !item.done"
-                role="progressbar"
-                [attr.aria-valuenow]="item.percent ?? undefined"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                [attr.aria-label]="'Downloading ' + item.item"
-              >
-                <span [style.width]="progressWidth(item.percent)"></span>
-              </div>
-              @if (item.message) {
-                <span class="hint">{{ item.message }}</span>
-              }
-            </li>
-          }
-        </ul>
+        <vd-download-progress-list [items]="setupEvents.items()" />
       } @else if (!installDone()) {
         <p class="muted">Waiting for the download to begin…</p>
       }

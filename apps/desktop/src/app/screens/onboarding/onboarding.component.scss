@@ -160,45 +160,8 @@
   align-items: center;
 }
 
-/* ----- Download progress ----- */
-.dl-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--vd-sp-4);
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.dl-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--vd-sp-1);
-}
-.dl-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-}
-.dl-name {
-  font-weight: 600;
-}
-.dl-pct {
-  color: var(--vd-text-muted);
-}
-
-/* Indeterminate state: a slim sweeping bar when percent is unknown. */
-.progress.indeterminate > span {
-  width: 35% !important;
-  animation: vd-indeterminate 1.1s ease-in-out infinite;
-}
-@keyframes vd-indeterminate {
-  0% {
-    transform: translateX(-120%);
-  }
-  100% {
-    transform: translateX(320%);
-  }
-}
+/* Download-progress bars live in the shared <vd-download-progress-list>; the
+   indeterminate animation is now a global `.progress.indeterminate` modifier. */
 
 /* ----- Activity log ----- */
 .log-details {

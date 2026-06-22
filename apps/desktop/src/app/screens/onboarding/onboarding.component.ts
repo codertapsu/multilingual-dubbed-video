@@ -16,6 +16,7 @@ import { SetupEventsService } from '../../core/ipc/setup-events.service';
 import { FirstRunService } from '../../core/guards/first-run.guard';
 import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
+import { DownloadProgressListComponent } from '../../shared/download-progress-list/download-progress-list.component';
 import { FALLBACK_COMMON_LANGUAGES } from '../../core/models/view-models';
 import type { AppError, LanguageCode } from '../../core/models';
 import type {
@@ -50,7 +51,7 @@ type OnboardingStep = 1 | 2 | 3 | 4;
   selector: 'vd-onboarding',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent],
+  imports: [FormsModule, ErrorBannerComponent, DownloadProgressListComponent],
   templateUrl: './onboarding.component.html',
   styleUrl: './onboarding.component.scss',
 })
@@ -334,9 +335,6 @@ export class OnboardingComponent implements OnInit, OnDestroy {
     return this.languages().find((l) => l.code === code)?.label ?? code;
   }
 
-  protected progressWidth(percent: number | null): string {
-    return percent === null ? '100%' : `${Math.max(0, Math.min(100, percent))}%`;
-  }
 }
 
 /** Base subtag of a locale code (e.g. "en-US" -> "en"). */

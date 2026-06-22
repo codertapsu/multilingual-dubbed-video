@@ -302,6 +302,20 @@ legend {
   background: var(--vd-primary);
   transition: width 0.25s ease;
 }
+/* Indeterminate state: a slim bar sweeping across when the percent is unknown
+   (e.g. an opaque worker download). Add `.indeterminate` to the `.progress`. */
+.progress.indeterminate > span {
+  width: 35% !important;
+  animation: vd-indeterminate 1.1s ease-in-out infinite;
+}
+@keyframes vd-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
 
 /* ---------------------------- Layout helpers ---------------------------- */
 .page {

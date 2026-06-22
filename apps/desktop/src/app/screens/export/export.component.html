@@ -87,7 +87,7 @@
       </select>
     </div>
 
-    <div>
+    <div class="row">
       <button
         type="button"
         class="btn btn-primary"
@@ -96,6 +96,10 @@
       >
         {{ rendering() ? 'Rendering…' : 'Re-render video' }}
       </button>
+      <vd-busy-indicator
+        [active]="rendering()"
+        label="Encoding the final video — this can take a few minutes"
+      />
     </div>
   </div>
 </section>

@@ -14,6 +14,8 @@ import { IpcService } from '../../core/ipc/ipc.service';
 import { SetupEventsService } from '../../core/ipc/setup-events.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
+import { DownloadProgressListComponent } from '../../shared/download-progress-list/download-progress-list.component';
+import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import {
   ALL_SUBTITLE_EXPORT_MODES,
   SUBTITLE_EXPORT_MODE_HINTS,
@@ -87,7 +89,7 @@ function defaultSettings(): ProjectSettings {
   selector: 'vd-new-project-wizard',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent],
+  imports: [FormsModule, ErrorBannerComponent, DownloadProgressListComponent, BusyIndicatorComponent],
   templateUrl: './new-project-wizard.component.html',
   styleUrl: './new-project-wizard.component.scss',
 })

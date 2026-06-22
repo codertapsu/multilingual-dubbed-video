@@ -12,6 +12,7 @@ import { IpcService } from '../../core/ipc/ipc.service';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
+import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import { environment } from '../../core/environment';
 import type {
   AppError,
@@ -63,7 +64,7 @@ const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> =
   selector: 'vd-settings',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent],
+  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
 })

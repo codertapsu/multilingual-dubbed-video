@@ -14,6 +14,7 @@ import { environment } from '../../core/environment';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
+import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import {
   ALL_SUBTITLE_EXPORT_MODES,
   SUBTITLE_EXPORT_MODE_LABELS,
@@ -35,7 +36,7 @@ import type {
   selector: 'vd-export',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent],
+  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent],
   templateUrl: './export.component.html',
   styleUrl: './export.component.scss',
 })

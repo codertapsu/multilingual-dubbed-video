@@ -292,6 +292,10 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
             ("VIDEODUBBER_PROJECTS_DIR", projects_dir.to_string_lossy().into_owned()),
             ("VIDEODUBBER_CONFIG_DIR", config_dir.to_string_lossy().into_owned()),
             ("VIDEODUBBER_MODELS_DIR", models_dir.to_string_lossy().into_owned()),
+            // Same HF hub cache the STT worker downloads into (above), so the
+            // orchestrator can watch whisper-model downloads and report a true
+            // percentage during first-run setup / project resource ensure.
+            ("STT_MODEL_CACHE_DIR", hf_cache.to_string_lossy().into_owned()),
         ];
         if let Some(ffmpeg) = ffmpeg_path.as_ref() {
             env.push(("FFMPEG_PATH", ffmpeg.clone()));

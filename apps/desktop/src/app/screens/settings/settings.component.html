@@ -354,6 +354,7 @@
             >
               {{ argosBusy() === row.key ? 'Installing…' : 'Install' }}
             </button>
+            <vd-busy-indicator [active]="argosBusy() === row.key" label="Downloading…" />
           }
         </div>
       </div>
@@ -403,6 +404,7 @@
         >
           {{ storageClearing() ? 'Deleting…' : 'Delete all downloaded data' }}
         </button>
+        <vd-busy-indicator [active]="storageClearing()" label="Deleting downloaded data…" />
       </div>
     } @else if (storageLoading()) {
       <p class="hint">Calculating disk usage…</p>
@@ -474,6 +476,10 @@
         >
           {{ installing() ? 'Installing…' : 'Download & install' }}
         </button>
+        <vd-busy-indicator
+          [active]="installing()"
+          label="Downloading and installing the update…"
+        />
       }
     </div>
 

@@ -31,6 +31,15 @@ export interface OrchestratorConfig {
   readonly configDir: string;
   /** Root directory holding downloaded models (Piper voices under /piper). */
   readonly modelsDir: string;
+  /**
+   * HuggingFace hub cache dir the STT worker downloads whisper weights into
+   * (the dir that holds the `models--*` snapshot folders). Mirrors the worker's
+   * `STT_MODEL_CACHE_DIR` resolution so the orchestrator can watch a download in
+   * flight and report a true percentage. The bundled shell sets
+   * `STT_MODEL_CACHE_DIR = <modelsDir>/huggingface` for BOTH processes
+   * (see src-tauri/src/sidecar.rs), and that is also the derived default here.
+   */
+  readonly whisperCacheDir: string;
   /** Explicit ffmpeg binary path, or undefined to use PATH lookup. */
   readonly ffmpegPath: string | undefined;
   /** Explicit ffprobe binary path, or undefined to use PATH lookup. */
@@ -92,6 +101,18 @@ export function loadConfig(overrides: Partial<OrchestratorConfig> = {}): Orchest
   const configDir = env('VIDEODUBBER_CONFIG_DIR') ?? defaultConfigDir(projectsDir);
   const modelsDir = env('VIDEODUBBER_MODELS_DIR') ?? defaultModelsDir(configDir);
 
+  // Resolve the HF hub cache dir with the SAME priority the STT worker uses
+  // (workers/stt-worker/app/whisper_service.py _hf_cache_dir): explicit cache
+  // dir, then HF_HUB_CACHE, then HF_HOME/hub, finally <modelsDir>/huggingface
+  // (what the bundled shell sets for the worker). Keep these in lockstep, or the
+  // progress poller watches the wrong directory and reports 0%.
+  const hfHome = env('HF_HOME');
+  const whisperCacheDir =
+    env('STT_MODEL_CACHE_DIR') ??
+    env('HF_HUB_CACHE') ??
+    (hfHome ? path.join(hfHome, 'hub') : undefined) ??
+    path.join(modelsDir, 'huggingface');
+
   const base: OrchestratorConfig = {
     port,
     host,
@@ -102,6 +123,7 @@ export function loadConfig(overrides: Partial<OrchestratorConfig> = {}): Orchest
     projectsDir,
     configDir,
     modelsDir,
+    whisperCacheDir,
     ffmpegPath: env('FFMPEG_PATH'),
     ffprobePath: env('FFPROBE_PATH'),
     pythonPath: env('PYTHON_PATH'),

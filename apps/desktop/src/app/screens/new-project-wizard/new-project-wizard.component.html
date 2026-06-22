@@ -449,7 +449,11 @@
       }
 
       <div class="row row-between">
-        <span class="hint">A workspace is created when you continue.</span>
+        @if (busy()) {
+          <vd-busy-indicator [active]="true" label="Creating project (copying the video)…" />
+        } @else {
+          <span class="hint">A workspace is created when you continue.</span>
+        }
         <button
           type="submit"
           class="btn btn-primary"
@@ -515,10 +519,15 @@
       </fieldset>
 
       @if (preparingModels()) {
-        <p class="hint">
-          Downloading the AI models for your selected languages — <strong>Start</strong>
-          unlocks once they're ready (this continues in the background).
-        </p>
+        <div class="stack">
+          <p class="hint">
+            Downloading the AI models for your selected languages — <strong>Start</strong>
+            unlocks once they're ready (this continues in the background).
+          </p>
+          @if (setupEvents.items().length > 0) {
+            <vd-download-progress-list [items]="setupEvents.items()" />
+          }
+        </div>
       }
 
       <div class="row row-between">

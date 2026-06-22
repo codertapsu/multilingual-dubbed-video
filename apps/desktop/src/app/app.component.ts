@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
 import { IpcService } from './core/ipc/ipc.service';
+import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.component';
 
 /**
  * Root shell: a slim top nav + a routed outlet. The whole app lives inside a
@@ -13,7 +14,7 @@ import { IpcService } from './core/ipc/ipc.service';
   selector: 'vd-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ConfirmDialogComponent],
   template: `
     <header class="topnav">
       <a class="brand" routerLink="/" aria-label="VideoDubber home">
@@ -40,6 +41,8 @@ import { IpcService } from './core/ipc/ipc.service';
     <main class="app-main">
       <router-outlet />
     </main>
+
+    <vd-confirm-dialog />
   `,
   styles: [
     `

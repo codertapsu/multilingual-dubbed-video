@@ -192,6 +192,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     options.registry ?? createDefaultRegistry(config, credentials, engineManager, enginePackStore);
   const bus = options.bus ?? new EventBusRegistry();
 
+  // First-run setup: config/state store, the global setup SSE bus, and the model
+  // installer that streams progress over it. Declared here (before the readiness
+  // deps) so the run gate can read the installed-model inventory from setupStore.
+  const setupStore = options.setupStore ?? new SetupStore(config.configDir);
+  const setupBus = options.setupBus ?? new SetupEventBus();
+  const installer =
+    options.installer ?? new SetupInstaller({ config, store: setupStore, bus: setupBus });
+
   // Probe the bundled worker backing a local provider's phase. The readiness
   // contract uses this to block a run while a worker is still booting — so a run
   // can't start and then fail against a not-yet-listening faster-whisper/argos/
@@ -211,6 +219,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     enginePackStore,
     probeWorker,
     packUsable: (id) => isPackUsable(enginePackStore, id),
+    // Block a run whose selected default model (whisper/argos/piper) for this
+    // language hasn't finished downloading, instead of failing mid-pipeline.
+    installedModels: () => setupStore.getStatus().then((s) => s.installed),
   });
 
   const orchestrator =
@@ -232,13 +243,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // Tracks background Ollama model pulls (lazy on-demand for the large, optional
   // local-LLM translation models). The UI polls /providers/ollama/pull-status.
   const ollamaPulls = new OllamaPullManager(OLLAMA_URL);
-
-  // First-run setup: config/state store, the global setup SSE bus, and the
-  // model installer that streams progress over that bus.
-  const setupStore = options.setupStore ?? new SetupStore(config.configDir);
-  const setupBus = options.setupBus ?? new SetupEventBus();
-  const installer =
-    options.installer ?? new SetupInstaller({ config, store: setupStore, bus: setupBus });
 
   const app = Fastify({ logger: false });
 

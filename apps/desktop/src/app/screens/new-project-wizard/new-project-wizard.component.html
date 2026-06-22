@@ -514,6 +514,13 @@
         </p>
       </fieldset>
 
+      @if (preparingModels()) {
+        <p class="hint">
+          Downloading the AI models for your selected languages — <strong>Start</strong>
+          unlocks once they're ready (this continues in the background).
+        </p>
+      }
+
       <div class="row row-between">
         <button type="button" class="btn" (click)="backToStep1()" [disabled]="busy()">
           ← Back
@@ -522,9 +529,9 @@
           type="button"
           class="btn btn-primary"
           (click)="start()"
-          [disabled]="busy() || ollamaPulling()"
+          [disabled]="busy() || ollamaPulling() || preparingModels()"
         >
-          {{ busy() ? 'Starting…' : 'Start dubbing ▶' }}
+          {{ busy() ? 'Starting…' : preparingModels() ? 'Preparing models…' : 'Start dubbing ▶' }}
         </button>
         @if (ollamaPullAction(); as pullModel) {
           <button

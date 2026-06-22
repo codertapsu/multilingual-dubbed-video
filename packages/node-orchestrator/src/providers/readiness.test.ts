@@ -214,6 +214,63 @@ describe('checkProviderReadiness', () => {
   });
 });
 
+describe('model-presence run gate', () => {
+  const fullProject = {
+    settings: {
+      sttProviderId: 'faster-whisper',
+      sttModel: 'small',
+      translationProviderId: 'argos',
+      sourceLanguage: 'en',
+      targetLanguage: 'vi',
+      ttsProviderId: 'piper-local',
+      ttsVoiceId: 'vi_VN-vais1000-medium',
+    },
+  } as unknown as Project;
+  const reg = (): ProviderRegistry => registryWith(fakeTranslation({ id: 'argos' }));
+
+  it('blocks the STT phase when its Whisper model is not downloaded yet', async () => {
+    const results = await checkProviderReadiness(fullProject, {
+      registry: reg(),
+      credentials: fakeCreds([]),
+      enginePackStore: noPacks,
+      installedModels: async () => ({
+        whisperModels: [],
+        argosPairs: [{ from: 'en', to: 'vi' }],
+        piperVoices: ['vi_VN-vais1000-medium'],
+      }),
+    });
+    const stt = results.find((r) => r.phase === 'stt')!;
+    expect(stt.ready).toBe(false);
+    expect(stt.status).toBe('model-missing');
+    // The other phases (their models present) stay ready.
+    expect(results.find((r) => r.phase === 'translation')!.ready).toBe(true);
+    expect(results.find((r) => r.phase === 'tts')!.ready).toBe(true);
+  });
+
+  it('is ready once every default model is installed', async () => {
+    const results = await checkProviderReadiness(fullProject, {
+      registry: reg(),
+      credentials: fakeCreds([]),
+      enginePackStore: noPacks,
+      installedModels: async () => ({
+        whisperModels: ['small'],
+        argosPairs: [{ from: 'en', to: 'vi' }],
+        piperVoices: ['vi_VN-vais1000-medium'],
+      }),
+    });
+    expect(results.every((r) => r.ready)).toBe(true);
+  });
+
+  it('does not gate models when installedModels is not wired (back-compat)', async () => {
+    const results = await checkProviderReadiness(fullProject, {
+      registry: reg(),
+      credentials: fakeCreds([]),
+      enginePackStore: noPacks,
+    });
+    expect(results.every((r) => r.ready)).toBe(true);
+  });
+});
+
 describe('managed llama.cpp (TranslateGemma) readiness', () => {
   let dir: string;
   let store: EnginePackStore;

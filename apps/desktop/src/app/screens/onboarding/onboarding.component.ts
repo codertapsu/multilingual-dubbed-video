@@ -3,6 +3,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -93,6 +94,15 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   // -------- step 4: install --------
   protected readonly installing = signal(false);
   protected readonly completing = signal(false);
+
+  /** Once the install stream ends or errors, it's no longer in flight — so the
+   *  Retry button enables on error (and Finish enables on done). */
+  private readonly _syncInstalling = effect(
+    () => {
+      if (this.setupEvents.done() || this.setupEvents.error()) this.installing.set(false);
+    },
+    { allowSignalWrites: true },
+  );
 
   /** The resolved info for the currently-selected voice (for the size label). */
   protected readonly selectedVoice = computed(
@@ -286,6 +296,12 @@ export class OnboardingComponent implements OnInit, OnDestroy {
       this.installing.set(false);
       this.setupEvents.disconnect();
     }
+  }
+
+  /** Retry after a failed/aborted download (e.g. the connection dropped). */
+  protected async retryInstall(): Promise<void> {
+    this.installing.set(false); // reset so startInstall proceeds
+    await this.startInstall();
   }
 
   /** Finish: mark first-run complete, then navigate to Home. */

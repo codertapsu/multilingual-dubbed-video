@@ -1,9 +1,9 @@
-import type {
-  OnInit} from '@angular/core';
+import type { OnDestroy, OnInit } from '@angular/core';
 import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  effect,
   inject,
   signal,
 } from '@angular/core';
@@ -91,7 +91,7 @@ function defaultSettings(): ProjectSettings {
   templateUrl: './new-project-wizard.component.html',
   styleUrl: './new-project-wizard.component.scss',
 })
-export class NewProjectWizardComponent implements OnInit {
+export class NewProjectWizardComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
   private readonly router = inject(Router);
   private readonly store = inject(ProjectStore);
@@ -181,6 +181,17 @@ export class NewProjectWizardComponent implements OnInit {
 
   // -------- async state --------
   protected readonly busy = signal(false);
+
+  /** True while the default models for the chosen languages are still downloading. */
+  protected readonly preparingModels = signal(false);
+
+  /** Clear "preparing" as soon as the background model download finishes or fails. */
+  private readonly _clearPreparing = effect(
+    () => {
+      if (this.setupEvents.done() || this.setupEvents.error()) this.preparingModels.set(false);
+    },
+    { allowSignalWrites: true },
+  );
   protected readonly error = signal<AppError | null>(null);
   protected readonly createdProjectId = signal<string | null>(null);
   protected readonly mediaInfo = signal<MediaInfo | null>(null);
@@ -204,6 +215,11 @@ export class NewProjectWizardComponent implements OnInit {
   ngOnInit(): void {
     void this.loadLanguages();
     void this.init();
+  }
+
+  ngOnDestroy(): void {
+    // Stop listening to the global setup stream when leaving the wizard.
+    this.setupEvents.disconnect();
   }
 
   /** Load the provider catalog + saved defaults, then the per-language voices. */
@@ -554,10 +570,20 @@ export class NewProjectWizardComponent implements OnInit {
       this.outputDir.set(project.outputDir);
       this.store.setCurrent(project);
 
-      // Pre-fetch any required local models (whisper/Argos pair/Piper voice) in
-      // the background now that the languages are known, so the run doesn't stall
-      // on a missing model later. Fire-and-forget; progress shows via setup SSE.
-      void this.ipc.ensureProjectResources(project.id).catch(() => {});
+      // Pre-fetch any required local models (whisper/Argos pair/Piper voice) now
+      // that the languages are known. Connect the setup stream first (so the
+      // effect can clear "preparing" when the download ends), then reflect
+      // whether one actually started — Start stays disabled until it finishes, so
+      // a run can never begin against a half-downloaded model.
+      this.setupEvents.connect();
+      const ensure = await this.ipc
+        .ensureProjectResources(project.id)
+        .catch(() => ({ installing: false }));
+      if (ensure.installing) {
+        this.preparingModels.set(true);
+      } else {
+        this.setupEvents.disconnect();
+      }
 
       // Probe — surface media info, but a probe failure shouldn't strand the
       // user: they can still proceed (the pipeline re-probes as step 1).

@@ -289,8 +289,25 @@
         <p class="muted">
           Fetching the AI models for
           {{ languageLabel(sourceLanguage()) }} →
-          {{ languageLabel(targetLanguage()) }}. Keep this window open.
+          {{ languageLabel(targetLanguage()) }} — this one-time download needs an
+          internet connection. Keep this window open.
         </p>
+      }
+
+      @if (displayError() && !installDone()) {
+        <div class="row">
+          <button
+            type="button"
+            class="btn btn-primary"
+            (click)="retryInstall()"
+            [disabled]="installing()"
+          >
+            {{ installing() ? 'Retrying…' : 'Retry download' }}
+          </button>
+          <span class="hint">
+            Check your internet connection, then retry — it picks up the remaining models.
+          </span>
+        </div>
       }
 
       @if (setupEvents.items().length > 0) {

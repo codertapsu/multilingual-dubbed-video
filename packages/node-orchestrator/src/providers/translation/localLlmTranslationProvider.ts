@@ -86,8 +86,8 @@ async function defaultPostJson<T>(url: string, headers: Record<string, string>, 
     throw new AppErrorException('ENGINE_UNAVAILABLE', `Local LLM is not reachable at ${url}.`, {
       cause: err instanceof Error ? err.message : String(err),
       remediation:
-        'Start the local LLM — Ollama: run `ollama serve` and `ollama pull <model>` (set OLLAMA_MODEL to match), ' +
-        'or enable the llama.cpp engine pack — OR switch the project\'s Translation provider to Argos (offline, no setup).',
+        "Switch this project's Translation provider to Argos (offline, nothing to install), or install " +
+        'TranslateGemma (built-in) from Settings → Engines. (Advanced: run your own Ollama with `ollama serve` + `ollama pull <model>`.)',
     });
   }
   if (!res.ok) {

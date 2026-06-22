@@ -21,9 +21,11 @@ import {
   pipelineStepIndex,
   type CloudServiceId,
   type ErrorCode,
+  type InstalledModels,
   type PipelineStepId,
   type Project,
 } from '@videodubber/shared';
+import { computeRequiredResources } from '../setup/requiredResources.js';
 import type { CredentialsStore } from '../credentials/credentialsStore.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
 import {
@@ -97,6 +99,14 @@ export interface ReadinessDeps {
    * simple boolean so they don't need a real venv on disk.
    */
   packUsable?: (packId: string) => Promise<boolean>;
+  /**
+   * The installed default-pipeline model inventory (whisper / argos / piper), so
+   * the run gate can block a run whose selected default model isn't downloaded
+   * yet (e.g. a project in a new language whose background fetch hasn't finished)
+   * instead of failing mid-pipeline. Omitted (unit tests, the generic /providers
+   * listing) => model-presence gating is skipped.
+   */
+  installedModels?: () => Promise<InstalledModels>;
 }
 
 /** Just the provider fields readiness cares about (instances + descriptors satisfy this). */
@@ -175,6 +185,8 @@ export async function describeProviderReadiness(
   provider: ProviderTraits,
   deps: ReadinessDeps,
   ctx: ReadinessContext,
+  /** Whether THIS phase's default-pipeline model is not yet downloaded (project-scoped checks only). */
+  modelMissing = false,
 ): Promise<ProviderReadiness> {
   const name = provider.displayName ?? provider.id;
   const base = { phase, providerId: provider.id };
@@ -258,7 +270,8 @@ export async function describeProviderReadiness(
         ready: false,
         message: 'The Ollama daemon is not running.',
         remediation:
-          'Start Ollama (`ollama serve`) and pull a model, or pick Argos / the llama.cpp engine pack (no daemon).',
+          "Switch this project's Translation to Argos (offline, nothing to install) or TranslateGemma (built-in) " +
+          'from Settings → Engines — neither needs Ollama. (Ollama is optional; to use it, start it with `ollama serve`.)',
         action: { kind: 'guide', ref: 'ollama' },
       };
     }
@@ -268,7 +281,9 @@ export async function describeProviderReadiness(
         status: 'model-missing',
         ready: false,
         message: `Ollama is running but the model "${OLLAMA_MODEL}" is not pulled.`,
-        remediation: `Pull it with \`ollama pull ${OLLAMA_MODEL}\` (or set OLLAMA_MODEL to a model you have).`,
+        remediation:
+          `Click “Pull ${OLLAMA_MODEL}” here to download it, or switch this project's Translation to Argos / ` +
+          `TranslateGemma (built-in). (Advanced: \`ollama pull ${OLLAMA_MODEL}\`.)`,
         action: { kind: 'pull-ollama-model', ref: OLLAMA_MODEL },
       };
     }
@@ -289,7 +304,22 @@ export async function describeProviderReadiness(
       action: { kind: 'guide', ref: 'worker-loading' },
     };
   }
-  // Precise model/voice-presence gating arrives with the background-installer stage.
+  // Default local provider (faster-whisper / argos / piper-local): if its model
+  // for the selected language hasn't finished downloading, block the run with a
+  // clear message instead of letting it die mid-pipeline. Only set for
+  // project-scoped checks (the generic /providers listing passes false).
+  if (modelMissing) {
+    return {
+      ...base,
+      status: 'model-missing',
+      ready: false,
+      message: `The ${PHASE_LABEL[phase]} model for this language is still downloading or isn't installed yet.`,
+      remediation:
+        'A new language downloads its model automatically the first time you use it — give it a moment and ' +
+        'press Start again, or pick a different provider for this phase.',
+      action: { kind: 'guide', ref: 'downloading-models' },
+    };
+  }
   return ready;
 }
 
@@ -308,8 +338,25 @@ export async function checkProviderReadiness(
   const ctx = await buildReadinessContext(deps);
   const retryIndex = fromStep ? pipelineStepIndex(fromStep) : 0;
   const phases = PHASES.filter((p) => pipelineStepIndex(p.step) >= retryIndex);
+
+  // Which of this project's DEFAULT-pipeline models aren't downloaded yet, so the
+  // gate can block before a run dies on a missing model. computeRequiredResources
+  // only reports for the default local providers (faster-whisper/argos/piper), so
+  // a phase using cloud/Ollama/an engine pack is never falsely flagged. Skipped
+  // when installedModels isn't wired (tests / the generic /providers listing).
+  const installed = deps.installedModels ? await deps.installedModels() : undefined;
+  const required = installed ? computeRequiredResources(project.settings, installed) : undefined;
+  const modelMissing = (phase: ProviderPhase): boolean => {
+    if (!required) return false;
+    if (phase === 'stt') return Boolean(required.whisperModel);
+    if (phase === 'translation') return (required.argosPairs?.length ?? 0) > 0;
+    return (required.piperVoices?.length ?? 0) > 0; // tts
+  };
+
   return Promise.all(
-    phases.map((p) => describeProviderReadiness(p.phase, providerFor(p.phase, deps.registry, project), deps, ctx)),
+    phases.map((p) =>
+      describeProviderReadiness(p.phase, providerFor(p.phase, deps.registry, project), deps, ctx, modelMissing(p.phase)),
+    ),
   );
 }
 

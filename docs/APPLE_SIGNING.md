@@ -123,13 +123,24 @@ Three pieces handle this (already committed):
 2. **`tauri.conf.json` → `bundle.macOS.entitlements`** points Tauri at that file
    so it applies the entitlements when it signs the app + sidecars. (Hardened
    runtime is on by default in Tauri — no need to set it.)
-3. **The "Deep-sign bundled resource binaries (macOS)" step** in `release.yml`
-   runs **before** `tauri-action`: it signs every Mach-O under
-   `apps/desktop/src-tauri/resources/` individually (`--options runtime
-   --timestamp`), adding `--entitlements` for the executables (the interpreter +
-   frozen worker bootloaders). Because this happens before bundling, the copies
-   `tauri-action` places in the `.app` are already valid, and its notarization
-   pass succeeds.
+3. **A post-build notarization pipeline.** There's a second, subtler problem:
+   Tauri's resource copy **dereferences symlinks**, which flattens PyInstaller's
+   bundled `Python.framework` into a *malformed* framework — its binaries then
+   fail notarization with *"The signature of the binary is invalid."* Pre-signing
+   can't survive that, and `tauri-action` signs **and** notarizes in one step with
+   no hook in between. So the CI:
+   - hands `tauri-action` only the **certificate** vars (it signs the app but
+     does **not** notarize — we withhold `APPLE_ID`/`APPLE_PASSWORD`/`APPLE_TEAM_ID`),
+     then
+   - runs **`scripts/package/macos-sign-notarize.sh`** ("Sign + notarize (macOS)")
+     against the built `.app`: it **repairs** each framework's symlink structure,
+     re-signs it as a bundle, signs the loose resource Mach-O (entitlements on the
+     executables), re-seals the `.app`, **rebuilds the `.dmg`** from the repaired
+     app, and finally `notarytool submit --wait` + `stapler staple` + replaces the
+     release's `.dmg` asset.
+
+   (The in-DMG "Open Me First" step is skipped for notarized builds — a notarized
+   `.dmg` needs no unlock, and editing it would break the staple.)
 
 > **First-run reality check (important).** The exact set of nested binaries can
 > shift with the bundled CPython / PyInstaller output. If notarization fails,

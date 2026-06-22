@@ -221,16 +221,19 @@ jobs:
       # behind the HAS_APPLE_CERT gate keeps them genuinely ABSENT for unsigned builds, so
       # macOS produces an unsigned .app/.dmg (the release notes already tell users to
       # right-click -> Open). Windows tolerates an empty cert, so it stays inline below.
-      - name: Provide Apple signing env (only when a cert is configured)
+      # SIGN-ONLY handoff to tauri-action: we pass the certificate vars but
+      # deliberately WITHHOLD APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID, so Tauri
+      # signs the .app but does NOT notarize. We notarize ourselves afterwards (in
+      # "Sign + notarize (macOS)") because Tauri's resource copy dereferences the
+      # symlinks in PyInstaller's bundled Python.framework, mangling it — that has
+      # to be repaired in the built .app before notarization. See docs/APPLE_SIGNING.md.
+      - name: Provide Apple signing env (sign-only; we notarize separately)
         if: startsWith(matrix.os, 'macos') && env.HAS_APPLE_CERT == 'true'
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           {
             echo "APPLE_CERTIFICATE<<__VD_CERT_EOF__"
@@ -238,58 +241,7 @@ jobs:
             echo "__VD_CERT_EOF__"
             echo "APPLE_CERTIFICATE_PASSWORD=$APPLE_CERTIFICATE_PASSWORD"
             echo "APPLE_SIGNING_IDENTITY=$APPLE_SIGNING_IDENTITY"
-            echo "APPLE_ID=$APPLE_ID"
-            echo "APPLE_PASSWORD=$APPLE_PASSWORD"
-            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
           } >> "$GITHUB_ENV"
-
-      # Tauri signs the app + externalBin (Contents/MacOS) but does NOT deep-sign
-      # the Mach-O we ship under bundle.resources — the standalone CPython
-      # (resources/python) and the PyInstaller worker trees (resources/workers).
-      # The notary service rejects ANY unsigned/old-timestamp nested binary, so we
-      # sign them HERE — before tauri-action bundles + notarizes, so the copies
-      # inside the .app are already valid. Each Mach-O individually, with the
-      # hardened runtime + a secure timestamp; executables (the interpreter +
-      # frozen worker bootloaders) also get the JIT/library entitlements. Plain
-      # .dylib/.so/bundles are signed without entitlements. See docs/APPLE_SIGNING.md.
-      - name: Deep-sign bundled resource binaries (macOS)
-        if: startsWith(matrix.os, 'macos') && env.HAS_APPLE_CERT == 'true'
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          set -euo pipefail
-          RES="apps/desktop/src-tauri/resources"
-          ENT="apps/desktop/src-tauri/entitlements.plist"
-          ID="$APPLE_SIGNING_IDENTITY"
-          if [ ! -d "$RES" ]; then echo "no resources dir staged; nothing to sign"; exit 0; fi
-
-          # 1) Frameworks (PyInstaller bundles a Python.framework per worker) MUST
-          #    be signed as BUNDLES — signing the inner Mach-O directly yields
-          #    "The signature of the binary is invalid" at notarization. Deepest
-          #    first; verify each so a malformed framework fails loudly here.
-          while IFS= read -r -d '' fw; do
-            codesign --force --options runtime --timestamp --sign "$ID" "$fw"
-            codesign --verify --strict "$fw"
-            echo "  signed framework: $fw"
-          done < <(find "$RES" -type d -name '*.framework' -print0 | sort -zr)
-
-          # 2) Loose Mach-O NOT inside a framework: executables (interpreters,
-          #    PyInstaller bootloaders) get the entitlements; plain dylib/.so/
-          #    loadable bundles don't.
-          signed=0
-          while IFS= read -r -d '' f; do
-            case "$f" in */*.framework/*) continue ;; esac   # covered by step 1
-            case "$(file -b "$f")" in
-              *Mach-O*executable*)
-                codesign --force --options runtime --timestamp \
-                  --entitlements "$ENT" --sign "$ID" "$f" ;;
-              *Mach-O*)
-                codesign --force --options runtime --timestamp --sign "$ID" "$f" ;;
-              *) continue ;;
-            esac
-            signed=$((signed + 1))
-          done < <(find "$RES" -type f -print0)
-          echo "Deep-signed frameworks + $signed loose Mach-O under $RES."
 
       # --- Build + publish the Tauri app (draft Release) -------------------
       # tauri-action runs `tauri build`, signs (only if the Apple env above was
@@ -330,12 +282,31 @@ jobs:
           includeUpdaterJson: false
           args: ${{ matrix.tauri-args }}
 
+      # Repair the bundled PyInstaller frameworks in the built .app (Tauri's
+      # resource copy dereferences their symlinks, which mangles them), re-sign +
+      # re-seal the app, rebuild the .dmg, then notarize + staple + replace the
+      # release's .dmg. Runs INSTEAD of tauri-action's own notarization (we
+      # withheld the notary vars above). See docs/APPLE_SIGNING.md.
+      - name: Sign + notarize (macOS)
+        if: startsWith(matrix.os, 'macos') && env.HAS_APPLE_CERT == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ENTITLEMENTS: apps/desktop/src-tauri/entitlements.plist
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ steps.tauri.outputs.releaseId }}
+        run: bash scripts/package/macos-sign-notarize.sh
+
       # Drop the "Open Me First" macOS unlock steps INTO the built .dmg so the
       # first-launch instructions ship with the download (release notes are easy
-      # to miss). Best-effort: the script restores the original installer on any
-      # failure, and continue-on-error means this can never fail the release.
+      # to miss). SKIPPED when the build is notarized (HAS_APPLE_CERT): a notarized
+      # .dmg needs no unlock, and editing it would break the staple. Best-effort:
+      # the script restores the original installer on any failure.
       - name: Add first-launch instructions to the .dmg (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT != 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

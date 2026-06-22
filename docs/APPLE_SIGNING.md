@@ -168,6 +168,7 @@ Three pieces handle this (already committed):
 | `notarytool` / Gatekeeper message | Cause → fix |
 |---|---|
 | "The code object is not signed at all" / "not signed with a valid Developer ID" | a nested `resources/python`/`resources/workers` Mach-O slipped past the deep-sign step → confirm the path is under `apps/desktop/src-tauri/resources/` and re-run |
+| "The signature of the binary is invalid" on a `*.framework/…` path (e.g. PyInstaller's `Python.framework/Python`) | a framework's inner binary was signed directly instead of the **framework bundle** → sign the `*.framework` directory itself (`codesign … Python.framework`); the deep-sign step does this and excludes framework internals from the loose-file pass |
 | "The signature does not include a secure timestamp" | signed without `--timestamp` (network blip on the TSA?) → re-run; the step always passes `--timestamp` |
 | "The executable does not have the hardened runtime enabled" | signed without `--options runtime` → the step always passes it; check a manual/local sign |
 | "library load disallowed by system policy" (at **runtime**, after install) | missing `disable-library-validation`, or the interpreter wasn't signed with `--entitlements` → both are in place; verify with `codesign -d --entitlements - <interpreter>` |

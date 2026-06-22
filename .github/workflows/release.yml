@@ -260,21 +260,36 @@ jobs:
           set -euo pipefail
           RES="apps/desktop/src-tauri/resources"
           ENT="apps/desktop/src-tauri/entitlements.plist"
+          ID="$APPLE_SIGNING_IDENTITY"
           if [ ! -d "$RES" ]; then echo "no resources dir staged; nothing to sign"; exit 0; fi
+
+          # 1) Frameworks (PyInstaller bundles a Python.framework per worker) MUST
+          #    be signed as BUNDLES — signing the inner Mach-O directly yields
+          #    "The signature of the binary is invalid" at notarization. Deepest
+          #    first; verify each so a malformed framework fails loudly here.
+          while IFS= read -r -d '' fw; do
+            codesign --force --options runtime --timestamp --sign "$ID" "$fw"
+            codesign --verify --strict "$fw"
+            echo "  signed framework: $fw"
+          done < <(find "$RES" -type d -name '*.framework' -print0 | sort -zr)
+
+          # 2) Loose Mach-O NOT inside a framework: executables (interpreters,
+          #    PyInstaller bootloaders) get the entitlements; plain dylib/.so/
+          #    loadable bundles don't.
           signed=0
           while IFS= read -r -d '' f; do
+            case "$f" in */*.framework/*) continue ;; esac   # covered by step 1
             case "$(file -b "$f")" in
               *Mach-O*executable*)
                 codesign --force --options runtime --timestamp \
-                  --entitlements "$ENT" --sign "$APPLE_SIGNING_IDENTITY" "$f" ;;
-              *Mach-O*) # dylib / loadable bundle / shared library — no entitlements
-                codesign --force --options runtime --timestamp \
-                  --sign "$APPLE_SIGNING_IDENTITY" "$f" ;;
+                  --entitlements "$ENT" --sign "$ID" "$f" ;;
+              *Mach-O*)
+                codesign --force --options runtime --timestamp --sign "$ID" "$f" ;;
               *) continue ;;
             esac
             signed=$((signed + 1))
           done < <(find "$RES" -type f -print0)
-          echo "Deep-signed $signed Mach-O file(s) under $RES."
+          echo "Deep-signed frameworks + $signed loose Mach-O under $RES."
 
       # --- Build + publish the Tauri app (draft Release) -------------------
       # tauri-action runs `tauri build`, signs (only if the Apple env above was

@@ -89,9 +89,10 @@ the first release:
    the Releases page.
 
 > **Why local, not CI?** GitHub's hosted macOS runners bill at 10x (and the DMG
-> step is flaky on them). Building on your Mac + Windows desktop is free and
-> repeatable. The Release workflow still exists but is **manual-only**
-> (`workflow_dispatch`) — a `v*` tag push no longer triggers a build.
+> step is flaky on them). The Release workflow is kept **intact but gated
+> per-OS**, so each platform builds either locally or in CI independently — see
+> [Per-OS: local build vs CI](#per-os-local-build-vs-ci) below. The current
+> policy is **macOS → local, Windows → CI** (the defaults; no setup needed).
 
 > **Optional polish (any time):**
 > - **Apple notarization / Windows Authenticode** (the secret tables in *One-time
@@ -118,11 +119,35 @@ artifact's `sha256` in `enginePackCatalog.ts`.
 
 ---
 
-## Local-first release (build locally, no CI)
+## Per-OS: local build vs CI
 
-Releases are built on your own machines and uploaded straight to the GitHub
-release — zero Actions minutes. The Release workflow is kept as a manual escape
-hatch (`workflow_dispatch`) but a tag push no longer triggers it.
+Every target OS has **two** ways to produce a release build, chosen
+independently:
+
+- **Local** — run the steps below on that machine and upload with
+  `release-upload` (zero Actions minutes).
+- **CI** — let `release.yml` build it on a `v*` tag push.
+
+CI is gated **per OS** by repo variables (Settings → Secrets and variables →
+Actions → Variables). The `setup` job reads them and builds the matrix; a
+disabled OS is omitted, so it provisions **no runner**:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RELEASE_CI_MACOS` | `false` | macOS (arm64 + x64) built **locally** |
+| `RELEASE_CI_WINDOWS` | `true` | Windows built in **CI** |
+| `RELEASE_CI_LINUX` | `false` | Linux not built (enable for CI) |
+
+So the current policy — **macOS local, Windows CI** — is the default; no
+variables needed. Set a variable to `true`/`false` to flip any OS; a manual
+**workflow_dispatch** run builds every OS regardless. The entries + defaults
+live in `scripts/ci/resolve-release-matrix.py` (runnable locally to preview the
+matrix). When CI builds Windows, it uploads to the same draft these local steps
+target.
+
+## Local-first release (build locally)
+
+Build any OS on your own machine and upload straight to the GitHub release.
 
 Both machines follow the same shape: bundle the self-contained sidecars, run
 `tauri build`, then upload with `release-upload`. The helper **creates the

@@ -39,47 +39,59 @@
 name: Release
 
 on:
-  # Releases are cut LOCALLY to avoid 10x-billed macOS Actions minutes — build on
-  # the Mac + Windows machines and upload with scripts/package/release-upload.{sh,ps1}
-  # (see docs/RELEASING.md). This workflow is therefore manual-only; a `v*` tag
-  # push no longer triggers it. Re-enable the `push:`/`tags:` block below to go
-  # back to CI builds.
+  # The pipeline is kept INTACT but gated PER-OS, so each platform can be built
+  # LOCALLY (scripts/package/*) or in CI independently. A `v*` tag push triggers
+  # this workflow; the `setup` job resolves which OSes actually build from per-OS
+  # repo variables (Settings → Secrets and variables → Actions → Variables), so a
+  # disabled OS provisions NO runner (10x-billed macOS minutes stay unspent). A
+  # manual `workflow_dispatch` run builds everything.
+  #   RELEASE_CI_MACOS    default false → macOS built locally
+  #   RELEASE_CI_WINDOWS  default true  → Windows built in CI
+  #   RELEASE_CI_LINUX    default false
+  # Local-release runbook + how to toggle: docs/RELEASING.md.
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag/version to build (e.g. v0.2.0). Required for a manual CI build."
+        description: "Tag/version to build (e.g. v0.2.0). Used only for manual runs."
         required: false
 
 permissions:
   contents: write
 
 jobs:
+  # Resolve which OSes build in CI from the per-OS RELEASE_CI_* flags (see the
+  # `on:` note). A tiny ubuntu job so a disabled OS never reaches the build
+  # matrix and provisions no runner. `scripts/ci/resolve-release-matrix.py`
+  # owns the entries + the default policy and is unit-runnable locally.
+  setup:
+    name: Resolve CI build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+      any: ${{ steps.m.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        shell: bash
+        env:
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+          CI_MACOS: ${{ vars.RELEASE_CI_MACOS }}
+          CI_WINDOWS: ${{ vars.RELEASE_CI_WINDOWS }}
+          CI_LINUX: ${{ vars.RELEASE_CI_LINUX }}
+        run: python3 scripts/ci/resolve-release-matrix.py >> "$GITHUB_OUTPUT"
+
   build:
+    needs: setup
+    # Skipped (no runners) when every OS is built locally; the matrix is whatever
+    # `setup` selected.
+    if: ${{ needs.setup.outputs.any == 'true' }}
     name: Build (${{ matrix.label }})
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # Apple Silicon (arm64) — macos-14 runners are arm64.
-          - os: macos-14
-            label: macos-arm64
-            rust-target: aarch64-apple-darwin
-            tauri-args: "--target aarch64-apple-darwin"
-          # Intel macOS (x64) — macos-13 runners are x64.
-          - os: macos-13
-            label: macos-x64
-            rust-target: x86_64-apple-darwin
-            tauri-args: "--target x86_64-apple-darwin"
-          # Windows x64.
-          - os: windows-latest
-            label: windows-x64
-            rust-target: x86_64-pc-windows-msvc
-            tauri-args: ""
-          # Linux x64 (.deb + AppImage). 22.04 for broad glibc compatibility.
-          - os: ubuntu-22.04
-            label: linux-x64
-            rust-target: x86_64-unknown-linux-gnu
-            tauri-args: ""
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
     runs-on: ${{ matrix.os }}
 

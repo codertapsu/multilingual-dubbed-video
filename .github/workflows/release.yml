@@ -44,10 +44,12 @@ on:
   # this workflow; the `setup` job resolves which OSes actually build from per-OS
   # repo variables (Settings → Secrets and variables → Actions → Variables), so a
   # disabled OS provisions NO runner (10x-billed macOS minutes stay unspent). A
-  # manual `workflow_dispatch` run builds everything.
+  # manual `workflow_dispatch` run builds everything. Every OS defaults to a
+  # LOCAL build (CI is opt-in per OS); set a variable to "true" to build that OS
+  # in CI:
   #   RELEASE_CI_MACOS    default false → macOS built locally
-  #   RELEASE_CI_WINDOWS  default true  → Windows built in CI
-  #   RELEASE_CI_LINUX    default false
+  #   RELEASE_CI_WINDOWS  default false → Windows built locally
+  #   RELEASE_CI_LINUX    default false → Linux built locally
   # Local-release runbook + how to toggle: docs/RELEASING.md.
   push:
     tags:

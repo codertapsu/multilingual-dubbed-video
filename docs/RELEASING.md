@@ -91,8 +91,9 @@ the first release:
 > **Why local, not CI?** GitHub's hosted macOS runners bill at 10x (and the DMG
 > step is flaky on them). The Release workflow is kept **intact but gated
 > per-OS**, so each platform builds either locally or in CI independently — see
-> [Per-OS: local build vs CI](#per-os-local-build-vs-ci) below. The current
-> policy is **macOS → local, Windows → CI** (the defaults; no setup needed).
+> [Per-OS: local build vs CI](#per-os-local-build-vs-ci) below. By default
+> **every OS builds locally**; opt an OS into CI by setting its `RELEASE_CI_*`
+> variable to `true`.
 
 > **Optional polish (any time):**
 > - **Apple notarization / Windows Authenticode** (the secret tables in *One-time
@@ -135,15 +136,16 @@ disabled OS is omitted, so it provisions **no runner**:
 | Variable | Default | Meaning |
 |---|---|---|
 | `RELEASE_CI_MACOS` | `false` | macOS (arm64 + x64) built **locally** |
-| `RELEASE_CI_WINDOWS` | `true` | Windows built in **CI** |
-| `RELEASE_CI_LINUX` | `false` | Linux not built (enable for CI) |
+| `RELEASE_CI_WINDOWS` | `false` | Windows built **locally** |
+| `RELEASE_CI_LINUX` | `false` | Linux not built |
 
-So the current policy — **macOS local, Windows CI** — is the default; no
-variables needed. Set a variable to `true`/`false` to flip any OS; a manual
-**workflow_dispatch** run builds every OS regardless. The entries + defaults
-live in `scripts/ci/resolve-release-matrix.py` (runnable locally to preview the
-matrix). When CI builds Windows, it uploads to the same draft these local steps
-target.
+So **every OS defaults to a local build** — CI is opt-in per OS, which is the
+safe, cost-free default (no surprise 10x macOS minutes). Set a variable to
+`true` to build that OS in **CI** on the next `v*` tag push; set it back to
+`false` (or delete it) to return to local. A manual **workflow_dispatch** run
+builds every OS regardless. The entries + defaults live in
+`scripts/ci/resolve-release-matrix.py` (runnable locally to preview the matrix).
+When CI builds an OS, it uploads to the same draft the local steps target.
 
 ## Local-first release (build locally)
 

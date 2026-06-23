@@ -187,22 +187,63 @@ Three pieces handle this (already committed):
 | "app is damaged / can't be opened" on another Mac | notarization didn't run or the `.dmg` wasn't stapled → confirm the `APPLE_*` notarization secrets are set; tauri-action staples automatically |
 | `SecKeychainItemImport … parameters … not valid` in the CI cert-import step | `APPLE_CERTIFICATE` is empty/garbled → re-paste the base64 from Phase 2e |
 | first-open blocked only when **offline** | `.dmg` not stapled → tauri-action staples; if signing locally, `xcrun stapler staple` the exact `.dmg` you ship |
+| **local build:** notarization `Invalid`, "not signed with a valid Developer ID certificate" on `Contents/MacOS/{ffmpeg,ffprobe,vd-uv,vd-piper,videodubber-orchestrator}` | a local `tauri build` only **adhoc**-signs the externalBin (CI's tauri-action Developer-ID-signs them) → `macos-sign-notarize.sh` now signs `Contents/MacOS` too; just run it |
+| **local build:** notarization `Invalid` on `resources/workers/**/_internal/*.so` during `pnpm app:build` | the notary creds were in the env, so `tauri build` notarized **itself** (its signing misses the worker `.so`) → build with `env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID pnpm app:build`, or just use `release-macos.sh` |
+| **local build:** `failed to bundle project: failed to run xattr` | the static `ffmpeg`/`ffprobe` ship read-only (0555) and carry the restricted `com.apple.provenance` xattr; Tauri's `xattr -cr` needs write permission → `fetch-ffmpeg.sh` now installs them `0755` (re-run `pnpm package:sidecars`, or `chmod u+w` the two binaries) |
 
-## Signing a locally-built `.dmg` (without CI)
+## Signing + notarizing a locally-built `.dmg`
 
-The CI is the supported path. To sign a local `pnpm app:build` instead, the cert
-must be in your login keychain (Phase 2), then export the same env vars and let
-`tauri build` sign + notarize: `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
-`APPLE_PASSWORD`, `APPLE_TEAM_ID` (plus `APPLE_CERTIFICATE` /
-`APPLE_CERTIFICATE_PASSWORD` if the cert isn't already imported). Run the
-deep-sign loop from the release workflow against
-`apps/desktop/src-tauri/resources/` **before** `tauri build` (same reason as
-Phase 5).
+This is the path when macOS is built **locally** (the `RELEASE_CI_MACOS` flag is
+off — see [`RELEASING.md`](RELEASING.md#per-os-local-build-vs-ci)). The cert must
+be in your login keychain (Phase 2). Export the four vars and use the
+one-command wrapper:
+
+```bash
+export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
+export APPLE_ID="<apple-id>"; export APPLE_PASSWORD="<app-specific-pw>"; export APPLE_TEAM_ID="<TEAMID>"
+SIDECARS=1 UPLOAD=1 bash scripts/package/release-macos.sh
+```
+
+### Why it's not just `tauri build` — the deep-sign pass is mandatory
+
+VideoDubber bundles **hundreds** of third-party/generated Mach-O binaries that
+Tauri's own signing does NOT cover: the PyInstaller workers (a full CPython +
+dozens of `.so`), the static ffmpeg/ffprobe, and the Node-SEA orchestrator. A
+plain `tauri build` signs only the app shell (and, in CI, the externalBin) and
+**adhoc-signs the rest**, which notarization rejects. So macOS packaging is a
+**separate, exhaustive deep-sign pass** done *after* the build by
+[`scripts/package/macos-sign-notarize.sh`](../scripts/package/macos-sign-notarize.sh):
+repair each PyInstaller framework's symlinks → re-sign it as a bundle →
+Developer-ID-sign **every** loose Mach-O across `Contents/MacOS` +
+`Contents/Resources` (hardened runtime + secure timestamp + entitlements) →
+re-seal the `.app` → build a fresh `.dmg` → `notarytool` + `stapler` (+ optional
+upload). `release-macos.sh` just wires the build + this pass together safely.
+
+### Two rules for a by-hand build
+
+`release-macos.sh` enforces both; if you run the steps manually you must too:
+
+1. **Keep the notary creds OUT of `tauri build`.** If `APPLE_ID` /
+   `APPLE_PASSWORD` / `APPLE_TEAM_ID` are in the environment, `tauri build`
+   tries to notarize itself — and fails, because its signing never reaches the
+   bundled worker `.so` files. Build with them withheld (keeping
+   `APPLE_SIGNING_IDENTITY` is fine):
+   ```bash
+   env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID pnpm app:build
+   bash scripts/package/macos-sign-notarize.sh
+   bash scripts/package/release-upload.sh upload \
+     apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_*_aarch64.dmg
+   ```
+2. **Always run `macos-sign-notarize.sh` after the build** — `tauri build` alone
+   never yields a notarizable app for this project.
 
 ---
 
 ### Files involved
 - [`apps/desktop/src-tauri/entitlements.plist`](../apps/desktop/src-tauri/entitlements.plist) — hardened-runtime exceptions.
 - [`apps/desktop/src-tauri/tauri.conf.json`](../apps/desktop/src-tauri/tauri.conf.json) — `bundle.macOS.entitlements`.
-- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — cert import, deep-sign step, and the `APPLE_*` env handoff to `tauri-action`.
+- [`scripts/package/macos-sign-notarize.sh`](../scripts/package/macos-sign-notarize.sh) — the deep-sign + notarize + staple pass (local **and** CI).
+- [`scripts/package/release-macos.sh`](../scripts/package/release-macos.sh) — one-command local build → deep-sign → notarize → upload (handles the `env -u` notary-creds rule).
+- [`scripts/package/fetch-ffmpeg.sh`](../scripts/package/fetch-ffmpeg.sh) — fetches ffmpeg/ffprobe and installs them `0755` so the bundler's `xattr` step works.
+- [`.github/workflows/release.yml`](../.github/workflows/release.yml) — CI cert import + the `APPLE_*` env handoff (notary creds withheld from `tauri-action`).
 - [`RELEASING.md`](RELEASING.md) — the overall release runbook.

@@ -14,7 +14,7 @@ Prints two GitHub Actions step outputs to stdout (append to $GITHUB_OUTPUT):
 Env:
   MANUAL      "true" when the run is a workflow_dispatch (build everything)
   CI_MACOS    repo var RELEASE_CI_MACOS    (default: off -> macOS built locally)
-  CI_WINDOWS  repo var RELEASE_CI_WINDOWS  (default: on  -> Windows built in CI)
+  CI_WINDOWS  repo var RELEASE_CI_WINDOWS  (default: off -> Windows built locally)
   CI_LINUX    repo var RELEASE_CI_LINUX    (default: off)
 An unset/empty flag uses the default; "true" forces on, anything else forces off.
 """
@@ -36,8 +36,10 @@ OSES = {
     ],
 }
 
-# Default CI policy when a repo variable is unset (macOS local, Windows in CI).
-DEFAULTS = {"macos": False, "windows": True, "linux": False}
+# Default when a repo variable is unset: every OS builds LOCALLY. CI is opt-in
+# per OS (the safe, cost-free default — no surprise 10x macOS minutes). Set
+# RELEASE_CI_<OS>=true to opt that OS into a CI build.
+DEFAULTS = {"macos": False, "windows": False, "linux": False}
 
 
 def enabled(key: str) -> bool:

@@ -31,6 +31,7 @@ import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.c
         >
         <a routerLink="/new" routerLinkActive="active">New project</a>
         <a routerLink="/settings" routerLinkActive="active">Settings</a>
+        <a routerLink="/support" routerLinkActive="active">♥ Support</a>
       </nav>
 
       <span class="mode-tag" [class.local]="!ipc.inTauri" [title]="modeTooltip">

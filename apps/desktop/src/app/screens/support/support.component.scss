@@ -1,0 +1,51 @@
+:host {
+  display: block;
+}
+
+.bank {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--vd-sp-5);
+}
+
+/* The PNG is RGBA (transparent background); force a white plate + padding so the
+   code stays scannable on a dark theme. */
+.qr {
+  width: 220px;
+  height: 220px;
+  flex: none;
+  background: #fff;
+  padding: var(--vd-sp-2);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+}
+
+.bank-details {
+  flex: 1;
+  min-width: 260px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-3);
+}
+
+.bank-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bank-row dt {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--vd-text-muted);
+}
+
+.bank-row dd {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+  flex-wrap: wrap;
+}

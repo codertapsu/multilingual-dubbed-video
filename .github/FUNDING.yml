@@ -1,0 +1,8 @@
+# Funding sources behind the repo's "Sponsor" button.
+# Docs: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/displaying-a-sponsor-button-in-your-repository
+#
+# `github:` shows the GitHub Sponsors button — it only renders once the account
+# is enrolled in GitHub Sponsors (https://github.com/sponsors). `buy_me_a_coffee`
+# takes the username only (not the full URL).
+github: [codertapsu]
+buy_me_a_coffee: codertapsu

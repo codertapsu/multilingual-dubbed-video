@@ -66,5 +66,13 @@ export const APP_ROUTES: Routes = [
     loadComponent: () =>
       import('./screens/export/export.component').then((m) => m.ExportComponent),
   },
+  {
+    path: 'support',
+    title: 'VideoDubber — Support',
+    loadComponent: () =>
+      import('./screens/support/support.component').then(
+        (m) => m.SupportComponent,
+      ),
+  },
   { path: '**', redirectTo: '' },
 ];

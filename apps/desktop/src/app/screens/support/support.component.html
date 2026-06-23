@@ -1,0 +1,105 @@
+<section class="page stack">
+  <header>
+    <h1>Support VideoDubber</h1>
+    <p class="muted">
+      VideoDubber is free and runs entirely on your machine. If it's useful to
+      you, a donation helps cover development time and keeps it free for everyone.
+      Thank you 🙏
+    </p>
+  </header>
+
+  <!-- Online sponsorship -->
+  <div class="card stack">
+    <h2>Sponsor online</h2>
+    <p class="hint">Opens in your default browser.</p>
+    <div class="row">
+      <button
+        type="button"
+        class="btn btn-primary"
+        (click)="open('https://github.com/sponsors/codertapsu')"
+      >
+        ♥ GitHub Sponsors
+      </button>
+      <button
+        type="button"
+        class="btn"
+        (click)="open('https://buymeacoffee.com/codertapsu')"
+      >
+        ☕ Buy me a coffee
+      </button>
+    </div>
+  </div>
+
+  <!-- Direct bank transfer (Vietnam) -->
+  <div class="card stack">
+    <h2>Bank transfer (Vietnam)</h2>
+    <p class="hint">
+      Scan the VietQR code with your banking app, or enter the account details
+      manually.
+    </p>
+
+    <div class="bank">
+      <img
+        class="qr"
+        src="assets/qr_vpbank.png"
+        alt="VPBank VietQR code for HOANG DUY KHANH, account 184268183"
+        width="220"
+        height="220"
+      />
+
+      <dl class="bank-details">
+        <div class="bank-row">
+          <dt>Beneficiary</dt>
+          <dd>
+            <span>HOANG DUY KHANH</span>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              (click)="copy('HOANG DUY KHANH', 'name')"
+            >
+              {{ copied() === 'name' ? 'Copied' : 'Copy' }}
+            </button>
+          </dd>
+        </div>
+
+        <div class="bank-row">
+          <dt>Account number</dt>
+          <dd>
+            <span class="mono">184268183</span>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              (click)="copy('184268183', 'account')"
+            >
+              {{ copied() === 'account' ? 'Copied' : 'Copy' }}
+            </button>
+          </dd>
+        </div>
+
+        <div class="bank-row">
+          <dt>Bank</dt>
+          <dd>Vietnam Prosperity Joint Stock Commercial Bank (VPBank)</dd>
+        </div>
+
+        <div class="bank-row">
+          <dt>SWIFT / BIC</dt>
+          <dd>
+            <span class="mono">VPBKVNVX</span>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              (click)="copy('VPBKVNVX', 'swift')"
+            >
+              {{ copied() === 'swift' ? 'Copied' : 'Copy' }}
+            </button>
+          </dd>
+        </div>
+      </dl>
+    </div>
+
+    <p class="hint">
+      SWIFT/BIC is only needed for international transfers; domestic VietQR
+      transfers use the QR code or the account number above.
+    </p>
+  </div>
+</section>

@@ -105,18 +105,24 @@ open the finished video from the Export screen.
 # one-time: generate the app icons from a 1024×1024 PNG
 pnpm --filter videodubber-desktop tauri icon path/to/icon.png
 
-# build a native bundle (.app/.dmg on macOS, .msi/.exe on Windows, .deb/AppImage on Linux)
-pnpm app:build
+# build the bundled sidecars (orchestrator + workers + ffmpeg), then the native bundle
+pnpm package:sidecars
+pnpm app:build         # .app/.dmg (macOS), .msi/.exe (Windows), .deb/AppImage (Linux)
 ```
 
 The bundle lands under `apps/desktop/src-tauri/target/release/bundle/`.
 
-> **Note — standalone installers.** The current bundle still expects the Python worker
-> **venvs + models** to exist on the machine (it launches them from the project layout).
-> A fully self-contained installer that **embeds** the Node orchestrator and the Python
-> workers (so end users need nothing pre-installed) means bundling them as Tauri
-> sidecars (`bundle.externalBin`) via `pkg`/`nexe` (Node) and `pyinstaller` (Python).
-> That packaging work is tracked in [`ROADMAP.md`](ROADMAP.md).
+> **Note — standalone installers.** The release bundle is **self-contained**: run
+> `pnpm package:sidecars` first, then `pnpm app:build`. The Node orchestrator (Node
+> SEA), the three Python workers (PyInstaller) + a bundled CPython, `vd-piper`,
+> `vd-uv`, and `ffmpeg`/`ffprobe` all ship — as `bundle.externalBin` and
+> `bundle.resources` in `tauri.conf.json` — so end users need nothing pre-installed
+> (only the AI **models** download on first run). Skipping `package:sidecars` builds a
+> dev bundle that still launches workers from the project layout. For the full release
+> runbook see [`RELEASING.md`](RELEASING.md); on **macOS** `tauri build` alone is not
+> notarizable (it adhoc-signs the bundled workers/ffmpeg) — a deep-sign + notarize pass
+> is mandatory, via `bash scripts/package/release-macos.sh` (see
+> [`APPLE_SIGNING.md`](APPLE_SIGNING.md)).
 
 ---
 

@@ -40,7 +40,7 @@ VideoDubber updates itself via **GitHub Releases** using the official
    signature against that pubkey **before** installing. A tampered or
    wrong-key archive is rejected — this is the core security property, so an
    attacker who compromises the download host still can't push a malicious update
-   without the private key (which lives only in CI secrets).
+   without the private key (which lives on the maintainer's machine at `~/.tauri/videodubber.key`, and optionally as a CI secret for opt-in CI builds).
 
 4. **Install + relaunch.** On success the plugin applies the update in place and
    the app relaunches via `tauri-plugin-process`.
@@ -107,7 +107,7 @@ To pull a bad version:
 3. Communicate in the release notes; affected users can also reinstall a known
    good installer from the Releases page manually.
 
-> Tip: keep releases as **drafts** until verified (the CI publishes drafts). A
+> Tip: keep releases as **drafts** until verified (the release upload scripts find-or-create the v0.1.0 draft). A
 > draft is never `latest`, so it can't reach users until you click Publish.
 
 ---
@@ -120,13 +120,14 @@ To pull a bad version:
 | `tauri.conf.json` | `plugins.updater.pubkey` | the public key from `pnpm tauri signer generate` |
 | `tauri.conf.json` | `bundle.createUpdaterArtifacts` | `true` (emit the signed update archives + `latest.json`) |
 | `capabilities/default.json` | permissions | `updater:default`, `process:allow-restart` (or `process:default`), `opener:default` |
-| CI secrets | `TAURI_SIGNING_PRIVATE_KEY` (+ password) | signs `latest.json` per release |
+| Local key (`~/.tauri/videodubber.key`), also a CI secret for opt-in CI | `TAURI_SIGNING_PRIVATE_KEY` (+ password) | signs `latest.json` per release |
 | App config | `<config>/preferences.json` → `autoUpdate` | user's auto/manual choice |
 
 **Before auto-update works:** the endpoint already points at the real repo
 (`codertapsu/multilingual-dubbed-video`). Generate the updater keypair, put the
-**public** key in `tauri.conf.json` → `plugins.updater.pubkey`, and add the
-**private** key as the `TAURI_SIGNING_PRIVATE_KEY` CI secret so each release
-ships a signed `latest.json`. See [`RELEASING.md`](RELEASING.md#one-time-setup).
+**public** key in `tauri.conf.json` → `plugins.updater.pubkey`, and make the
+**private** key available to the build as `TAURI_SIGNING_PRIVATE_KEY` (the local
+key at `~/.tauri/videodubber.key` for local builds; also a CI secret when an OS
+is opted into CI) so each release ships a signed `latest.json`. See [`RELEASING.md`](RELEASING.md#one-time-setup).
 A release built without that secret still installs fine — it just won't
 auto-update.

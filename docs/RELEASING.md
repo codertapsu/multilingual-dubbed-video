@@ -1,8 +1,10 @@
 # Releasing VideoDubber
 
-End-to-end runbook for cutting a signed, auto-updatable release. The CI workflow
-[`.github/workflows/release.yml`](../.github/workflows/release.yml) does the heavy
-lifting; this doc is the human checklist around it.
+End-to-end runbook for cutting a signed, auto-updatable release. Releases are built
+**locally by default** on the maintainer's own machines; CI
+([`.github/workflows/release.yml`](../.github/workflows/release.yml)) is **opt-in
+per OS** via the `RELEASE_CI_*` repo variables. This doc is the human checklist for
+both paths.
 
 > Audience: maintainers. For the architecture of *what* is being shipped, read
 > [`PRODUCTION.md`](PRODUCTION.md) first. For how updates reach users, read
@@ -186,6 +188,11 @@ reach the bundled PyInstaller worker `.so` files, which makes an in-build
 notarization fail), then `macos-sign-notarize.sh` deep-signs **every** Mach-O +
 notarizes + staples, then uploads the `.dmg`.
 
+> **Why the deep-sign pass (and how to troubleshoot it):** see
+> [`APPLE_SIGNING.md`](APPLE_SIGNING.md) — why `tauri build` alone isn't
+> notarizable, what the deep-sign step covers, and how to debug signing /
+> notarization failures.
+
 > **Doing the steps by hand?** You MUST keep the notary creds out of the
 > `tauri build` environment, or it notarizes itself and fails:
 > ```bash
@@ -283,7 +290,8 @@ completes. (You need the worker venvs present — `scripts/setup-local-models.sh
 
 ### 3. Tag and push
 
-CI triggers on a `v*` tag:
+Push a `v*` tag for bookkeeping (and to trigger CI **only for any OS you opted
+into** via `RELEASE_CI_*`):
 
 ```bash
 git tag v0.2.0
@@ -291,21 +299,25 @@ git push origin v0.2.0
 # (and push the release branch / open the PR if you bumped versions there)
 ```
 
-This starts the **Release** workflow across macOS-arm64, macOS-x64, Windows, and
-Linux. Each runner:
+The `setup` job in `release.yml` reads the `RELEASE_CI_*` variables and builds the
+matrix: an OS left at the default (`false`) is **omitted** — no runner is
+provisioned, and you build/upload it locally per [Local-first release](#local-first-release-build-locally).
+For each OS that **is** opted into CI, the runner:
 
 1. installs Node/pnpm/Python/Rust + (Linux) Tauri system deps,
 2. creates the three worker venvs and freezes them with PyInstaller,
 3. builds the orchestrator (Node SEA) and fetches libass-enabled ffmpeg,
 4. runs `tauri build` (signing + notarizing) and uploads the installers + the
-   updater `latest.json` to a **draft** GitHub Release.
+   updater `latest.json` to the same **draft** GitHub Release the local steps target.
+
+(A manual **workflow_dispatch** run builds every OS regardless of the variables.)
 
 ### 4. Review the draft release
 
-In GitHub → Releases, the workflow created/updated a **draft** for the tag.
-Check that:
+In GitHub → Releases, find the **draft** for the tag (created by `release-upload`
+on first local upload, and/or updated by any opted-in CI runner). Check that:
 
-* All four platforms uploaded their installers (`.dmg`, `.app.tar.gz` +
+* Every platform you're shipping uploaded its installers (`.dmg`, `.app.tar.gz` +
   `.app.tar.gz.sig`, `.msi`/`.exe` + `.sig`, `.deb`, `.AppImage` + `.sig`).
 * `latest.json` is present and lists every platform with a signature.
 * Release notes are accurate (edit the body as needed).

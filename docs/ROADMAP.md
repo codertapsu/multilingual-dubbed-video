@@ -106,15 +106,22 @@ downloaded on **first run** by an in-app wizard.
 - Build scripts: [`scripts/package/`](../scripts/package/) (`build-sidecars.{sh,ps1}` →
   `build-orchestrator`, `build-workers` + PyInstaller `.spec`s, `fetch-ffmpeg`). Run
   with `pnpm package:sidecars`.
-- CI: [`.github/workflows/release.yml`](../.github/workflows/release.yml) — on a `v*`
-  tag, a macOS-arm64 / macOS-x64 / Windows / Linux matrix builds the sidecars + bundles
-  the installers and publishes a **draft** GitHub Release with the updater `latest.json`.
+- Build/release: by default every OS is built **locally** (`pnpm package:sidecars`
+  → `pnpm app:build` → upload to the v0.1.0 draft via
+  `scripts/package/release-upload.{sh,ps1}`); macOS adds a mandatory deep-sign +
+  notarize pass (`scripts/package/release-macos.sh`). CI is **opt-in per OS** via
+  the repo variables `RELEASE_CI_MACOS` / `RELEASE_CI_WINDOWS` / `RELEASE_CI_LINUX`
+  (default `false` = local); [`.github/workflows/release.yml`](../.github/workflows/release.yml)
+  on a `v*` tag only builds the OSes whose variable is `true`.
 - Docs: [`PRODUCTION.md`](PRODUCTION.md), [`RELEASING.md`](RELEASING.md).
 
 **Remaining hardening:** generate + commit the real app icons (`pnpm tauri icon`);
-provision the **code-signing certificates** (Apple Developer ID + notarization, Windows
-Authenticode) as CI secrets; generate the **updater keypair** and set the real
-endpoint/pubkey; first end-to-end signed release per OS.
+provision the Windows Authenticode certificate; first end-to-end signed release per
+OS. macOS Developer ID signing + notarization is **implemented** — a mandatory
+deep-sign pass (`scripts/package/macos-sign-notarize.sh`, driven by
+`release-macos.sh`) signs every bundled Mach-O and notarizes/staples; see
+[`APPLE_SIGNING.md`](APPLE_SIGNING.md). The updater keypair + endpoint/pubkey are
+already in place (signing key at `~/.tauri/videodubber.key`).
 
 ### Auto-update (GitHub Releases) — **scaffolded**
 **Scaffolded:** in-app auto-update via the official `tauri-plugin-updater`, reading a
@@ -126,9 +133,10 @@ signature-verified on-device before install.
   `bundle.createUpdaterArtifacts`.
 - Docs: [`AUTOUPDATE.md`](AUTOUPDATE.md).
 
-**Remaining hardening:** generate the signing keypair (`pnpm tauri signer generate`),
-replace the endpoint/pubkey placeholders, and ship the first published release so the
-updater endpoint resolves.
+**Remaining hardening:** enable auto-update — flip `bundle.createUpdaterArtifacts`
+to `true` and `includeUpdaterJson: true` in `release.yml`, then ship the first
+**published** release so the updater endpoint resolves. (The signing keypair is
+already generated at `~/.tauri/videodubber.key`, and the endpoint + pubkey are set.)
 
 ---
 

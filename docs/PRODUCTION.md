@@ -197,9 +197,15 @@ pnpm package:sidecars
 pnpm app:build
 ```
 
-In CI, `.github/workflows/release.yml` does this on a macOS-arm64 / macOS-x64 /
-Windows / Linux matrix and publishes a draft GitHub Release with the installers
-and the auto-updater `latest.json`.
+By default every OS is built **locally** on the maintainer's own machines
+(`pnpm package:sidecars` then `pnpm app:build`, then upload to the v0.1.0 draft
+release via `scripts/package/release-upload.{sh,ps1}`). macOS additionally needs
+a mandatory deep-sign + notarize pass after the build — use
+`scripts/package/release-macos.sh` (see [`APPLE_SIGNING.md`](APPLE_SIGNING.md)).
+CI is **opt-in per OS** via the repo variables `RELEASE_CI_MACOS` /
+`RELEASE_CI_WINDOWS` / `RELEASE_CI_LINUX` (all default `false` = local); a `v*`
+tag only spins up runners for the OSes whose variable is `true`. See
+[`RELEASING.md`](RELEASING.md) for the full runbook.
 
 Related docs:
 

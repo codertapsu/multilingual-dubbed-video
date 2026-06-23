@@ -214,6 +214,14 @@ pnpm --filter videodubber-desktop tauri icon path/to/source.png
 See [LOCAL_SETUP §6](LOCAL_SETUP.md#6-rust--tauri-only-for-the-native-desktop-app). The
 browser dev mode needs neither Rust nor icons.
 
+### Packaging a release build fails (macOS sign/notarize)
+Local **release** builds (`pnpm package:sidecars` → `pnpm app:build`) have macOS-specific
+failure modes: a plain `tauri build` only adhoc-signs the bundled workers/ffmpeg, the
+static ffmpeg/ffprobe ship read-only and trip the bundler's `xattr` step, and notary
+creds left in the env make `tauri build` try (and fail) to notarize itself. These and
+their fixes are in [`APPLE_SIGNING.md` Phase 7](APPLE_SIGNING.md#phase-7--common-errors--fixes);
+the one-command wrapper that avoids all three is `scripts/package/release-macos.sh`.
+
 ### Packaged app shows unstyled UI (CSS not applied)
 
 Symptom: the app works (JS runs, routing works) but has **no styling** in the packaged

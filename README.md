@@ -55,11 +55,20 @@ Updates**).
 > Bundle internals: [`docs/PRODUCTION.md`](docs/PRODUCTION.md) · auto-update design:
 > [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
 
-**Building the installers / cutting a release?** See
-[`docs/RELEASING.md`](docs/RELEASING.md) (`pnpm package:sidecars` + `pnpm app:build`,
-then upload with `scripts/package/release-upload.{sh,ps1}`; releases are built
-**locally** on macOS + Windows — no CI). The rest of this README covers
-**developing from source**.
+**Cutting a release locally?** Releases are built on the maintainer's own Mac +
+Windows (CI is opt-in per OS). The short version:
+
+```bash
+pnpm package:sidecars && pnpm app:build        # self-contained installer for this OS
+# macOS — one command (build + deep-sign + notarize + upload):
+SIDECARS=1 UPLOAD=1 bash scripts/package/release-macos.sh
+# other OSes — upload to the shared draft release:
+bash scripts/package/release-upload.sh upload <artifact>      # Windows: release-upload.ps1
+```
+
+Full runbook (per-OS steps, signing, opt-in CI): [`docs/RELEASING.md`](docs/RELEASING.md);
+macOS deep-sign rationale + troubleshooting: [`docs/APPLE_SIGNING.md`](docs/APPLE_SIGNING.md).
+The rest of this README covers **developing from source**.
 
 ---
 
@@ -321,7 +330,7 @@ required. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md).
 |---|---|
 | [`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) | **Simple install & use guide for the desktop app** + auto start/stop of services. |
 | [`docs/PRODUCTION.md`](docs/PRODUCTION.md) | The fully self-contained installer: what's bundled vs. downloaded on first run, the first-run wizard, prod sidecar lifecycle, storage & sizes. |
-| [`docs/RELEASING.md`](docs/RELEASING.md) | Release runbook: version bump, updater keys, code signing/notarization, tag → CI → draft Release → publish. |
+| [`docs/RELEASING.md`](docs/RELEASING.md) | Release runbook: cut a release **locally** (`pnpm package:sidecars` + `pnpm app:build` → `release-upload.{sh,ps1}`); macOS deep-sign + notarize via `release-macos.sh`; updater keys; opt-in per-OS CI. |
 | [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md) | How auto-update works (endpoint, pubkey, signature verification), the auto/manual setting, manual checks, rollback. |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, pipeline flow, data model, workspace layout, HTTP API, Tauri commands, SSE model, service lifecycle. |
 | [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md) | Node/pnpm/Python/FFmpeg/Rust setup; running, starting & stopping each service. |

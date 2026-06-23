@@ -39,13 +39,15 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  # Releases are cut LOCALLY to avoid 10x-billed macOS Actions minutes — build on
+  # the Mac + Windows machines and upload with scripts/package/release-upload.{sh,ps1}
+  # (see docs/RELEASING.md). This workflow is therefore manual-only; a `v*` tag
+  # push no longer triggers it. Re-enable the `push:`/`tags:` block below to go
+  # back to CI builds.
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag/version to build (e.g. v0.2.0). Used only for manual runs."
+        description: "Tag/version to build (e.g. v0.2.0). Required for a manual CI build."
         required: false
 
 permissions:

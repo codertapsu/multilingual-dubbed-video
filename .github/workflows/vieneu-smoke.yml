@@ -12,6 +12,11 @@ on:
   schedule:
     - cron: '0 6 * * 1' # Mondays 06:00 UTC
   push:
+    # Branch-scoped so a `v*` release-tag push does NOT trigger this (releases
+    # are built locally now — see docs/RELEASING.md). Only fires on `main` when
+    # the pinned-requirements / engine sources actually change.
+    branches:
+      - main
     paths:
       - 'packages/node-orchestrator/src/engines/uvRequirements.ts'
       - 'workers/tts-engine-neural/**'

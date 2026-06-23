@@ -80,16 +80,18 @@ portable** ffmpeg, and v0.1.0 ships with auto-update **off**
 (`bundle.createUpdaterArtifacts: false`) — so **no secrets are required** to cut
 the first release:
 
-1. **Tag and push** — this triggers the Release workflow (macOS arm64/x64,
-   Windows, Linux), which builds the self-contained installers and uploads them
-   to a **draft** GitHub Release:
-   ```bash
-   git tag v0.1.0 && git push origin v0.1.0
-   ```
-   Watch **Actions**. Jobs run independently (`fail-fast: false`), so even if one
-   platform hiccups the others still upload.
-2. **Review the draft release** GitHub created, then **Publish** it. Users can now
-   download from the Releases page.
+1. **Build locally + upload** — releases are cut on your own machines (no CI), so
+   the 10x-billed macOS runners stay idle. On each machine build the
+   self-contained installer and upload it to the shared **draft** release with
+   `scripts/package/release-upload.{sh,ps1}`. Full per-OS steps:
+   [Local-first release](#local-first-release-build-locally-no-ci).
+2. **Review the draft release**, then **Publish** it. Users can now download from
+   the Releases page.
+
+> **Why local, not CI?** GitHub's hosted macOS runners bill at 10x (and the DMG
+> step is flaky on them). Building on your Mac + Windows desktop is free and
+> repeatable. The Release workflow still exists but is **manual-only**
+> (`workflow_dispatch`) — a `v*` tag push no longer triggers a build.
 
 > **Optional polish (any time):**
 > - **Apple notarization / Windows Authenticode** (the secret tables in *One-time
@@ -116,69 +118,81 @@ artifact's `sha256` in `enginePackCatalog.ts`.
 
 ---
 
-## Hybrid release: CI for Windows/Linux, local Mac for macOS
+## Local-first release (build locally, no CI)
 
-In practice the macOS jobs on GitHub's hosted runners fail intermittently at the
-DMG bundling step (`bundle_dmg.sh` drives Finder via AppleScript, which is flaky
-on headless `macos-14` runners) — even when the *same commit* bundles cleanly on
-a real Mac. The robust, repeatable model is therefore a split:
+Releases are built on your own machines and uploaded straight to the GitHub
+release — zero Actions minutes. The Release workflow is kept as a manual escape
+hatch (`workflow_dispatch`) but a tag push no longer triggers it.
 
-* **CI builds Windows + Linux** — the platforms you can't build on a Mac. They
-  upload to the draft release automatically (`tauri-action`, `fail-fast: false`,
-  so each platform is independent and a macOS flake never blocks the others).
-* **You build macOS on your Mac** and attach the `.dmg` to the same release.
+Both machines follow the same shape: bundle the self-contained sidecars, run
+`tauri build`, then upload with `release-upload`. The helper **creates the
+`v0.1.0` draft on first use** and **replaces** same-named assets on re-upload, so
+both machines push to the *same* draft and re-runs are idempotent. Auth is the
+GitHub token from `git credential` (no `gh` needed); override target with
+`GH_REPO` / `RELEASE_TAG`.
 
-### Build the macOS installer locally
+> Build the tag you're releasing: `git checkout v0.1.0` (or just build current
+> `main` — the installer contents are what matter; the tag is bookkeeping).
 
-From a checkout of the tag you're releasing (e.g. `git checkout v0.1.0`):
+### macOS (`.dmg`) — on your Mac
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 pnpm package:sidecars          # orchestrator + workers + piper + uv + static ffmpeg
 pnpm app:build                 # tauri build -> .app + .dmg
+
+# Sign + notarize with your Developer ID. The cert lives in your login keychain
+# from the signing setup (see APPLE_SIGNING.md); set these once per shell:
+export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
+export APPLE_ID="<apple-id-email>"
+export APPLE_PASSWORD="<app-specific-password>"   # appleid.apple.com -> App-Specific Passwords
+export APPLE_TEAM_ID="<TEAMID>"
+bash scripts/package/macos-sign-notarize.sh        # repair frameworks, sign, notarize, staple
+
+# Upload the notarized .dmg to the draft release:
+bash scripts/package/release-upload.sh upload \
+  apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_*_aarch64.dmg
 ```
 
-The installer lands at
-`apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_<version>_aarch64.dmg`.
-Verify it's self-contained before shipping (should print only `/System` and
-`/usr/lib` — no `/opt/homebrew`):
+Verify it's self-contained first (should print `portable` — no `/opt/homebrew`):
 
 ```bash
 otool -L apps/desktop/src-tauri/target/release/bundle/macos/VideoDubber.app/Contents/MacOS/ffmpeg \
   | grep -E '/opt/|/usr/local|homebrew' && echo "NON-PORTABLE" || echo "portable"
-shasum -a 256 apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_*_aarch64.dmg
 ```
 
-> **Intel (x86_64) macOS** can be cross-built from Apple Silicon (Rosetta is
-> needed for the x86_64 PyInstaller workers + Node SEA), but the sidecar scripts
-> aren't wired for mac cross-arch yet — easiest is to let CI's `macos-x64` job
-> produce it, or ship Apple-Silicon-only for now.
+> Want an **unsigned** `.dmg` instead? Skip `macos-sign-notarize.sh`, run
+> `pnpm dmg:instructions <dmg>` so the Gatekeeper unlock ships inside the image,
+> then upload the `tauri build` output from `.../bundle/dmg/`. Notarization is the
+> better experience (plain double-click), so prefer it when you can.
 
-### Attach + publish
+### Windows (`.exe` + `.msi`) — on your Windows desktop
 
-First, drop the macOS "Open Me First" unlock steps **into** the `.dmg` so the
-first-launch instructions ship with the download (CI does this automatically;
-run it manually for a locally-built `.dmg`):
+```powershell
+pnpm install --frozen-lockfile
+pwsh scripts/package/build-sidecars.ps1     # orchestrator + workers + piper + uv + static ffmpeg
+pnpm app:build                              # tauri build -> NSIS .exe + .msi
 
-```bash
-pnpm dmg:instructions apps/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/VideoDubber_*_aarch64.dmg
+# Upload to the SAME draft release (unsigned -> SmartScreen: More info -> Run anyway):
+pwsh scripts/package/release-upload.ps1 -Upload `
+  apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe `
+  apps/desktop/src-tauri/target/release/bundle/msi/*_en-US.msi
 ```
 
-Then drag the `.dmg` onto the draft release (Releases → the tag's draft →
-**Edit** → drop into assets), or with the CLI:
+### Publish
 
-```bash
-gh release upload <tag> <path-to-dmg> --clobber
-gh release edit <tag> --draft=false      # publish
-```
+Both machines upload to the same `v0.1.0` draft (found by tag). When the
+platforms you're shipping are attached, review the draft on the **Releases** page
+and **Publish**. Assets can be added after publishing, so publish what you have
+and attach the rest later.
 
-> Until the build is **signed + notarized** (the `APPLE_*` secrets above), the
-> macOS app is quarantined on download. The README + release notes carry the
-> one-time `xattr` unlock, and `pnpm dmg:instructions` puts the same steps inside
-> the `.dmg`. Notarization is the real fix — it removes the step entirely.
+> **Intel (x86_64) macOS / Linux** aren't part of the two-machine flow yet — ship
+> Apple-Silicon + Windows now and add them later (or run the manual CI workflow
+> scoped to just those targets).
 
-Assets can be added to a release **after** publishing, so it's fine to publish the
-platforms you have and attach the rest (Linux from CI, Intel) as they land.
+> **Re-cutting `v0.1.0`:** the upload helper overwrites same-named assets in
+> place, so you do NOT need to delete the draft or move the tag between
+> iterations — just rebuild and re-run `release-upload`.
 
 ---
 

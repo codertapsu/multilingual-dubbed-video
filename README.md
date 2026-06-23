@@ -56,9 +56,10 @@ Updates**).
 > [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
 
 **Building the installers / cutting a release?** See
-[`docs/RELEASING.md`](docs/RELEASING.md) (`pnpm package:sidecars` + `pnpm app:build`;
-macOS is built locally — the hybrid CI/local model is documented there). The rest of
-this README covers **developing from source**.
+[`docs/RELEASING.md`](docs/RELEASING.md) (`pnpm package:sidecars` + `pnpm app:build`,
+then upload with `scripts/package/release-upload.{sh,ps1}`; releases are built
+**locally** on macOS + Windows — no CI). The rest of this README covers
+**developing from source**.
 
 ---
 

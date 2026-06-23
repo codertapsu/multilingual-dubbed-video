@@ -9,10 +9,10 @@ import {
 import type { SubtitleStyle } from '@videodubber/shared';
 
 describe('escapeSubtitlePathForFilter', () => {
-  it('escapes colons and backslashes on posix paths', () => {
+  it('escapes a colon as a double-backslash so it survives two-pass filtergraph parsing', () => {
     const out = escapeSubtitlePathForFilter('/home/user/My: Subs/translated.srt', 'linux');
-    // colon escaped, no backslashes originally so none doubled.
-    expect(out).toBe('/home/user/My\\: Subs/translated.srt');
+    // `\\:` -> outer pass yields `\:` -> inner pass yields a literal `:`.
+    expect(out).toBe('/home/user/My\\\\: Subs/translated.srt');
   });
 
   it('escapes single quotes and brackets', () => {
@@ -25,10 +25,10 @@ describe('escapeSubtitlePathForFilter', () => {
     expect(out).toBe('/a/b\\,c.srt');
   });
 
-  it('handles windows drive paths by normalizing slashes and escaping the drive colon', () => {
+  it('handles windows drive paths: forward slashes + double-escaped drive colon', () => {
     const out = escapeSubtitlePathForFilter('C:\\Users\\me\\sub.srt', 'win32');
-    // backslashes -> forward slashes, then drive colon escaped.
-    expect(out).toBe('C\\:/Users/me/sub.srt');
+    // backslashes -> forward slashes, then the drive colon escaped as `\\:`.
+    expect(out).toBe('C\\\\:/Users/me/sub.srt');
   });
 });
 
@@ -120,5 +120,16 @@ describe('buildSubtitlesFilter', () => {
     );
     expect(f.startsWith('subtitles=/tmp/a.srt:force_style=')).toBe(true);
     expect(f).toContain("force_style='FontName=Arial");
+  });
+
+  it('builds a Windows burn-in filter whose drive colon survives ffmpeg parsing (regression)', () => {
+    // Repro of the render failure: a bare/`\:` drive colon made ffmpeg split the
+    // path and feed the remainder to `original_size`. Must be `\\:`.
+    const f = buildSubtitlesFilter(
+      'C:\\Users\\Admin\\proj\\subtitles\\translated.srt',
+      undefined,
+      'win32',
+    );
+    expect(f).toBe('subtitles=C\\\\:/Users/Admin/proj/subtitles/translated.srt');
   });
 });

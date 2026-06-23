@@ -22,16 +22,22 @@ import type { SubtitleStyle } from '@videodubber/shared';
  * value. We do NOT add surrounding quotes; we escape the characters libass /
  * the filtergraph parser treat as special.
  *
- * Rules (matching ffmpeg's filtergraph escaping):
- *   - backslash  \  -> \\        (escape first so we don't double-escape)
- *   - colon      :  -> \:        (filter option separator)
+ * ffmpeg un-escapes a `-vf` filtergraph in TWO passes — first the whole graph
+ * description, then each filter's option string (split on ':'). A literal colon
+ * therefore has to survive BOTH passes: written as `\:` the outer pass consumes
+ * the backslash and the inner pass splits on the bare colon (the bug that put a
+ * Windows path like `C:/…/sub.srt` into the `original_size` option). So a
+ * literal ':' must be `\\:` — the outer pass yields `\:`, the inner yields ':'.
+ *
+ * Rules (matching ffmpeg's two-level filtergraph escaping):
+ *   - colon      :  -> \\:       (option separator — needs BOTH levels)
  *   - single '   '  -> \'        (string delimiter)
  *   - left [     [  -> \[
  *   - right ]    ]  -> \]
  *   - comma      ,  -> \,        (filter separator)
- * On Windows we additionally normalize backslashes in the drive path to
- * forward slashes first (libass accepts forward slashes on Windows), which
- * sidesteps the messy `C\:\\...` form.
+ * On Windows we normalize backslashes in the drive path to forward slashes
+ * first (libass accepts forward slashes on Windows), so the only colon left is
+ * the drive colon — escaped by the rule above.
  */
 export function escapeSubtitlePathForFilter(
   inputPath: string,
@@ -42,14 +48,15 @@ export function escapeSubtitlePathForFilter(
   if (platform === 'win32') {
     // Convert C:\Users\foo\sub.srt -> C:/Users/foo/sub.srt
     p = p.replace(/\\/g, '/');
-    // The remaining drive colon (C:/...) must be escaped for the filtergraph.
-    // We escape ALL colons below, which covers the drive colon too.
+    // The remaining drive colon (C:/...) is escaped for the filtergraph below.
   }
 
-  // Order matters: backslash first.
+  // Backslash first (so we don't double the ones the colon rule inserts), then
+  // the colon as `\\:` so the two-pass filtergraph parse keeps it literal
+  // instead of splitting the path into a second filter option.
   return p
     .replace(/\\/g, '\\\\')
-    .replace(/:/g, '\\:')
+    .replace(/:/g, '\\\\:')
     .replace(/'/g, "\\'")
     .replace(/\[/g, '\\[')
     .replace(/\]/g, '\\]')

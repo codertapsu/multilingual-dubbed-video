@@ -570,18 +570,20 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
       this.store.setCurrent(project);
 
       // Pre-fetch any required local models (whisper/Argos pair/Piper voice) now
-      // that the languages are known. Connect the setup stream first (so the
-      // effect can clear "preparing" when the download ends), then reflect
-      // whether one actually started — Start stays disabled until it finishes, so
-      // a run can never begin against a half-downloaded model.
-      this.setupEvents.connect();
+      // that the languages are known. Kick off the install FIRST, then connect:
+      // the POST runs installer.run(), which *synchronously* resets the setup bus
+      // before the request returns. Connecting only afterwards means replay-on-
+      // connect can't hand us a stale `done` from a prior run (e.g. the onboarding
+      // install) — which would leave `done()` already true and stop the effect
+      // below from ever clearing "preparing". Replay still delivers every event of
+      // THIS run, so no progress is missed. Start stays disabled until this run's
+      // own `done`/`error`, so a run can never begin against a half-downloaded model.
       const ensure = await this.ipc
         .ensureProjectResources(project.id)
         .catch(() => ({ installing: false }));
       if (ensure.installing) {
         this.preparingModels.set(true);
-      } else {
-        this.setupEvents.disconnect();
+        this.setupEvents.connect();
       }
 
       // Probe — surface media info, but a probe failure shouldn't strand the

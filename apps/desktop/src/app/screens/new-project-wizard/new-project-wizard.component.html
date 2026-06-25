@@ -526,6 +526,8 @@
           </p>
           @if (setupEvents.items().length > 0) {
             <vd-download-progress-list [items]="setupEvents.items()" />
+          } @else {
+            <vd-busy-indicator [active]="true" label="Preparing models…" />
           }
         </div>
       }

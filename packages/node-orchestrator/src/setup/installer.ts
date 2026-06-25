@@ -160,6 +160,7 @@ export class SetupInstaller {
       return;
     }
     this.running = true;
+    this.deps.bus.reset(); // fresh run — drop any prior run's replay snapshot
     try {
       await this.installAll(request);
       const status = await this.deps.store.getStatus();

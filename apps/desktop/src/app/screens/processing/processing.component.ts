@@ -17,6 +17,7 @@ import { PipelineEventsService } from '../../core/ipc/pipeline-events.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { StatusBadgeComponent } from '../../shared/status-badge/status-badge.component';
+import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import { PIPELINE_STEP_LABELS } from '../../core/util/format';
 import type { WorkersHealth } from '../../core/models/view-models';
 import type {
@@ -41,7 +42,7 @@ const WORKERS_HEALTH_POLL_MS = 5000;
   selector: 'vd-processing',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ErrorBannerComponent, StatusBadgeComponent],
+  imports: [ErrorBannerComponent, StatusBadgeComponent, BusyIndicatorComponent],
   templateUrl: './processing.component.html',
   styleUrl: './processing.component.scss',
 })

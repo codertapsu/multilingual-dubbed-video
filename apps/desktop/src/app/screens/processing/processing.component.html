@@ -104,7 +104,9 @@
         }
       </li>
     } @empty {
-      <li class="muted">Waiting for the pipeline to report its steps…</li>
+      <li class="muted">
+        <vd-busy-indicator [active]="true" label="Waiting for the pipeline to start…" />
+      </li>
     }
   </ol>
 

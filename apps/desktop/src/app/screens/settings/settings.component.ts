@@ -355,6 +355,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
         /* ignore malformed frame */
       }
     };
+    es.onerror = () => {
+      // EventSource auto-reconnects on transient blips; only act on a genuine
+      // close so an in-flight row doesn't sit at "Starting…" forever with no
+      // feedback. Clear progress, surface a retryable error, and allow a reconnect.
+      if (es.readyState === EventSource.CLOSED) {
+        this.engineProgress.set({});
+        this.error.set({
+          code: 'WORKER_UNAVAILABLE',
+          message: 'Lost connection to the engine install stream.',
+          remediation: 'Make sure the local services are running, then try the install again.',
+        });
+        this.engineEvents = null;
+      }
+    };
     this.engineEvents = es;
   }
 

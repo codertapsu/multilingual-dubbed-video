@@ -312,8 +312,15 @@
 
       @if (setupEvents.items().length > 0) {
         <vd-download-progress-list [items]="setupEvents.items()" />
-      } @else if (!installDone()) {
-        <p class="muted">Waiting for the download to begin…</p>
+      } @else if (!installDone() && !displayError()) {
+        <vd-busy-indicator
+          [active]="true"
+          [label]="
+            setupEvents.status() === 'connecting'
+              ? 'Connecting to the installer…'
+              : 'Preparing the download…'
+          "
+        />
       }
 
       <details class="log-details" [open]="!installDone()">

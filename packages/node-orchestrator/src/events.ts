@@ -65,18 +65,33 @@ const EVENT_NAME = 'pipeline-event';
  */
 export class ProjectEventBus {
   private readonly emitter = new EventEmitter();
+  /** Last full state snapshot + last terminal, for replay-on-connect. */
+  private lastState: StateEvent | null = null;
+  private terminal: DoneEvent | ErrorEvent | null = null;
 
   constructor(public readonly projectId: string) {
     this.emitter.setMaxListeners(64);
   }
 
-  /** Publish an event to all subscribers. */
+  /** Publish an event to all subscribers (and record state for replay). */
   emit(event: PipelineEvent): void {
+    if (event.type === 'state') {
+      this.lastState = event;
+    } else if (event.type === 'done' || event.type === 'error') {
+      this.terminal = event;
+    }
     this.emitter.emit(EVENT_NAME, event);
   }
 
-  /** Subscribe; returns an unsubscribe function. */
+  /**
+   * Subscribe; returns an unsubscribe function. The last full `state` snapshot
+   * (and any terminal) is **replayed** to the new listener first, so a client
+   * connecting mid-run — or re-opening after a retry — immediately re-syncs the
+   * full pipeline state instead of waiting for the next `step`/`log` frame.
+   */
   subscribe(listener: PipelineEventListener): () => void {
+    if (this.lastState) listener(this.lastState);
+    if (this.terminal) listener(this.terminal);
     this.emitter.on(EVENT_NAME, listener);
     return () => this.emitter.off(EVENT_NAME, listener);
   }

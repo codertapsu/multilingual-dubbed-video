@@ -44,6 +44,10 @@ const MAX_LOG_LINES = 1000;
 @Injectable({ providedIn: 'root' })
 export class SetupEventsService {
   private source: EventSource | null = null;
+  /** Fires if the stream never reaches `open`, so a silent connection failure
+   *  (services not up yet, blocked origin) surfaces as a retryable error rather
+   *  than an endless "Waiting…". */
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   private readonly _items: WritableSignal<SetupItemProgress[]> = signal<
     SetupItemProgress[]
@@ -81,19 +85,53 @@ export class SetupEventsService {
     const es = new EventSource(url);
     this.source = es;
 
-    es.onopen = () => this._status.set('open');
+    es.onopen = () => {
+      this._status.set('open');
+      this.clearConnectTimer();
+    };
     es.onmessage = (ev: MessageEvent<string>) => this.handleMessage(ev.data);
     es.onerror = () => {
       // EventSource auto-reconnects on transient errors; only surface an error
-      // state when the connection is genuinely closed.
+      // when the connection is genuinely closed (so the UI shows a Retry).
       if (es.readyState === EventSource.CLOSED) {
-        this._status.set('error');
+        this.fail('Lost connection to the setup progress stream.');
       }
     };
+
+    // A stream stuck in CONNECTING (services not up yet, blocked origin) never
+    // fires onerror(CLOSED) — it just retries silently. Time out so it can't
+    // masquerade as an endless "Waiting…".
+    this.connectTimer = setTimeout(() => {
+      if (this._status() !== 'open') {
+        this.fail('Could not connect to the setup progress stream.');
+      }
+    }, 10000);
+  }
+
+  private clearConnectTimer(): void {
+    if (this.connectTimer) {
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
+  }
+
+  /** Move the stream into a surfaced error state (drives the UI's Retry). */
+  private fail(message: string): void {
+    this.clearConnectTimer();
+    this._status.set('error');
+    if (!this._error()) {
+      this._error.set({
+        code: 'WORKER_UNAVAILABLE',
+        message,
+        remediation:
+          'Make sure the local services are running, then retry — the download resumes where it left off.',
+      });
+    }
   }
 
   /** Close the stream. Signals retain their last values for the summary view. */
   disconnect(): void {
+    this.clearConnectTimer();
     if (this.source) {
       this.source.close();
       this.source = null;

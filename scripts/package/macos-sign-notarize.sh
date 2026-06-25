@@ -3,17 +3,22 @@
 # macos-sign-notarize.sh — post-build macOS Developer ID signing + notarization
 # for the VideoDubber .app, run AFTER tauri-action.
 #
-# Why this exists (tauri-action can't do it for this app):
-#   * tauri-action signs the .app + externalBin but does NOT deep-sign the Mach-O
-#     we ship under bundle.resources (the standalone CPython + PyInstaller
-#     workers), and
-#   * Tauri's resource copy DEREFERENCES symlinks, which flattens PyInstaller's
-#     `Python.framework` into a malformed bundle whose binaries notarization
-#     rejects ("The signature of the binary is invalid").
-# So we run notarization ourselves: REPAIR each framework's symlink structure,
-# re-sign it as a bundle, sign the loose resource binaries, re-seal the .app,
-# build a fresh .dmg, then notarytool + stapler. tauri-action's own notarization
-# is disabled upstream by withholding APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID.
+# Why this exists:
+#   * The externalBin sidecars in Contents/MacOS (videodubber-orchestrator,
+#     ffmpeg, ffprobe, vd-uv, vd-piper) are only ADHOC-signed by the linker on a
+#     local `tauri build` — CI's tauri-action Developer-ID-signs them, a local
+#     build does NOT — so notarization rejects them ("not signed with a valid
+#     Developer ID certificate" / "does not have hardened runtime"), and
+#   * the Mach-O under bundle.resources (standalone CPython + PyInstaller workers)
+#     aren't deep-signed by Tauri either, and Tauri's resource copy DEREFERENCES
+#     symlinks, flattening PyInstaller's `Python.framework` into a malformed
+#     bundle whose binaries notarization rejects.
+# So we sign EVERYTHING ourselves: REPAIR each framework's symlinks + re-sign it
+# as a bundle, Developer-ID-sign every loose Mach-O across the app (Contents/MacOS
+# + Contents/Resources) with the hardened runtime + entitlements, re-seal the
+# .app, build a fresh .dmg, then notarytool + stapler. Works for local AND CI
+# builds (re-signing already-signed binaries is a no-op). When run in CI,
+# tauri-action's own notarization is disabled by withholding the notary vars.
 #
 # Env: APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID (required);
 #      ENTITLEMENTS (default apps/desktop/src-tauri/entitlements.plist);
@@ -56,9 +61,10 @@ while IFS= read -r -d '' fw; do
   sign "$fw"
   codesign --verify --strict "$fw"
   echo "    framework: ${fw#"$APP"/}"
-done < <(find "$APP/Contents/Resources" -type d -name '*.framework' -print0 | sort -zr)
+done < <(find "$APP/Contents" -type d -name '*.framework' -print0 | sort -zr)
 
-echo "==> 2/5 sign loose Mach-O under Resources (executables get entitlements)"
+echo "==> 2/5 sign every loose Mach-O across the app (MacOS externalBin are adhoc"
+echo "       from the linker; executables get the hardened-runtime entitlements)"
 n=0
 while IFS= read -r -d '' f; do
   case "$f" in */*.framework/*) continue ;; esac
@@ -68,7 +74,7 @@ while IFS= read -r -d '' f; do
     *) continue ;;
   esac
   n=$((n + 1))
-done < <(find "$APP/Contents/Resources" -type f -print0)
+done < <(find "$APP/Contents" -type f -print0)
 echo "    signed $n loose Mach-O"
 
 echo "==> 3/5 re-seal the app (its CodeResources is stale after editing Resources)"
@@ -90,8 +96,20 @@ codesign --force --timestamp --sign "$ID" "$DMG"   # sign the .dmg container too
 echo "    DMG:  $DMG"
 
 echo "==> 5/5 notarize + staple"
-xcrun notarytool submit "$DMG" \
-  --apple-id "${APPLE_ID:?}" --password "${APPLE_PASSWORD:?}" --team-id "${APPLE_TEAM_ID:?}" --wait
+submit_json="$(xcrun notarytool submit "$DMG" \
+  --apple-id "${APPLE_ID:?}" --password "${APPLE_PASSWORD:?}" --team-id "${APPLE_TEAM_ID:?}" \
+  --wait --output-format json)"
+echo "$submit_json"
+sub_id="$(printf '%s' "$submit_json" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+sub_status="$(printf '%s' "$submit_json" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+if [ "$sub_status" != "Accepted" ]; then
+  # Self-diagnose: print Apple's per-file reasons instead of failing opaquely at
+  # the staple step (a rejected submission has no ticket -> "Record not found").
+  echo "::error::Notarization status: ${sub_status:-unknown}. Per-file reasons from the notary log:"
+  [ -n "$sub_id" ] && xcrun notarytool log "$sub_id" \
+    --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+  exit 1
+fi
 xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
 spctl -a -t open -vv --context context:primary-signature "$DMG" || true

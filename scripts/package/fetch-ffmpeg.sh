@@ -86,7 +86,13 @@ verify_and_stage() {
 
   cp -f "${ffmpeg_src}" "${BIN_DIR}/ffmpeg-${TRIPLE}${EXE_SUFFIX}"
   cp -f "${ffprobe_src}" "${BIN_DIR}/ffprobe-${TRIPLE}${EXE_SUFFIX}"
-  chmod +x "${BIN_DIR}/ffmpeg-${TRIPLE}${EXE_SUFFIX}" "${BIN_DIR}/ffprobe-${TRIPLE}${EXE_SUFFIX}" || true
+  # 0755 (owner WRITE bit), not just +x: static ffmpeg archives ship read-only
+  # (0555), and Tauri's macOS bundler runs `xattr -cr` on the bundled binaries
+  # to strip extended attributes — which needs write permission, or it fails
+  # with "failed to run xattr" (EACCES on a read-only file). Clear any download
+  # quarantine too while we're here.
+  chmod 0755 "${BIN_DIR}/ffmpeg-${TRIPLE}${EXE_SUFFIX}" "${BIN_DIR}/ffprobe-${TRIPLE}${EXE_SUFFIX}" || true
+  xattr -c "${BIN_DIR}/ffmpeg-${TRIPLE}${EXE_SUFFIX}" "${BIN_DIR}/ffprobe-${TRIPLE}${EXE_SUFFIX}" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------

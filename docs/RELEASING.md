@@ -161,23 +161,37 @@ GitHub token from `git credential` (no `gh` needed); override target with
 
 ### macOS (`.dmg`) — on your Mac
 
-```bash
-pnpm install --frozen-lockfile
-pnpm package:sidecars          # orchestrator + workers + piper + uv + static ffmpeg
-pnpm app:build                 # tauri build -> .app + .dmg
+Set your Developer ID env once (the cert lives in your login keychain from the
+signing setup — see [`APPLE_SIGNING.md`](APPLE_SIGNING.md)):
 
-# Sign + notarize with your Developer ID. The cert lives in your login keychain
-# from the signing setup (see APPLE_SIGNING.md); set these once per shell:
+```bash
 export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
 export APPLE_ID="<apple-id-email>"
 export APPLE_PASSWORD="<app-specific-password>"   # appleid.apple.com -> App-Specific Passwords
 export APPLE_TEAM_ID="<TEAMID>"
-bash scripts/package/macos-sign-notarize.sh        # repair frameworks, sign, notarize, staple
-
-# Upload the notarized .dmg to the draft release:
-bash scripts/package/release-upload.sh upload \
-  apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_*_aarch64.dmg
 ```
+
+Then build + sign + notarize + upload with the one-command wrapper:
+
+```bash
+pnpm install --frozen-lockfile
+SIDECARS=1 UPLOAD=1 bash scripts/package/release-macos.sh
+```
+
+`release-macos.sh` runs `tauri build` with the notary creds **withheld** (so
+`tauri build` signs the shell but does NOT try to notarize — its signing can't
+reach the bundled PyInstaller worker `.so` files, which makes an in-build
+notarization fail), then `macos-sign-notarize.sh` deep-signs **every** Mach-O +
+notarizes + staples, then uploads the `.dmg`.
+
+> **Doing the steps by hand?** You MUST keep the notary creds out of the
+> `tauri build` environment, or it notarizes itself and fails:
+> ```bash
+> env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID pnpm app:build
+> bash scripts/package/macos-sign-notarize.sh
+> bash scripts/package/release-upload.sh upload \
+>   apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_*_aarch64.dmg
+> ```
 
 Verify it's self-contained first (should print `portable` — no `/opt/homebrew`):
 

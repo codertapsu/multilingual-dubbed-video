@@ -107,10 +107,10 @@ jobs:
         uses: actions/checkout@v4
 
       # --- Toolchains -------------------------------------------------------
-      - name: Setup Node 20 + corepack/pnpm
+      - name: Setup Node 24 + corepack/pnpm
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Enable corepack (pnpm)
         run: corepack enable

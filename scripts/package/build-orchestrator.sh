@@ -62,7 +62,12 @@ echo "==> [1/4] pnpm build (orchestrator + deps)"
 #    deps in. fastify/@fastify/cors are pure JS and bundle cleanly.
 echo "==> [2/4] esbuild bundle -> orchestrator.cjs"
 BUNDLE="${SEA_DIR}/orchestrator.cjs"
-( cd "${REPO_ROOT}" && "${REPO_ROOT}/node_modules/.bin/esbuild" "${SCRIPT_DIR}/orchestrator-entry.mjs" \
+# Invoke esbuild's real package bin, NOT pnpm's node_modules/.bin/esbuild wrapper:
+# once esbuild's postinstall runs it swaps bin/esbuild for the native binary, but
+# pnpm's wrapper still `node`-launches it (→ "SyntaxError: Invalid or unexpected
+# token"). The package bin runs correctly whether it's the JS shim or the binary.
+ESBUILD_BIN="${REPO_ROOT}/node_modules/esbuild/bin/esbuild"
+( cd "${REPO_ROOT}" && "${ESBUILD_BIN}" "${SCRIPT_DIR}/orchestrator-entry.mjs" \
     --bundle \
     --platform=node \
     --format=cjs \

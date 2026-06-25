@@ -14,7 +14,7 @@
  * assumption), which is authoritative.
  */
 import type { PiperVoiceInfo } from '@videodubber/shared';
-import snapshotRaw from './piper-voices-snapshot.json';
+import snapshotRaw from './piper-voices-snapshot.json' with { type: 'json' };
 
 /** Base for raw file downloads from the rhasspy/piper-voices repo. */
 const PIPER_VOICES_BASE = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';

@@ -82,8 +82,6 @@ export class BusyIndicatorComponent {
           this._elapsed.set(`${m}:${s.toString().padStart(2, '0')}`);
         }, 1000);
         onCleanup(() => clearInterval(id));
-      },
-      { allowSignalWrites: true },
-    );
+    });
   }
 }

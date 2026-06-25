@@ -713,7 +713,8 @@ export class PipelineRunner {
           const fromId = segmentIdToIndex(seg.id);
           const index = fromId > 0 ? fromId : Number.isFinite(seg.index) ? seg.index + 1 : i + 1;
           const audioPath = paths.ttsSegment(index);
-          let generatedDurationMs = 0;
+          // Assigned on both the success and failure paths below.
+          let generatedDurationMs: number;
           try {
             // Bound each probe so one hung/locked ffprobe can't stall the whole
             // step on a long video; an unprobeable WAV is treated as 0ms below.

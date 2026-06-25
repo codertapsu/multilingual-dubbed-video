@@ -99,12 +99,9 @@ export class OnboardingComponent implements OnInit, OnDestroy {
 
   /** Once the install stream ends or errors, it's no longer in flight — so the
    *  Retry button enables on error (and Finish enables on done). */
-  private readonly _syncInstalling = effect(
-    () => {
-      if (this.setupEvents.done() || this.setupEvents.error()) this.installing.set(false);
-    },
-    { allowSignalWrites: true },
-  );
+  private readonly _syncInstalling = effect(() => {
+    if (this.setupEvents.done() || this.setupEvents.error()) this.installing.set(false);
+  });
 
   /** The resolved info for the currently-selected voice (for the size label). */
   protected readonly selectedVoice = computed(

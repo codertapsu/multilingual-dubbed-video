@@ -46,4 +46,33 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
+
+  // Plain Node scripts/configs (.mjs/.cjs/.js). TypeScript files get their
+  // global resolution from the TS compiler, so `no-undef` is off there — but
+  // these JS files need Node's globals declared or `no-undef` flags `console`,
+  // `process`, etc.
+  {
+    files: ['**/*.{js,mjs,cjs}'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
+        TextEncoder: 'readonly',
+        TextDecoder: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        module: 'writable',
+        require: 'readonly',
+        exports: 'writable',
+        global: 'readonly',
+      },
+    },
+  },
 );

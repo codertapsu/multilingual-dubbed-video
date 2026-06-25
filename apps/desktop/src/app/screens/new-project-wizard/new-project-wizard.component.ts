@@ -188,12 +188,9 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   protected readonly preparingModels = signal(false);
 
   /** Clear "preparing" as soon as the background model download finishes or fails. */
-  private readonly _clearPreparing = effect(
-    () => {
-      if (this.setupEvents.done() || this.setupEvents.error()) this.preparingModels.set(false);
-    },
-    { allowSignalWrites: true },
-  );
+  private readonly _clearPreparing = effect(() => {
+    if (this.setupEvents.done() || this.setupEvents.error()) this.preparingModels.set(false);
+  });
   protected readonly error = signal<AppError | null>(null);
   protected readonly createdProjectId = signal<string | null>(null);
   protected readonly mediaInfo = signal<MediaInfo | null>(null);

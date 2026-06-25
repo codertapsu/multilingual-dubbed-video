@@ -63,7 +63,6 @@ export function splitSubtitleLines(
   // Push the trailing line if there's room.
   if (current !== '' && lines.length < safeMaxLines) {
     lines.push(current);
-    current = '';
   }
 
   // Determine whether content was dropped (overflow beyond maxLines).

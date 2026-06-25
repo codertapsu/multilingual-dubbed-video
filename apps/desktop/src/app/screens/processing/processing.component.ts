@@ -112,18 +112,15 @@ export class ProcessingComponent implements OnInit, OnDestroy {
 
   constructor() {
     // When the stream completes, refresh the persisted project so navigation
-    // targets (editor/export) have fresh data on arrival. This intentionally
-    // triggers a store load whose `guard()` flips loading/error signals, so
-    // `allowSignalWrites` is required (NG0600) — the write is a deliberate
-    // reaction to the completion state, not an accidental in-computation write.
-    effect(
-      () => {
-        if (this.events.done() || this.events.pipeline()?.status === 'completed') {
-          void this.store.loadProject(this.id());
-        }
-      },
-      { allowSignalWrites: true },
-    );
+    // targets (editor/export) have fresh data on arrival. This deliberately
+    // triggers a store load whose `guard()` flips loading/error signals — a
+    // considered reaction to the completion state, not an accidental in-
+    // computation write (effects may write signals freely since Angular v19).
+    effect(() => {
+      if (this.events.done() || this.events.pipeline()?.status === 'completed') {
+        void this.store.loadProject(this.id());
+      }
+    });
   }
 
   ngOnInit(): void {

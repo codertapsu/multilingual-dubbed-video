@@ -53,6 +53,32 @@ ok()    { printf "${c_grn}[dev]${c_reset} %s\n" "$*"; }
 warn()  { printf "${c_yel}[dev][warn]${c_reset} %s\n" "$*" >&2; }
 err()   { printf "${c_red}[dev][error]${c_reset} %s\n" "$*" >&2; }
 
+# --- Dev data isolation ------------------------------------------------------
+# Keep DEV state OUT of the installed app's production folder. The packaged app
+# (apps/desktop/src-tauri/src/sidecar.rs) roots everything at ~/VideoDubber; here
+# we root the dev stack at a SEPARATE home so `npm run dev` / `tauri dev` and the
+# installed VideoDubber don't share config, projects, engine packs, or the
+# Whisper/Piper model caches. (Exception: Argos translation packages live in
+# argostranslate's own GLOBAL data dir — shared with prod, same as the packaged
+# app; set ARGOS_PACKAGES_DIR yourself if you want those isolated too.)
+# Mirrors the SAME env vars the Tauri shell sets, just pointed at the dev home.
+# Override the whole root with VIDEODUBBER_DEV_HOME, or pin any individual dir
+# (VIDEODUBBER_CONFIG_DIR / _PROJECTS_DIR / _MODELS_DIR / HF_HOME / PIPER_VOICES_DIR);
+# already-set values always win (so `.env` or your shell can point dev back at
+# ~/VideoDubber if you ever want the old shared behavior).
+VIDEODUBBER_DEV_HOME="${VIDEODUBBER_DEV_HOME:-${HOME}/VideoDubber-dev}"
+export VIDEODUBBER_CONFIG_DIR="${VIDEODUBBER_CONFIG_DIR:-${VIDEODUBBER_DEV_HOME}}"
+export VIDEODUBBER_PROJECTS_DIR="${VIDEODUBBER_PROJECTS_DIR:-${VIDEODUBBER_DEV_HOME}/projects}"
+export VIDEODUBBER_MODELS_DIR="${VIDEODUBBER_MODELS_DIR:-${VIDEODUBBER_DEV_HOME}/models}"
+export VIDEODUBBER_CACHE_DIR="${VIDEODUBBER_CACHE_DIR:-${VIDEODUBBER_DEV_HOME}/cache}"
+# Worker caches (mirror sidecar.rs): whisper HF cache + Piper voices live under
+# the dev models dir. (Engine packs install under <config>/engines automatically.)
+export STT_MODEL_CACHE_DIR="${STT_MODEL_CACHE_DIR:-${VIDEODUBBER_MODELS_DIR}/huggingface}"
+export HF_HOME="${HF_HOME:-${VIDEODUBBER_MODELS_DIR}/huggingface}"
+export PIPER_VOICES_DIR="${PIPER_VOICES_DIR:-${VIDEODUBBER_MODELS_DIR}/piper}"
+mkdir -p "${VIDEODUBBER_PROJECTS_DIR}" "${VIDEODUBBER_MODELS_DIR}" "${VIDEODUBBER_CACHE_DIR}"
+info "Dev data home: ${VIDEODUBBER_DEV_HOME} (isolated from the installed app's ~/VideoDubber)"
+
 # Track child PIDs so we can clean up on exit.
 PIDS=()
 

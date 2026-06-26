@@ -46,6 +46,7 @@ describe('REMEDIATIONS', () => {
     'WORKER_UNAVAILABLE',
     'WORKER_TIMEOUT',
     'CANCELLED',
+    'RUN_IN_PROGRESS',
     'UNKNOWN',
   ];
 

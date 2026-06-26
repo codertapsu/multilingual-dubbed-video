@@ -22,6 +22,7 @@ import {
   type CloudServiceId,
   type CreateProjectInput,
   type PipelineStepId,
+  type ProjectSettings,
   type SaveCredentialRequest,
   type SetupInstallRequest,
   type SubtitleExportMode,
@@ -60,6 +61,7 @@ import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog, findPiperVoice, translatableLanguages } from './setup/catalog.js';
 import { listVoicesForLanguage } from './setup/voicesCatalog.js';
 import { listNeuralVoicesForLanguage } from './setup/neuralVoicesCatalog.js';
+import { listOmnivoiceForLanguage } from './setup/omnivoicesCatalog.js';
 import { runPreflight } from './setup/preflight.js';
 import { SetupEventBus } from './setup/setupBus.js';
 import { SetupInstaller } from './setup/installer.js';
@@ -342,6 +344,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         }
         if (engine === 'neural-v3' || engine === 'neural') {
           return { language, engine: 'neural-v3', voices: listNeuralVoicesForLanguage(language, 'v3') };
+        }
+        // engine=omnivoice lists OmniVoice's "designed" voices (same set for every
+        // language; OmniVoice is multilingual). Apple-Silicon-only pack.
+        if (engine === 'omnivoice') {
+          return { language, engine: 'omnivoice', voices: listOmnivoiceForLanguage(language) };
         }
         const voices = listVoicesForLanguage(language).map((v) => ({
           ...v,
@@ -863,6 +870,23 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
   );
 
+  // Update a whitelisted subset of project settings (the editor's "change an
+  // engine / model / voice, then re-dub from that stage" flow). Returns the
+  // updated { project, pipeline } envelope. Re-running is a separate /retry call.
+  app.put(
+    '/projects/:id/settings',
+    async (
+      req: FastifyRequest<{ Params: { id: string }; Body: Partial<ProjectSettings> } >,
+      reply,
+    ) => {
+      try {
+        return await orchestrator.updateProjectSettings(req.params.id, req.body ?? {});
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
   // ---- Segments -----------------------------------------------------------
 
   app.get('/projects/:id/segments', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
@@ -1088,9 +1112,25 @@ function isMain(): boolean {
 }
 
 if (isMain()) {
-  startServer().catch((err) => {
-     
-    console.error('[orchestrator] failed to start:', err);
-    process.exitCode = 1;
-  });
+  startServer()
+    .then((app) => {
+      // Stop child engine servers cleanly on quit so heavy model processes
+      // (whisper.cpp / llama.cpp / the uv-env neural-TTS workers) are NOT orphaned.
+      // app.close() runs the onClose hook -> engineManager.stopAll(). A SIGKILL
+      // can't be intercepted, but dev's SIGTERM/Ctrl-C and tsx-watch's restart
+      // SIGTERM are handled here — exactly what was leaving orphaned multi-GB models
+      // across dev restarts (which then pressured RAM and OOM-killed the workers).
+      let closing = false;
+      for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+        process.once(sig, () => {
+          if (closing) return;
+          closing = true;
+          void app.close().finally(() => process.exit(0));
+        });
+      }
+    })
+    .catch((err) => {
+      console.error('[orchestrator] failed to start:', err);
+      process.exitCode = 1;
+    });
 }

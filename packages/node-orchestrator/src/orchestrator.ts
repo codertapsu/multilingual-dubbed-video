@@ -21,6 +21,7 @@ import {
   type PipelineState,
   type PipelineStepId,
   type Project,
+  type ProjectSettings,
   type RenderFinalVideoResult,
   type TranscriptSegment,
   type TtsSegment,
@@ -65,6 +66,35 @@ interface RunningJob {
   controller: AbortController;
   promise: Promise<void>;
 }
+
+/**
+ * The project-settings fields the editor may change after creation (then re-dub
+ * from the affected stage). Excludes structural/complex fields (burnSubtitleStyle,
+ * speakerVoices) that aren't part of the change-and-re-dub flow.
+ */
+const EDITABLE_SETTING_KEYS = [
+  'sourceLanguage',
+  'targetLanguage',
+  'processingMode',
+  'sttProviderId',
+  'sttModel',
+  'translationProviderId',
+  'ttsProviderId',
+  'ttsVoiceId',
+  'includeOriginalBackgroundAudio',
+  'duckOriginalAudio',
+  'duckingLevelDb',
+  'originalAudioMode',
+  'ttsGainDb',
+  'maxSpeedRatio',
+  'allowedOverflowMs',
+  'autoFitOverflow',
+  'timeStretchEngine',
+  'renderQuality',
+  'subtitleExportMode',
+  'forcedAlignment',
+  'diarize',
+] as const satisfies readonly (keyof ProjectSettings)[];
 
 /** The transcript segment shape merged with optional alignment status. */
 export interface SegmentWithAlignment extends TranscriptSegment {
@@ -174,6 +204,43 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // re-run from `stepId` (a retry-from-render isn't blocked by the translator).
     if (this.deps.checkReadiness) assertRunReady(await this.deps.checkReadiness(project, stepId));
     this.startRun(project, stepId);
+  }
+
+  /**
+   * Update a whitelisted subset of a project's settings after creation, then
+   * persist. This is the engine behind the editor's "change an engine / model /
+   * voice and re-dub from that stage" flow: the caller updates settings here,
+   * then calls {@link retryStep} from the appropriate step so earlier stages are
+   * reused. Refuses while a run is active (cancel first) so we never mutate the
+   * config out from under an in-flight pipeline. Returns the updated project +
+   * pipeline so the UI can re-render its summary.
+   */
+  async updateProjectSettings(
+    projectId: string,
+    patch: Partial<ProjectSettings>,
+  ): Promise<{ project: Project; pipeline: PipelineState }> {
+    if (this.running.has(projectId)) {
+      throw new AppErrorException(
+        'RUN_IN_PROGRESS',
+        'Cannot change settings while the pipeline is running. Cancel the run first.',
+      );
+    }
+    const project = await this.deps.store.getProject(projectId);
+    const next: ProjectSettings = { ...project.settings };
+    // Apply only the known-safe keys (ignore anything else a client might send).
+    for (const key of EDITABLE_SETTING_KEYS) {
+      const value = patch[key];
+      if (value !== undefined) {
+        (next as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
+    const saved = await this.deps.store.saveProject({
+      ...project,
+      settings: next,
+      updatedAt: new Date().toISOString(),
+    });
+    const pipeline = await this.deps.store.getPipeline(projectId);
+    return { project: saved, pipeline };
   }
 
   // ----- Extra API methods -------------------------------------------------

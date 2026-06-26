@@ -34,6 +34,7 @@ export type ErrorCode =
   | 'ENGINE_PACK_FAILED'
   | 'ENGINE_UNAVAILABLE'
   | 'CANCELLED'
+  | 'RUN_IN_PROGRESS'
   | 'UNKNOWN';
 
 /**
@@ -157,6 +158,11 @@ export const REMEDIATIONS: Record<ErrorCode, { remediation: string; docsRef: str
   CANCELLED: {
     remediation: 'The operation was cancelled. Re-run the pipeline or retry the step when ready.',
     docsRef: 'docs/TROUBLESHOOTING.md#cancelled',
+  },
+  RUN_IN_PROGRESS: {
+    remediation:
+      'A pipeline run is already in progress for this project. Wait for it to finish, or cancel it, before changing settings or re-dubbing.',
+    docsRef: 'docs/TROUBLESHOOTING.md#run-in-progress',
   },
   UNKNOWN: {
     remediation:

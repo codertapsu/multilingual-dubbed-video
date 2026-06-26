@@ -26,6 +26,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   ENGINE_PACK_FAILED: 502, // download/verify/build failure
   ENGINE_UNAVAILABLE: 503, // engine process not reachable
   CANCELLED: 409, // Conflict
+  RUN_IN_PROGRESS: 409, // Conflict — a run is already active for this project
   UNKNOWN: 500,
 };
 

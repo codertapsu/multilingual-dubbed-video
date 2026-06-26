@@ -109,3 +109,68 @@
   white-space: normal;
   line-height: 1.4;
 }
+
+/* ---- Project settings panel (display + change + re-dub) ----------------- */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--vd-sp-3) var(--vd-sp-4);
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-2);
+  padding: var(--vd-sp-3);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius-sm);
+  background: var(--vd-surface-2);
+
+  h3 {
+    margin: 0 0 var(--vd-sp-1);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--vd-text-muted);
+  }
+}
+
+.setting-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  .label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--vd-text-muted);
+  }
+  .value {
+    font-size: 0.9rem;
+    line-height: 1.35;
+    word-break: break-word;
+  }
+  select {
+    width: 100%;
+  }
+}
+
+.redub-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--vd-sp-2) var(--vd-sp-3);
+  padding-top: var(--vd-sp-2);
+  border-top: 1px solid var(--vd-border);
+
+  .label {
+    font-weight: 650;
+    color: var(--vd-text-muted);
+  }
+}
+
+.redub-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--vd-sp-2);
+}

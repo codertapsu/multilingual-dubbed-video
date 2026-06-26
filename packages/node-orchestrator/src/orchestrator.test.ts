@@ -133,6 +133,33 @@ describe('LocalJobOrchestrator extras', () => {
     const reloaded = await store.getProject(project.id);
     expect(reloaded.mediaInfo?.durationMs).toBe(info.durationMs);
   });
+
+  it('updateProjectSettings applies whitelisted changes + ignores unknown keys', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video));
+    const beforeVoice = project.settings.ttsVoiceId;
+
+    const { project: updated, pipeline } = await orchestrator.updateProjectSettings(project.id, {
+      ttsProviderId: 'omnivoice',
+      ttsVoiceId: 'omnivoice-female-bright',
+      sttModel: 'large-v3',
+      maxSpeedRatio: 1.8,
+      // An unknown / non-whitelisted key must be ignored, not persisted.
+      ...({ bogusKey: 'nope' } as Record<string, unknown>),
+    });
+
+    expect(updated.settings.ttsProviderId).toBe('omnivoice');
+    expect(updated.settings.ttsVoiceId).toBe('omnivoice-female-bright');
+    expect(updated.settings.ttsVoiceId).not.toBe(beforeVoice);
+    expect(updated.settings.sttModel).toBe('large-v3');
+    expect(updated.settings.maxSpeedRatio).toBe(1.8);
+    expect((updated.settings as Record<string, unknown>).bogusKey).toBeUndefined();
+    expect(pipeline.projectId).toBe(project.id);
+
+    // Persisted to disk (a reload sees the change).
+    const reloaded = await store.getProject(project.id);
+    expect(reloaded.settings.ttsProviderId).toBe('omnivoice');
+  });
 });
 
 describe('run readiness gate', () => {

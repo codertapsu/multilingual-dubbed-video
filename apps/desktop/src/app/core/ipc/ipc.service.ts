@@ -6,6 +6,7 @@ import type {
   MediaInfo,
   PipelineStepId,
   Project,
+  ProjectSettings,
   RenderFinalVideoResult,
 } from '../models';
 import type {
@@ -156,6 +157,21 @@ export class IpcService {
     );
   }
 
+  /**
+   * PUT /projects/:id/settings — change a whitelisted subset of project settings
+   * (engine / model / voice / mix / render) after creation. Persists only; the
+   * caller re-dubs by calling {@link retryPipelineStep} from the affected stage.
+   * Consumed over HTTP in both modes (no Rust command needed — same as
+   * /providers), so the editor can update settings without a shell round-trip.
+   */
+  updateProjectSettings(projectId: string, patch: Partial<ProjectSettings>): Promise<ProjectWithPipeline> {
+    return this.http<ProjectWithPipeline>(
+      'PUT',
+      `/projects/${encodeURIComponent(projectId)}/settings`,
+      patch,
+    );
+  }
+
   getSegments(projectId: string): Promise<SegmentWithAlignment[]> {
     return this.call<SegmentWithAlignment[]>(
       'get_segments',
@@ -301,7 +317,7 @@ export class IpcService {
    * best-first, with the curated default flagged `recommended`. Consumed over
    * HTTP in both modes (no Rust command needed; same as /providers below).
    */
-  async setupListVoices(language: string, engine?: 'piper' | 'neural-v2' | 'neural-v3'): Promise<PiperVoiceInfo[]> {
+  async setupListVoices(language: string, engine?: 'piper' | 'neural-v2' | 'neural-v3' | 'omnivoice'): Promise<PiperVoiceInfo[]> {
     const eng = engine ? `&engine=${engine}` : '';
     const res = await this.http<{ language: string; voices: PiperVoiceInfo[] }>(
       'GET',

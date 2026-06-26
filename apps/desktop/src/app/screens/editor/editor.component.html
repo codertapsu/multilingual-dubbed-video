@@ -61,6 +61,256 @@
     </div>
   }
 
+  <!-- All applied settings + change-and-re-dub. Lets the user swap an engine,
+       model or voice and re-render from the affected stage (earlier stages are
+       reused, so e.g. changing the voice does NOT redo STT + translation). -->
+  @if (draft(); as s) {
+    <div class="card stack settings-card">
+      <div class="row row-between">
+        <h2>Project settings</h2>
+        @if (settingsDirty()) {
+          <span class="badge badge-warning">Unsaved changes</span>
+        }
+      </div>
+      <p class="muted">
+        Review every option applied to this dub. Change an engine, model or voice
+        below, then <strong>re-dub from</strong> the affected stage — the earlier
+        stages are reused (e.g. a new voice re-renders without redoing transcription
+        or translation).
+      </p>
+
+      <div class="settings-grid">
+        <!-- Languages & mode (fixed for the life of the project) -->
+        <div class="settings-group">
+          <h3>Languages &amp; mode</h3>
+          <div class="setting-row">
+            <span class="label">Source language</span>
+            <span class="value">{{ languageLabel(s.sourceLanguage) }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="label">Target language</span>
+            <span class="value">{{ languageLabel(s.targetLanguage) }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="label">Processing</span>
+            <span class="value">{{ processingLabels[s.processingMode] }}</span>
+          </div>
+        </div>
+
+        <!-- Speech-to-Text -->
+        <div class="settings-group">
+          <h3>Speech to Text</h3>
+          <label class="setting-row">
+            <span class="label">Engine</span>
+            <select
+              [ngModel]="s.sttProviderId"
+              (ngModelChange)="onSettingChange('sttProviderId', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (p of providers()?.stt ?? []; track p.id) {
+                <option [value]="p.id">{{ providerLabel(p) }}</option>
+              }
+              @if (!providerInList('stt', s.sttProviderId)) {
+                <option [value]="s.sttProviderId">{{ s.sttProviderId }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">Local STT Model</span>
+            @if (whisperModels().length > 0) {
+              <select
+                [ngModel]="s.sttModel ?? ''"
+                (ngModelChange)="onSettingChange('sttModel', $event)"
+                [disabled]="redubbing()"
+              >
+                @for (m of whisperModels(); track m.id) {
+                  <option [value]="m.id">{{ m.label }}</option>
+                }
+                @if (!modelInList(s.sttModel)) {
+                  <option [value]="s.sttModel">{{ s.sttModel }}</option>
+                }
+              </select>
+            } @else {
+              <span class="value">{{ modelLabel(s.sttModel) }}</span>
+            }
+          </label>
+        </div>
+
+        <!-- Translation -->
+        <div class="settings-group">
+          <h3>Translation</h3>
+          <label class="setting-row">
+            <span class="label">Engine</span>
+            <select
+              [ngModel]="s.translationProviderId"
+              (ngModelChange)="onSettingChange('translationProviderId', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (p of providers()?.translation ?? []; track p.id) {
+                <option [value]="p.id">{{ providerLabel(p) }}</option>
+              }
+              @if (!providerInList('translation', s.translationProviderId)) {
+                <option [value]="s.translationProviderId">{{ s.translationProviderId }}</option>
+              }
+            </select>
+          </label>
+          <div class="setting-row">
+            <span class="label">Auto-fit overflow</span>
+            <span class="value">{{ s.autoFitOverflow ? 'On' : 'Off' }}</span>
+          </div>
+          <p class="hint">
+            Model size (e.g. TranslateGemma 4B → 12B) is managed in Settings →
+            Engines; re-dub from Translate to apply a newly-installed model.
+          </p>
+        </div>
+
+        <!-- Text-to-Speech -->
+        <div class="settings-group">
+          <h3>Text to Speech</h3>
+          <label class="setting-row">
+            <span class="label">Engine</span>
+            <select
+              [ngModel]="s.ttsProviderId"
+              (ngModelChange)="onSettingChange('ttsProviderId', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (p of providers()?.tts ?? []; track p.id) {
+                <option [value]="p.id">{{ providerLabel(p) }}</option>
+              }
+              @if (!providerInList('tts', s.ttsProviderId)) {
+                <option [value]="s.ttsProviderId">{{ s.ttsProviderId }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">Voice</span>
+            @if (draftHasVoices()) {
+              <select
+                [ngModel]="s.ttsVoiceId ?? ''"
+                (ngModelChange)="onSettingChange('ttsVoiceId', $event || undefined)"
+                [disabled]="redubbing()"
+              >
+                <option value="">Provider default</option>
+                @for (v of draftVoices(); track v.id) {
+                  <option [value]="v.id">{{ v.label }}</option>
+                }
+              </select>
+            } @else {
+              <span class="value">{{ s.ttsVoiceId ?? 'Provider default' }}</span>
+            }
+          </label>
+        </div>
+
+        <!-- Audio mix -->
+        <div class="settings-group">
+          <h3>Audio &amp; mixing</h3>
+          <label class="setting-row">
+            <span class="label">Original audio</span>
+            <select
+              [ngModel]="s.originalAudioMode ?? 'keep'"
+              (ngModelChange)="onSettingChange('originalAudioMode', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (m of originalAudioModes; track m) {
+                <option [value]="m">{{ originalAudioModeLabels[m] }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">Ducking</span>
+            <select
+              [ngModel]="s.duckingLevelDb"
+              (ngModelChange)="onNumberSettingChange('duckingLevelDb', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (d of duckingOptions; track d.value) {
+                <option [ngValue]="d.value">{{ d.label }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">Max speech speed</span>
+            <select
+              [ngModel]="s.maxSpeedRatio"
+              (ngModelChange)="onNumberSettingChange('maxSpeedRatio', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (sp of speedOptions; track sp.value) {
+                <option [ngValue]="sp.value">{{ sp.label }}</option>
+              }
+            </select>
+          </label>
+          <div class="setting-row">
+            <span class="label">Time-stretch</span>
+            <span class="value">{{ timeStretchLabels[s.timeStretchEngine ?? 'auto'] }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="label">TTS gain</span>
+            <span class="value">{{ s.ttsGainDb }} dB</span>
+          </div>
+        </div>
+
+        <!-- Output -->
+        <div class="settings-group">
+          <h3>Subtitles &amp; render</h3>
+          <label class="setting-row">
+            <span class="label">Subtitles</span>
+            <select
+              [ngModel]="s.subtitleExportMode"
+              (ngModelChange)="onSettingChange('subtitleExportMode', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (mode of subtitleModes; track mode) {
+                <option [value]="mode">{{ subtitleLabels[mode] }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">Render quality</span>
+            <select
+              [ngModel]="s.renderQuality ?? 'quality'"
+              (ngModelChange)="onSettingChange('renderQuality', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (q of renderQualities; track q) {
+                <option [value]="q">{{ renderQualityLabels[q] }}</option>
+              }
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="redub-bar">
+        <span class="label">Re-dub from:</span>
+        <div class="redub-buttons">
+          @for (step of redubStages; track step) {
+            <button
+              type="button"
+              class="btn btn-sm"
+              [class.btn-primary]="isRecommendedStep(step)"
+              (click)="redubFrom(step)"
+              [disabled]="redubbing()"
+              [title]="'Re-run the pipeline from “' + stepLabels[step] + '”, reusing the earlier stages'"
+            >
+              {{ stepLabels[step] }}
+            </button>
+          }
+        </div>
+      </div>
+      @if (recommendedStep(); as rec) {
+        <p class="hint">
+          Your changes take effect from <strong>{{ stepLabels[rec] }}</strong> —
+          click that stage to re-dub.
+        </p>
+      } @else {
+        <p class="hint">
+          No changes yet. You can still re-dub from any stage (e.g. after installing
+          a different model in Settings → Engines).
+        </p>
+      }
+    </div>
+  }
+
   @if (anyWarnings()) {
     <div class="badge badge-warning warnings-hint">
       ⚠ Some segments have warnings — over-long subtitles or timing conflicts.
@@ -101,7 +351,7 @@
             </label>
             <textarea
               [id]="'tr-' + row.segment.id"
-              [ngModel]="draft(row.segment.id)"
+              [ngModel]="draftText(row.segment.id)"
               (ngModelChange)="onTranslationChange(row.segment.id, $event)"
               rows="2"
               spellcheck="true"

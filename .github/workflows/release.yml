@@ -268,10 +268,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Updater signing (empty unless auto-update is enabled; harmless while
-          # createUpdaterArtifacts is false).
+          # Updater signing (auto-update enabled in v0.2.0). The committed
+          # videodubber.key has an EMPTY password, and GitHub can't store an empty
+          # secret, so the password is hardcoded to '' (see docs/RELEASING.md).
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
           # Windows Authenticode (optional; Windows tolerates an empty cert).
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
@@ -292,9 +293,10 @@ jobs:
           # Keep as DRAFT so a human reviews + publishes (see docs/RELEASING.md).
           releaseDraft: true
           prerelease: false
-          # Auto-update is enabled in a later release: set createUpdaterArtifacts
-          # true in tauri.conf.json + add the TAURI_SIGNING_PRIVATE_KEY secret.
-          includeUpdaterJson: false
+          # Auto-update is enabled in v0.2.0: createUpdaterArtifacts is true in
+          # tauri.conf.json and the TAURI_SIGNING_PRIVATE_KEY secret is set, so
+          # tauri-action emits the signed update archives + latest.json.
+          includeUpdaterJson: true
           args: ${{ matrix.tauri-args }}
 
       # Repair the bundled PyInstaller frameworks in the built .app (Tauri's

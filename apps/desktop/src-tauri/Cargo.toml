@@ -1,6 +1,6 @@
 [package]
 name = "videodubber-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "VideoDubber — local/offline-first desktop app that dubs videos into another language."
 authors = ["VideoDubber"]
 edition = "2021"

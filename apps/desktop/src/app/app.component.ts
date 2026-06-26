@@ -18,7 +18,7 @@ import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.c
   template: `
     <header class="topnav">
       <a class="brand" routerLink="/" aria-label="VideoDubber home">
-        <span class="brand-mark" aria-hidden="true">🎬</span>
+        <img class="brand-mark" src="assets/brand-icon.png" alt="" aria-hidden="true" />
         <span class="brand-name">VideoDubber</span>
       </a>
 
@@ -67,7 +67,10 @@ import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.c
         text-decoration: none;
       }
       .brand-mark {
-        font-size: 1.2rem;
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        display: block;
       }
       .nav-links {
         display: flex;

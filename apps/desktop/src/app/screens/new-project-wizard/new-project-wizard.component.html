@@ -387,7 +387,14 @@
       @if (showVoicePicker()) {
         <fieldset>
           <legend>Voice (text to speech)</legend>
-          @if (voiceEngine() !== 'piper') {
+          @if (voiceEngine() === 'omnivoice') {
+            <p class="hint">
+              Choose a designed voice for OmniVoice. OmniVoice is multilingual, so these
+              work for {{ targetLanguageLabel() }} (and any language); they ship with the
+              engine pack — if it isn't installed yet, you'll be prompted to install it
+              when the dub starts.
+            </p>
+          } @else if (voiceEngine() !== 'piper') {
             <p class="hint">
               Choose a VieNeu voice for {{ targetLanguageLabel() }}. These ship with the
               VieNeu engine pack — if it isn't installed yet, you'll be prompted to
@@ -432,6 +439,11 @@
                 dub starts (or pick it again to fetch it now).
               </p>
             }
+          } @else if (voiceEngine() === 'omnivoice') {
+            <p class="muted">
+              Couldn’t load the OmniVoice voices — the local services may still be
+              starting. They’ll be available once the engine is ready.
+            </p>
           } @else if (voiceEngine() !== 'piper') {
             <p class="muted">
               VieNeu currently provides Vietnamese voices only. For

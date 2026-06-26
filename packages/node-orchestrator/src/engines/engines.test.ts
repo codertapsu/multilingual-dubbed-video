@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { EnginePackInfo, SystemProfile } from '@videodubber/shared';
 import { EnginePackStore } from './enginePackStore.js';
-import { availablePacks, findPack, packRunsOn } from './enginePackCatalog.js';
+import { ENGINE_PACKS, availablePacks, findPack, packRunsOn } from './enginePackCatalog.js';
 import {
   packsForProvider,
   pickInstalledLocalLlmModel,
@@ -13,7 +13,7 @@ import {
   resolveLocalLlmModelPath,
 } from './packSelection.js';
 import { packFitsMachine, recommendEnginePacks } from './engineRecommendation.js';
-import { EngineManager, findFile, waitFor } from './engineManager.js';
+import { ENGINE_LAUNCH_SPECS, EngineManager, findFile, waitFor } from './engineManager.js';
 import { _resetUvCache, resolveUvPath, uvAvailable } from './uv.js';
 import { recommendSetup } from '../system/systemProfile.js';
 
@@ -57,6 +57,34 @@ describe('engine pack catalog', () => {
     expect(packRunsOn(pack, 'darwin', 'x64')).toBe(false);
     expect(packRunsOn(pack, 'darwin', 'arm64')).toBe(true);
     expect(packRunsOn(pack, 'linux', 'x64')).toBe(true);
+  });
+
+  it('every launchable pack resolves to a launch spec (guards providerOf drift)', () => {
+    // Regression for "No launch spec for engine pack <id>": every SERVER pack's
+    // provider must have an ENGINE_LAUNCH_SPECS entry (model packs are consumed by
+    // a runtime, not launched, so they're exempt). EngineManager.providerOf() maps
+    // a pack id to its providerId, so a mismatch here = a launch failure at run.
+    for (const p of ENGINE_PACKS) {
+      if (p.packKind === 'model') continue;
+      expect(ENGINE_LAUNCH_SPECS[p.providerId], `${p.id} -> ${p.providerId}`).toBeDefined();
+    }
+  });
+
+  it('OmniVoice TTS pack metadata is Apple-Silicon-only (metal) with the omnivoice provider', () => {
+    const p = findPack('tts-omnivoice')!;
+    expect(p.providerId).toBe('omnivoice');
+    expect(p.platforms).toEqual(['darwin']);
+    expect(p.arch).toEqual(['arm64']);
+    expect(p.accel).toBe('metal');
+  });
+
+  it('OmniVoice is currently DISABLED — defined but never offered (pending quality work)', () => {
+    // The pack is withheld via DISABLED_PACK_IDS, so it must not appear in
+    // availablePacks() on ANY platform (and thus not in the engines list, the
+    // provider registry, or the wizard/editor). Re-enable by removing the id.
+    expect(findPack('tts-omnivoice')).toBeDefined();
+    expect(availablePacks('darwin', 'arm64').map((x) => x.id)).not.toContain('tts-omnivoice');
+    expect(availablePacks('win32', 'x64').map((x) => x.id)).not.toContain('tts-omnivoice');
   });
 });
 
@@ -345,6 +373,54 @@ describe('EngineManager lifecycle policy', () => {
     expect(capturedArgs).toEqual(['-m', 'vd_tts_engine', '--port', '51234']);
 
     await manager.stopAll();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('launches the OmniVoice pack as `python -m vd_omnivoice` (regression: providerOf -> launch spec)', async () => {
+    // Regression for "No launch spec for engine pack tts-omnivoice": providerOf()
+    // must resolve the pack id to its providerId ('omnivoice'); it previously fell
+    // through to the pack id (no spec). Mirrors the VieNeu launch test above.
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-mgr-ov-'));
+    const store = new EnginePackStore(dir);
+    const p = store.packDir('tts-omnivoice');
+    const pyRel =
+      process.platform === 'win32'
+        ? path.join('venv', 'Scripts', 'python.exe')
+        : path.join('venv', 'bin', 'python');
+    const pyAbs = path.join(p, pyRel);
+    await mkdir(path.dirname(pyAbs), { recursive: true });
+    await writeFile(pyAbs, '');
+    await store.add({ id: 'tts-omnivoice', path: p, installedAt: '2026-01-01T00:00:00Z' });
+
+    let capturedArgs: string[] = [];
+    const manager = new EngineManager({
+      store,
+      allocatePort: async () => 51299,
+      healthProbe: async () => true,
+      spawnImpl: (_cmd, args) => {
+        capturedArgs = args;
+        return { on: () => undefined, stderr: { on: () => undefined }, kill: () => true } as never;
+      },
+      startTimeoutMs: 1000,
+    });
+
+    await expect(manager.ensureRunning('tts-omnivoice')).resolves.toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    expect(capturedArgs).toEqual(['-m', 'vd_omnivoice', '--port', '51299']);
+
+    await manager.stopAll();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('rejects a pack id absent from the catalog with ENGINE_UNAVAILABLE (providerOf fallback)', async () => {
+    // providerOf() maps a pack id to its provider via `findPack(packId)?.providerId
+    // ?? packId`; a pack NOT in ENGINE_PACKS yields the raw id, which has no launch
+    // spec -> ENGINE_UNAVAILABLE "No launch spec". Pins the fallback + the error path.
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-ghost-'));
+    const store = new EnginePackStore(dir);
+    const manager = new EngineManager({ store, startTimeoutMs: 100 });
+    await expect(manager.ensureRunning('tts-ghost')).rejects.toMatchObject({
+      appError: { code: 'ENGINE_UNAVAILABLE' },
+    });
     await rm(dir, { recursive: true, force: true });
   });
 

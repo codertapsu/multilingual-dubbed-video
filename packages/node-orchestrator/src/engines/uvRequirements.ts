@@ -63,6 +63,18 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
     ],
     extraIndexUrls: ['https://pnnbao97.github.io/llama-cpp-python-v0.3.16/cpu/'],
   },
+  // OmniVoice (k2-fsa) via mlx-audio — Apple Silicon ONLY (the `mlx`/`mlx-audio`
+  // wheels are macOS/arm64). The pack is gated to darwin/arm64 in
+  // enginePackCatalog, so this only ever installs there. mlx-audio pulls mlx +
+  // transformers + numpy + scipy + tokenizers transitively; we add fastapi/uvicorn
+  // for the server (it writes WAV with numpy + stdlib, so no soundfile needed).
+  'tts-omnivoice': {
+    base: [
+      'mlx-audio==0.4.4',
+      'fastapi==0.115.6',
+      'uvicorn==0.34.0',
+    ],
+  },
   // Other uv packs — kept at their existing (loose) sets.
   'separation-audio': {
     base: ['audio-separator>=0.18', 'onnxruntime>=1.20', 'fastapi>=0.110', 'uvicorn>=0.29'],

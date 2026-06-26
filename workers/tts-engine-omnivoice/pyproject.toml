@@ -1,0 +1,31 @@
+[project]
+name = "vd-omnivoice"
+version = "0.1.0"
+description = "VideoDubber OmniVoice (k2-fsa) multilingual neural-TTS engine for the optional tts-omnivoice engine pack (Apple Silicon / MLX)"
+requires-python = ">=3.10"
+# Runtime deps are provided by the engine pack's uv venv (see the orchestrator's
+# uvRequirements['tts-omnivoice']); this package is loaded from bundled source via
+# PYTHONPATH, not pip-installed. Listed here for reference / standalone dev only.
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+# The OmniVoice stack — installed into the pack venv at install time, NOT here.
+# mlx + mlx-audio are Apple-Silicon-only, so this pack is gated to darwin/arm64.
+omnivoice = [
+  "mlx-audio>=0.4.4",
+]
+dev = [
+  "pytest>=8.0",
+  "httpx>=0.27",
+  "numpy>=1.26",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["vd_omnivoice"]

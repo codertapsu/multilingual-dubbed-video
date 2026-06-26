@@ -358,6 +358,45 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
       'Apache-2.0 — VieNeu-TTS v3 code + weights. Uses the MOSS-Audio-Tokenizer-Nano codec and sea-g2p (verify their licenses). Preset voices only; output is watermarked.',
   },
 
+  // --- neural TTS: OmniVoice multilingual (uv-managed Python env, MLX) ------
+  // Apple-Silicon-ONLY: mlx-audio runs OmniVoice (k2-fsa) via Apple's MLX (Metal),
+  // so the pack is gated to darwin/arm64 — offered ONLY where it can actually run.
+  // On other platforms the provider isn't even registered (see providers/registry.ts),
+  // so it never appears as a permanently-uninstallable option.
+  {
+    id: 'tts-omnivoice',
+    kind: 'tts',
+    packKind: 'python-uv',
+    displayName: 'OmniVoice Neural TTS (multilingual, Apple Silicon)',
+    description:
+      'A massively multilingual neural voice — OmniVoice (k2-fsa), ~646 languages — running on Apple Silicon via MLX. Far broader language coverage than Piper, with natural “designed” voices (calm/bright/warm, female/male). 24 kHz; the model (~3 GB) downloads on first use. Generates ~1.5× faster than real time on an M-series chip. Optional and Apple-Silicon-only — Piper stays the fast default.',
+    providerId: 'omnivoice',
+    platforms: ['darwin'],
+    arch: ['arm64'],
+    accel: 'metal',
+    tier: 'performance',
+    // ~0.8B-param model, ~2 GB resident. It loads EXCLUSIVELY (evicting other heavy
+    // engine packs first), but the bundled STT/TTS workers stay resident and the GPU
+    // shares RAM on Apple Silicon — so gate higher than the model alone to avoid
+    // mid-run memory pressure (packFitsMachine treats total RAM as VRAM here).
+    minRamMb: 16384,
+    approxSizeMb: 4500,
+    artifacts: [
+      {
+        // uv venv (mlx-audio) per uvRequirements['tts-omnivoice']; the first-party
+        // `vd_omnivoice` server is loaded from bundled source via PYTHONPATH (see
+        // engineManager). The OmniVoice model downloads on first use into the
+        // pack's hf/ dir, like the Whisper/VieNeu models.
+        url: 'uv-env://tts-omnivoice',
+        approxSizeMb: 4500,
+        destPath: 'venv',
+      },
+    ],
+    licenseCategory: 'commercial-restricted',
+    licenseNote:
+      'OmniVoice code + weights are Apache-2.0 (k2-fsa), but the bundled HiggsAudio tokenizer carries the Boson Higgs Audio 2 Community License (non-OSI; 100k annual-active-users commercial gate). Fine for this open-source, non-commercial app — review before any commercial redistribution. Apple Silicon only (MLX). Reference-audio voice cloning is not yet available in the MLX checkpoint (designed voices only).',
+  },
+
   // --- vocal separation (uv-managed Python env) ----------------------------
   {
     id: 'separation-audio',
@@ -414,6 +453,18 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
   },
 ] as const;
 
+/**
+ * Packs that are DEFINED but temporarily withheld from availability — their
+ * catalog entry + launch spec stay in the tree (so the work isn't lost and can
+ * be re-enabled by deleting the id below), but they are excluded from
+ * `availablePacks()`, so they never appear in the engines list, the provider
+ * registry, or the wizard/editor.
+ *
+ * `tts-omnivoice` (OmniVoice): held back pending output-quality work — the
+ * bf16 MLX checkpoint's voice is not yet good enough to ship.
+ */
+const DISABLED_PACK_IDS: ReadonlySet<string> = new Set(['tts-omnivoice']);
+
 /** True if a pack can run on the given platform/arch. */
 export function packRunsOn(pack: EnginePackInfo, platform: NodeJS.Platform, arch: string): boolean {
   if (pack.platforms && pack.platforms.length > 0 && !pack.platforms.includes(platform)) return false;
@@ -422,12 +473,12 @@ export function packRunsOn(pack: EnginePackInfo, platform: NodeJS.Platform, arch
   return true;
 }
 
-/** Packs runnable on the current (or given) machine. */
+/** Packs runnable on the current (or given) machine (excludes disabled packs). */
 export function availablePacks(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
 ): EnginePackInfo[] {
-  return ENGINE_PACKS.filter((p) => packRunsOn(p, platform, arch));
+  return ENGINE_PACKS.filter((p) => !DISABLED_PACK_IDS.has(p.id) && packRunsOn(p, platform, arch));
 }
 
 /** Look up a pack by id (across all platforms). */

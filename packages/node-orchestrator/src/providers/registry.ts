@@ -38,6 +38,7 @@ import { OpenAiTtsProvider } from './tts/openaiTtsProvider.js';
 import type { EngineManager } from '../engines/engineManager.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
 import { requireInstalledPack, resolveLocalLlmModelPath } from '../engines/packSelection.js';
+import { availablePacks } from '../engines/enginePackCatalog.js';
 
 /**
  * Default local-LLM models per backend (overridable via env).
@@ -222,6 +223,17 @@ export function createDefaultRegistry(
     registry.registerTts(
       new NeuralTtsProvider('neural-tts', 'VieNeu Neural TTS v3 (Vietnamese)', 'neural-tts', engines, store, timeout),
     );
+    // OmniVoice — massively-multilingual neural TTS, Apple Silicon ONLY (MLX).
+    // Registered only where its pack can actually run, so it isn't offered as a
+    // permanently-uninstallable option on Windows/Intel. (Its pack `tts-omnivoice`
+    // is gated to darwin/arm64; here we mirror that gate at registration.)
+    if (availablePacks().some((p) => p.id === 'tts-omnivoice')) {
+      registry.registerTts(
+        // exclusive=true: OmniVoice's ~2 GB MLX model evicts other resident heavy
+        // engines before loading (it's marked heavy: true in ENGINE_LAUNCH_SPECS).
+        new NeuralTtsProvider('omnivoice', 'OmniVoice Neural TTS (multilingual)', 'omnivoice', engines, store, timeout, true),
+      );
+    }
   }
 
   return registry;

@@ -158,7 +158,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   protected readonly showVoicePicker = computed(() => this.voiceEngine() !== null);
 
   /** Which voice catalog to list for the selected TTS provider (null = no picker). */
-  protected readonly voiceEngine = computed<'piper' | 'neural-v2' | 'neural-v3' | null>(() => {
+  protected readonly voiceEngine = computed<'piper' | 'neural-v2' | 'neural-v3' | 'omnivoice' | null>(() => {
     switch (this.settings().ttsProviderId) {
       case 'piper-local':
         return 'piper';
@@ -166,6 +166,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
         return 'neural-v2';
       case 'neural-tts':
         return 'neural-v3';
+      case 'omnivoice':
+        return 'omnivoice';
       default:
         return null;
     }

@@ -49,11 +49,19 @@ export class NeuralTtsProvider implements TtsProvider {
     private readonly engines: EngineManager,
     private readonly store: EnginePackStore,
     private readonly timeoutMs: number,
+    /**
+     * Load this engine EXCLUSIVELY for synthesis — i.e. unload other resident
+     * heavy engines (whisper.cpp / llama.cpp) first to free RAM/VRAM. Set for
+     * memory-heavy engines like OmniVoice (a ~2 GB MLX model); left false for the
+     * light ONNX VieNeu engines. Only applied on the synth path, NOT the
+     * interactive voice picker (which must not evict a resident engine).
+     */
+    private readonly exclusive = false,
   ) {}
 
-  private async baseUrl(): Promise<string> {
+  private async baseUrl(exclusive = false): Promise<string> {
     const packId = await requireInstalledPack(this.store, this.id);
-    return this.engines.ensureRunning(packId);
+    return this.engines.ensureRunning(packId, exclusive ? { exclusive: true } : {});
   }
 
   /**
@@ -101,7 +109,10 @@ export class NeuralTtsProvider implements TtsProvider {
   }
 
   async synthesizeSegments(input: TtsInput, signal?: AbortSignal): Promise<TtsResult> {
-    const base = (await this.baseUrl()).replace(/\/$/, '');
+    // Synthesis is the heavy phase: load exclusively (for OmniVoice) so a resident
+    // llama.cpp/whisper.cpp is evicted before the ~2 GB MLX model loads — otherwise
+    // co-resident models pressure RAM and can OOM-kill the bundled workers.
+    const base = (await this.baseUrl(this.exclusive)).replace(/\/$/, '');
     // The engine loads its (large, first-run-downloaded) model lazily. Wait for it
     // to become RESIDENT before the synth request, so the one-time load isn't
     // charged to the synth timeout — over 200+ segments that overrun would abort

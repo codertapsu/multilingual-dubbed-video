@@ -45,6 +45,7 @@ bump the version constant, or edit the artifact `url`/`sha256` directly.
 | `whisper-cpp-cuda` | Windows x64 | **upstream** ggml-org/whisper.cpp (cuBLAS) | none |
 | `whisper-cpp-metal` | macOS arm64 | **self-host** (no upstream build) | **build + upload + set codertapsu/multilingual-dubbed-video** |
 | `tts-neural` | all | PyPI via bundled `uv` | none (no URL) |
+| `tts-omnivoice` | **macOS arm64** | PyPI (`mlx-audio`) via bundled `uv` | none (no URL) |
 | `separation-audio` | all | PyPI via bundled `uv` | none |
 | `alignment-whisperx` | all | PyPI via bundled `uv` | none |
 

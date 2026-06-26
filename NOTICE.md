@@ -59,3 +59,23 @@ community **GGUF requants** of Google's `google/translategemma-*-it` models.
 > The Gemma Terms were last revised 2026-04-01 — re-check the current text before
 > shipping a build that bundles the weights. (A future Gemma-4-based TranslateGemma
 > would move to Apache-2.0 and drop these obligations.)
+
+### OmniVoice (`tts-omnivoice` engine pack — Apple Silicon only)
+
+The optional OmniVoice neural-TTS engine pack runs k2-fsa's **OmniVoice** on Apple
+Silicon via **MLX** (`mlx-audio`). It is **not** bundled — the user installs it on
+demand, and the model (`mlx-community/OmniVoice-bf16`) downloads on first use.
+
+- **OmniVoice** code + weights are **Apache-2.0** (k2-fsa).
+- **BUT** the model bundles the **HiggsAudio tokenizer**, whose weights are under
+  the **Boson Higgs Audio 2 Community License** — a custom, **non-OSI** license
+  (Meta-Llama-3-derived) with a **100,000-annual-active-users** commercial gate and
+  a no-competing-model clause. This is acceptable for VideoDubber as an open-source,
+  non-commercial app, but **a commercial redistributor must review it** (and may
+  need a separate license from Boson AI).
+- `mlx-audio` and `mlx` are **MIT**.
+- Reference-audio voice cloning is **not** enabled (the MLX checkpoint omits the
+  audio encoder); only "designed" voices are offered.
+
+> Re-check the Boson Higgs Audio 2 Community License before shipping a build that
+> bundles or auto-downloads these weights.

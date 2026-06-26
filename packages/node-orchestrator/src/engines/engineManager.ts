@@ -23,6 +23,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AppErrorException } from '@videodubber/shared';
 import type { EnginePackStore } from './enginePackStore.js';
+import { findPack } from './enginePackCatalog.js';
 
 /**
  * Directory holding the bundled first-party engine-pack worker source (e.g. the
@@ -53,6 +54,30 @@ function neuralTtsEnv(packDir: string, variant: 'v2' | 'v3'): Record<string, str
     VD_PACK_DIR: packDir,
     HF_HOME: path.join(packDir, 'hf'),
     VIENEU_VARIANT: variant,
+  };
+}
+
+/**
+ * Source dir for the bundled `vd_omnivoice` engine worker (the OmniVoice pack's
+ * counterpart to {@link engineSrcDir}). A source build (`npm run dev`) falls back
+ * to `<repo>/workers/tts-engine-omnivoice`; a packaged build uses the bundled
+ * engine-src dir (VIDEODUBBER_ENGINE_SRC_DIR), which must hold BOTH worker
+ * packages (vd_tts_engine + vd_omnivoice) — see the engine-src bundling step.
+ */
+function omnivoiceSrcDir(): string {
+  const fromEnv = process.env.VIDEODUBBER_ENGINE_SRC_DIR;
+  if (fromEnv) return fromEnv;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, '../../../../workers/tts-engine-omnivoice');
+}
+
+/** Env for the OmniVoice `vd_omnivoice` sidecar: bundled module on PYTHONPATH,
+ * the model cache pinned to the pack dir. */
+function omnivoiceEnv(packDir: string): Record<string, string> {
+  return {
+    PYTHONPATH: prependPath(omnivoiceSrcDir(), process.env.PYTHONPATH),
+    VD_PACK_DIR: packDir,
+    HF_HOME: path.join(packDir, 'hf'),
   };
 }
 
@@ -139,6 +164,17 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     env: ({ packDir }) => neuralTtsEnv(packDir, 'v2'),
     healthPath: '/health',
     heavy: false,
+  },
+  // OmniVoice (Apple Silicon / MLX) — same bundled-server pattern as VieNeu: the
+  // venv supplies mlx-audio, PYTHONPATH supplies our `vd_omnivoice` module, HF_HOME
+  // points model downloads into the pack dir. Marked heavy (a ~0.8B model resident
+  // on the GPU) so the sequential-memory policy can unload it for other phases.
+  omnivoice: {
+    pythonModule: 'vd_omnivoice',
+    args: ({ port }) => ['--port', String(port)],
+    env: ({ packDir }) => omnivoiceEnv(packDir),
+    healthPath: '/health',
+    heavy: true,
   },
   // LibreTranslate: a self-hosted Flask server launched via its `libretranslate`
   // console script (no `python -m` entrypoint). Headless (--disable-web-ui) and
@@ -325,7 +361,10 @@ export class EngineManager {
     if (packId === 'separation-audio') return 'audio-separator';
     if (packId === 'alignment-whisperx') return 'whisperx';
     if (packId === 'translation-libretranslate') return 'libretranslate';
-    return packId;
+    // Anything else (e.g. tts-omnivoice): map via the catalog's providerId, so a
+    // NEW pack's launch spec is found without adding a line here. Falls back to the
+    // pack id only if it isn't in the catalog.
+    return findPack(packId)?.providerId ?? packId;
   }
 
   /** Find the server binary (binary pack) or the venv python (uv-env pack). */

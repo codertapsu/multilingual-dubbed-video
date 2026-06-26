@@ -497,10 +497,11 @@ fn resolve_sidecar_bin(base: &str) -> Option<String> {
     bin.exists().then(|| bin.to_string_lossy().into_owned())
 }
 
-/// Resolve the bundled engine-pack worker SOURCE dir — the parent of
-/// `vd_tts_engine/` — to hand the orchestrator as VIDEODUBBER_ENGINE_SRC_DIR.
+/// Resolve the bundled engine-pack worker SOURCE dir — the parent of the staged
+/// worker packages (`vd_tts_engine/`) — to hand the orchestrator as
+/// VIDEODUBBER_ENGINE_SRC_DIR.
 ///
-/// Bundled via tauri.conf `resources` (staged by scripts/package/stage-engine-src.sh).
+/// Bundled via tauri.conf `resources` (staged by scripts/package/stage-engine-src.mjs).
 /// Tauri's exact on-disk resource layout can differ (it may or may not preserve
 /// the `resources/` prefix), so we try the likely locations and accept the first
 /// that actually contains the `vd_tts_engine` package. Returns `None` when the

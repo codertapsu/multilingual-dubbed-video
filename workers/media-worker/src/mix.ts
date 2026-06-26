@@ -78,6 +78,34 @@ export function loudnormApplyFilter(m: LoudnormMeasurements): string {
   );
 }
 
+/**
+ * True when the analysis produced USABLE measurements for a linear second pass.
+ *
+ * A silent/near-silent program (an all-silence dub, or a fully-ducked bed with no
+ * speech) reports degenerate values — on ffmpeg 8.x specifically, `input_i` and
+ * `input_tp` come back `"-inf"` and `target_offset` `"inf"` (while `input_thresh`
+ * is a finite -70 default and `input_lra` 0). loudnormApplyFilter() forwards ALL
+ * of input_i/tp/lra/thresh + target_offset into pass 2, and ffmpeg aborts on ANY
+ * out-of-range value ("Value … out of range", exit 222) — not just measured_I. So
+ * we validate every forwarded field against ffmpeg's accepted ranges; if any
+ * fails, the caller falls back to the single-pass dynamic loudnorm (no measured
+ * values, so it can't trip the range check).
+ */
+export function loudnormMeasurementsUsable(m: LoudnormMeasurements): boolean {
+  const i = Number.parseFloat(m.input_i);
+  const tp = Number.parseFloat(m.input_tp);
+  const thresh = Number.parseFloat(m.input_thresh);
+  const lra = Number.parseFloat(m.input_lra);
+  const offset = Number.parseFloat(m.target_offset);
+  return (
+    Number.isFinite(i) && i >= -99 && i <= 0 &&
+    Number.isFinite(tp) && tp >= -99 && tp <= 99 &&
+    Number.isFinite(thresh) && thresh >= -99 && thresh <= 0 &&
+    Number.isFinite(lra) && lra >= 0 && lra <= 99 &&
+    Number.isFinite(offset) && offset >= -99 && offset <= 99
+  );
+}
+
 /** Parse the JSON block ffmpeg's loudnorm prints to stderr on an analysis pass. */
 export function parseLoudnormJson(stderr: string): LoudnormMeasurements | undefined {
   const start = stderr.lastIndexOf('{');
@@ -224,12 +252,14 @@ export async function duckAndMix(
     // Pass 1: measure the mixed program loudness.
     const measureRes = await runFfmpeg(buildMixMeasureArgs(input), runOpts);
     const measured = parseLoudnormJson(measureRes.stderr);
-    if (measured) {
+    if (measured && loudnormMeasurementsUsable(measured)) {
       // Pass 2: apply with measured values (linear/transparent).
       await runFfmpeg(buildMixArgs(input, loudnormApplyFilter(measured)), runOpts);
       return { output: input.output, durationMs: await probeDurationMs(input.output) };
     }
-    // Measurement failed (unusual ffmpeg build) — fall back to single pass.
+    // Measurement failed (unusual ffmpeg build) OR the program is (near-)silent
+    // (measured_I=-inf, which loudnorm rejects as a measured value) — fall back to
+    // the single-pass dynamic loudnorm below (no measured values, can't crash).
   }
 
   await runFfmpeg(buildMixArgs(input), runOpts);

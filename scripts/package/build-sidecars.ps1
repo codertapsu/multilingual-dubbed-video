@@ -123,6 +123,20 @@ if (-not $SkipEngineSrc) {
   if ($LASTEXITCODE -ne 0) { throw "stage-engine-src.mjs failed ($LASTEXITCODE)" }
 }
 
+# `resources/default-models` is a DECLARED Tauri resource (tauri.conf.json), so it
+# MUST exist at `tauri build` time or the bundle step aborts on the missing
+# declared resource (the same failure mode a past release hit for engine-src).
+# Windows does NOT yet stage the default-pipeline models (no PowerShell port of
+# fetch-default-models.sh), so a Windows install relies on the first-run download
+# for its first dub — unlike macOS, which ships them for an offline out-of-box dub.
+# Guarantee the dir exists with a placeholder so the bundle succeeds; the runtime
+# seed-copy (sidecar.rs) is a clean no-op when no models are present.
+$DmRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\default-models"
+New-Item -ItemType Directory -Force -Path $DmRes | Out-Null
+if (-not (Get-ChildItem -Path $DmRes -ErrorAction SilentlyContinue)) {
+  Set-Content -Path (Join-Path $DmRes "README.txt") -Value "Default-pipeline models for the bundled language pairs are staged here on macOS for an offline out-of-box dub. On Windows they are not bundled yet; the app downloads them on first run."
+}
+
 Write-Host "`n############################################################"
 Write-Host "# Done. Sidecars in $BinDir :"
 Write-Host "############################################################"

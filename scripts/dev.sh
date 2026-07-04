@@ -58,9 +58,7 @@ err()   { printf "${c_red}[dev][error]${c_reset} %s\n" "$*" >&2; }
 # (apps/desktop/src-tauri/src/sidecar.rs) roots everything at ~/VideoDubber; here
 # we root the dev stack at a SEPARATE home so `npm run dev` / `tauri dev` and the
 # installed VideoDubber don't share config, projects, engine packs, or the
-# Whisper/Piper model caches. (Exception: Argos translation packages live in
-# argostranslate's own GLOBAL data dir — shared with prod, same as the packaged
-# app; set ARGOS_PACKAGES_DIR yourself if you want those isolated too.)
+# Whisper/Piper/Argos model caches.
 # Mirrors the SAME env vars the Tauri shell sets, just pointed at the dev home.
 # Override the whole root with VIDEODUBBER_DEV_HOME, or pin any individual dir
 # (VIDEODUBBER_CONFIG_DIR / _PROJECTS_DIR / _MODELS_DIR / HF_HOME / PIPER_VOICES_DIR);
@@ -76,6 +74,7 @@ export VIDEODUBBER_CACHE_DIR="${VIDEODUBBER_CACHE_DIR:-${VIDEODUBBER_DEV_HOME}/c
 export STT_MODEL_CACHE_DIR="${STT_MODEL_CACHE_DIR:-${VIDEODUBBER_MODELS_DIR}/huggingface}"
 export HF_HOME="${HF_HOME:-${VIDEODUBBER_MODELS_DIR}/huggingface}"
 export PIPER_VOICES_DIR="${PIPER_VOICES_DIR:-${VIDEODUBBER_MODELS_DIR}/piper}"
+export ARGOS_PACKAGES_DIR="${ARGOS_PACKAGES_DIR:-${VIDEODUBBER_MODELS_DIR}/argos}"
 mkdir -p "${VIDEODUBBER_PROJECTS_DIR}" "${VIDEODUBBER_MODELS_DIR}" "${VIDEODUBBER_CACHE_DIR}"
 info "Dev data home: ${VIDEODUBBER_DEV_HOME} (isolated from the installed app's ~/VideoDubber)"
 

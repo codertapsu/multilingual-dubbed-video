@@ -50,6 +50,7 @@
       "binaries/ffprobe"
     ],
     "resources": [
+      "resources/default-models",
       "resources/engine-src",
       "resources/python",
       "resources/workers"

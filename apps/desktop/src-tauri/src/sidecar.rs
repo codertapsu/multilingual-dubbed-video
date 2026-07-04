@@ -215,6 +215,13 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
     let models_dir = config_dir.join("models");
     let piper_dir = models_dir.join("piper");
     let hf_cache = config_dir.join("models").join("huggingface");
+    let argos_dir = models_dir.join("argos");
+
+    // Seed the bundled default-pipeline models (whisper 'small' + en->vi Argos +
+    // vi Piper voice) into the writable model dirs so a FIRST dub works fully
+    // offline, before the user downloads anything. No-op in a dev build and a
+    // cheap stat on every launch after the first. See seed_default_models.
+    seed_default_models(app, &models_dir);
 
     // Common loopback host + ports.
     const ORCH_PORT: &str = "5100";
@@ -244,6 +251,10 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
         &[
             ("TRANSLATION_WORKER_HOST", LOOPBACK.to_string()),
             ("TRANSLATION_WORKER_PORT", TRANSLATION_PORT.to_string()),
+            // Argos packages live under the app's models dir (seeded with the
+            // en->vi default, extended by Settings downloads) — not argostranslate's
+            // global ~/.local share — so everything stays inside ~/VideoDubber.
+            ("ARGOS_PACKAGES_DIR", argos_dir.to_string_lossy().into_owned()),
         ],
     );
 
@@ -292,6 +303,10 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
             ("VIDEODUBBER_PROJECTS_DIR", projects_dir.to_string_lossy().into_owned()),
             ("VIDEODUBBER_CONFIG_DIR", config_dir.to_string_lossy().into_owned()),
             ("VIDEODUBBER_MODELS_DIR", models_dir.to_string_lossy().into_owned()),
+            // We reached this code path, so this is the bundled/production launch.
+            // The orchestrator uses this to own its whole toolchain (e.g. never
+            // fall back to a system `uv` when the bundled one is broken). See uv.ts.
+            ("VIDEODUBBER_BUNDLED", "1".to_string()),
             // Same HF hub cache the STT worker downloads into (above), so the
             // orchestrator can watch whisper-model downloads and report a true
             // percentage during first-run setup / project resource ensure.
@@ -498,8 +513,8 @@ fn resolve_sidecar_bin(base: &str) -> Option<String> {
 }
 
 /// Resolve the bundled engine-pack worker SOURCE dir — the parent of the staged
-/// worker packages (`vd_tts_engine/`) — to hand the orchestrator as
-/// VIDEODUBBER_ENGINE_SRC_DIR.
+/// worker packages (`vd_tts_engine/`; more as packs ship) — to hand the
+/// orchestrator as VIDEODUBBER_ENGINE_SRC_DIR.
 ///
 /// Bundled via tauri.conf `resources` (staged by scripts/package/stage-engine-src.mjs).
 /// Tauri's exact on-disk resource layout can differ (it may or may not preserve
@@ -513,6 +528,55 @@ fn resolve_engine_src_dir(app: &AppHandle) -> Option<String> {
         .into_iter()
         .find(|c| c.join("vd_tts_engine").is_dir())
         .map(|c| c.to_string_lossy().into_owned())
+}
+
+/// Resolve the bundled default-pipeline models dir (`resources/default-models`,
+/// staged at build by scripts/package/fetch-default-models.sh). `None` in a
+/// dev/source build (those rely on the first-run wizard download).
+fn resolve_default_models_dir(app: &AppHandle) -> Option<PathBuf> {
+    let res = app.path().resource_dir().ok()?;
+    [res.join("default-models"), res.join("resources").join("default-models")]
+        .into_iter()
+        .find(|c| c.is_dir())
+}
+
+/// Recursively copy `src` into `dst`, NEVER clobbering an existing destination
+/// file — so a model the user later downloaded (e.g. large-v3-turbo in the same
+/// hf cache) is preserved. Cheap on repeat launches: present files are just stat'd.
+fn copy_if_absent(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_if_absent(&from, &to)?;
+        } else if !to.exists() {
+            std::fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
+/// Seed the bundled default-pipeline models (whisper 'small' + en->vi Argos + the
+/// vi Piper voice) into the WRITABLE model dirs (`<config>/models/{huggingface,
+/// argos,piper}`) on launch, so a FIRST dub works fully offline, out of the box.
+/// Copy-if-absent, so user-downloaded models are never touched. Best-effort —
+/// logged, never fatal; a dev build (no bundled models) is a no-op.
+fn seed_default_models(app: &AppHandle, models_dir: &Path) {
+    let Some(src_root) = resolve_default_models_dir(app) else {
+        return;
+    };
+    for sub in ["huggingface", "argos", "piper"] {
+        let src = src_root.join(sub);
+        if !src.is_dir() {
+            continue;
+        }
+        if let Err(e) = copy_if_absent(&src, &models_dir.join(sub)) {
+            log_info(&format!("seeding bundled default models: '{sub}' copy failed: {e}"));
+        }
+    }
+    log_info("seeded bundled default-pipeline models (offline out-of-box dub).");
 }
 
 /// Resolve the bundled standalone-CPython install dir — a `UV_PYTHON_INSTALL_DIR`

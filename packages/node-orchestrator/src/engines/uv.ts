@@ -7,6 +7,12 @@
  *      uv downloads its own standalone CPython, so the user installs nothing.
  *   2. `uv` on PATH — for dev / source checkouts.
  *
+ * In a PACKAGED build (VIDEODUBBER_BUNDLED=1, set by sidecar.rs) the app owns its
+ * whole toolchain, so a declared-but-broken bundled uv must NOT silently fall
+ * through to a system `uv` of unknown version/Python — we return null and let the
+ * UI show an actionable remediation. The PATH fallback is only for dev / source
+ * checkouts (and a deliberately-degraded build that bundled no uv at all).
+ *
  * Returns the resolved path, or null when uv is unavailable (the caller then
  * surfaces an actionable "install uv" remediation instead of failing opaquely).
  */
@@ -84,6 +90,13 @@ export function _resetUvCache(): void {
   cached = undefined;
 }
 
+/** True when running inside a packaged/bundled app (VIDEODUBBER_BUNDLED, set by
+ * the desktop shell). Used to forbid the system-uv fallback in production. */
+function isPackaged(): boolean {
+  const v = process.env.VIDEODUBBER_BUNDLED?.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
 async function resolve(): Promise<string | null> {
   const bundled = process.env.VIDEODUBBER_UV_PATH?.trim();
   if (bundled) {
@@ -92,6 +105,11 @@ async function resolve(): Promise<string | null> {
       .then((s) => s.isFile())
       .catch(() => false);
     if (ok) return bundled;
+    // The bundled uv was DECLARED but is missing/unusable. In a packaged app,
+    // fail loud rather than silently using a system uv (a different version, a
+    // different Python) — the build-time bundle assertion should have caught
+    // this, so it means a corrupt install: surface it as unavailable.
+    if (isPackaged()) return null;
   }
   return which('uv');
 }

@@ -3,7 +3,8 @@
 VideoDubber's local engines need three kinds of models:
 
 1. A **faster-whisper** speech-to-text model (default `small`).
-2. An **Argos Translate** language package (default `en → vi`).
+2. **Argos Translate** language package(s) (default `en → vi`; a non-English pair like
+   `zh → vi` pivots through English and needs both `zh → en` and `en → vi`).
 3. (Optional) A **Piper** voice for high-quality local TTS.
 
 The one-shot setup script handles all three:
@@ -77,6 +78,15 @@ Missing/undownloadable model → **`STT_MODEL_MISSING`** (see
 Argos is offline neural MT. You install a **language package** per direction (e.g.
 `en → vi`). The translation worker reduces locales to the base subtag
 (`toArgosLanguage`, so `vi-VN → vi`) before looking up the package.
+
+> **English pivot.** Argos publishes packages only **to and from English**, so a
+> non-English pair translates in two hops. Installing `zh → vi`, for example, means
+> installing **both** `zh → en` and `en → vi`; argostranslate chains them
+> automatically. The app computes these legs for you (`argosPivotLegs`) when you pick
+> languages, and the packaged installer bundles the legs for its default pairs —
+> `en → vi` **and** `zh → vi` — derived from the single source of truth
+> [`defaultBundle.ts`](../packages/node-orchestrator/src/setup/defaultBundle.ts).
+> To bundle another pair, add it to `DEFAULT_PAIRS` there and rebuild.
 
 ### Install a package
 

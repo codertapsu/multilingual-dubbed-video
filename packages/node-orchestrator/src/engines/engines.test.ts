@@ -458,6 +458,7 @@ describe('EngineManager lifecycle policy', () => {
 describe('uv resolution (bundled vs PATH)', () => {
   afterEach(() => {
     delete process.env.VIDEODUBBER_UV_PATH;
+    delete process.env.VIDEODUBBER_BUNDLED;
     _resetUvCache();
   });
 
@@ -478,6 +479,15 @@ describe('uv resolution (bundled vs PATH)', () => {
     // Result depends on whether uv is on PATH in this env; just assert it does
     // not return the bogus bundled path.
     expect(await resolveUvPath()).not.toBe('/no/such/vd-uv');
+  });
+
+  it('in a packaged build, a broken bundled uv fails loud (no system-uv fallback)', async () => {
+    process.env.VIDEODUBBER_UV_PATH = '/no/such/vd-uv';
+    process.env.VIDEODUBBER_BUNDLED = '1';
+    _resetUvCache();
+    // The packaged app owns its toolchain — never silently use a system uv.
+    expect(await resolveUvPath()).toBeNull();
+    expect(await uvAvailable()).toBe(false);
   });
 });
 

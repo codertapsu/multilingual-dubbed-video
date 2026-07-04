@@ -171,9 +171,13 @@ Full details, the 8-step flow, and the data model are in
 | **Rust (optional)** | Only needed to build/run the **native Tauri desktop app** (`pnpm app`). Install via [rustup](https://rustup.rs). The browser dev mode does **not** need Rust. |
 
 Local models (downloaded by the setup script): a faster-whisper model (default
-`small`; `base` is a fast CPU choice), an Argos language package (default `en → vi`),
-and optionally a Piper voice for high-quality TTS. See
-[`docs/MODEL_SETUP.md`](docs/MODEL_SETUP.md).
+`small`; `base` is a fast CPU choice), Argos language package(s) (default `en → vi`;
+non-English pairs like `zh → vi` pivot through English and need both legs), and
+optionally a Piper voice for high-quality TTS. The packaged installer bundles the
+default pairs (`en → vi` and `zh → vi`) for an offline first dub — edit
+`DEFAULT_PAIRS` in
+[`defaultBundle.ts`](packages/node-orchestrator/src/setup/defaultBundle.ts) to change
+them. See [`docs/MODEL_SETUP.md`](docs/MODEL_SETUP.md).
 
 ---
 

@@ -55,7 +55,11 @@ function defaultSettings(): ProjectSettings {
     sttProviderId: 'faster-whisper',
     translationProviderId: 'argos',
     ttsProviderId: 'piper-local',
-    sttModel: 'large-v3-turbo',
+    // Default to the BUNDLED 'small' model so a first dub works fully offline,
+    // out of the box (the installer ships small + the en->vi Argos pair + the vi
+    // voice). 'large-v3-turbo' is the higher-accuracy upgrade the user can pick
+    // (it downloads ~1.6 GB) — see WHISPER_MODELS (recommended).
+    sttModel: 'small',
     includeOriginalBackgroundAudio: true,
     duckOriginalAudio: true,
     duckingLevelDb: -12,

@@ -108,6 +108,24 @@ if [[ "${SKIP_ENGINE_SRC:-0}" != "1" ]]; then
   node "${SCRIPT_DIR}/stage-engine-src.mjs"
 fi
 
+if [[ "${SKIP_DEFAULT_MODELS:-0}" != "1" ]]; then
+  echo ""; echo "### Default-pipeline models (offline out-of-box dub) #######"
+  # Stage the default-pipeline models for the BUNDLED language pairs (the STT
+  # model + the Argos pivot legs + the Piper voices) INTO the bundle so a first
+  # dub for one of those pairs works fully offline. WHICH pairs is the single
+  # source of truth defaultBundle.ts (today en->vi + zh->vi); the staging script
+  # derives the rest. The runtime seed-copies them into the writable model dirs
+  # on first launch (sidecar.rs). The assertion below fails the release if any
+  # bundled pair's models are missing.
+  bash "${SCRIPT_DIR}/fetch-default-models.sh" || \
+    echo "WARNING: default-model staging failed; the installer will need a first-run download (not offline out-of-box)." >&2
+fi
+# `resources/default-models` is a DECLARED Tauri resource — guarantee it exists.
+DM_RES="${REPO_ROOT}/apps/desktop/src-tauri/resources/default-models"
+mkdir -p "${DM_RES}"
+[[ -n "$(ls -A "${DM_RES}" 2>/dev/null)" ]] || \
+  echo "Default-pipeline models for the bundled language pairs (whisper + Argos pivot legs + Piper voices; see defaultBundle.ts) are staged here at build time for an offline out-of-box dub." > "${DM_RES}/README.txt"
+
 echo ""
 echo "############################################################"
 echo "# Done. Sidecars in ${BIN_DIR}:"
@@ -130,3 +148,43 @@ for base in vd-stt-worker vd-translation-worker vd-tts-worker; do
   d="${REPO_ROOT}/apps/desktop/src-tauri/resources/workers/${base}"
   [[ -x "${d}/${base}${EXE_SUFFIX}" ]] || echo "NOTE: missing one-dir worker ${d}/${base}${EXE_SUFFIX} (skipped or failed?)."
 done
+
+# --- Release bundle assertion ------------------------------------------------
+# A RELEASE must ship its built-in prerequisites: the default-pipeline models
+# (offline out-of-box dub) + the bundled uv + CPython (optional Python engine
+# packs install with NOTHING preinstalled). Fail the build rather than silently
+# ship a degraded installer. Skipped components (SKIP_*) aren't asserted; set
+# ASSERT_BUNDLE=0 to downgrade to warnings for a deliberately-partial build.
+if [[ "${ASSERT_BUNDLE:-1}" == "1" ]]; then
+  miss=0
+  need() { if compgen -G "$2" >/dev/null; then :; else echo "::error:: missing bundled $1 ($2)"; miss=1; fi; }
+  if [[ "${SKIP_DEFAULT_MODELS:-0}" != "1" ]]; then
+    need "default whisper model" "${DM_RES}/huggingface/models--*"
+    # Assert EACH bundled pair's Argos leg + Piper voice individually, derived from
+    # the SAME source of truth the staging used (defaultBundle.ts via the bridge).
+    # A pair-agnostic glob (argos/*) would pass even with a pair missing — this
+    # loop is the real release gate the bundled-pairs feature relies on.
+    if plan="$("${REPO_ROOT}/node_modules/.bin/tsx" "${REPO_ROOT}/packages/node-orchestrator/scripts/print-default-bundle.ts" --sh 2>/dev/null)"; then
+      while IFS=$'\t' read -r kind a b _; do
+        case "$kind" in
+          # Anchor the version suffix (`-`) so a leg can't false-match a longer
+          # language code (en_vi- vs en_vie-).
+          argos) need "Argos ${a}->${b}" "${DM_RES}/argos/translate-${a}_${b}-"* ;;
+          # A Piper voice needs BOTH the model AND its .onnx.json config to load.
+          piper) need "Piper voice ${a}" "${DM_RES}/piper/${a}.onnx"
+                 need "Piper config ${a}" "${DM_RES}/piper/${a}.onnx.json" ;;
+        esac
+      done <<< "$plan"
+    else
+      echo "::error:: could not compute the default-bundle plan for the release assertion"; miss=1
+    fi
+  fi
+  [[ "${SKIP_UV:-0}" == "1" ]]     || need "uv binary"        "${BIN_DIR}/vd-uv-${TRIPLE}${EXE_SUFFIX}"
+  [[ "${SKIP_PYTHON:-0}" == "1" ]] || need "bundled CPython"  "${PY_RES}/cpython-"*
+  if [[ "${miss}" == "1" ]]; then
+    echo "::error:: release bundle is MISSING required built-in dependencies (see above)." >&2
+    echo "          Re-run with network, or set ASSERT_BUNDLE=0 to ship a degraded build on purpose." >&2
+    exit 1
+  fi
+  echo "✓ bundle assertion passed: default models + uv + CPython are all bundled."
+fi

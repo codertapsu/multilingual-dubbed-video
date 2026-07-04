@@ -456,15 +456,27 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
 
 /**
  * Packs that are DEFINED but temporarily withheld from availability — their
- * catalog entry + launch spec stay in the tree (so the work isn't lost and can
- * be re-enabled by deleting the id below), but they are excluded from
+ * catalog entry + launch spec stay in the tree but are excluded from
  * `availablePacks()`, so they never appear in the engines list, the provider
- * registry, or the wizard/editor.
+ * registry, or the wizard/editor. Add an id here to disable that pack.
  *
- * `tts-omnivoice` (OmniVoice): held back pending output-quality work — the
- * bf16 MLX checkpoint's voice is not yet good enough to ship.
+ * `separation-audio` / `alignment-whisperx`: their Python worker servers
+ * (vd_separator / vd_whisperx) are still UNIMPLEMENTED stubs, so the pack would
+ * install but never become healthy. Withhold them until the workers exist, so a
+ * user can't install a non-functional engine. (Their providers already degrade
+ * gracefully to null when absent.)
+ *
+ * `tts-omnivoice`: the worker was reworked onto the official PyTorch/MPS
+ * pipeline (fixing the MLX-codec degradation and the invalid instruct
+ * attributes), but output quality is still not stable enough to ship. Held out
+ * of releases until it is — status, findings, and the re-enable checklist live
+ * in docs/OMNIVOICE.md.
  */
-const DISABLED_PACK_IDS: ReadonlySet<string> = new Set(['tts-omnivoice']);
+const DISABLED_PACK_IDS: ReadonlySet<string> = new Set<string>([
+  'separation-audio',
+  'alignment-whisperx',
+  'tts-omnivoice',
+]);
 
 /** True if a pack can run on the given platform/arch. */
 export function packRunsOn(pack: EnginePackInfo, platform: NodeJS.Platform, arch: string): boolean {

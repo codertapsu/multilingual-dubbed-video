@@ -256,8 +256,10 @@ describe('hardware-aware engine recommendations', () => {
     // 32 GB Apple Silicon is accelerated + workstation-class → the 27B model.
     expect(recs).toContain('translategemma-27b');
     expect(recs).toContain('tts-neural');
-    // 32 GB is workstation-class: separation + alignment too.
-    expect(recs).toContain('separation-audio');
+    // separation-audio + alignment-whisperx are unimplemented stubs (gated in
+    // DISABLED_PACK_IDS), so they are NEVER recommended — even on a 32 GB Mac.
+    expect(recs).not.toContain('separation-audio');
+    expect(recs).not.toContain('alignment-whisperx');
   });
 
   it('recommends the 4B TranslateGemma on an 8 GB CPU-only machine (no 16 GB gate)', () => {

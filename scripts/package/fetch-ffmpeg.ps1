@@ -72,6 +72,18 @@ if ($LocalFfmpeg -and $LocalFfprobe -and (Test-Path $LocalFfmpeg) -and (Test-Pat
     throw "local ffmpeg is missing the 'subtitles' filter (no libass). Use a full/gpl build."
   }
   Write-Host "    libass OK."
+  # SHARED-build trap: only the exe is staged as a Tauri sidecar, so a *shared*
+  # distribution (ffmpeg.exe + avcodec-*.dll etc., e.g. gyan.dev
+  # ffmpeg-release-full-SHARED) passes the libass check here (its DLLs sit next
+  # to the ORIGINAL exe) but breaks inside the installed app, where the DLLs
+  # don't exist. Require a static single-file build.
+  $ffDlls = Get-ChildItem -Path (Split-Path $LocalFfmpeg -Parent) -Filter 'av*.dll' -ErrorAction SilentlyContinue
+  if ($ffDlls) {
+    throw ("local ffmpeg at $LocalFfmpeg is a SHARED build (found $($ffDlls[0].Name) beside it) - " +
+      "the bundled sidecar ships the exe ALONE, so a shared build breaks at app runtime. " +
+      "Use a STATIC single-file build (e.g. BtbN win64-gpl), or unset FFMPEG_PATH/FFPROBE_PATH " +
+      "to let this script auto-download one.")
+  }
   Copy-Item -Force $LocalFfmpeg  (Join-Path $BinDir "ffmpeg-$Triple.exe")
   Copy-Item -Force $LocalFfprobe (Join-Path $BinDir "ffprobe-$Triple.exe")
   Write-Host ""

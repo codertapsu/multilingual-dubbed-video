@@ -63,14 +63,20 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
     ],
     extraIndexUrls: ['https://pnnbao97.github.io/llama-cpp-python-v0.3.16/cpu/'],
   },
-  // OmniVoice (k2-fsa) via mlx-audio — Apple Silicon ONLY (the `mlx`/`mlx-audio`
-  // wheels are macOS/arm64). The pack is gated to darwin/arm64 in
-  // enginePackCatalog, so this only ever installs there. mlx-audio pulls mlx +
-  // transformers + numpy + scipy + tokenizers transitively; we add fastapi/uvicorn
+  // OmniVoice (k2-fsa) via the official PyTorch package on Apple Silicon
+  // Metal/MPS — the MLX ports (mlx-audio) bf16-quantize the HiggsAudio codec and
+  // audibly degrade the voice, so we run the full PyTorch model (the HF Space
+  // pipeline). Apple-Silicon-only (we ship the arm64 MPS torch wheels, ~0.45 GB,
+  // no CUDA); the pack is gated to darwin/arm64 in enginePackCatalog. `omnivoice`
+  // pulls transformers + accelerate + numpy transitively; we add fastapi/uvicorn
   // for the server (it writes WAV with numpy + stdlib, so no soundfile needed).
   'tts-omnivoice': {
     base: [
-      'mlx-audio==0.4.4',
+      // NOTE: torchaudio's version LAGS torch by a minor (torch 2.12.x pairs with
+      // torchaudio 2.11.x — there is no torchaudio 2.12). Keep this pair in sync.
+      'torch==2.12.1',
+      'torchaudio==2.11.0',
+      'omnivoice==0.1.5',
       'fastapi==0.115.6',
       'uvicorn==0.34.0',
     ],

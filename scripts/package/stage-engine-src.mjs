@@ -13,9 +13,9 @@
  * package staged here is importable as `python -m <package>`:
  *   - workers/tts-engine-neural/vd_tts_engine   (VieNeu)
  *
- * (OmniVoice / vd_omnivoice is intentionally NOT staged while its engine pack is
- * disabled — see DISABLED_PACK_IDS in enginePackCatalog.ts — so the bundle stays
- * lean. Re-add it here when OmniVoice is re-enabled.)
+ * (workers/tts-engine-omnivoice/vd_omnivoice is deliberately NOT staged: the
+ * OmniVoice pack is disabled for releases pending output-quality work — see
+ * docs/OMNIVOICE.md. Re-add it here when the pack is re-enabled.)
  *
  * Run from anywhere: node scripts/package/stage-engine-src.mjs
  */
@@ -28,9 +28,9 @@ const repoRoot = path.resolve(here, '../..');
 const destDir = path.join(repoRoot, 'apps', 'desktop', 'src-tauri', 'resources', 'engine-src');
 
 // Each first-party engine-pack worker package to stage (importable as `python -m <name>`).
+// vd_omnivoice intentionally absent while the pack is release-disabled (docs/OMNIVOICE.md).
 const SOURCES = [
   path.join(repoRoot, 'workers', 'tts-engine-neural', 'vd_tts_engine'),
-  // OmniVoice (vd_omnivoice) omitted while its pack is disabled (see file header).
 ];
 
 rmSync(destDir, { recursive: true, force: true });

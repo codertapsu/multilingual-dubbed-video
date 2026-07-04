@@ -43,7 +43,7 @@ per project in the new-project wizard — and changed again at any time.
 | Translation | `gemini-translate` | Google Gemini (default `gemini-2.0-flash`) | cloud | Gemini key |
 | TTS | `piper-local` | Piper → system voice → silent fallback, worker `:5103` | local | — |
 | TTS | `neural-tts` | Neural voices (Kokoro / VieNeu / Chatterbox / Qwen3-TTS) | local | engine pack |
-| TTS | `omnivoice` | OmniVoice multilingual neural voices (646 languages; Apple Silicon / MLX) | local | engine pack |
+| TTS | `omnivoice` | OmniVoice multilingual neural voices (600+ languages; Apple Silicon / PyTorch MPS) — **on hold, not in releases** ([OMNIVOICE.md](OMNIVOICE.md)) | local | engine pack (disabled) |
 | TTS | `openai-tts` | OpenAI speech API (default `gpt-4o-mini-tts`) | cloud | OpenAI key |
 | Rendering | — | FFmpeg (bundled, libass; opt-in HW encode) | **always local** | — |
 
@@ -67,7 +67,7 @@ for the per-hardware-tier matrix behind the recommendations.
 | `llama-cpp-metal` / `-cuda` / `-vulkan` | Local LLM translation **runtime** (`llama-cpp`) | native binary |
 | `translategemma-4b` / `-12b` / `-27b` | **TranslateGemma** GGUF weights the runtime loads (4B from 8 GB; 12B/27B with a GPU/Apple-Silicon) | model download |
 | `tts-neural` | Neural multilingual + Vietnamese voices (`neural-tts`) | uv-managed Python env |
-| `tts-omnivoice` | **OmniVoice** multilingual neural voices, 646 languages (`omnivoice`) — Apple Silicon / MLX | uv-managed Python env |
+| `tts-omnivoice` | **OmniVoice** multilingual neural voices, 600+ languages (`omnivoice`) — Apple Silicon / PyTorch MPS. **On hold**: gated out of releases pending output-quality work; see [OMNIVOICE.md](OMNIVOICE.md) | uv-managed Python env |
 | `separation-audio` | Vocal/M&E separation for the “replace voices” mix | uv-managed Python env |
 | `alignment-whisperx` | Word-accurate timing + speaker diarization | uv-managed Python env |
 

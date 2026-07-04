@@ -1,16 +1,15 @@
 """OmniVoice "designed voice" catalog + language mapping.
 
 Unlike Piper (per-language preset voices) or VieNeu (Vietnamese only), OmniVoice
-is a massively multilingual zero-shot model: one model speaks ~646 languages and
+is a massively multilingual zero-shot model: one model speaks 600+ languages and
 there are no fixed preset speakers. We therefore expose a small set of DESIGNED
-voices — each a natural-language ``instruct`` description (OmniVoice "Voice
-Design") plus a fixed random seed so the same speaker timbre is reproduced across
-every segment of a dub (a different speaker per line would make the dub
-incoherent). The same voice set is offered for ANY target language.
+voices — each a Voice-Design ``instruct`` (trained speaker ATTRIBUTES) plus a
+fixed random seed so the same speaker timbre is reproduced across every segment of
+a dub (a different speaker per line would make the dub incoherent). The same voice
+set is offered for ANY target language.
 
 Reference-audio voice cloning (matching the original speaker) is a deliberate
-FUTURE addition — the current MLX checkpoint ships an incomplete audio-encoder,
-so cloning is not wired yet (see engine.py).
+FUTURE addition via ``ref_audio`` / ``ref_text``; this catalog is Voice-Design only.
 """
 
 from __future__ import annotations
@@ -34,50 +33,42 @@ class DesignedVoice:
     recommended: bool = False
 
 
-# Each ``instruct`` is OmniVoice's official Voice-Design format: SHORT,
-# comma-separated speaker ATTRIBUTES (gender, age, pitch, style) — per
-# k2-fsa/OmniVoice docs/voice-design.md ("female, young adult, high pitch").
-# Two hard-won rules, both verified on the bf16 checkpoint with dub-fitting on:
-#
-#   1. Keep it to a few attribute words. A long DESCRIPTIVE SENTENCE (e.g. "A
-#      calm, clear adult female narrator voice, natural and friendly.") gets
-#      VOCALISED into the speech when an explicit duration_s is also passed
-#      (the dub-fitting path always passes one) — the words "calm clear adult
-#      ... friendly" leak into the audio. Terse attributes do not leak.
-#
-#   2. Anchor PITCH explicitly ("high pitch" for female, "low pitch" for male).
-#      Vague pitch ("medium pitch"/"neutral") lets the zero-shot speaker DRIFT
-#      across segments — in one real dub the sentence-style "bright female"
-#      prompt produced 7 MALE-voiced segments out of 16 sampled (F0 ~95 Hz in a
-#      "female" voice). A firm pitch anchor pins gender: std drops from ~89 Hz
-#      to ~10–42 Hz and male/female flips disappear. (True per-speaker pinning
-#      would need reference-audio cloning, but this checkpoint omits the audio
-#      encoder; the attribute anchor is the best available proxy.)
-#
-# Verified leak-free + intelligible (Whisper) and audible across real segments.
+# Each ``instruct`` MUST use ONLY OmniVoice's TRAINED Voice-Design attributes —
+# the model VALIDATES the instruct against a closed vocabulary and raises on any
+# unknown tag (see omnivoice/utils/voice_design.py). Valid categories, one tag each:
+#   gender : male | female
+#   age    : child | teenager | young adult | middle-aged | elderly
+#   pitch  : very low | low | moderate | high | very high  (+ " pitch")
+#   style  : whisper
+#   accent : american/british/…/japanese accent   dialect (ZH): 四川话, …
+# Made-up descriptors ("bright", "warm", "calm", "neutral", "gentle", "clear",
+# "natural") are NOT trained tags — they push the model out of distribution and
+# degrade quality. The PITCH tag also anchors gender so the speaker doesn't drift
+# male<->female across a dub's segments. Verified consistent (F0 std ~24, no
+# gender flips), audible, leak-free, and intelligible on the PyTorch/MPS pipeline.
 VOICES: tuple[DesignedVoice, ...] = (
     DesignedVoice(
         "omnivoice-female-calm",
-        "female, adult, high pitch, gentle",
+        "female, middle-aged, moderate pitch",
         "Female — calm narrator (default)",
         seed=7,
         recommended=True,
     ),
     DesignedVoice(
         "omnivoice-male-warm",
-        "male, adult, low pitch, warm",
+        "male, middle-aged, low pitch",
         "Male — warm",
         seed=13,
     ),
     DesignedVoice(
         "omnivoice-female-bright",
-        "female, young adult, high pitch, bright",
+        "female, young adult, high pitch",
         "Female — bright",
         seed=21,
     ),
     DesignedVoice(
         "omnivoice-male-neutral",
-        "male, adult, low pitch, clear",
+        "male, young adult, moderate pitch",
         "Male — neutral",
         seed=34,
     ),
@@ -88,51 +79,37 @@ def base_subtag(language: str | None) -> str:
     return (language.split("-")[0].split("_")[0] if language else "").lower()
 
 
-# BCP-47 base subtag -> the language NAME mlx-audio's OmniVoice `language` param
-# expects (lowercase English name). OmniVoice covers ~646 languages; this maps the
-# app's common set. Unknown subtags fall back to English (the model still runs).
+# BCP-47 base subtag -> the language NAME OmniVoice's `language` param expects
+# (the capitalized English name from docs/lang_id_name_map.tsv, e.g. "Vietnamese").
+# OmniVoice covers 600+ languages; this maps the app's common set. An UNKNOWN
+# subtag maps to None -> we pass no language and the model AUTO-DETECTS from the
+# text (more robust than forcing a wrong language).
 _LANGUAGE_NAMES: dict[str, str] = {
-    "en": "english",
-    "vi": "vietnamese",
-    "es": "spanish",
-    "fr": "french",
-    "de": "german",
-    "it": "italian",
-    "pt": "portuguese",
-    "ru": "russian",
-    "ja": "japanese",
-    "ko": "korean",
-    "zh": "chinese",
-    "ar": "arabic",
-    "hi": "hindi",
-    "id": "indonesian",
-    "th": "thai",
-    "nl": "dutch",
-    "pl": "polish",
-    "tr": "turkish",
-    "uk": "ukrainian",
-    "cs": "czech",
-    "sv": "swedish",
-    "ro": "romanian",
-    "el": "greek",
-    "he": "hebrew",
-    "fi": "finnish",
-    "da": "danish",
-    "no": "norwegian",
-    "hu": "hungarian",
-    "ms": "malay",
-    "fa": "persian",
-    "ta": "tamil",
-    "bn": "bengali",
-    "uk_UA": "ukrainian",
+    "en": "English",
+    "vi": "Vietnamese",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh": "Chinese",
+    "ar": "Arabic",
+    "hi": "Hindi",
+    "id": "Indonesian",
+    "th": "Thai",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "tr": "Turkish",
 }
 
-DEFAULT_LANGUAGE_NAME = "english"
 
-
-def language_name(language: str | None) -> str:
-    """Map a BCP-47-ish code (e.g. 'vi-VN') to OmniVoice's language name."""
-    return _LANGUAGE_NAMES.get(base_subtag(language), DEFAULT_LANGUAGE_NAME)
+def language_name(language: str | None) -> str | None:
+    """Map a BCP-47-ish code (e.g. 'vi-VN') to OmniVoice's language name, or None
+    (unknown -> let the model auto-detect from the text)."""
+    return _LANGUAGE_NAMES.get(base_subtag(language))
 
 
 def voices_for_language(_language: str | None = None) -> list[DesignedVoice]:

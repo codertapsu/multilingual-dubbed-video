@@ -70,21 +70,17 @@ describe('engine pack catalog', () => {
     }
   });
 
-  it('OmniVoice TTS pack metadata is Apple-Silicon-only (metal) with the omnivoice provider', () => {
+  it('OmniVoice TTS pack is Apple-Silicon-only (metal) with the omnivoice provider', () => {
     const p = findPack('tts-omnivoice')!;
     expect(p.providerId).toBe('omnivoice');
     expect(p.platforms).toEqual(['darwin']);
     expect(p.arch).toEqual(['arm64']);
     expect(p.accel).toBe('metal');
-  });
-
-  it('OmniVoice is currently DISABLED — defined but never offered (pending quality work)', () => {
-    // The pack is withheld via DISABLED_PACK_IDS, so it must not appear in
-    // availablePacks() on ANY platform (and thus not in the engines list, the
-    // provider registry, or the wizard/editor). Re-enable by removing the id.
-    expect(findPack('tts-omnivoice')).toBeDefined();
+    // Gated out of releases while output quality stabilizes (DISABLED_PACK_IDS;
+    // see docs/OMNIVOICE.md) — not offered ANYWHERE, including Apple Silicon.
     expect(availablePacks('darwin', 'arm64').map((x) => x.id)).not.toContain('tts-omnivoice');
     expect(availablePacks('win32', 'x64').map((x) => x.id)).not.toContain('tts-omnivoice');
+    expect(availablePacks('darwin', 'x64').map((x) => x.id)).not.toContain('tts-omnivoice');
   });
 });
 

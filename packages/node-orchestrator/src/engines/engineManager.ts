@@ -165,10 +165,11 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     healthPath: '/health',
     heavy: false,
   },
-  // OmniVoice (Apple Silicon / MLX) — same bundled-server pattern as VieNeu: the
-  // venv supplies mlx-audio, PYTHONPATH supplies our `vd_omnivoice` module, HF_HOME
-  // points model downloads into the pack dir. Marked heavy (a ~0.8B model resident
-  // on the GPU) so the sequential-memory policy can unload it for other phases.
+  // OmniVoice (Apple Silicon / PyTorch MPS) — same bundled-server pattern as
+  // VieNeu: the venv supplies torch + omnivoice, PYTHONPATH supplies our
+  // `vd_omnivoice` module, HF_HOME points model downloads into the pack dir.
+  // Marked heavy (a ~0.8B model resident on the GPU) so the sequential-memory
+  // policy can unload it for other phases.
   omnivoice: {
     pythonModule: 'vd_omnivoice',
     args: ({ port }) => ['--port', String(port)],

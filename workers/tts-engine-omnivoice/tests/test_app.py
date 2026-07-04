@@ -1,9 +1,9 @@
 """Tests for the non-ML surface of vd_omnivoice.
 
 Exercise the HTTP contract, the designed-voice catalog, the per-language
-duration-fit math, and the silent-fallback path WITHOUT mlx-audio (not installed
-in CI / on non-Apple-Silicon). OmniVoice is multilingual, so /voices returns the
-same designed set for every language.
+duration-fit math, and the silent-fallback path WITHOUT torch/omnivoice (not
+installed in CI / on non-Apple-Silicon). OmniVoice is multilingual, so /voices
+returns the same designed set for every language.
 """
 
 from __future__ import annotations
@@ -34,31 +34,30 @@ def test_designed_voice_catalog():
     assert all(v.instruct and isinstance(v.seed, int) for v in voices.VOICES)
 
 
-def test_instruct_prompts_are_short_attribute_lists():
-    """Regression guard for OmniVoice voice quality (two real bugs).
+def test_instruct_prompts_use_only_valid_trained_attributes():
+    """Regression guard for OmniVoice voice quality.
 
-    The instruct must be OmniVoice's Voice-Design format: a SHORT list of
-    comma-separated attributes (gender, age, pitch, style) — NOT a descriptive
-    sentence. Two constraints, each guarding a fixed bug:
-
-    1. SHORT — a long descriptive sentence ("A calm, clear adult female narrator
-       voice, natural and friendly.") gets vocalized into the speech when an
-       explicit duration_s is passed (dub-fitting always passes one). Few words
-       => no leak.
-
-    2. EXPLICIT PITCH — a vague pitch lets the zero-shot speaker drift across
-       segments (one dub produced male-voiced segments in a "female" voice).
-       Anchoring "high pitch"/"low pitch" pins gender across segments.
+    The instruct MUST use ONLY OmniVoice's TRAINED Voice-Design attributes — the
+    official model validates the instruct against a closed vocabulary and raises
+    on any unknown tag ("Unsupported instruct items"), and out-of-vocab tags
+    ("bright", "warm", "neutral", "gentle", "clear") push the model out of
+    distribution and degrade quality (mlx-audio silently accepted them). Each
+    voice also carries a gender + a PITCH anchor, which pins gender so the speaker
+    doesn't drift male<->female across a dub's segments.
     """
+    # Mirror of omnivoice/utils/voice_design.py categories (one tag per category).
+    GENDER = {"male", "female"}
+    AGE = {"child", "teenager", "young adult", "middle-aged", "elderly"}
+    PITCH = {"very low pitch", "low pitch", "moderate pitch", "high pitch", "very high pitch"}
+    STYLE = {"whisper"}
+    VALID = GENDER | AGE | PITCH | STYLE  # (+ accents / ZH dialects, unused here)
     for v in voices.VOICES:
-        attrs = [a.strip() for a in v.instruct.split(",") if a.strip()]
+        attrs = [a.strip().lower() for a in v.instruct.split(",") if a.strip()]
         assert len(attrs) >= 2, f"{v.id}: instruct should be comma-separated attributes"
-        assert len(v.instruct.split()) <= 6, f"{v.id}: instruct too long (leaks into speech)"
-        low = v.instruct.lower()
-        # Must steer gender so the female/male labels are meaningful...
-        assert ("female" in low) or ("male" in low), f"{v.id}: no gender attribute"
-        # ...and anchor pitch so the speaker doesn't drift male<->female per segment.
-        assert "pitch" in low, f"{v.id}: missing explicit pitch anchor (voice drifts)"
+        for a in attrs:
+            assert a in VALID, f"{v.id}: '{a}' is not a trained OmniVoice attribute"
+        assert any(a in GENDER for a in attrs), f"{v.id}: missing gender attribute"
+        assert any(a in PITCH for a in attrs), f"{v.id}: missing pitch anchor (voice drifts)"
 
 
 def test_resolve_voice():
@@ -69,10 +68,10 @@ def test_resolve_voice():
 
 
 def test_language_name_mapping():
-    assert voices.language_name("en-US") == "english"
-    assert voices.language_name("vi-VN") == "vietnamese"
-    assert voices.language_name("zh-CN") == "chinese"
-    assert voices.language_name("xx-YY") == "english"  # unknown -> English (still runs)
+    assert voices.language_name("en-US") == "English"
+    assert voices.language_name("vi-VN") == "Vietnamese"
+    assert voices.language_name("zh-CN") == "Chinese"
+    assert voices.language_name("xx-YY") is None  # unknown -> auto-detect (no language passed)
 
 
 def test_voices_for_language_is_multilingual():
@@ -86,14 +85,14 @@ def test_health_reports_fallback_always_true():
     assert h.status == "ok"
     assert h.engines["fallback"] is True
     assert "omnivoice" in h.engines
-    # mlx-audio isn't warmed in-process here, so the model is reported not resident.
+    # torch/omnivoice isn't warmed in-process here, so the model isn't resident.
     assert h.loaded is False
     assert h.loadError is None
 
 
 def test_warmup_records_error_when_sdk_missing():
-    # mlx-audio isn't installed in this test env, so warm-up fails: loaded stays
-    # False and the error is recorded for /health.loadError (orchestrator fails fast).
+    # torch/omnivoice aren't installed in this test env, so warm-up fails: loaded
+    # stays False and the error is recorded for /health.loadError (orchestrator fails fast).
     eng = OmniVoiceEngine()
     assert eng.loaded() is False
     with pytest.raises(Exception):
@@ -113,7 +112,7 @@ def test_list_voices_endpoint_returns_designed_set():
 
 
 def test_synthesize_falls_back_to_sized_silence(tmp_path: Path):
-    # No mlx-audio -> every segment becomes a measured silent WAV at 24 kHz.
+    # No torch/omnivoice -> every segment becomes a measured silent WAV at 24 kHz.
     req = SynthesizeRequest(
         language="en-US",
         voiceId="omnivoice-female-calm",
@@ -174,29 +173,25 @@ def test_fit_duration_is_bounded_and_language_aware():
     assert ds_zh > ds_short
 
 
-# --- synth() output guards (the silent-codec safety nets) --------------------
-# These inject a fake model so we exercise synth() WITHOUT mlx-audio (mlx is
-# imported optionally inside synth for exactly this reason).
-
-
-class _FakeResult:
-    def __init__(self, audio):
-        self.audio = audio
+# --- synth() output guards (the audibility / fallback safety nets) -----------
+# Inject a fake model so we exercise synth() WITHOUT torch/omnivoice (not installed
+# in CI / on non-Apple-Silicon). The real OmniVoice.generate() returns a list of
+# np.ndarray waveforms; the fakes mirror that. With a fake model injected, synth's
+# `_seed()` is a no-op (self._torch stays None), so no torch is needed.
 
 
 class _FakeModel:
-    """Minimal mlx-audio stand-in: generate() yields the given chunks."""
+    """Minimal omnivoice stand-in: generate() returns the given list of waveforms."""
 
     def __init__(self, chunks):
-        self._chunks = chunks
+        self._chunks = list(chunks)
 
     def generate(self, **_kwargs):
-        for c in self._chunks:
-            yield _FakeResult(c)
+        return list(self._chunks)
 
 
 class _SequenceModel:
-    """generate() yields a DIFFERENT chunk-list on each call, to exercise the
+    """generate() returns a DIFFERENT waveform-list on each call, to exercise the
     audibility re-roll: pass [weak_draw, audible_draw, ...]."""
 
     def __init__(self, draws):
@@ -206,13 +201,12 @@ class _SequenceModel:
     def generate(self, **_kwargs):
         draw = self._draws[min(self._calls, len(self._draws) - 1)]
         self._calls += 1
-        for c in draw:
-            yield _FakeResult(c)
+        return list(draw)
 
 
 def _engine_with_model(chunks):
     eng = OmniVoiceEngine()
-    eng._model = _FakeModel(chunks)  # bypass _ensure_loaded (no mlx-audio needed)
+    eng._model = _FakeModel(chunks)  # bypass _ensure_loaded (no torch/omnivoice needed)
     return eng
 
 

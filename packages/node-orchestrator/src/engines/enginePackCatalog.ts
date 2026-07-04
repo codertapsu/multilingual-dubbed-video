@@ -369,32 +369,33 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     packKind: 'python-uv',
     displayName: 'OmniVoice Neural TTS (multilingual, Apple Silicon)',
     description:
-      'A massively multilingual neural voice — OmniVoice (k2-fsa), ~646 languages — running on Apple Silicon via MLX. Far broader language coverage than Piper, with natural “designed” voices (calm/bright/warm, female/male). 24 kHz; the model (~3 GB) downloads on first use. Generates ~1.5× faster than real time on an M-series chip. Optional and Apple-Silicon-only — Piper stays the fast default.',
+      'A massively multilingual neural voice — OmniVoice (k2-fsa), 600+ languages — running the full PyTorch model on the Apple Silicon Metal (MPS) backend (the same pipeline as the official demo, for faithful audio quality). Far broader language coverage than Piper, with “designed” voices (gender + age + pitch attributes). 24 kHz; the model (~3 GB) downloads on first use. Generates around real-time (RTF ~1) on an M-series chip. Optional and Apple-Silicon-only — Piper stays the fast default.',
     providerId: 'omnivoice',
     platforms: ['darwin'],
     arch: ['arm64'],
     accel: 'metal',
     tier: 'performance',
-    // ~0.8B-param model, ~2 GB resident. It loads EXCLUSIVELY (evicting other heavy
-    // engine packs first), but the bundled STT/TTS workers stay resident and the GPU
-    // shares RAM on Apple Silicon — so gate higher than the model alone to avoid
-    // mid-run memory pressure (packFitsMachine treats total RAM as VRAM here).
+    // ~0.8B-param model, ~3 GB resident in fp16. It loads EXCLUSIVELY (evicting
+    // other heavy engine packs first), but the bundled STT/TTS workers stay
+    // resident and the GPU shares RAM on Apple Silicon — so gate higher than the
+    // model alone to avoid mid-run memory pressure (packFitsMachine treats total
+    // RAM as VRAM here).
     minRamMb: 16384,
-    approxSizeMb: 4500,
+    approxSizeMb: 1500,
     artifacts: [
       {
-        // uv venv (mlx-audio) per uvRequirements['tts-omnivoice']; the first-party
-        // `vd_omnivoice` server is loaded from bundled source via PYTHONPATH (see
-        // engineManager). The OmniVoice model downloads on first use into the
-        // pack's hf/ dir, like the Whisper/VieNeu models.
+        // uv venv (torch + omnivoice) per uvRequirements['tts-omnivoice']; the
+        // first-party `vd_omnivoice` server is loaded from bundled source via
+        // PYTHONPATH (see engineManager). The OmniVoice model downloads on first
+        // use into the pack's hf/ dir, like the Whisper/VieNeu models.
         url: 'uv-env://tts-omnivoice',
-        approxSizeMb: 4500,
+        approxSizeMb: 1500,
         destPath: 'venv',
       },
     ],
     licenseCategory: 'commercial-restricted',
     licenseNote:
-      'OmniVoice code + weights are Apache-2.0 (k2-fsa), but the bundled HiggsAudio tokenizer carries the Boson Higgs Audio 2 Community License (non-OSI; 100k annual-active-users commercial gate). Fine for this open-source, non-commercial app — review before any commercial redistribution. Apple Silicon only (MLX). Reference-audio voice cloning is not yet available in the MLX checkpoint (designed voices only).',
+      'OmniVoice code + weights are Apache-2.0 (k2-fsa), but the bundled HiggsAudio tokenizer carries the Boson Higgs Audio 2 Community License (non-OSI; 100k annual-active-users commercial gate). Fine for this open-source, non-commercial app — review before any commercial redistribution. Apple Silicon only (PyTorch/MPS). Reference-audio voice cloning is supported by the model but not wired here (designed voices only).',
   },
 
   // --- vocal separation (uv-managed Python env) ----------------------------

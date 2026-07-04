@@ -60,11 +60,17 @@ community **GGUF requants** of Google's `google/translategemma-*-it` models.
 > shipping a build that bundles the weights. (A future Gemma-4-based TranslateGemma
 > would move to Apache-2.0 and drop these obligations.)
 
-### OmniVoice (`tts-omnivoice` engine pack — Apple Silicon only)
+### OmniVoice (`tts-omnivoice` engine pack — Apple Silicon only, ON HOLD)
+
+> **Status:** this pack is currently **excluded from releases** (gated in
+> `DISABLED_PACK_IDS`; its worker source is not bundled) while output quality
+> stabilizes — see [docs/OMNIVOICE.md](docs/OMNIVOICE.md). The license notes below
+> apply whenever it ships again.
 
 The optional OmniVoice neural-TTS engine pack runs k2-fsa's **OmniVoice** on Apple
-Silicon via **MLX** (`mlx-audio`). It is **not** bundled — the user installs it on
-demand, and the model (`mlx-community/OmniVoice-bf16`) downloads on first use.
+Silicon via the official **PyTorch** package on the Metal (MPS) backend (the MLX
+ports degrade the audio codec). It is **not** bundled — the user installs it on
+demand, and the model (`k2-fsa/OmniVoice`) downloads on first use.
 
 - **OmniVoice** code + weights are **Apache-2.0** (k2-fsa).
 - **BUT** the model bundles the **HiggsAudio tokenizer**, whose weights are under
@@ -73,9 +79,9 @@ demand, and the model (`mlx-community/OmniVoice-bf16`) downloads on first use.
   a no-competing-model clause. This is acceptable for VideoDubber as an open-source,
   non-commercial app, but **a commercial redistributor must review it** (and may
   need a separate license from Boson AI).
-- `mlx-audio` and `mlx` are **MIT**.
-- Reference-audio voice cloning is **not** enabled (the MLX checkpoint omits the
-  audio encoder); only "designed" voices are offered.
+- `torch` / `torchaudio` are **BSD-3-Clause**.
+- Reference-audio voice cloning is **not** enabled; only "designed" voices
+  (the model's trained instruct vocabulary) are offered.
 
 > Re-check the Boson Higgs Audio 2 Community License before shipping a build that
 > bundles or auto-downloads these weights.

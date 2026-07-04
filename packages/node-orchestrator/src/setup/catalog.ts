@@ -187,6 +187,21 @@ export function findPiperVoice(voiceId: string): PiperVoiceInfo | undefined {
   return PIPER_VOICES.find((v) => v.id === voiceId);
 }
 
+/**
+ * The recommended default Piper voice for a target language (exact locale first,
+ * then the base subtag) — the voice the TTS worker auto-selects when no voice is
+ * pinned. Used to treat that voice as a REQUIRED resource so a default dub never
+ * falls through to silent/fallback audio for want of a downloaded voice.
+ */
+export function recommendedPiperVoice(language: string | undefined): PiperVoiceInfo | undefined {
+  if (!language) return undefined;
+  const exact = PIPER_VOICES.find((v) => v.language === language && v.recommended);
+  if (exact) return exact;
+  const baseOf = (lang: string) => (lang.split(/[-_]/)[0] ?? lang).toLowerCase();
+  const base = baseOf(language);
+  return PIPER_VOICES.find((v) => baseOf(v.language) === base && v.recommended);
+}
+
 /** Look up a curated whisper model by id. */
 export function findWhisperModel(modelId: string): WhisperModelInfo | undefined {
   return WHISPER_MODELS.find((m) => m.id === modelId);

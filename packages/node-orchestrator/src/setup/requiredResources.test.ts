@@ -25,11 +25,13 @@ function settings(overrides: Partial<ProjectSettings> = {}): ProjectSettings {
 }
 
 describe('computeRequiredResources', () => {
-  it('lists the whisper model + argos pair when nothing is installed', () => {
+  it('lists the whisper model + argos pair + the auto-selected default voice when nothing is installed', () => {
     const req = computeRequiredResources(settings(), empty);
     expect(req.whisperModel).toBe('small');
     expect(req.argosPairs).toEqual([{ from: 'en', to: 'vi' }]);
-    expect(req.piperVoices).toBeUndefined(); // no explicit voice
+    // No voice pinned, so the recommended default voice for the target language
+    // is REQUIRED — a default dub must never fall through to silent/fallback TTS.
+    expect(req.piperVoices).toEqual(['vi_VN-vais1000-medium']);
     expect(hasRequiredResources(req)).toBe(true);
   });
 
@@ -37,17 +39,24 @@ describe('computeRequiredResources', () => {
     const installed: InstalledModels = {
       whisperModels: ['small'],
       argosPairs: [{ from: 'en', to: 'vi' }],
-      piperVoices: [],
+      piperVoices: ['vi_VN-vais1000-medium'],
     };
     const req = computeRequiredResources(settings(), installed);
     expect(req.whisperModel).toBeUndefined();
     expect(req.argosPairs).toBeUndefined();
+    expect(req.piperVoices).toBeUndefined();
     expect(hasRequiredResources(req)).toBe(false);
   });
 
   it('includes an explicitly-chosen Piper voice when missing', () => {
     const req = computeRequiredResources(settings({ ttsVoiceId: 'vi_VN-vais1000-medium' }), empty);
     expect(req.piperVoices).toEqual(['vi_VN-vais1000-medium']);
+  });
+
+  it('requires the recommended default voice for the target language when none is pinned', () => {
+    // en-US target: the recommended en voice is auto-selected and required.
+    const req = computeRequiredResources(settings({ targetLanguage: 'en-US' }), empty);
+    expect(req.piperVoices?.length).toBe(1);
   });
 
   it('skips non-local providers (cloud / Ollama / whisper.cpp bring their own)', () => {

@@ -19,6 +19,7 @@ import {
   type ProjectSettings,
   type SetupInstallRequest,
 } from '@videodubber/shared';
+import { recommendedPiperVoice } from './catalog.js';
 
 /** The missing required resources for this project's selected default providers. */
 export function computeRequiredResources(
@@ -42,10 +43,13 @@ export function computeRequiredResources(
     if (missing.length > 0) request.argosPairs = missing;
   }
 
-  // TTS — an explicitly-chosen Piper voice. Auto-select degrades gracefully, so
-  // only pre-fetch when the user pinned a specific voice id.
-  if (settings.ttsProviderId === 'piper-local' && settings.ttsVoiceId) {
-    if (!installed.piperVoices.includes(settings.ttsVoiceId)) request.piperVoices = [settings.ttsVoiceId];
+  // TTS — the Piper voice the dub will actually use: the pinned voice, or (when
+  // none is pinned) the recommended default voice for the target language that
+  // the worker auto-selects. We REQUIRE it so a default dub can never fall
+  // through to Piper's silent/fallback engine for want of a downloaded voice.
+  if (settings.ttsProviderId === 'piper-local') {
+    const voiceId = settings.ttsVoiceId || recommendedPiperVoice(settings.targetLanguage)?.id;
+    if (voiceId && !installed.piperVoices.includes(voiceId)) request.piperVoices = [voiceId];
   }
 
   return request;

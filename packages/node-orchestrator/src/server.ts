@@ -66,6 +66,7 @@ import { runPreflight } from './setup/preflight.js';
 import { SetupEventBus } from './setup/setupBus.js';
 import { SetupInstaller } from './setup/installer.js';
 import { SetupStore } from './setup/setupStore.js';
+import { detectInstalledModels } from './setup/detectInstalledModels.js';
 
 /** Ollama's OpenAI-compatible base URL (for the prerequisites probe). */
 const OLLAMA_URL = process.env.OLLAMA_URL?.trim() || 'http://127.0.0.1:11434/v1';
@@ -201,6 +202,22 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const setupBus = options.setupBus ?? new SetupEventBus();
   const installer =
     options.installer ?? new SetupInstaller({ config, store: setupStore, bus: setupBus });
+
+  // Reconcile the recorded inventory with what's actually on disk BEFORE serving:
+  // the desktop shell seed-copies the bundled default models (whisper 'small' +
+  // en->vi Argos + the vi Piper voice) into the model dirs on first launch, so
+  // record them as installed here. Otherwise a first OFFLINE dub's required-
+  // resource check would try to re-download a model that's already present.
+  // Best-effort — a detection error must never block the server from starting.
+  try {
+    const onDisk = await detectInstalledModels({
+      modelsDir: config.modelsDir,
+      whisperCacheDir: config.whisperCacheDir,
+    });
+    await setupStore.reconcileInstalled(onDisk);
+  } catch {
+    /* non-fatal: fall back to the recorded inventory */
+  }
 
   // Probe the bundled worker backing a local provider's phase. The readiness
   // contract uses this to block a run while a worker is still booting — so a run

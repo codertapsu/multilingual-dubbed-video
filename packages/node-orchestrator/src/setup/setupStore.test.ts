@@ -52,6 +52,23 @@ describe('SetupStore round-trip', () => {
     expect(status.installed.piperVoices).toEqual(['vi_VN-vais1000-medium']);
   });
 
+  it('reconciles disk-detected models into the inventory (idempotent)', async () => {
+    await store.addWhisperModel('small'); // already recorded
+    const detected = {
+      whisperModels: ['small', 'large-v3-turbo'],
+      argosPairs: [{ from: 'en', to: 'vi' }],
+      piperVoices: ['vi_VN-vais1000-medium'],
+    };
+    const after = await store.reconcileInstalled(detected);
+    expect(after.installed.whisperModels).toEqual(['small', 'large-v3-turbo']);
+    expect(after.installed.argosPairs).toEqual([{ from: 'en', to: 'vi' }]);
+    expect(after.installed.piperVoices).toEqual(['vi_VN-vais1000-medium']);
+
+    // A second reconcile with the same detection adds nothing new.
+    const again = await store.reconcileInstalled(detected);
+    expect(again.installed).toEqual(after.installed);
+  });
+
   it('preserves installed lists when marking first-run complete', async () => {
     await store.addWhisperModel('small');
     await store.addPiperVoice('en_US-lessac-medium');

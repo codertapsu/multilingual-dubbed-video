@@ -175,6 +175,33 @@ export class SetupStore {
   }
 
   /**
+   * Union models DETECTED on disk into the recorded inventory — chiefly the
+   * bundled default set the desktop shell seeds into the model dirs on first
+   * launch, which is otherwise invisible to setup.json. Without this, a first
+   * offline dub would try to re-download a model that is already present (and
+   * fail with no network). Idempotent; writes only when something is new.
+   */
+  async reconcileInstalled(detected: InstalledModels): Promise<SetupStatus> {
+    const current = await this.getStatus();
+    const whisperModels = [...current.installed.whisperModels];
+    for (const m of detected.whisperModels) if (!whisperModels.includes(m)) whisperModels.push(m);
+    const argosPairs = [...current.installed.argosPairs];
+    for (const p of detected.argosPairs) if (!argosPairs.some((q) => pairsEqual(q, p))) argosPairs.push(p);
+    const piperVoices = [...current.installed.piperVoices];
+    for (const v of detected.piperVoices) if (!piperVoices.includes(v)) piperVoices.push(v);
+
+    const added =
+      whisperModels.length !== current.installed.whisperModels.length ||
+      argosPairs.length !== current.installed.argosPairs.length ||
+      piperVoices.length !== current.installed.piperVoices.length;
+    if (!added) return current;
+
+    const next: SetupStatus = { ...current, installed: { whisperModels, argosPairs, piperVoices } };
+    await this.saveStatus(next);
+    return next;
+  }
+
+  /**
    * Forget the downloaded Whisper models + Piper voices (used by "free up disk
    * space" after wiping `<config>/models`). Argos pairs live in a separate
    * package dir and are managed elsewhere, so they're left intact; the

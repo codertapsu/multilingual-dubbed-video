@@ -74,10 +74,9 @@ on demand:
   [`PROVIDERS.md`](PROVIDERS.md#engine-packs). The base app always works on the
   bundled CPU engines; packs are purely additive.
 
-> **Per-OS note.** The bundled default set ships in the **macOS** build. The
-> **Windows** installer does not stage the default models yet (no PowerShell port
-> of the staging step), so a Windows install downloads them on first run like any
-> other model — the app still works, just not offline on the very first dub.
+> **Per-OS note.** The bundled default set ships in **both** the macOS and Windows
+> builds (`fetch-default-models.sh` / `fetch-default-models.ps1`), so a first
+> `en→vi` / `zh→vi` dub is offline out-of-box on either OS.
 
 ---
 

@@ -24,7 +24,8 @@ param(
   [switch]$SkipFfmpeg,
   [switch]$SkipUv,
   [switch]$SkipPython,
-  [switch]$SkipEngineSrc
+  [switch]$SkipEngineSrc,
+  [switch]$SkipDefaultModels
 )
 
 $ErrorActionPreference = "Stop"
@@ -123,18 +124,26 @@ if (-not $SkipEngineSrc) {
   if ($LASTEXITCODE -ne 0) { throw "stage-engine-src.mjs failed ($LASTEXITCODE)" }
 }
 
+if (-not $SkipDefaultModels) {
+  Write-Host "`n### Default-pipeline models (offline out-of-box dub) #######"
+  # Stage the default-pipeline models for the BUNDLED language pairs (STT model +
+  # Argos pivot legs + Piper voices) so a first dub for one of those pairs works
+  # fully offline on Windows too — parity with macOS. WHICH pairs is the single
+  # source of truth defaultBundle.ts; the staging script derives the rest. The
+  # runtime seed-copies them into the writable model dirs on first launch
+  # (sidecar.rs). Non-fatal: a failure downgrades to a first-run download (the
+  # assertion below still fails the release when models are required and absent).
+  try { & (Join-Path $ScriptDir "fetch-default-models.ps1") }
+  catch { Write-Warning "default-model staging failed; the installer will need a first-run download (not offline out-of-box). $_" }
+}
 # `resources/default-models` is a DECLARED Tauri resource (tauri.conf.json), so it
 # MUST exist at `tauri build` time or the bundle step aborts on the missing
-# declared resource (the same failure mode a past release hit for engine-src).
-# Windows does NOT yet stage the default-pipeline models (no PowerShell port of
-# fetch-default-models.sh), so a Windows install relies on the first-run download
-# for its first dub — unlike macOS, which ships them for an offline out-of-box dub.
-# Guarantee the dir exists with a placeholder so the bundle succeeds; the runtime
-# seed-copy (sidecar.rs) is a clean no-op when no models are present.
+# declared resource. Guarantee the dir exists with a placeholder if staging was
+# skipped/failed; the runtime seed-copy (sidecar.rs) is a clean no-op when empty.
 $DmRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\default-models"
 New-Item -ItemType Directory -Force -Path $DmRes | Out-Null
 if (-not (Get-ChildItem -Path $DmRes -ErrorAction SilentlyContinue)) {
-  Set-Content -Path (Join-Path $DmRes "README.txt") -Value "Default-pipeline models for the bundled language pairs are staged here on macOS for an offline out-of-box dub. On Windows they are not bundled yet; the app downloads them on first run."
+  Set-Content -Path (Join-Path $DmRes "README.txt") -Value "Default-pipeline models for the bundled language pairs (whisper + Argos pivot legs + Piper voices; see defaultBundle.ts) are staged here at build time for an offline out-of-box dub."
 }
 
 Write-Host "`n############################################################"
@@ -151,4 +160,52 @@ foreach ($b in @("vd-stt-worker","vd-translation-worker","vd-tts-worker")) {
   $exe = Join-Path (Join-Path $WorkersRes $b) "$b.exe"
   if (Test-Path $exe) { Write-Host "    resources\workers\$b\ (one-dir)" }
   else { Write-Host "NOTE: missing one-dir worker $exe (skipped or failed?)." }
+}
+
+# --- Release bundle assertion (mirror of build-sidecars.sh) ------------------
+# A RELEASE must ship its built-in prerequisites: the default-pipeline models
+# (offline out-of-box dub) + bundled uv + CPython. Fail the build rather than
+# silently ship a degraded installer. Skipped components aren't asserted; set
+# $env:ASSERT_BUNDLE = '0' to downgrade to a warning for a deliberately-partial build.
+if ($env:ASSERT_BUNDLE -ne '0') {
+  $missing = @()
+  # Honor BOTH the -SkipDefaultModels switch and the $env:SKIP_DEFAULT_MODELS the
+  # staging script obeys, so an intentional skip doesn't fail the release.
+  if (-not $SkipDefaultModels -and $env:SKIP_DEFAULT_MODELS -ne '1') {
+    if (-not (Get-ChildItem (Join-Path $DmRes 'huggingface\models--*') -ErrorAction SilentlyContinue)) {
+      $missing += 'default whisper model'; Write-Host "::error:: missing bundled default whisper model ($DmRes\huggingface\models--*)"
+    }
+    # Assert EACH bundled pair's Argos leg + Piper voice individually, from the same
+    # source of truth the staging used (defaultBundle.ts via the bridge).
+    $bTsx = Join-Path $RepoRoot 'node_modules\.bin\tsx.cmd'
+    $bBridge = Join-Path $RepoRoot 'packages\node-orchestrator\scripts\print-default-bundle.ts'
+    $bplan = $null
+    # try/catch so a nonzero bridge exit (a terminating error under pwsh 7.4+
+    # $PSNativeCommandUseErrorActionPreference) falls into the aggregation below
+    # instead of aborting before the uv/CPython checks + consolidated message.
+    if (Test-Path $bTsx) { try { $bplan = & $bTsx $bBridge '--sh' } catch { $bplan = $null } }
+    if (-not $bplan) {
+      $missing += 'default-bundle plan'; Write-Host '::error:: could not compute the default-bundle plan for the release assertion'
+    } else {
+      foreach ($line in $bplan) {
+        $p = $line -split "`t"
+        if ($p[0] -eq 'argos') {
+          if (-not (Get-ChildItem (Join-Path $DmRes "argos\translate-$($p[1])_$($p[2])-*") -ErrorAction SilentlyContinue)) {
+            $missing += "Argos $($p[1])->$($p[2])"; Write-Host "::error:: missing bundled Argos $($p[1])->$($p[2])"
+          }
+        } elseif ($p[0] -eq 'piper') {
+          if (-not (Test-Path (Join-Path $DmRes "piper\$($p[1]).onnx")))      { $missing += "Piper voice $($p[1])";  Write-Host "::error:: missing bundled Piper voice $($p[1])" }
+          if (-not (Test-Path (Join-Path $DmRes "piper\$($p[1]).onnx.json"))) { $missing += "Piper config $($p[1])"; Write-Host "::error:: missing bundled Piper config $($p[1])" }
+        }
+      }
+    }
+  }
+  if (-not $SkipUv     -and -not (Test-Path (Join-Path $BinDir "vd-uv-$Triple.exe"))) { $missing += 'uv binary';       Write-Host "::error:: missing bundled uv binary" }
+  if (-not $SkipPython -and -not (Get-ChildItem (Join-Path $PyRes 'cpython-*') -ErrorAction SilentlyContinue)) { $missing += 'bundled CPython'; Write-Host "::error:: missing bundled CPython" }
+  if ($missing.Count -gt 0) {
+    Write-Host "::error:: release bundle is MISSING required built-in dependencies (see above)."
+    Write-Host "          Re-run with network, or set `$env:ASSERT_BUNDLE = '0' to ship a degraded build on purpose."
+    exit 1
+  }
+  Write-Host "OK bundle assertion passed: default models + uv + CPython are all bundled."
 }

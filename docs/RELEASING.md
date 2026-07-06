@@ -85,10 +85,12 @@ pwsh scripts\package\release-windows.ps1 -Sidecars -Upload
 ```
 
 This builds the sidecars (auto-downloads a **static** libass ffmpeg — do **not**
-set `FFMPEG_PATH` to a shared build), runs `tauri build` (NSIS `-setup.exe` + MSI,
-each with an updater `.sig`), uploads all four artifacts to the same `vX.Y.Z`
-draft, and merges the `windows-x86_64` entry into `latest.json`. Installers are
-unsigned → first launch shows SmartScreen: **More info → Run anyway**.
+set `FFMPEG_PATH` to a shared build), runs `tauri build` (the NSIS `-setup.exe`
+with an updater `.sig`), uploads it to the same `vX.Y.Z` draft, and merges the
+`windows-x86_64` entry into `latest.json`. Windows ships the **NSIS `-setup.exe`
+only** (no MSI — `bundle.targets` excludes it; the `.exe` is a complete installer
+and is what auto-update uses). The installer is unsigned → first launch shows
+SmartScreen: **More info → Run anyway**.
 
 ### 4. Verify the draft
 
@@ -96,8 +98,7 @@ GitHub → **Releases** → the `vX.Y.Z` draft. Confirm:
 
 1. **Assets present** — macOS: `VideoDubber_X.Y.Z_aarch64.dmg`,
    `VideoDubber_X.Y.Z_aarch64.app.tar.gz` (+ `.sig`); Windows:
-   `VideoDubber_X.Y.Z_x64-setup.exe` (+ `.sig`), `VideoDubber_X.Y.Z_x64_en-US.msi`
-   (+ `.sig`); and `latest.json`.
+   `VideoDubber_X.Y.Z_x64-setup.exe` (+ `.sig`); and `latest.json`.
 2. **`latest.json` has BOTH platforms** — open it: `platforms` contains
    `darwin-aarch64` **and** `windows-x86_64`, and `"version": "X.Y.Z"`.
 3. **The draft's tag is `vX.Y.Z`** (not `untagged-<sha>`) — otherwise every
@@ -336,7 +337,7 @@ otool -L apps/desktop/src-tauri/target/release/bundle/macos/VideoDubber.app/Cont
 > then upload the `tauri build` output from `.../bundle/dmg/`. Notarization is the
 > better experience (plain double-click), so prefer it when you can.
 
-### Windows (`.exe` + `.msi`) — on your Windows desktop
+### Windows (`.exe`) — on your Windows desktop
 
 Project checkout: `D:\development\projects\multilingual-dubbed-video`.
 
@@ -375,12 +376,13 @@ pwsh scripts/package/release-windows.ps1 -Sidecars -Upload
 ```
 
 `release-windows.ps1` loads the signing key (env var or `~\.tauri\videodubber.key`),
-builds the sidecars (`build-sidecars.ps1`), runs `tauri build` (NSIS `-setup.exe`
-+ `.msi`, each with an updater `.sig`), verifies all four artifacts, uploads them
-to the tag's draft (`release-upload.ps1`), and merges the `windows-x86_64` entry
-into the release's `latest.json` (`merge-latest-json.mjs` — preserves the mac
-entry if it's already there). Installers are unsigned (no Authenticode cert), so
-first-run shows SmartScreen: **More info → Run anyway**.
+builds the sidecars (`build-sidecars.ps1`), runs `tauri build` (the NSIS
+`-setup.exe` with an updater `.sig` — `bundle.targets` excludes the MSI, so Windows
+ships the `.exe` only, which is a complete installer and what auto-update uses),
+uploads it to the tag's draft (`release-upload.ps1`), and merges the
+`windows-x86_64` entry into the release's `latest.json` (`merge-latest-json.mjs` —
+preserves the mac entry if it's already there). The installer is unsigned (no
+Authenticode cert), so first-run shows SmartScreen: **More info → Run anyway**.
 
 ### Publish
 
@@ -389,7 +391,7 @@ whichever merges `latest.json` second preserves the other's platform entry.
 Before publishing, check on the draft:
 
 1. Assets: mac `.dmg` + `VideoDubber_<ver>_aarch64.app.tar.gz(.sig)`, Windows
-   `-setup.exe(.sig)` + `.msi(.sig)`, and `latest.json`.
+   `-setup.exe(.sig)`, and `latest.json`.
 2. `latest.json` contains **both** `darwin-aarch64` and `windows-x86_64` entries
    and `version` matches the tag.
 3. The draft's tag is the real `vX.Y.Z` (the merge script's `--fix-tag` repairs
@@ -469,9 +471,9 @@ cannot check it for malicious software").
 
 ### Windows (Authenticode)
 
-If `WINDOWS_CERTIFICATE` is set, the `.msi`/`.exe` are Authenticode-signed,
-which avoids the SmartScreen "unknown publisher" warning. Unsigned builds still
-work but show that warning. EV certificates clear SmartScreen reputation fastest.
+If `WINDOWS_CERTIFICATE` is set, the `-setup.exe` is Authenticode-signed, which
+avoids the SmartScreen "unknown publisher" warning. Unsigned builds still work but
+show that warning. EV certificates clear SmartScreen reputation fastest.
 
 ### Linux
 

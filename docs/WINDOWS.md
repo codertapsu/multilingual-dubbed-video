@@ -10,8 +10,8 @@ There are **two things** you can do:
 - **Run in dev mode** — hot-reloading workers + orchestrator + Angular UI, either
   in the browser or in the native Tauri window. Needs the Python worker venvs and
   models, but **not** the release toolchain (signing key etc.).
-- **Build → release → publish** — produce the signed `.exe`/`.msi` installers and
-  upload them to the GitHub release. Needs the updater signing key + a GitHub
+- **Build → release → publish** — produce the signed `.exe` installer and
+  upload it to the GitHub release. Needs the updater signing key + a GitHub
   token on top of the dev prerequisites.
 
 ---
@@ -259,10 +259,13 @@ What it does, in order:
 1. **`-Sidecars`** → `build-sidecars.ps1`: builds the orchestrator (Node SEA), the
    three PyInstaller workers, `vd-piper`, a **static** libass ffmpeg (auto-download
    — see Part A.7), `vd-uv` + bundled CPython, and stages the engine-pack source.
-2. `pnpm app:build` → Tauri build → the NSIS `…_x64-setup.exe` and MSI
-   `…_x64_en-US.msi`, each with an updater `.sig` (the signing key from step 1).
-3. Verifies all four artifacts exist.
-4. **`-Upload`** → uploads the four files to the tag's **draft** release
+2. `pnpm app:build` → Tauri build → the NSIS `…_x64-setup.exe` with an updater
+   `.sig` (the signing key from step 1). `bundle.targets` is `["app","dmg","nsis"]`,
+   so Windows produces the `-setup.exe` **only** — no MSI. The `.exe` is a complete
+   installer and is what auto-update uses; the MSI needs the WiX toolset and is
+   dropped for a simpler, faster local build.
+3. Verifies the `-setup.exe` + its `.sig` exist.
+4. **`-Upload`** → uploads them to the tag's **draft** release
    (`release-upload.ps1`) and merges the `windows-x86_64` entry into the release's
    `latest.json` (`merge-latest-json.mjs`, preserving the mac entry if it's already
    there; `--fix-tag` repairs a stray `untagged-<sha>` draft tag).
@@ -278,7 +281,7 @@ shows Windows SmartScreen — **More info → Run anyway**.
 The Mac and Windows both upload to the same draft (found by tag). On the GitHub
 **Releases** page, open the draft and confirm before publishing:
 
-1. Assets present: Windows `…-setup.exe(.sig)` + `…_en-US.msi(.sig)`, macOS `.dmg`
+1. Assets present: Windows `…-setup.exe(.sig)`, macOS `.dmg`
    + `VideoDubber_<ver>_aarch64.app.tar.gz(.sig)`, and `latest.json`.
 2. `latest.json` has **both** `windows-x86_64` and `darwin-aarch64` entries and its
    `version` matches the tag.

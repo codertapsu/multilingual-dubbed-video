@@ -18,12 +18,15 @@
        PyInstaller workers, vd-piper, static libass ffmpeg (auto-downloads the
        BtbN win64-gpl build; do NOT point FFMPEG_PATH at a *shared* ffmpeg),
        vd-uv + bundled CPython, engine-src.
-    2. pnpm app:build — Tauri build. TAURI_SIGNING_PRIVATE_KEY must be set so
-       the NSIS/MSI installers get updater signatures (.sig). The key password
-       is empty -> TAURI_SIGNING_PRIVATE_KEY_PASSWORD defaults to ''.
-    3. Verifies the four artifacts exist: *-setup.exe(.sig) + *_en-US.msi(.sig).
-    4. (-Upload) uploads all four to the vX.Y.Z DRAFT (release-upload.ps1) and
-       merges the windows-x86_64 entry into latest.json (merge-latest-json.mjs,
+    2. pnpm app:build — Tauri build. TAURI_SIGNING_PRIVATE_KEY must be set so the
+       NSIS -setup.exe gets an updater signature (.sig). The key password is
+       empty -> TAURI_SIGNING_PRIVATE_KEY_PASSWORD defaults to ''. bundle.targets
+       is ["app","dmg","nsis"], so Windows produces the NSIS -setup.exe (no MSI;
+       the .exe is a complete installer and is what auto-update uses).
+    3. Verifies the required artifacts: -setup.exe + its .sig. (An MSI is uploaded
+       too if you re-enable the msi target and it builds; otherwise skipped.)
+    4. (-Upload) uploads them to the vX.Y.Z DRAFT (release-upload.ps1) and merges
+       the windows-x86_64 entry into latest.json (merge-latest-json.mjs,
        preserving the mac entry if the Mac already merged its side).
 
   Prereqs (one-time, see docs/RELEASING.md "Windows — on your Windows desktop"):
@@ -81,30 +84,40 @@ if ($Sidecars) {
   if ($LASTEXITCODE -ne 0) { throw "build-sidecars.ps1 failed ($LASTEXITCODE)" }
 }
 
-Write-Host '==> build the app (tauri build; emits NSIS + MSI + updater .sig files)'
+Write-Host '==> build the app (tauri build; emits the NSIS -setup.exe + its updater .sig)'
 pnpm app:build
 if ($LASTEXITCODE -ne 0) { throw "pnpm app:build failed ($LASTEXITCODE)" }
 
 # --- locate + verify the artifacts ----------------------------------------------
+# The NSIS -setup.exe is REQUIRED (it's what the auto-updater installs). The MSI is
+# OPTIONAL: it only builds when the WiX toolset is available and succeeds on the
+# large bundle, so a missing MSI is a warning, not a failure.
 $bundle = 'apps/desktop/src-tauri/target/release/bundle'
 $setup = Get-ChildItem "$bundle/nsis" -Filter "VideoDubber_${Version}_x64-setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 $msi   = Get-ChildItem "$bundle/msi"  -Filter "VideoDubber_${Version}_x64_en-US.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $setup) { throw "NSIS installer not found under $bundle/nsis" }
-if (-not $msi)   { throw "MSI installer not found under $bundle/msi" }
-foreach ($f in @($setup, $msi)) {
-  if (-not (Test-Path "$($f.FullName).sig")) {
-    throw ("missing updater signature $($f.Name).sig - tauri build ran without a usable " +
-      'TAURI_SIGNING_PRIVATE_KEY. Fix the key and rebuild.')
-  }
+if (-not $setup) { throw "NSIS installer not found under $bundle/nsis (did `tauri build` finish?)." }
+if (-not (Test-Path "$($setup.FullName).sig")) {
+  throw ("missing updater signature $($setup.Name).sig - tauri build ran without a usable " +
+    'TAURI_SIGNING_PRIVATE_KEY. Fix the key and rebuild.')
 }
+
+# Files to upload: always the NSIS pair; add the MSI pair only if it built (+ signed).
+$uploads = @($setup.FullName, "$($setup.FullName).sig")
 Write-Host "==> artifacts:"
-foreach ($f in @($setup, $msi)) { Write-Host "    $($f.Name) (+ .sig)" }
+Write-Host "    $($setup.Name) (+ .sig)"
+if ($msi -and (Test-Path "$($msi.FullName).sig")) {
+  $uploads += @($msi.FullName, "$($msi.FullName).sig")
+  Write-Host "    $($msi.Name) (+ .sig)"
+} elseif ($msi) {
+  Write-Warning "MSI built but its .sig is missing - skipping the MSI upload."
+} else {
+  Write-Host "    (no .msi - not built; ships the NSIS -setup.exe only, which is what auto-update uses)"
+}
 
 if ($Upload) {
   Write-Host "==> upload installers + sigs to the $Tag draft"
   $env:RELEASE_TAG = $Tag
-  pwsh (Join-Path $ScriptDir 'release-upload.ps1') -Upload `
-    $setup.FullName, "$($setup.FullName).sig", $msi.FullName, "$($msi.FullName).sig"
+  pwsh (Join-Path $ScriptDir 'release-upload.ps1') -Upload $uploads
   if ($LASTEXITCODE -ne 0) { throw "release-upload.ps1 failed ($LASTEXITCODE)" }
 
   Write-Host '==> merge the windows-x86_64 entry into latest.json (preserves the mac entry)'

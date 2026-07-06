@@ -67,6 +67,11 @@ pnpm install --frozen-lockfile
 SIDECARS=1 UPLOAD=1 bash scripts/package/release-macos.sh
 ```
 
+> The updater key has an **empty password**; `release-macos.sh` exports
+> `TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""` so `tauri build` decrypts it without
+> prompting. (If it ever does prompt — e.g. running `pnpm app:build` by hand — just
+> press **Enter**.)
+
 This builds the sidecars, runs `tauri build` (notary creds withheld so it signs
 but doesn't self-notarize), deep-signs every Mach-O + notarizes + staples,
 **regenerates** the signed updater archive from the repaired app

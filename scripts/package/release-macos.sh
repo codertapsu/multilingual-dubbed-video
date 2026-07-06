@@ -30,6 +30,11 @@ set -euo pipefail
 : "${APPLE_PASSWORD:?set APPLE_PASSWORD (app-specific password)}"
 : "${APPLE_TEAM_ID:?set APPLE_TEAM_ID}"
 
+# The updater signing key (videodubber.key) has an EMPTY password. Export the
+# password (default empty) so `tauri build` decrypts the key non-interactively
+# instead of stopping to prompt. Set it yourself if you use a password-protected key.
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 
 if [ "${SIDECARS:-}" = "1" ]; then

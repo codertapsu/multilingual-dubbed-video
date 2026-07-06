@@ -1,6 +1,6 @@
 {
   "name": "videodubber-desktop",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "VideoDubber desktop UI (Angular 18 standalone) running inside a Tauri 2 shell.",
   "type": "module",
   "private": true,

@@ -4719,7 +4719,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "videodubber-desktop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",

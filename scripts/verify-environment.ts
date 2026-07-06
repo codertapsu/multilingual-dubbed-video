@@ -68,7 +68,9 @@ const STT_WORKER_URL = ENV.STT_WORKER_URL ?? 'http://127.0.0.1:5101';
 const TRANSLATION_WORKER_URL = ENV.TRANSLATION_WORKER_URL ?? 'http://127.0.0.1:5102';
 const TTS_WORKER_URL = ENV.TTS_WORKER_URL ?? 'http://127.0.0.1:5103';
 
-const PYTHON_PATH = ENV.PYTHON_PATH ?? 'python3';
+// Windows ships `python`, not `python3`; the py.exe launcher makes `python3`
+// resolve only sometimes. Default to the platform-correct name.
+const PYTHON_PATH = ENV.PYTHON_PATH ?? (process.platform === 'win32' ? 'python' : 'python3');
 const FFMPEG_PATH = ENV.FFMPEG_PATH ?? 'ffmpeg';
 const FFPROBE_PATH = ENV.FFPROBE_PATH ?? 'ffprobe';
 
@@ -113,7 +115,16 @@ function run(cmd: string, args: readonly string[], timeoutMs = 5000): Promise<Ru
 
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawn(cmd, args, { windowsHide: true });
+      // On Windows, npm bin shims (pnpm, tsx, …) are `.cmd`/`.ps1` files that
+      // Node's spawn CANNOT launch by bare name without a shell — so `pnpm`
+      // reads as "not found" here even though it works in the terminal. Use the
+      // shell on Windows, and quote the command + any space-containing args
+      // (e.g. `C:\Program Files\…\ffmpeg.exe`) so the shell parses them intact.
+      const useShell = process.platform === 'win32';
+      const q = (s: string): string => (useShell && /\s/.test(s) ? `"${s}"` : s);
+      child = useShell
+        ? spawn(q(cmd), args.map(q), { windowsHide: true, shell: true })
+        : spawn(cmd, args, { windowsHide: true });
     } catch {
       finish({ code: null, stdout: '', stderr: '', spawnError: true });
       return;

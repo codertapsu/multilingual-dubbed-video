@@ -118,11 +118,11 @@ function Start-Worker {
     if (Test-Path $venvPy) {
         $py = $venvPy
     } else {
-        Write-Warn "$Name: no .venv in $wdir; using '$PythonBin'. Run scripts\setup-local-models.ps1."
+        Write-Warn "${Name}:no .venv in $wdir; using '$PythonBin'. Run scripts\setup-local-models.ps1."
     }
 
     if (($py -eq $PythonBin) -and -not (Get-Command $py -ErrorAction SilentlyContinue)) {
-        Write-Warn "$Name: no usable python interpreter; skipping."
+        Write-Warn "${Name}:no usable python interpreter; skipping."
         return
     }
 
@@ -152,8 +152,11 @@ if (-not $env:ORCHESTRATOR_URL) {
 Write-Info "Starting Node orchestrator on port $OrchestratorPort (logs: $LogDir\orchestrator.log)"
 $orchOut = Join-Path $LogDir 'orchestrator.log'
 $orchErr = Join-Path $LogDir 'orchestrator.err.log'
-$orch = Start-Process -FilePath 'pnpm' `
-    -ArgumentList @('--filter', '@videodubber/node-orchestrator', 'dev') `
+# pnpm is a .cmd shim on Windows; Start-Process can't launch it by bare name
+# ("%1 is not a valid Win32 application"), so run it through cmd.exe, which
+# resolves pnpm.cmd via PATH. Redirection captures pnpm's output as normal.
+$orch = Start-Process -FilePath $env:ComSpec `
+    -ArgumentList @('/c', 'pnpm', '--filter', '@videodubber/node-orchestrator', 'dev') `
     -WorkingDirectory $RootDir -RedirectStandardOutput $orchOut -RedirectStandardError $orchErr `
     -NoNewWindow -PassThru
 [void]$script:Procs.Add($orch)
@@ -163,8 +166,8 @@ if (-not $SkipUi) {
     Write-Info "Starting Angular dev server (videodubber-desktop) on port $AngularPort"
     $uiOut = Join-Path $LogDir 'desktop.log'
     $uiErr = Join-Path $LogDir 'desktop.err.log'
-    $ui = Start-Process -FilePath 'pnpm' `
-        -ArgumentList @('--filter', 'videodubber-desktop', 'dev') `
+    $ui = Start-Process -FilePath $env:ComSpec `
+        -ArgumentList @('/c', 'pnpm', '--filter', 'videodubber-desktop', 'dev') `
         -WorkingDirectory $RootDir -RedirectStandardOutput $uiOut -RedirectStandardError $uiErr `
         -NoNewWindow -PassThru
     [void]$script:Procs.Add($ui)

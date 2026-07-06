@@ -118,7 +118,13 @@ if (-not $FfmpegUrl) {
 
 $Zip = Join-Path $Work "ffmpeg.zip"
 Write-Host "==> Downloading $FfmpegUrl"
-Invoke-WebRequest -Uri $FfmpegUrl -OutFile $Zip -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 5
+# Retry loop instead of -MaximumRetryCount/-RetryIntervalSec (those params are
+# PowerShell 6+ only; this script advertises `#requires -Version 5.1` and is
+# reachable under Windows PowerShell 5.1 via clean-build.mjs's fallback).
+for ($i = 1; $i -le 3; $i++) {
+  try { Invoke-WebRequest -Uri $FfmpegUrl -OutFile $Zip -UseBasicParsing; break }
+  catch { if ($i -eq 3) { throw }; Write-Host "   download failed (attempt $i/3), retrying in 5s..."; Start-Sleep -Seconds 5 }
+}
 Write-Host "==> Extracting..."
 Expand-Archive -Path $Zip -DestinationPath (Join-Path $Work "ff") -Force
 

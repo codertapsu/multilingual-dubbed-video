@@ -60,11 +60,11 @@ function Start-Worker {
     if (Test-Path $venvPy) {
         $py = $venvPy
     } else {
-        Write-Warn "$Name: no .venv in $wdir; using '$PythonBin'. Run scripts\setup-local-models.ps1."
+        Write-Warn "${Name}:no .venv in $wdir; using '$PythonBin'. Run scripts\setup-local-models.ps1."
     }
 
     if (($py -eq $PythonBin) -and -not (Get-Command $py -ErrorAction SilentlyContinue)) {
-        Write-Warn "$Name: no usable python interpreter; skipping."
+        Write-Warn "${Name}:no usable python interpreter; skipping."
         return
     }
 

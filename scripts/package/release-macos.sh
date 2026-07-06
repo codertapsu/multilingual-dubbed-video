@@ -53,7 +53,9 @@ VERSION="$(node -e "console.log(require('./apps/desktop/src-tauri/tauri.conf.jso
 TAG="${RELEASE_TAG:-v${VERSION}}"
 APP="$(find apps/desktop/src-tauri/target -path '*/release/bundle/macos/VideoDubber.app' | head -1)"
 [ -n "$APP" ] || { echo "::error::repaired VideoDubber.app not found"; exit 1; }
-TARBALL_DIR="$(dirname "$APP")"
+# ABSOLUTE dir: `pnpm exec tauri signer sign` below runs with CWD = apps/desktop,
+# so a relative tarball path would resolve wrong ("No such file or directory").
+TARBALL_DIR="$(cd "$(dirname "$APP")" && pwd)"
 TARBALL="${TARBALL_DIR}/VideoDubber_${VERSION}_aarch64.app.tar.gz"
 echo "==> regenerate updater archive from the repaired app: $(basename "$TARBALL")"
 xcrun stapler staple "$APP" >/dev/null 2>&1 || true   # idempotent; ensures the ticket rides along

@@ -24,8 +24,7 @@ param(
   [switch]$SkipFfmpeg,
   [switch]$SkipUv,
   [switch]$SkipPython,
-  [switch]$SkipEngineSrc,
-  [switch]$SkipDefaultModels
+  [switch]$SkipEngineSrc
 )
 
 $ErrorActionPreference = "Stop"
@@ -124,26 +123,26 @@ if (-not $SkipEngineSrc) {
   if ($LASTEXITCODE -ne 0) { throw "stage-engine-src.mjs failed ($LASTEXITCODE)" }
 }
 
-if (-not $SkipDefaultModels) {
-  Write-Host "`n### Default-pipeline models (offline out-of-box dub) #######"
-  # Stage the default-pipeline models for the BUNDLED language pairs (STT model +
-  # Argos pivot legs + Piper voices) so a first dub for one of those pairs works
-  # fully offline on Windows too — parity with macOS. WHICH pairs is the single
-  # source of truth defaultBundle.ts; the staging script derives the rest. The
-  # runtime seed-copies them into the writable model dirs on first launch
-  # (sidecar.rs). Non-fatal: a failure downgrades to a first-run download (the
-  # assertion below still fails the release when models are required and absent).
-  try { & (Join-Path $ScriptDir "fetch-default-models.ps1") }
-  catch { Write-Warning "default-model staging failed; the installer will need a first-run download (not offline out-of-box). $_" }
-}
-# `resources/default-models` is a DECLARED Tauri resource (tauri.conf.json), so it
-# MUST exist at `tauri build` time or the bundle step aborts on the missing
-# declared resource. Guarantee the dir exists with a placeholder if staging was
-# skipped/failed; the runtime seed-copy (sidecar.rs) is a clean no-op when empty.
+# `resources/default-models` is a DECLARED Tauri resource — always exists.
 $DmRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\default-models"
+# Bundling the default models is OPT-IN ($env:BUNDLE_DEFAULT_MODELS = '1'): it
+# makes a first en->vi / zh->vi dub work offline but adds ~1 GB to the installer.
+# The DEFAULT ships a small installer that downloads them on first run; the
+# runtime seed-copy (sidecar.rs) no-ops when none are bundled.
+if ($env:BUNDLE_DEFAULT_MODELS -eq '1') {
+  Write-Host "`n### Default-pipeline models - BUNDLED (offline out-of-box, +~1 GB) ###"
+  try { & (Join-Path $ScriptDir "fetch-default-models.ps1") }
+  catch { Write-Warning "default-model staging failed; the installer will need a first-run download. $_" }
+} else {
+  Write-Host "`n### Default-pipeline models - NOT bundled (small installer; download on first run) ###"
+  # Clear any previously-staged models so a small build never carries them.
+  foreach ($sub in @('huggingface','argos','piper')) {
+    Remove-Item -Recurse -Force (Join-Path $DmRes $sub) -ErrorAction SilentlyContinue
+  }
+}
 New-Item -ItemType Directory -Force -Path $DmRes | Out-Null
 if (-not (Get-ChildItem -Path $DmRes -ErrorAction SilentlyContinue)) {
-  Set-Content -Path (Join-Path $DmRes "README.txt") -Value "Default-pipeline models for the bundled language pairs (whisper + Argos pivot legs + Piper voices; see defaultBundle.ts) are staged here at build time for an offline out-of-box dub."
+  Set-Content -Path (Join-Path $DmRes "README.txt") -Value "Default-pipeline models are bundled here only when BUNDLE_DEFAULT_MODELS=1 (offline out-of-box dub); otherwise the app downloads them on first run."
 }
 
 Write-Host "`n############################################################"
@@ -163,15 +162,14 @@ foreach ($b in @("vd-stt-worker","vd-translation-worker","vd-tts-worker")) {
 }
 
 # --- Release bundle assertion (mirror of build-sidecars.sh) ------------------
-# A RELEASE must ship its built-in prerequisites: the default-pipeline models
-# (offline out-of-box dub) + bundled uv + CPython. Fail the build rather than
-# silently ship a degraded installer. Skipped components aren't asserted; set
-# $env:ASSERT_BUNDLE = '0' to downgrade to a warning for a deliberately-partial build.
+# A RELEASE must ship the bundled uv + CPython, and — WHEN opted into bundling the
+# default models ($env:BUNDLE_DEFAULT_MODELS = '1') — those too. Fail the build
+# rather than silently ship a degraded installer. Set $env:ASSERT_BUNDLE = '0' to
+# downgrade to a warning for a deliberately-partial build.
 if ($env:ASSERT_BUNDLE -ne '0') {
   $missing = @()
-  # Honor BOTH the -SkipDefaultModels switch and the $env:SKIP_DEFAULT_MODELS the
-  # staging script obeys, so an intentional skip doesn't fail the release.
-  if (-not $SkipDefaultModels -and $env:SKIP_DEFAULT_MODELS -ne '1') {
+  # Only assert the default models when the build actually bundled them.
+  if ($env:BUNDLE_DEFAULT_MODELS -eq '1') {
     if (-not (Get-ChildItem (Join-Path $DmRes 'huggingface\models--*') -ErrorAction SilentlyContinue)) {
       $missing += 'default whisper model'; Write-Host "::error:: missing bundled default whisper model ($DmRes\huggingface\models--*)"
     }

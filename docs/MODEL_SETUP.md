@@ -83,10 +83,12 @@ Argos is offline neural MT. You install a **language package** per direction (e.
 > non-English pair translates in two hops. Installing `zh → vi`, for example, means
 > installing **both** `zh → en` and `en → vi`; argostranslate chains them
 > automatically. The app computes these legs for you (`argosPivotLegs`) when you pick
-> languages, and the packaged installer bundles the legs for its default pairs —
-> `en → vi` **and** `zh → vi` — derived from the single source of truth
-> [`defaultBundle.ts`](../packages/node-orchestrator/src/setup/defaultBundle.ts).
-> To bundle another pair, add it to `DEFAULT_PAIRS` there and rebuild.
+> languages and downloads them on first run. A build can instead **pre-bundle** the
+> legs for its default pairs — `en → vi` **and** `zh → vi` — for an offline
+> out-of-box first dub by setting `BUNDLE_DEFAULT_MODELS=1` (the pairs are the
+> single source of truth
+> [`defaultBundle.ts`](../packages/node-orchestrator/src/setup/defaultBundle.ts);
+> add to `DEFAULT_PAIRS` there and rebuild).
 
 ### Install a package
 

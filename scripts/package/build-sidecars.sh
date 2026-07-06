@@ -108,23 +108,27 @@ if [[ "${SKIP_ENGINE_SRC:-0}" != "1" ]]; then
   node "${SCRIPT_DIR}/stage-engine-src.mjs"
 fi
 
-if [[ "${SKIP_DEFAULT_MODELS:-0}" != "1" ]]; then
-  echo ""; echo "### Default-pipeline models (offline out-of-box dub) #######"
-  # Stage the default-pipeline models for the BUNDLED language pairs (the STT
-  # model + the Argos pivot legs + the Piper voices) INTO the bundle so a first
-  # dub for one of those pairs works fully offline. WHICH pairs is the single
-  # source of truth defaultBundle.ts (today en->vi + zh->vi); the staging script
-  # derives the rest. The runtime seed-copies them into the writable model dirs
-  # on first launch (sidecar.rs). The assertion below fails the release if any
-  # bundled pair's models are missing.
-  bash "${SCRIPT_DIR}/fetch-default-models.sh" || \
-    echo "WARNING: default-model staging failed; the installer will need a first-run download (not offline out-of-box)." >&2
-fi
-# `resources/default-models` is a DECLARED Tauri resource — guarantee it exists.
+# `resources/default-models` is a DECLARED Tauri resource — always exists.
 DM_RES="${REPO_ROOT}/apps/desktop/src-tauri/resources/default-models"
+# Bundling the default models is OPT-IN (BUNDLE_DEFAULT_MODELS=1): it makes a
+# first en->vi / zh->vi dub work fully offline, but adds ~1 GB to the installer.
+# The DEFAULT is a small installer that downloads the models on first run (like
+# v0.2.0) — the runtime seed-copy (sidecar.rs) simply no-ops when none are bundled.
+if [[ "${BUNDLE_DEFAULT_MODELS:-0}" == "1" ]]; then
+  echo ""; echo "### Default-pipeline models — BUNDLED (offline out-of-box, +~1 GB) ###"
+  # WHICH pairs is the single source of truth defaultBundle.ts (today en->vi +
+  # zh->vi); the staging script derives the rest. The assertion below then fails
+  # the release if any bundled pair's models are missing.
+  bash "${SCRIPT_DIR}/fetch-default-models.sh" || \
+    echo "WARNING: default-model staging failed; the installer will need a first-run download." >&2
+else
+  echo ""; echo "### Default-pipeline models — NOT bundled (small installer; download on first run) ###"
+  # Clear any previously-staged models so a small build never carries them.
+  rm -rf "${DM_RES}/huggingface" "${DM_RES}/argos" "${DM_RES}/piper"
+fi
 mkdir -p "${DM_RES}"
 [[ -n "$(ls -A "${DM_RES}" 2>/dev/null)" ]] || \
-  echo "Default-pipeline models for the bundled language pairs (whisper + Argos pivot legs + Piper voices; see defaultBundle.ts) are staged here at build time for an offline out-of-box dub." > "${DM_RES}/README.txt"
+  echo "Default-pipeline models are bundled here only when BUNDLE_DEFAULT_MODELS=1 (offline out-of-box dub); otherwise the app downloads them on first run." > "${DM_RES}/README.txt"
 
 echo ""
 echo "############################################################"
@@ -150,15 +154,14 @@ for base in vd-stt-worker vd-translation-worker vd-tts-worker; do
 done
 
 # --- Release bundle assertion ------------------------------------------------
-# A RELEASE must ship its built-in prerequisites: the default-pipeline models
-# (offline out-of-box dub) + the bundled uv + CPython (optional Python engine
-# packs install with NOTHING preinstalled). Fail the build rather than silently
-# ship a degraded installer. Skipped components (SKIP_*) aren't asserted; set
-# ASSERT_BUNDLE=0 to downgrade to warnings for a deliberately-partial build.
+# A RELEASE must ship the bundled uv + CPython (so the optional Python engine
+# packs install with NOTHING preinstalled), and — WHEN opted into bundling the
+# default models — those too. Fail the build rather than silently ship a degraded
+# installer. Set ASSERT_BUNDLE=0 to downgrade to warnings for a partial build.
 if [[ "${ASSERT_BUNDLE:-1}" == "1" ]]; then
   miss=0
   need() { if compgen -G "$2" >/dev/null; then :; else echo "::error:: missing bundled $1 ($2)"; miss=1; fi; }
-  if [[ "${SKIP_DEFAULT_MODELS:-0}" != "1" ]]; then
+  if [[ "${BUNDLE_DEFAULT_MODELS:-0}" == "1" ]]; then
     need "default whisper model" "${DM_RES}/huggingface/models--*"
     # Assert EACH bundled pair's Argos leg + Piper voice individually, derived from
     # the SAME source of truth the staging used (defaultBundle.ts via the bridge).

@@ -6,13 +6,13 @@ mode you use day-to-day.
 
 > **TL;DR.** The installer bundles *everything that runs code* — the Tauri shell,
 > the Angular UI, the Node orchestrator, the three Python workers, and an
-> libass-enabled FFmpeg/ffprobe — as Tauri **externalBin sidecars**, **plus a
-> small default-model set** (faster-whisper `small` + the Argos legs + the Piper
-> voice for the bundled default pairs, today `en→vi` and `zh→vi`) so a first dub
-> for those pairs works **offline, out of the box**. Larger models, other voices,
-> and other language pairs are downloaded on **first run** via an in-app wizard.
-> (The bundled default set ships on **macOS**; the **Windows** installer currently
-> downloads even the default models on first run — see the per-OS note below.)
+> libass-enabled FFmpeg/ffprobe — as Tauri **externalBin sidecars**. The **AI
+> models** are downloaded on **first run** via an in-app wizard, which keeps the
+> installer small (~0.5 GB). A build can **opt in** to bundling a small
+> default-model set (faster-whisper `small` + the Argos legs + the Piper voice for
+> the default pairs `en→vi` / `zh→vi`) with `BUNDLE_DEFAULT_MODELS=1` for an
+> offline out-of-box first dub — at the cost of ~1 GB more installer size. Default
+> releases do **not** bundle them.
 
 ---
 
@@ -37,11 +37,12 @@ mode you use day-to-day.
 │                                                                                                       │ │
 └───────────────────────────────────────────────────────────────────────────────────────────────────┘ │
                                                                                                         │
-  BUNDLED DEFAULT MODELS (macOS, in resources/default-models, seeded on 1st launch) — offline out-of-box:│
+  OPT-IN BUNDLED DEFAULT MODELS (only when BUNDLE_DEFAULT_MODELS=1; else downloaded on first run):         │
           • faster-whisper `small`  +  Argos legs (en→vi, zh→en, en→vi)  +  the vi Piper voice           │
-          • the bundled pairs are the single source of truth in defaultBundle.ts (DEFAULT_PAIRS)         │
+          • the default pairs are the single source of truth in defaultBundle.ts (DEFAULT_PAIRS)         │
 
-        DOWNLOADED ON DEMAND (non-default models — large + machine-dependent / Windows first run):        │
+        DOWNLOADED ON FIRST RUN / ON DEMAND (default — keeps the installer small):                        │
+          • the default-pair models above (first-run wizard) unless BUNDLE_DEFAULT_MODELS=1               │
           • bigger faster-whisper models (… large-v3-turbo) -> HuggingFace cache (<config>/models)        │
           • Argos packages for OTHER pairs (e.g. ja→en)   -> <config>/models/argos                        │
           • other Piper voices (.onnx + .onnx.json)       -> <config>/models/piper                        │
@@ -59,24 +60,22 @@ to run is inside the app bundle.
 A single Whisper `large-v3` is ~3 GB; every language pair and voice adds more, and
 the optional accelerated/neural engines are larger still. Bundling *every*
 combination would make a multi-gigabyte installer that's mostly dead weight for
-any one user. So the app ships a **small default set** — just enough for an
-offline first dub of the bundled pairs (`defaultBundle.ts`) — and fetches the rest
-on demand:
+any one user. So by default the app ships **no models** and fetches them on demand:
 
-- the **bundled default models** (whisper `small` + the Argos pivot legs + the
-  recommended Piper voice for the default pairs) are staged into the installer at
-  build time and seed-copied into the writable model dirs on first launch, so a
-  first dub for `en→vi` / `zh→vi` needs no network;
-- the **first-run wizard** fetches anything else the chosen languages need (a
-  larger whisper model, a different voice, or a non-default pair);
+- the **first-run wizard** downloads exactly the models the chosen languages need
+  (whisper `small`, the Argos legs, the recommended Piper voice) into the writable
+  model dirs — a one-time download, then it runs offline;
 - **engine packs** (Settings → Engines) download only the higher-quality engines
   a given machine can use, verified and run on demand — see
   [`PROVIDERS.md`](PROVIDERS.md#engine-packs). The base app always works on the
   bundled CPU engines; packs are purely additive.
 
-> **Per-OS note.** The bundled default set ships in **both** the macOS and Windows
-> builds (`fetch-default-models.sh` / `fetch-default-models.ps1`), so a first
-> `en→vi` / `zh→vi` dub is offline out-of-box on either OS.
+> **Opt-in offline out-of-box.** A build can bundle the default-pair models
+> (whisper `small` + the Argos pivot legs + the vi Piper voice, from
+> `defaultBundle.ts`) so a first `en→vi` / `zh→vi` dub needs no network — pass
+> `BUNDLE_DEFAULT_MODELS=1` to the sidecar build (`fetch-default-models.sh` /
+> `.ps1`; seed-copied into the model dirs on first launch by sidecar.rs). It adds
+> ~1 GB to the installer, so it's **off by default**.
 
 ---
 

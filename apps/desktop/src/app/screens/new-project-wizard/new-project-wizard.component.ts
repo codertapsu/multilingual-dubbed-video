@@ -128,10 +128,18 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
    * (a feature whose pack isn't installed is disabled with an "Install" hint, so
    * the user can't enable something that would silently no-op during the run). */
   protected readonly installedPacks = signal<ReadonlySet<string>>(new Set<string>());
+  /** Packs the backend even OFFERS on this machine/OS (available = enabled +
+   * platform/hardware-runnable). A feature whose pack isn't offered is HIDDEN
+   * entirely, not shown as a dead "Install" hint. */
+  protected readonly offeredPacks = signal<ReadonlySet<string>>(new Set<string>());
   /** Vocal-separation pack ("replace original vocals" mix mode) is installed. */
   protected readonly vocalSeparationReady = computed(() => this.installedPacks().has('separation-audio'));
   /** WhisperX pack (forced alignment + diarization) is installed. */
   protected readonly whisperxReady = computed(() => this.installedPacks().has('alignment-whisperx'));
+  /** Whether the vocal-separation feature is offered at all (else hide the control). */
+  protected readonly vocalSeparationOffered = computed(() => this.offeredPacks().has('separation-audio'));
+  /** Whether the WhisperX (alignment + diarization) feature is offered at all. */
+  protected readonly whisperxOffered = computed(() => this.offeredPacks().has('alignment-whisperx'));
 
   /** Phases currently routed to a cloud provider (drives the privacy note). */
   protected readonly cloudPhases = computed(() => {
@@ -262,6 +270,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
       this.providers.set(provs);
       if (engines) {
         this.installedPacks.set(new Set(engines.installed.map((p) => p.id)));
+        this.offeredPacks.set(new Set(engines.available.map((p) => p.id)));
         this.resetUnavailableFeatureToggles();
       }
       const d = prefs.providerDefaults;

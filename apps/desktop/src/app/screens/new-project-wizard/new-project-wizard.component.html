@@ -140,26 +140,30 @@
               >
             </span>
           </label>
-          <label class="radio-row">
-            <input
-              type="radio"
-              name="originalAudio"
-              value="replace-vocals"
-              [checked]="settings().originalAudioMode === 'replace-vocals'"
-              (change)="setOriginalAudioMode('replace-vocals')"
-              [disabled]="!vocalSeparationReady()"
-            />
-            <span class="radio-body">
-              <span class="radio-title">Replace voices, keep music &amp; effects</span>
-              <span class="hint"
-                >Studio-style: the original voices are separated out and replaced
-                by the dub, while the music &amp; effects play at full volume.
-                @if (!vocalSeparationReady()) {
-                  <strong>Install the “Vocal separation” engine in Settings → Engines to enable this.</strong>
-                }</span
-              >
-            </span>
-          </label>
+          <!-- Vocal separation is only shown where the engine is actually offered
+               on this machine; otherwise the option is hidden entirely. -->
+          @if (vocalSeparationOffered()) {
+            <label class="radio-row">
+              <input
+                type="radio"
+                name="originalAudio"
+                value="replace-vocals"
+                [checked]="settings().originalAudioMode === 'replace-vocals'"
+                (change)="setOriginalAudioMode('replace-vocals')"
+                [disabled]="!vocalSeparationReady()"
+              />
+              <span class="radio-body">
+                <span class="radio-title">Replace voices, keep music &amp; effects</span>
+                <span class="hint"
+                  >Studio-style: the original voices are separated out and replaced
+                  by the dub, while the music &amp; effects play at full volume.
+                  @if (!vocalSeparationReady()) {
+                    <strong>Install the “Vocal separation” engine in Settings → Engines to enable this.</strong>
+                  }</span
+                >
+              </span>
+            </label>
+          }
           <label class="radio-row">
             <input
               type="radio"
@@ -196,46 +200,50 @@
 
       <fieldset>
         <legend>Timing accuracy</legend>
-        <label class="radio-row">
-          <input
-            type="checkbox"
-            name="forcedAlignment"
-            [ngModel]="settings().forcedAlignment ?? false"
-            (ngModelChange)="toggleForcedAlignment($event)"
-          />
-          <span class="radio-body">
-            <span class="radio-title">Word-accurate timing (forced alignment)</span>
-            <span class="hint"
-              >Tightens subtitle/dub sync to ~50 ms using the “Forced alignment +
-              diarization” engine.
-              @if (whisperxReady()) {
-                Active.
-              } @else {
-                Not installed — falls back to the default timestamps (install the
-                engine in Settings → Engines for word-accurate timing).
-              }</span
-            >
-          </span>
-        </label>
-        <label class="radio-row">
-          <input
-            type="checkbox"
-            name="diarize"
-            [ngModel]="settings().diarize ?? false"
-            (ngModelChange)="toggleDiarize($event)"
-            [disabled]="!whisperxReady()"
-          />
-          <span class="radio-body">
-            <span class="radio-title">Detect speakers (diarization)</span>
-            <span class="hint"
-              >Splits the transcript per speaker so multi-speaker videos can use a
-              distinct voice per person. Uses the same engine pack.
-              @if (!whisperxReady()) {
-                <strong>Install the “Forced alignment + diarization” engine in Settings → Engines to enable this.</strong>
-              }</span
-            >
-          </span>
-        </label>
+        <!-- Forced alignment + diarization both need the WhisperX engine; shown
+             only where that engine is offered on this machine. -->
+        @if (whisperxOffered()) {
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              name="forcedAlignment"
+              [ngModel]="settings().forcedAlignment ?? false"
+              (ngModelChange)="toggleForcedAlignment($event)"
+            />
+            <span class="radio-body">
+              <span class="radio-title">Word-accurate timing (forced alignment)</span>
+              <span class="hint"
+                >Tightens subtitle/dub sync to ~50 ms using the “Forced alignment +
+                diarization” engine.
+                @if (whisperxReady()) {
+                  Active.
+                } @else {
+                  Not installed — falls back to the default timestamps (install the
+                  engine in Settings → Engines for word-accurate timing).
+                }</span
+              >
+            </span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="checkbox"
+              name="diarize"
+              [ngModel]="settings().diarize ?? false"
+              (ngModelChange)="toggleDiarize($event)"
+              [disabled]="!whisperxReady()"
+            />
+            <span class="radio-body">
+              <span class="radio-title">Detect speakers (diarization)</span>
+              <span class="hint"
+                >Splits the transcript per speaker so multi-speaker videos can use a
+                distinct voice per person. Uses the same engine pack.
+                @if (!whisperxReady()) {
+                  <strong>Install the “Forced alignment + diarization” engine in Settings → Engines to enable this.</strong>
+                }</span
+              >
+            </span>
+          </label>
+        }
         <label class="radio-row">
           <input
             type="checkbox"

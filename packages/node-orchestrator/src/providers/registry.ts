@@ -167,8 +167,11 @@ export function createDefaultRegistry(
   registry.registerTranslation(new ArgosTranslationProvider(config.translationWorkerUrl, timeout));
   registry.registerTts(new LocalTtsProvider(config.ttsWorkerUrl, timeout));
 
-  // Cloud providers (opt-in per phase; keys resolved lazily per call, so an
-  // unconfigured provider costs nothing until a project selects it).
+  // Cloud providers (OpenAI / Anthropic / Gemini). We run NO servers of our own;
+  // these are THIRD-PARTY services the end user opts into and pays for directly,
+  // so they're always offered — per-phase, key-gated, never a default. Keys
+  // resolve lazily per call, so an unconfigured provider costs nothing until a
+  // project selects it.
   registry.registerStt(new OpenAiSttProvider(credentials, timeout));
   registry.registerTranslation(new LlmTranslationProvider('openai', credentials, timeout));
   registry.registerTranslation(new LlmTranslationProvider('anthropic', credentials, timeout));
@@ -215,11 +218,15 @@ export function createDefaultRegistry(
     // LibreTranslate (optional engine pack). Same engine as Argos (so not the
     // default); offered for users who want the LibreTranslate server.
     registry.registerTranslation(new LibreTranslateProvider(engines, store, timeout));
-    // Two SEPARATE VieNeu options. v2 (24 kHz; preset voices CC BY-NC) and
-    // v3-Turbo (48 kHz; Apache-2.0) each have their own pack + venv.
-    registry.registerTts(
-      new NeuralTtsProvider('neural-tts-v2', 'VieNeu Neural TTS v2 (Vietnamese)', 'neural-tts-v2', engines, store, timeout),
-    );
+    // VieNeu v3-Turbo (48 kHz; Apache-2.0). v2 (tts-neural-v2) is disabled — its
+    // neural path is unvalidated end-to-end, it installs on Windows only, and its
+    // preset voices are CC BY-NC — so register the v2 provider ONLY where its pack
+    // is actually offered (it isn't, while gated), mirroring the OmniVoice pattern.
+    if (availablePacks().some((p) => p.id === 'tts-neural-v2')) {
+      registry.registerTts(
+        new NeuralTtsProvider('neural-tts-v2', 'VieNeu Neural TTS v2 (Vietnamese)', 'neural-tts-v2', engines, store, timeout),
+      );
+    }
     registry.registerTts(
       new NeuralTtsProvider('neural-tts', 'VieNeu Neural TTS v3 (Vietnamese)', 'neural-tts', engines, store, timeout),
     );

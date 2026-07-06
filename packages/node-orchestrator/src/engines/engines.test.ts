@@ -12,7 +12,7 @@ import {
   requireInstalledPack,
   resolveLocalLlmModelPath,
 } from './packSelection.js';
-import { packFitsMachine, recommendEnginePacks } from './engineRecommendation.js';
+import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engineRecommendation.js';
 import { ENGINE_LAUNCH_SPECS, EngineManager, findFile, waitFor } from './engineManager.js';
 import { _resetUvCache, resolveUvPath, uvAvailable } from './uv.js';
 import { recommendSetup } from '../system/systemProfile.js';
@@ -247,6 +247,43 @@ describe('hardware-aware engine recommendations', () => {
     const big = profile({ totalRamMb: 32 * 1024, appleSilicon: true });
     expect(packFitsMachine(findPack('translategemma-12b')!, big)).toBe(true);
     expect(packFitsMachine(findPack('translategemma-27b')!, big)).toBe(true); // 27B needs 32 GB
+  });
+
+  it('packHardwareSupported gates on the accelerator, not just RAM/VRAM', () => {
+    const cuda = findPack('whisper-cpp-cuda')!;
+    // Windows box WITH an NVIDIA GPU and enough VRAM → runnable.
+    const withNvidia = profile({
+      platform: 'win32', arch: 'x64', appleSilicon: false,
+      totalRamMb: 32 * 1024, gpus: [{ name: 'NVIDIA GeForce RTX 4070', vramMb: 12 * 1024 }],
+    });
+    expect(packHardwareSupported(cuda, withNvidia)).toBe(true);
+    // Windows laptop with integrated/AMD graphics (no NVIDIA) → HIDDEN, even
+    // though packFitsMachine alone might pass. This is the requirement-2 fix.
+    const noNvidia = profile({
+      platform: 'win32', arch: 'x64', appleSilicon: false,
+      totalRamMb: 32 * 1024, gpus: [{ name: 'AMD Radeon 780M', vramMb: 8 * 1024 }],
+    });
+    expect(packHardwareSupported(cuda, noNvidia)).toBe(false);
+    // No GPU at all → also hidden.
+    expect(packHardwareSupported(cuda, profile({ platform: 'win32', arch: 'x64', appleSilicon: false, gpus: [] }))).toBe(false);
+  });
+
+  it('packHardwareSupported: Metal packs need Apple Silicon; Vulkan is ungated; RAM is a hard gate', () => {
+    const metal = findPack('llama-cpp-metal')!;
+    expect(packHardwareSupported(metal, profile({ appleSilicon: true }))).toBe(true);
+    expect(packHardwareSupported(metal, profile({ appleSilicon: false, gpus: [{ name: 'Intel Iris' }] }))).toBe(false);
+    // Vulkan build deliberately not GPU-gated (AMD/Intel GPUs report as gpus:[]).
+    const vulkan = findPack('llama-cpp-vulkan')!;
+    expect(packHardwareSupported(vulkan, profile({ platform: 'win32', arch: 'x64', appleSilicon: false, gpus: [] }))).toBe(true);
+    // RAM floor is now HARD: the 27B model hides on a 16 GB machine.
+    expect(packHardwareSupported(findPack('translategemma-27b')!, profile({ totalRamMb: 16 * 1024 }))).toBe(false);
+    expect(packHardwareSupported(findPack('translategemma-27b')!, profile({ totalRamMb: 32 * 1024 }))).toBe(true);
+  });
+
+  it('gates tts-neural-v2 out of the catalog (unvalidated / non-commercial); keeps v3', () => {
+    expect(availablePacks('win32', 'x64').map((p) => p.id)).not.toContain('tts-neural-v2');
+    expect(availablePacks('darwin', 'arm64').map((p) => p.id)).not.toContain('tts-neural-v2');
+    expect(availablePacks('win32', 'x64').map((p) => p.id)).toContain('tts-neural');
   });
 
   it('recommends local LLM (runtime + tier-sized model) + neural TTS on a 32 GB Mac', () => {

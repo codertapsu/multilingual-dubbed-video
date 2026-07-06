@@ -476,6 +476,10 @@ const DISABLED_PACK_IDS: ReadonlySet<string> = new Set<string>([
   'separation-audio',
   'alignment-whisperx',
   'tts-omnivoice',
+  // VieNeu v2: unvalidated neural path end-to-end, Windows-only wheels, and its
+  // preset voices are CC BY-NC (non-commercial). The validated, cross-platform,
+  // Apache-2.0 v3 (`tts-neural`) supersedes it.
+  'tts-neural-v2',
 ]);
 
 /** True if a pack can run on the given platform/arch. */

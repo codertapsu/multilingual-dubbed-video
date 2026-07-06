@@ -39,7 +39,7 @@ import { EngineManager } from './engines/engineManager.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
 import { isPackUsable } from './engines/packSelection.js';
-import { packFitsMachine, recommendEnginePacks } from './engines/engineRecommendation.js';
+import { packHardwareSupported, recommendEnginePacks } from './engines/engineRecommendation.js';
 import { resolveUvPath } from './engines/uv.js';
 import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
@@ -356,8 +356,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         // preset voices bundled in that pack; the default (Piper) lists per-voice
         // downloadable voices.
         const engine = (req.query.engine ?? '').trim().toLowerCase();
+        // Only serve voices for engines whose pack is actually offered on this
+        // machine, so a disabled/unavailable engine (v2, OmniVoice) can't leak
+        // voices into the UI even if a stale request asks for them.
+        const packOffered = (packId: string): boolean => availablePacks().some((p) => p.id === packId);
         if (engine === 'neural-v2') {
-          return { language, engine: 'neural-v2', voices: listNeuralVoicesForLanguage(language, 'v2') };
+          const voices = packOffered('tts-neural-v2') ? listNeuralVoicesForLanguage(language, 'v2') : [];
+          return { language, engine: 'neural-v2', voices };
         }
         if (engine === 'neural-v3' || engine === 'neural') {
           return { language, engine: 'neural-v3', voices: listNeuralVoicesForLanguage(language, 'v3') };
@@ -365,7 +370,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         // engine=omnivoice lists OmniVoice's "designed" voices (same set for every
         // language; OmniVoice is multilingual). Apple-Silicon-only pack.
         if (engine === 'omnivoice') {
-          return { language, engine: 'omnivoice', voices: listOmnivoiceForLanguage(language) };
+          const voices = packOffered('tts-omnivoice') ? listOmnivoiceForLanguage(language) : [];
+          return { language, engine: 'omnivoice', voices };
         }
         const voices = listVoicesForLanguage(language).map((v) => ({
           ...v,
@@ -652,7 +658,21 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       const recorded = await enginePackStore.list();
       const usable = await Promise.all(recorded.map((r) => isPackUsable(enginePackStore, r.id)));
       const installed = recorded.filter((_, i) => usable[i]);
-      return { available: availablePacks(), installed };
+      // Show ONLY packs that can actually RUN on this machine: platform/arch (via
+      // availablePacks) + the accelerator the build needs (CUDA→NVIDIA, Metal→
+      // Apple Silicon) + RAM/VRAM. This hides, e.g., a CUDA pack on a GPU-less
+      // Windows laptop instead of offering a dead "Install". An already-installed
+      // pack is always kept so its Remove button never vanishes. If hardware
+      // detection fails, fall back to the platform-compatible list (never 500).
+      let available = availablePacks();
+      try {
+        const { profile } = await buildSystemResponse();
+        const installedIds = new Set(installed.map((i) => i.id));
+        available = available.filter((p) => installedIds.has(p.id) || packHardwareSupported(p, profile));
+      } catch {
+        /* detection failed — show the platform-compatible list unfiltered */
+      }
+      return { available, installed };
     } catch (err) {
       return sendError(reply, err);
     }
@@ -661,11 +681,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   app.get('/engines/recommended', async (_req, reply) => {
     try {
       const { profile, recommendation } = await buildSystemResponse();
-      // `fits` = packs this machine's RAM/VRAM can actually run (local-first:
-      // "if the hardware can run it, allow it"). `recommendations` is the subset
-      // worth installing as a quality upgrade. The UI badges each accordingly.
+      // `fits` = packs this machine can actually run (accelerator + RAM/VRAM). It
+      // matches the filtered /engines list, so every shown pack reads "✓ can run".
+      // `recommendations` is the subset worth installing as a quality upgrade.
       const fits = availablePacks()
-        .filter((p) => packFitsMachine(p, profile))
+        .filter((p) => packHardwareSupported(p, profile))
         .map((p) => p.id);
       return { recommendations: recommendEnginePacks(profile, recommendation), fits };
     } catch (err) {

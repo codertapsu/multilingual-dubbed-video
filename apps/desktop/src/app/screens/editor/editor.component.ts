@@ -126,8 +126,17 @@ export class EditorComponent implements OnInit {
   protected readonly processingLabels = PROCESSING_MODE_LABELS;
   protected readonly duckingOptions = DUCKING_OPTIONS;
   protected readonly speedOptions = SPEED_OPTIONS;
+  /** Engine packs the backend OFFERS on this machine/OS (available = enabled +
+   * runnable). Gates features whose pack isn't offered so they don't show. */
+  protected readonly offeredPacks = signal<ReadonlySet<string>>(new Set<string>());
   // Typed option lists so the template can index the label Records strictly.
-  protected readonly originalAudioModes: readonly OriginalAudioMode[] = ['keep', 'replace-vocals', 'remove'];
+  // 'replace-vocals' needs the Vocal-separation engine; hide it unless that pack
+  // is offered here (else the dropdown would let a user pick a silent no-op).
+  protected readonly originalAudioModes = computed<readonly OriginalAudioMode[]>(() =>
+    this.offeredPacks().has('separation-audio')
+      ? (['keep', 'replace-vocals', 'remove'] as const)
+      : (['keep', 'remove'] as const),
+  );
   protected readonly renderQualities: readonly RenderQuality[] = ['quality', 'fast'];
   protected readonly subtitleModes: readonly SubtitleExportMode[] = ALL_SUBTITLE_EXPORT_MODES;
 
@@ -256,11 +265,13 @@ export class EditorComponent implements OnInit {
       this.rendered.set(renderDone === true || project.status === 'completed');
 
       // Provider/model catalogs for the pickers (each best-effort + parallel).
-      const [providers, catalog] = await Promise.all([
+      const [providers, catalog, engines] = await Promise.all([
         this.ipc.getProviders().catch(() => null),
         this.ipc.setupGetCatalog().catch(() => null),
+        this.ipc.getEngines().catch(() => null),
       ]);
       if (providers) this.providers.set(providers);
+      if (engines) this.offeredPacks.set(new Set(engines.available.map((p) => p.id)));
       if (catalog) {
         this.whisperModels.set(catalog.whisperModels ?? []);
         this.languageLabels.set(new Map((catalog.languages ?? []).map((l) => [l.code, l.label])));

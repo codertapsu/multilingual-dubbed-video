@@ -5,8 +5,20 @@ VideoDubber's pipeline has four user-visible phases. Three of them — **speech-
 TypeScript interfaces and selected **per phase, per project** by id. The fourth,
 **rendering**, always runs locally (FFmpeg): your video file never leaves the machine.
 
-The default is **always local**. Cloud providers are optional, per-phase, key-gated
-opt-ins — mix and match freely (e.g. local STT + cloud translation + local TTS).
+The default is **always local** — and we (the developers) run **no servers**:
+everything runs on the user's own device. Cloud providers are optional, per-phase,
+key-gated opt-ins to **third-party** services the user chooses and pays for
+directly (OpenAI/Anthropic/Gemini) — mix and match freely (e.g. local STT + cloud
+translation + local TTS). Ollama is a **local** daemon the user runs on their own
+machine.
+
+> **Engine packs are hidden where they can't run.** Settings → Engines only lists
+> packs that can actually run on *this* machine — the right OS/arch, the accelerator
+> the build needs (a CUDA pack requires an NVIDIA GPU; a Metal pack requires Apple
+> Silicon), and enough RAM/VRAM. So a Windows laptop with no NVIDIA GPU never sees
+> the CUDA packs, and a 16 GB machine never sees the 32 GB TranslateGemma. Packs
+> whose worker isn't implemented (vocal separation, WhisperX) or that aren't
+> validated (VieNeu v2) are hidden on every OS.
 
 ---
 

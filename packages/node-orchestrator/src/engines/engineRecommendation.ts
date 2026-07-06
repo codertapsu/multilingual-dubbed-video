@@ -10,7 +10,7 @@
  * Pure: takes the profile + the available packs, returns ranked pack ids with a
  * reason. RAM/VRAM gates from the catalog are respected.
  */
-import type { EnginePackInfo, HardwareRecommendation, SystemProfile } from '@videodubber/shared';
+import type { EngineAccel, EnginePackInfo, HardwareRecommendation, SystemProfile } from '@videodubber/shared';
 import { availablePacks } from './enginePackCatalog.js';
 
 /** One recommended pack with a human reason. */
@@ -29,6 +29,45 @@ export function packFitsMachine(pack: EnginePackInfo, profile: SystemProfile): b
     if (effectiveVram < pack.minVramMb) return false;
   }
   return true;
+}
+
+/** GPU marketing names that indicate an NVIDIA (CUDA-capable) GPU. */
+const NVIDIA_RE = /nvidia|geforce|quadro|tesla|\brtx\b|\bgtx\b/i;
+
+/** Does the machine physically have the accelerator this pack build targets? */
+function accelSupported(accel: EngineAccel, profile: SystemProfile): boolean {
+  switch (accel) {
+    case 'cpu':
+      return true;
+    case 'metal':
+    case 'coreml':
+    case 'mps':
+      // Apple GPU frameworks — only on Apple Silicon.
+      return profile.appleSilicon;
+    case 'cuda':
+      // CUDA builds require an NVIDIA GPU; match the detected GPU name.
+      return profile.gpus.some((g) => NVIDIA_RE.test(g.name));
+    case 'vulkan':
+      // Intentionally NOT gated: GPU detection runs `nvidia-smi` only, so the
+      // AMD/Intel GPUs a Vulkan build targets report as gpus:[]. Gating on GPU
+      // presence would hide the pack from its own audience, and the Vulkan builds
+      // fall back to CPU, so a wrong "✓" costs "slow", not "cannot run".
+      return true;
+    default:
+      return true;
+  }
+}
+
+/**
+ * HARD gate: can this pack's binary actually RUN on this machine? False means it
+ * physically cannot (wrong/absent GPU for the accel, or the model can't fit in
+ * RAM/VRAM), so the UI must not offer it. This is stricter than
+ * {@link packFitsMachine} (which is a soft "runs well" hint) — it also enforces
+ * the accelerator requirement, so e.g. a CUDA pack never shows on a machine with
+ * no NVIDIA GPU.
+ */
+export function packHardwareSupported(pack: EnginePackInfo, profile: SystemProfile): boolean {
+  return accelSupported(pack.accel, profile) && packFitsMachine(pack, profile);
 }
 
 /**

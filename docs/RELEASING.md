@@ -12,6 +12,115 @@ both paths.
 
 ---
 
+## Cut a release — step by step
+
+The current flow builds **every installer locally** — macOS on the Mac, Windows on
+the Windows desktop (`D:\development\projects\multilingual-dubbed-video`) — and
+uploads them to a single GitHub **draft** release, which you then **publish**. CI
+is off (`RELEASE_CI_MACOS` / `RELEASE_CI_WINDOWS` = `false`).
+
+> **First time on a machine?** Do the one-time setup first: [macOS](#one-time-setup)
+> (Developer ID + the updater key) and [Windows](WINDOWS.md#part-a--one-time-machine-setup-install-these-once)
+> (pwsh 7, Node 24, Python 3.12, Rust+MSVC, the updater key copied over, a GitHub
+> token). You only do that once per machine.
+
+Steps 2 (macOS) and 3 (Windows) are independent — run them in either order, on
+either machine first; each preserves the other's `latest.json` entry.
+
+### 0. Pick the version
+
+Choose `X.Y.Z` (semver; the current version is in
+`apps/desktop/src-tauri/tauri.conf.json`). Below, replace every `X.Y.Z` / `vX.Y.Z`.
+
+### 1. Bump the version, commit, tag, push
+
+Set the SAME version in all four files (the Tauri **app version** is what the
+updater compares against `latest.json`):
+
+* `package.json` → `version`
+* `apps/desktop/package.json` → `version`
+* `apps/desktop/src-tauri/tauri.conf.json` → `version`
+* `apps/desktop/src-tauri/Cargo.toml` → `[package].version`
+
+```bash
+git checkout -b release/vX.Y.Z
+# edit the four version fields to X.Y.Z (review each — don't blind-sed)
+git commit -am "chore(release): vX.Y.Z"
+git tag vX.Y.Z
+git push origin release/vX.Y.Z --tags     # (merge to main when ready)
+```
+
+The tag is bookkeeping — CI is off, so pushing it builds nothing. Make sure BOTH
+machines are on this commit (`git pull`) before building, so the installers match.
+
+### 2. Build + upload macOS — on the Mac
+
+```bash
+export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
+export APPLE_ID="<apple-id-email>"
+export APPLE_PASSWORD="<app-specific-password>"      # appleid.apple.com → App-Specific Passwords
+export APPLE_TEAM_ID="<TEAMID>"
+export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/videodubber.key)"
+export RELEASE_TAG=vX.Y.Z
+
+pnpm install --frozen-lockfile
+SIDECARS=1 UPLOAD=1 bash scripts/package/release-macos.sh
+```
+
+This builds the sidecars, runs `tauri build` (notary creds withheld so it signs
+but doesn't self-notarize), deep-signs every Mach-O + notarizes + staples,
+**regenerates** the signed updater archive from the repaired app
+(`VideoDubber_X.Y.Z_aarch64.app.tar.gz` + `.sig`), uploads the `.dmg` + updater
+artifacts to the `vX.Y.Z` draft, and merges the `darwin-aarch64` entry into
+`latest.json`.
+
+### 3. Build + upload Windows — on the Windows desktop
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content ~\.tauri\videodubber.key -Raw
+$env:RELEASE_TAG = 'vX.Y.Z'
+
+pnpm install --frozen-lockfile
+pwsh scripts\package\release-windows.ps1 -Sidecars -Upload
+```
+
+This builds the sidecars (auto-downloads a **static** libass ffmpeg — do **not**
+set `FFMPEG_PATH` to a shared build), runs `tauri build` (NSIS `-setup.exe` + MSI,
+each with an updater `.sig`), uploads all four artifacts to the same `vX.Y.Z`
+draft, and merges the `windows-x86_64` entry into `latest.json`. Installers are
+unsigned → first launch shows SmartScreen: **More info → Run anyway**.
+
+### 4. Verify the draft
+
+GitHub → **Releases** → the `vX.Y.Z` draft. Confirm:
+
+1. **Assets present** — macOS: `VideoDubber_X.Y.Z_aarch64.dmg`,
+   `VideoDubber_X.Y.Z_aarch64.app.tar.gz` (+ `.sig`); Windows:
+   `VideoDubber_X.Y.Z_x64-setup.exe` (+ `.sig`), `VideoDubber_X.Y.Z_x64_en-US.msi`
+   (+ `.sig`); and `latest.json`.
+2. **`latest.json` has BOTH platforms** — open it: `platforms` contains
+   `darwin-aarch64` **and** `windows-x86_64`, and `"version": "X.Y.Z"`.
+3. **The draft's tag is `vX.Y.Z`** (not `untagged-<sha>`) — otherwise every
+   download URL inside `latest.json` 404s after publishing. (`merge-latest-json.mjs
+   --fix-tag`, which the release scripts pass, repairs this automatically.)
+
+### 5. Publish
+
+Click **Publish release**. That makes
+`releases/latest/download/latest.json` (the updater endpoint) resolve to this
+version, so existing installs start seeing the update. Assets can still be added
+afterward if needed.
+
+> **Re-cutting the same version:** the upload helpers overwrite same-named assets
+> in place, so just rebuild and re-run the release script — no need to delete the
+> draft or move the tag. **Intel macOS / Linux** aren't in this two-machine flow
+> yet; ship Apple-Silicon + Windows now and add them later.
+
+The rest of this doc is reference: one-time setup, per-OS detail, signing
+internals, and how `latest.json` drives the updater.
+
+---
+
 ## One-time setup
 
 ### 1. Generate the auto-updater signing key
@@ -74,13 +183,16 @@ Settings → Secrets and variables → Actions. Required / optional:
 
 ---
 
-## First release (v0.1.0) — quickstart
+## First release (v0.1.0) — historical note
 
-The repo references are set (`codertapsu/multilingual-dubbed-video`), the
-engine-pack URLs are pinned + checksummed, all platforms bundle a **static,
-portable** ffmpeg, and v0.1.0 ships with auto-update **off**
-(`bundle.createUpdaterArtifacts: false`) — so **no secrets are required** to cut
-the first release:
+> This documents how the *first* release (v0.1.0) was cut, when auto-update was
+> still **off** (`createUpdaterArtifacts: false`) and no signing secrets were
+> needed. Since **v0.2.0** auto-update is **on** and releases are signed — follow
+> [Cut a release](#cut-a-release--step-by-step) at the top instead. Kept for context.
+
+v0.1.0 shipped with the repo references set, engine-pack URLs pinned +
+checksummed, a static portable ffmpeg on all platforms, and auto-update **off** —
+so **no secrets were required**:
 
 1. **Build locally + upload** — releases are cut on your own machines (no CI), so
    the 10x-billed macOS runners stay idle. On each machine build the
@@ -298,90 +410,38 @@ version. Assets can still be added after publishing if needed.
 
 ---
 
-## Per-release steps
+## Per-release steps (reference)
 
-### 1. Bump the version
+The ordered runbook is **[Cut a release — step by step](#cut-a-release--step-by-step)**
+at the top. This section keeps two extra reference details.
 
-Keep these in sync (they all start at `0.1.0`):
+### Sanity-build before releasing (optional)
 
-* root `package.json` → `version`
-* `apps/desktop/package.json` → `version`
-* `apps/desktop/src-tauri/tauri.conf.json` → `version`
-* `apps/desktop/src-tauri/Cargo.toml` → `[package].version`
-
-The Tauri **app version** is what the updater compares against `latest.json`.
+Catch packaging breakage before you build the real release:
 
 ```bash
-# example bump to 0.2.0 — review each file, don't blindly sed.
-# Then commit on a release branch (don't push straight to main if protected).
-git checkout -b release/v0.2.0
-git commit -am "release: v0.2.0"
+pnpm package:sidecars     # orchestrator + workers + piper + ffmpeg for your host
+pnpm app:build            # a local installer under apps/desktop/src-tauri/target
 ```
 
-### 2. Sanity-build sidecars locally (optional but recommended)
+Verify it launches, the first-run wizard appears, and a tiny dub completes (needs
+the worker venvs — `scripts/setup-local-models.sh`).
 
-Catch packaging breakage before CI:
+> **ffmpeg for a local sanity build.** `package:sidecars` loads `.env` and stages a
+> **local** ffmpeg from `FFMPEG_PATH`/`FFPROBE_PATH` when set — handy for a quick
+> local build. On macOS: `brew install ffmpeg-full`, then point `.env` at it. Note
+> these are **dynamically linked** (your machine only); the real release build
+> stages a **static** libass ffmpeg, so leave `FFMPEG_PATH` unset for it (on
+> Windows a shared build is rejected — see [WINDOWS.md](WINDOWS.md)).
 
-```bash
-pnpm package:sidecars     # builds orchestrator + workers + piper + ffmpeg for your host
-pnpm app:build            # produces a local installer in apps/desktop/src-tauri/target
-```
+### CI fallback (normally off)
 
-Verify the local bundle launches, the first-run wizard appears, and a tiny dub
-completes. (You need the worker venvs present — `scripts/setup-local-models.sh`.)
-
-> **ffmpeg for local builds.** `package:sidecars` loads `.env`, and
-> `fetch-ffmpeg` stages a **local** libass-enabled ffmpeg from
-> `FFMPEG_PATH`/`FFPROBE_PATH` (or `FFMPEG_BIN`/`FFPROBE_BIN`) when set —
-> no download. On macOS, `brew install ffmpeg-full` and point `.env` at it:
-> ```
-> FFMPEG_PATH=$(brew --prefix ffmpeg-full)/bin/ffmpeg
-> FFPROBE_PATH=$(brew --prefix ffmpeg-full)/bin/ffprobe
-> ```
-> If neither is set, it auto-tries Homebrew, else needs `FFMPEG_URL`/`FFPROBE_URL`.
-> Locally-staged binaries are dynamically linked (run on **your** machine only);
-> **distributable** builds must use a STATIC libass ffmpeg (set the URLs in CI).
-
-### 3. Tag and push
-
-Push a `v*` tag for bookkeeping (and to trigger CI **only for any OS you opted
-into** via `RELEASE_CI_*`):
-
-```bash
-git tag v0.2.0
-git push origin v0.2.0
-# (and push the release branch / open the PR if you bumped versions there)
-```
-
-The `setup` job in `release.yml` reads the `RELEASE_CI_*` variables and builds the
-matrix: an OS left at the default (`false`) is **omitted** — no runner is
-provisioned, and you build/upload it locally per [Local-first release](#local-first-release-build-locally).
-For each OS that **is** opted into CI, the runner:
-
-1. installs Node/pnpm/Python/Rust + (Linux) Tauri system deps,
-2. creates the three worker venvs and freezes them with PyInstaller,
-3. builds the orchestrator (Node SEA) and fetches libass-enabled ffmpeg,
-4. runs `tauri build` (signing + notarizing) and uploads the installers + the
-   updater `latest.json` to the same **draft** GitHub Release the local steps target.
-
-(A manual **workflow_dispatch** run builds every OS regardless of the variables.)
-
-### 4. Review the draft release
-
-In GitHub → Releases, find the **draft** for the tag (created by `release-upload`
-on first local upload, and/or updated by any opted-in CI runner). Check that:
-
-* Every platform you're shipping uploaded its installers (`.dmg`, `.app.tar.gz` +
-  `.app.tar.gz.sig`, `.msi`/`.exe` + `.sig`, `.deb`, `.AppImage` + `.sig`).
-* `latest.json` is present and lists every platform with a signature.
-* Release notes are accurate (edit the body as needed).
-
-### 5. Publish
-
-Click **Publish release** (remove the draft flag). Publishing is what makes
-`releases/latest/download/latest.json` resolve to this version — i.e. it's the
-moment existing installs start seeing the update. See
-[`AUTOUPDATE.md`](AUTOUPDATE.md).
+`RELEASE_CI_MACOS` / `RELEASE_CI_WINDOWS` are `false`, so pushing a `v*` tag builds
+nothing — releases are local (§[Cut a release](#cut-a-release--step-by-step)). To
+build an OS in **CI** instead, set its variable to `true` before the tag push; CI
+then uploads to the same draft the local steps target. A manual
+**workflow_dispatch** run builds **every** OS regardless of the variables, so don't
+trigger one unintentionally.
 
 ---
 

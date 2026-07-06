@@ -56,10 +56,13 @@ upload_one() {  # upload_one RELEASE_ID FILE
   aid="$(api GET "/repos/$REPO/releases/$rid/assets?per_page=100" | BASE="$base" python3 -c "import sys,json,os
 print(next((str(a['id']) for a in json.load(sys.stdin) if a['name']==os.environ['BASE']), ''))")"
   if [ -n "$aid" ]; then api DELETE "/repos/$REPO/releases/assets/$aid" >/dev/null; fi
+  # Stream the file with `-T` (curl reads it from disk) instead of
+  # `--data-binary @file`, which buffers the ENTIRE file in memory and OOMs on
+  # multi-GB installers (the app bundles the offline models now).
   curl -fsSL -X POST \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/octet-stream" \
-    --data-binary @"$file" \
+    -T "$file" \
     "https://uploads.github.com/repos/$REPO/releases/$rid/assets?name=$base" >/dev/null
   echo "  uploaded $base ($(du -h "$file" | cut -f1))"
 }

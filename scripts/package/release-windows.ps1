@@ -117,8 +117,12 @@ if ($msi -and (Test-Path "$($msi.FullName).sig")) {
 if ($Upload) {
   Write-Host "==> upload installers + sigs to the $Tag draft"
   $env:RELEASE_TAG = $Tag
-  pwsh (Join-Path $ScriptDir 'release-upload.ps1') -Upload $uploads
-  if ($LASTEXITCODE -ne 0) { throw "release-upload.ps1 failed ($LASTEXITCODE)" }
+  # Call the helper IN-PROCESS with `&` (not `pwsh <script>`): spawning a new pwsh
+  # flattens the $uploads array into separate command-line args that the child
+  # re-parses, so only the first path binds ("A positional parameter cannot be
+  # found for '<...>.sig'"). In-process, the array binds cleanly to [string[]]$Upload.
+  # release-upload.ps1 uses $ErrorActionPreference='Stop', so a failure throws here.
+  & (Join-Path $ScriptDir 'release-upload.ps1') -Upload $uploads
 
   Write-Host '==> merge the windows-x86_64 entry into latest.json (preserves the mac entry)'
   node (Join-Path $ScriptDir 'merge-latest-json.mjs') --tag $Tag --platform windows-x86_64 --artifact $setup.FullName --fix-tag

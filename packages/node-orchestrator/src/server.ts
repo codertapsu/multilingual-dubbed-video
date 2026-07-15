@@ -32,14 +32,14 @@ import {
 import { loadConfig, type OrchestratorConfig } from './config.js';
 import { CredentialsStore } from './credentials/credentialsStore.js';
 import { testCloudCredential } from './credentials/testConnection.js';
-import { buildSystemResponse } from './system/systemProfile.js';
+import { buildSystemResponse, getSystemProfile } from './system/systemProfile.js';
 import { EngineEventBus } from './engines/engineBus.js';
 import { EngineInstaller } from './engines/engineInstaller.js';
 import { EngineManager } from './engines/engineManager.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
 import { isPackUsable } from './engines/packSelection.js';
-import { packHardwareSupported, recommendEnginePacks } from './engines/engineRecommendation.js';
+import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engines/engineRecommendation.js';
 import { resolveUvPath } from './engines/uv.js';
 import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
@@ -191,8 +191,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     options.separation ?? new AudioSeparatorProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
   const alignment = new WhisperxAlignmentProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
 
+  // Hardware profile so the registry only offers providers whose packs can run
+  // on this machine (e.g. whisper.cpp only where an NVIDIA/Metal pack exists).
+  // Best-effort: on detection failure the registry falls back to OS/arch gating.
+  const registryProfile = options.registry ? undefined : await getSystemProfile().catch(() => undefined);
   const registry =
-    options.registry ?? createDefaultRegistry(config, credentials, engineManager, enginePackStore);
+    options.registry ?? createDefaultRegistry(config, credentials, engineManager, enginePackStore, registryProfile);
   const bus = options.bus ?? new EventBusRegistry();
 
   // First-run setup: config/state store, the global setup SSE bus, and the model
@@ -681,11 +685,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   app.get('/engines/recommended', async (_req, reply) => {
     try {
       const { profile, recommendation } = await buildSystemResponse();
-      // `fits` = packs this machine can actually run (accelerator + RAM/VRAM). It
-      // matches the filtered /engines list, so every shown pack reads "✓ can run".
-      // `recommendations` is the subset worth installing as a quality upgrade.
+      // `fits` = packs that run WELL here (accelerator present AND enough RAM/VRAM),
+      // driving the "✓ can run" vs "⚠ may be slow" badge. The shown list (/engines)
+      // is broader — accelerator-only — so a memory-heavy pack (e.g. the 27B model)
+      // still appears, just badged ⚠, and the user can choose to install it.
       const fits = availablePacks()
-        .filter((p) => packHardwareSupported(p, profile))
+        .filter((p) => packHardwareSupported(p, profile) && packFitsMachine(p, profile))
         .map((p) => p.id);
       return { recommendations: recommendEnginePacks(profile, recommendation), fits };
     } catch (err) {

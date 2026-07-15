@@ -268,16 +268,19 @@ describe('hardware-aware engine recommendations', () => {
     expect(packHardwareSupported(cuda, profile({ platform: 'win32', arch: 'x64', appleSilicon: false, gpus: [] }))).toBe(false);
   });
 
-  it('packHardwareSupported: Metal packs need Apple Silicon; Vulkan is ungated; RAM is a hard gate', () => {
+  it('packHardwareSupported gates on the accelerator ONLY; RAM stays a soft (packFitsMachine) hint', () => {
     const metal = findPack('llama-cpp-metal')!;
     expect(packHardwareSupported(metal, profile({ appleSilicon: true }))).toBe(true);
     expect(packHardwareSupported(metal, profile({ appleSilicon: false, gpus: [{ name: 'Intel Iris' }] }))).toBe(false);
     // Vulkan build deliberately not GPU-gated (AMD/Intel GPUs report as gpus:[]).
     const vulkan = findPack('llama-cpp-vulkan')!;
     expect(packHardwareSupported(vulkan, profile({ platform: 'win32', arch: 'x64', appleSilicon: false, gpus: [] }))).toBe(true);
-    // RAM floor is now HARD: the 27B model hides on a 16 GB machine.
-    expect(packHardwareSupported(findPack('translategemma-27b')!, profile({ totalRamMb: 16 * 1024 }))).toBe(false);
-    expect(packHardwareSupported(findPack('translategemma-27b')!, profile({ totalRamMb: 32 * 1024 }))).toBe(true);
+    // A cpu MODEL pack (27B) is NOT hidden by RAM — it stays offered so the user can
+    // choose; RAM adequacy is a soft badge via packFitsMachine, not a hard gate.
+    const g27 = findPack('translategemma-27b')!;
+    expect(packHardwareSupported(g27, profile({ totalRamMb: 16 * 1024 }))).toBe(true);
+    expect(packFitsMachine(g27, profile({ totalRamMb: 16 * 1024 }))).toBe(false); // "⚠ needs 32 GB"
+    expect(packFitsMachine(g27, profile({ totalRamMb: 32 * 1024 }))).toBe(true);
   });
 
   it('gates tts-neural-v2 out of the catalog (unvalidated / non-commercial); keeps v3', () => {

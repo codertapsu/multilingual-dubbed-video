@@ -59,15 +59,17 @@ function accelSupported(accel: EngineAccel, profile: SystemProfile): boolean {
 }
 
 /**
- * HARD gate: can this pack's binary actually RUN on this machine? False means it
- * physically cannot (wrong/absent GPU for the accel, or the model can't fit in
- * RAM/VRAM), so the UI must not offer it. This is stricter than
- * {@link packFitsMachine} (which is a soft "runs well" hint) — it also enforces
- * the accelerator requirement, so e.g. a CUDA pack never shows on a machine with
- * no NVIDIA GPU.
+ * HARD gate: can this pack's binary even LOAD on this machine's accelerator? False
+ * means it physically cannot — the accel targets a GPU vendor the machine doesn't
+ * have (a CUDA pack with no NVIDIA GPU; a Metal pack off Apple Silicon) — so the
+ * UI must not offer it. RAM/VRAM are deliberately NOT gated here: a memory-heavy
+ * pack (e.g. the 27B model) still SHOWS, badged via {@link packFitsMachine} as
+ * "may be slow / needs N GB", so the user can choose. (Gating RAM hard also
+ * mis-hid packs on machines that nominally qualify — a "32 GB" box reports a bit
+ * under 32768 MB.)
  */
 export function packHardwareSupported(pack: EnginePackInfo, profile: SystemProfile): boolean {
-  return accelSupported(pack.accel, profile) && packFitsMachine(pack, profile);
+  return accelSupported(pack.accel, profile);
 }
 
 /**

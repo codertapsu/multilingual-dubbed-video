@@ -17,7 +17,7 @@
  * The registry is the single composition point, so tests can build a registry
  * out of mocked providers and inject it into the pipeline runner.
  */
-import { AppErrorException, type CloudServiceId } from '@videodubber/shared';
+import { AppErrorException, type CloudServiceId, type SystemProfile } from '@videodubber/shared';
 import type { OrchestratorConfig } from '../config.js';
 import { CredentialsStore } from '../credentials/credentialsStore.js';
 import type {
@@ -39,6 +39,7 @@ import type { EngineManager } from '../engines/engineManager.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
 import { requireInstalledPack, resolveLocalLlmModelPath } from '../engines/packSelection.js';
 import { availablePacks } from '../engines/enginePackCatalog.js';
+import { packHardwareSupported } from '../engines/engineRecommendation.js';
 
 /**
  * Default local-LLM models per backend (overridable via env).
@@ -158,9 +159,20 @@ export function createDefaultRegistry(
   credentials: CredentialsStore = new CredentialsStore(config.configDir),
   engines?: EngineManager,
   store?: EnginePackStore,
+  profile?: SystemProfile,
 ): ProviderRegistry {
   const registry = new ProviderRegistry();
   const timeout = config.workerRequestTimeoutMs;
+
+  // True if the machine has ANY installable pack for a provider — the right OS/arch
+  // AND (when we know the hardware) an accelerator the build can use. Used to avoid
+  // offering a provider whose only packs can't run here (e.g. whisper.cpp, which
+  // ships CUDA-only: no pack exists for macOS or a non-NVIDIA Windows box, so the
+  // "needs engine pack" option would be a dead end with nothing to install).
+  const hasRunnablePack = (providerId: string): boolean =>
+    availablePacks().some(
+      (p) => p.providerId === providerId && (!profile || packHardwareSupported(p, profile)),
+    );
 
   // Local (default) providers — always present, no engine pack required.
   registry.registerStt(new FasterWhisperProvider(config.sttWorkerUrl, timeout));
@@ -195,9 +207,18 @@ export function createDefaultRegistry(
   // wired). They list in the UI as "needs engine pack" until installed; calling
   // one without its pack throws ENGINE_PACK_MISSING.
   if (engines && store) {
-    registry.registerStt(
-      new WhisperCppProvider(engines, () => requireInstalledPack(store, 'whisper-cpp'), timeout),
-    );
+    // whisper.cpp accelerated STT — only offer it where a pack can actually run
+    // (CUDA-only today, so NVIDIA Windows). Elsewhere the bundled faster-whisper
+    // is the local STT, so we don't show a "needs engine pack" dead end.
+    if (hasRunnablePack('whisper-cpp')) {
+      registry.registerStt(
+        new WhisperCppProvider(engines, () => requireInstalledPack(store, 'whisper-cpp'), timeout),
+      );
+    }
+    // Local-LLM translation (llama.cpp runtime + a TranslateGemma model) — only
+    // where a runtime pack can run here (Metal on Apple Silicon, CUDA/Vulkan on
+    // Windows). The model packs list separately in Settings → Engines.
+    if (hasRunnablePack('local-llm')) {
     registry.registerTranslation(
       new LocalLlmTranslationProvider({
         id: 'llama-cpp',
@@ -215,6 +236,7 @@ export function createDefaultRegistry(
         timeoutMs: timeout,
       }),
     );
+    }
     // LibreTranslate (optional engine pack). Same engine as Argos (so not the
     // default); offered for users who want the LibreTranslate server.
     registry.registerTranslation(new LibreTranslateProvider(engines, store, timeout));

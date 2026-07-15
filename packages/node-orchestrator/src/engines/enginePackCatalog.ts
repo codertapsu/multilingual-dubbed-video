@@ -93,6 +93,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Accelerated Whisper for NVIDIA GPUs on Windows (cuBLAS). Large speedups over CPU for big models.',
     providerId: 'whisper-cpp',
+    version: WHISPER_CPP,
     platforms: ['win32'],
     arch: ['x64'],
     accel: 'cuda',
@@ -122,6 +123,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Local LLM runtime for high-quality offline translation (TranslateGemma / Qwen3 / Gemma). OpenAI-compatible server; Metal-accelerated on Apple Silicon.',
     providerId: 'local-llm',
+    version: LLAMA_CPP,
     platforms: ['darwin'],
     arch: ['arm64'],
     accel: 'metal',
@@ -149,6 +151,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Local LLM runtime for offline translation on NVIDIA GPUs (Windows). OpenAI-compatible server.',
     providerId: 'local-llm',
+    version: LLAMA_CPP,
     platforms: ['win32'],
     arch: ['x64'],
     accel: 'cuda',
@@ -183,6 +186,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Local LLM runtime for offline translation via Vulkan (AMD/Intel GPU) on Windows. OpenAI-compatible server.',
     providerId: 'local-llm',
+    version: LLAMA_CPP,
     platforms: ['win32'],
     arch: ['x64'],
     accel: 'vulkan',
@@ -208,6 +212,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Local LLM runtime for offline translation on Linux (Vulkan GPU, CPU fallback). OpenAI-compatible server.',
     providerId: 'local-llm',
+    version: LLAMA_CPP,
     platforms: ['linux'],
     arch: ['x64'],
     accel: 'vulkan',
@@ -241,6 +246,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Google’s open translation model (Gemma 3 based, 55 languages incl. Vietnamese), Q4_K_M GGUF — a large quality jump over Argos for offline MT. The 4B is the CPU-friendly size (~2.5 GB, runs on 8 GB RAM). Needs a llama.cpp runtime pack (installed automatically alongside).',
     providerId: 'local-llm-model',
+    version: 'Q4_K_M',
     accel: 'cpu',
     tier: 'balanced',
     minRamMb: 8192,
@@ -264,6 +270,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'The 12B TranslateGemma (Q4_K_M GGUF, ~7.3 GB) — the quality sweet spot, best on a GPU or Apple Silicon (16 GB+). Usable but slow on CPU-only machines; prefer the 4B there. Needs a llama.cpp runtime pack.',
     providerId: 'local-llm-model',
+    version: 'Q4_K_M',
     accel: 'cpu',
     tier: 'performance',
     minRamMb: 16384,
@@ -287,6 +294,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'The 27B TranslateGemma (Q4_K_M GGUF, ~16.5 GB) — maximum local quality, for workstation-class machines (32 GB+ / strong GPU). Impractical CPU-only. Needs a llama.cpp runtime pack.',
     providerId: 'local-llm-model',
+    version: 'Q4_K_M',
     accel: 'cpu',
     tier: 'workstation',
     minRamMb: 32768,
@@ -336,6 +344,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'A far more natural Vietnamese voice than Piper, via VieNeu-TTS v3-Turbo: a 48 kHz speech model that runs torch-free on CPU through ONNX (the `vieneu` SDK). Ships 10 preset Vietnamese voices; the model (~0.5–1 GB) downloads on first use. Optional and CPU-only — Piper stays the fast default. Output carries an imperceptible AI-audio watermark.',
     providerId: 'neural-tts',
+    version: '3.0.5',
     accel: 'cpu',
     tier: 'performance',
     // CPU-feasible at ~1.5–2 GB working RAM. No torch/GGUF, so it runs on every
@@ -442,6 +451,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       "A self-hosted LibreTranslate API server for offline translation. Its engine IS Argos Translate, so quality matches the built-in Argos provider — it reuses the language packs you've already installed (Settings → Translation packs / onboarding), so no extra model download. Optional; Argos stays the default.",
     providerId: 'libretranslate',
+    version: '1.6.0',
     accel: 'cpu',
     // Light: it's Argos + a Flask server (CTranslate2 on CPU), so it runs on
     // essentially any machine that runs the app — not a performance-class engine.

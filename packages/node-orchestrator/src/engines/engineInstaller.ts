@@ -89,7 +89,9 @@ export class EngineInstaller {
       const record: InstalledEnginePack = {
         id: pack.id,
         path: packDir,
-        version: pack.id,
+        // Record the artifact version so the UI can later flag when the catalog
+        // ships a newer one. Falls back to the id for packs without a version.
+        version: pack.version ?? pack.id,
         installedAt: this.nowIso(),
       };
       await this.deps.store.add(record);

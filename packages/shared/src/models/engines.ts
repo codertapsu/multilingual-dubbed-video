@@ -65,6 +65,13 @@ export interface EnginePackInfo {
   description: string;
   /** Provider id this pack enables (matches the provider registry). */
   providerId: string;
+  /**
+   * Version of the artifacts this pack ships (upstream release tag, pinned SDK
+   * version, or model revision). Recorded at install time; when the catalog's
+   * version later differs from an installed pack's, the UI flags an update.
+   * Bump this whenever the artifact URLs / pinned deps change.
+   */
+  version?: string;
   /** Target OS platforms (Node `process.platform`); empty = all. */
   platforms?: NodeJS.Platform[];
   /** Target CPU architectures (Node `process.arch`); empty = all. */
@@ -143,6 +150,9 @@ export interface EnginesResponse {
   available: EnginePackInfo[];
   /** Packs currently installed. */
   installed: InstalledEnginePack[];
+  /** Ids of installed packs whose catalog version is newer than what's installed
+   * (an update is available — reinstall to get it). */
+  updatable: string[];
 }
 
 /** Body for POST /engines/install. */

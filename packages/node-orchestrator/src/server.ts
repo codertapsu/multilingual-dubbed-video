@@ -676,7 +676,15 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       } catch {
         /* detection failed — show the platform-compatible list unfiltered */
       }
-      return { available, installed };
+      // An installed pack is "updatable" when the catalog now declares a different
+      // artifact version than the one recorded at install time (reinstall to get it).
+      const updatable = installed
+        .filter((i) => {
+          const cat = findPack(i.id);
+          return cat?.version != null && i.version !== cat.version;
+        })
+        .map((i) => i.id);
+      return { available, installed, updatable };
     } catch (err) {
       return sendError(reply, err);
     }

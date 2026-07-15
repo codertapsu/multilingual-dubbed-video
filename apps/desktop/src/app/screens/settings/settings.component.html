@@ -248,6 +248,9 @@
           @if (isEngineInstalled(pack.id)) {
             <span class="badge badge-completed">installed</span>
           }
+          @if (isEngineUpdatable(pack.id)) {
+            <span class="badge badge-running">update available</span>
+          }
           <span class="chip">{{ pack.approxSizeMb >= 1000 ? (pack.approxSizeMb / 1000).toFixed(1) + ' GB' : pack.approxSizeMb + ' MB' }}</span>
         </div>
         <span class="hint">{{ pack.description }}</span>
@@ -269,6 +272,11 @@
         } @else {
           <div class="cred-controls">
             @if (isEngineInstalled(pack.id)) {
+              @if (isEngineUpdatable(pack.id)) {
+                <button type="button" class="btn btn-sm" (click)="installEngine(pack.id)" title="A newer version is available — reinstall to update">Update</button>
+              } @else {
+                <button type="button" class="btn btn-ghost btn-sm" (click)="installEngine(pack.id)" title="Re-download the latest version">Reinstall</button>
+              }
               <button type="button" class="btn btn-ghost btn-sm" (click)="uninstallEngine(pack.id)">Remove</button>
             } @else if (needsUv(pack) && prerequisites() && !prerequisites()!.uv.available) {
               <button type="button" class="btn btn-sm" disabled title="This engine needs uv (bundled in the installed app)">

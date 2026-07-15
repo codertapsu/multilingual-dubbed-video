@@ -107,6 +107,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // -------- engine packs --------
   protected readonly enginePacks = signal<EnginePackInfo[]>([]);
   protected readonly installedEngines = signal<InstalledEnginePack[]>([]);
+  /** Installed packs with a newer version in the catalog (reinstall to update). */
+  protected readonly updatableEngineIds = signal<Set<string>>(new Set());
   protected readonly recommendedEngineIds = signal<Set<string>>(new Set());
   /** Packs this machine's hardware can run (local-first fit check). null = the
    * backend didn't report fit (older build) -> assume everything fits. */
@@ -282,6 +284,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
         .then((e) => {
           this.enginePacks.set(e.available);
           this.installedEngines.set(e.installed);
+          this.updatableEngineIds.set(new Set(e.updatable ?? []));
         })
         .catch(() => undefined),
       this.ipc
@@ -300,6 +303,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   protected isEngineInstalled(packId: string): boolean {
     return this.installedEngines().some((i) => i.id === packId);
+  }
+
+  /** True if an installed pack has a newer version available (reinstall to update). */
+  protected isEngineUpdatable(packId: string): boolean {
+    return this.updatableEngineIds().has(packId);
   }
 
   protected isEngineRecommended(packId: string): boolean {

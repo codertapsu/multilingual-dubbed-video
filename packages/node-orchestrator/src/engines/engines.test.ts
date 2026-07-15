@@ -289,6 +289,16 @@ describe('hardware-aware engine recommendations', () => {
     expect(availablePacks('win32', 'x64').map((p) => p.id)).toContain('tts-neural');
   });
 
+  it('installable packs declare a version (so an update can be detected)', () => {
+    for (const id of [
+      'whisper-cpp-cuda', 'llama-cpp-metal', 'llama-cpp-cuda', 'llama-cpp-vulkan',
+      'translategemma-4b', 'translategemma-12b', 'translategemma-27b',
+      'tts-neural', 'translation-libretranslate',
+    ]) {
+      expect(findPack(id)?.version, id).toBeTruthy();
+    }
+  });
+
   it('recommends local LLM (runtime + tier-sized model) + neural TTS on a 32 GB Mac', () => {
     const p = profile({ totalRamMb: 32 * 1024 });
     const recs = recommendEnginePacks(p, recommendSetup(p), 'darwin', 'arm64').map((r) => r.packId);

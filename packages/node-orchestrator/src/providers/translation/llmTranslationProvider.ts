@@ -296,19 +296,25 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
         ? this.callAnthropic(baseUrl, cred.apiKey, model, prompt, signal, system)
         : this.callOpenAiCompatible(baseUrl, cred.apiKey, model, prompt, signal, system);
 
-    // Document-level context: one analysis pass over the transcript produces
-    // the "character sheet" (synopsis, cast, glossary, pronoun/address plan)
-    // that keeps Vietnamese xưng hô and terminology consistent across batches.
-    // Best-effort: an analysis failure must never fail the translation itself.
-    const useContext = translationContextEnabled() && input.segments.length >= MIN_SEGMENTS_FOR_ANALYSIS;
-    let analysis: TranslationAnalysis | undefined;
-    if (useContext) {
-      analysis = await send(
+    // Document-level context: the project's character sheet (synopsis, cast,
+    // glossary, pronoun/address plan) keeps Vietnamese xưng hô and terminology
+    // consistent across batches. A sheet provided by the caller (persisted /
+    // user-edited) is authoritative; otherwise one analysis pass generates it
+    // and it is returned for persistence. Best-effort: an analysis failure must
+    // never fail the translation itself.
+    const provided = input.documentContext;
+    const useContext =
+      translationContextEnabled() && (provided !== undefined || input.segments.length >= MIN_SEGMENTS_FOR_ANALYSIS);
+    let analysis: TranslationAnalysis | undefined = provided;
+    let generated: TranslationAnalysis | undefined;
+    if (useContext && analysis === undefined) {
+      generated = await send(
         buildAnalysisPrompt(source, target, buildAnalysisSample(input.segments)),
         'You prepare structured notes for dubbing translators. Respond with strict JSON only.',
       )
         .then(parseAnalysisReply)
         .catch(() => undefined);
+      analysis = generated;
     }
 
     // Scene-aware batches + a rolling window of the previous batch's translated
@@ -337,7 +343,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
       previousBatch = batch;
     }
 
-    return { segments: results };
+    return { segments: results, ...(generated ? { analysis: generated } : {}) };
   }
 
   /** OpenAI-compatible chat completion (OpenAI itself + Gemini compat). */

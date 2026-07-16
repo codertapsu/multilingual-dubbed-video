@@ -1,7 +1,7 @@
 # Dubbing quality: natural tone + context-aware translation
 
-Status: **Phase A + B1 implemented** (2026-07). This doc records the diagnosis,
-what shipped, how to tune/disable it, and the researched follow-up roadmap.
+Status: **Phase A + B1 + B2 implemented** (2026-07). This doc records the
+diagnosis, what shipped, how to tune/disable it, and the remaining roadmap.
 
 ## The problem
 
@@ -57,6 +57,32 @@ translate (officially confirmed: no system prompts, no glossaries, ~2K input).
 
 Module: `packages/node-orchestrator/src/providers/translation/translationContext.ts`.
 
+### B2. The character sheet ("Cast & translation context") + offline tiers
+
+- **Persistent, user-editable character sheet** (`TranslationDocContext`):
+  the first context-aware translation run persists the generated analysis to
+  `subtitles/translation_context.json`; every later translation (full runs,
+  auto-fit, per-line "tighten to fit") passes it back verbatim, so it is
+  authoritative. The editor shows a **Cast & translation context** card
+  (synopsis, pronoun/address plan, cast, glossary) with **Save** and
+  **Save & re-translate** — fix "gọi 'thầy', xưng 'em'" once, apply it to the
+  whole video. API: `GET/PUT /projects/:id/translation-context`.
+- **Fully-offline context-aware tiers** (both need a llama.cpp runtime pack +
+  a `chat-gemma3-4b`/`-12b` model pack — Gemma 3 INSTRUCT, ungated ggml-org
+  GGUFs, sha256-pinned; TranslateGemma structurally can't follow the sheet):
+  - `llama-cpp-chat` — Gemma 3 chat translates scene batches with the sheet.
+  - `argos-llm-repair` — **Argos drafts instantly, Gemma 3 repairs** pronouns/
+    terminology/cohesion with document context (the research-backed best
+    pronoun quality per compute; drafts are kept wherever the repair reply is
+    missing/malformed).
+  The shared llama.cpp runtime restarts automatically when a provider needs a
+  different GGUF (engineManager keys running servers by model now).
+- **Per-speaker voices wired**: synthesis groups carry `speakerId`; the TTS
+  step partitions units by `settings.speakerVoices` assignment (falling back
+  to the project voice), and single-segment regeneration + native-rate/refit
+  re-synthesis honor the same mapping. Live as soon as segments carry
+  speaker ids (diarization pack, or an STT provider that diarizes).
+
 ### Behavioral notes
 
 - `translated.aligned.json` now contains one entry per **synthesis unit**
@@ -85,20 +111,18 @@ Module: `packages/node-orchestrator/src/providers/translation/translationContext
 
 1. **Diarization engine pack** → real `speakerId`s: pyannote
    `speaker-diarization-community-1` (CC-BY-4.0) or 3.1 (MIT) in the
-   `vd_whisperx` stub; senko (MIT) as the fast Apple-Silicon path. Unlocks
-   per-speaker voices (`speakerVoices` already in the schema) and a real
-   speaker-pair pronoun map.
-2. **Character-sheet UI**: persist the analysis (cast/glossary/pronoun plan)
-   per project and let the user edit it; one correction re-translates the
-   whole video consistently. (The plumbing exists — the analysis object just
-   isn't persisted yet.)
-3. **Argos draft + local-LLM context repair** for the fully-offline tier
-   (research-backed best pronoun quality per compute).
-4. **Engines**: track VieNeu v3-Turbo to stable (Apache-2.0; the only
+   `vd_whisperx` stub; senko (MIT) as the fast Apple-Silicon path. The
+   consumer side is READY: per-speaker voices and the speaker-pair pronoun
+   map light up as soon as segments carry speaker ids. (Deliberately not
+   built blind — heavy ML packs get built + validated on real hardware, not
+   shipped as stubs.)
+2. **Engines**: track VieNeu v3-Turbo to stable (Apache-2.0; the only
    commercially-clean neural Vietnamese cloning today) + per-speaker reference
    cloning + prompt chaining behind a "cohesion" toggle; Kokoro-82M ONNX
    (Apache) as the above-Piper tier for its 8 languages; verify Chatterbox
    Multilingual v3's Vietnamese claim (MIT). Avoid: XTTS/viXTTS (CPML,
    orphaned), F5-TTS vi finetunes / Fish / SeamlessExpressive (all NC).
-5. **Prosody transfer** from source audio (emotion/energy classifier → engine
+3. **Prosody transfer** from source audio (emotion/energy classifier → engine
    style controls) once an engine with style controls ships.
+4. **Speaker-voice assignment UI** (a per-speaker voice picker in the editor)
+   once diarization produces speakers to assign.

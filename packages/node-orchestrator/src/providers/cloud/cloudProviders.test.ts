@@ -136,6 +136,62 @@ describe('LlmTranslationProvider', () => {
       provider.translateSegments({ sourceLanguage: 'en', targetLanguage: 'vi', segments: [] }),
     ).rejects.toMatchObject({ appError: { code: 'CLOUD_CREDENTIALS_MISSING' } });
   });
+
+  const tenSegments = Array.from({ length: 10 }, (_, i) => ({
+    id: `seg_${String(i + 1).padStart(4, '0')}`,
+    sourceText: `line ${i}`,
+    startMs: i * 2000,
+    endMs: i * 2000 + 1500,
+  }));
+
+  it('injects a provided character sheet into every batch prompt (no analysis call)', async () => {
+    const prompts: string[] = [];
+    const provider = new LlmTranslationProvider('openai', store, 5000, async (_url, _headers, body) => {
+      const b = body as { messages: { content: string }[] };
+      prompts.push(b.messages[1]!.content);
+      return { choices: [{ message: { content: '{"segments":[]}' } }] } as never;
+    });
+
+    await provider.translateSegments({
+      sourceLanguage: 'en',
+      targetLanguage: 'vi',
+      segments: tenSegments,
+      documentContext: { pronounGuide: 'học sinh -> giáo viên: thầy/em' },
+    });
+
+    expect(prompts.length).toBeGreaterThan(0);
+    for (const p of prompts) {
+      // Every call is a TRANSLATION call (the provided sheet suppressed analysis)…
+      expect(p).toContain('Translate the following subtitle segments');
+      // …and carries the sheet.
+      expect(p).toContain('thầy/em');
+    }
+  });
+
+  it('generates + returns the analysis when no sheet is provided', async () => {
+    let call = 0;
+    const prompts: string[] = [];
+    const provider = new LlmTranslationProvider('openai', store, 5000, async (_url, _headers, body) => {
+      const b = body as { messages: { content: string }[] };
+      prompts.push(b.messages[1]!.content);
+      const reply =
+        call++ === 0
+          ? '{"synopsis":"a lesson","pronounGuide":"thầy/em"}'
+          : '{"segments":[]}';
+      return { choices: [{ message: { content: reply } }] } as never;
+    });
+
+    const result = await provider.translateSegments({
+      sourceLanguage: 'en',
+      targetLanguage: 'vi',
+      segments: tenSegments,
+    });
+
+    expect(prompts[0]).toContain('Analyze the following transcript');
+    expect(result.analysis).toEqual({ synopsis: 'a lesson', pronounGuide: 'thầy/em' });
+    // The generated sheet flows into the translation prompts that follow.
+    expect(prompts[1]).toContain('a lesson');
+  });
 });
 
 describe('OpenAI STT segment mapping', () => {

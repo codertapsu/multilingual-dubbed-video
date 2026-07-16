@@ -311,6 +311,93 @@
     </div>
   }
 
+  <!-- Cast & translation context: the project's character sheet. Context-aware
+       translation providers follow it, so fixing a pronoun/term HERE fixes it
+       across the whole video on the next re-translate. -->
+  @if (ctxDraft(); as ctx) {
+    <div class="card stack ctx-card">
+      <div class="ctx-head">
+        <h2>Cast &amp; translation context</h2>
+        @if (ctxDirty()) {
+          <span class="badge badge-warning">unsaved</span>
+        }
+      </div>
+      <p class="hint">
+        Used by context-aware translation (cloud LLMs, Gemma 3 chat, Argos + Gemma repair) to keep
+        pronouns, terms of address, and terminology consistent. Fix something once — e.g. “student →
+        teacher: gọi ‘thầy’, xưng ‘em’” — then <strong>Save &amp; re-translate</strong> to apply it everywhere.
+      </p>
+
+      <label class="ctx-field">
+        <span class="label">Synopsis</span>
+        <textarea
+          rows="2"
+          [ngModel]="ctx.synopsis"
+          (ngModelChange)="ctx.synopsis = $event; ctxChanged()"
+          placeholder="What is this video about, and who is talking to whom?"
+        ></textarea>
+      </label>
+
+      <label class="ctx-field">
+        <span class="label">Pronouns &amp; terms of address</span>
+        <textarea
+          rows="3"
+          [ngModel]="ctx.pronounGuide"
+          (ngModelChange)="ctx.pronounGuide = $event; ctxChanged()"
+          placeholder="Per speaker pair, the address terms to use (e.g. học sinh → giáo viên: gọi 'thầy', xưng 'em')."
+        ></textarea>
+      </label>
+
+      <div class="ctx-field">
+        <span class="label">Cast</span>
+        @for (c of ctx.cast; track $index) {
+          <div class="ctx-row">
+            <input [ngModel]="c.name" (ngModelChange)="c.name = $event; ctxChanged()" placeholder="Name / label" />
+            <input [ngModel]="c.role" (ngModelChange)="c.role = $event; ctxChanged()" placeholder="Role (e.g. teacher, narrator)" />
+            <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveCast($index)" title="Remove">✕</button>
+          </div>
+        }
+        <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddCast()">+ Add speaker</button>
+      </div>
+
+      <div class="ctx-field">
+        <span class="label">Glossary (always translate as)</span>
+        @for (g of ctx.glossary; track $index) {
+          <div class="ctx-row">
+            <input [ngModel]="g.source" (ngModelChange)="g.source = $event; ctxChanged()" placeholder="Source term" />
+            <input [ngModel]="g.target" (ngModelChange)="g.target = $event; ctxChanged()" placeholder="Target rendering" />
+            <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveGlossary($index)" title="Remove">✕</button>
+          </div>
+        }
+        <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddGlossary()">+ Add term</button>
+      </div>
+
+      <div class="ctx-actions">
+        <button type="button" class="btn btn-sm" (click)="saveCtx(false)" [disabled]="!ctxDirty() || ctxSaving()">
+          Save sheet
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          (click)="saveCtx(true)"
+          [disabled]="ctxSaving() || redubbing()"
+          title="Save, then re-run the pipeline from the translation step so the sheet is applied"
+        >
+          Save &amp; re-translate
+        </button>
+      </div>
+    </div>
+  } @else if (project()) {
+    <div class="card muted ctx-card">
+      <span>
+        No translation character sheet yet — one is generated automatically on the first
+        context-aware translation run (cloud LLM, Gemma 3 chat, or Argos + Gemma repair), or create
+        one now to steer pronouns and terminology.
+      </span>
+      <button type="button" class="btn btn-ghost btn-sm" (click)="createCtxSheet()">Create sheet</button>
+    </div>
+  }
+
   @if (anyWarnings()) {
     <div class="badge badge-warning warnings-hint">
       ⚠ Some segments have warnings — over-long subtitles or timing conflicts.

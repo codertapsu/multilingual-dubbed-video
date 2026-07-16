@@ -86,6 +86,8 @@ export interface RunningEngine {
   packId: string;
   baseUrl: string;
   port: number;
+  /** The model file this instance was launched with (llama.cpp runtime). */
+  model?: string;
   /** Kill the process. */
   stop: () => Promise<void>;
 }
@@ -238,7 +240,16 @@ export class EngineManager {
    */
   async ensureRunning(packId: string, opts: { exclusive?: boolean; model?: string } = {}): Promise<string> {
     const existing = this.running.get(packId);
-    if (existing) return existing.baseUrl;
+    if (existing) {
+      // Same pack, same (or unspecified) model -> reuse the running server.
+      // A DIFFERENT model means a different provider wants the same runtime
+      // (e.g. TranslateGemma vs the Gemma-instruct chat model on llama.cpp):
+      // restart with the requested GGUF instead of silently serving the wrong
+      // weights.
+      if (opts.model === undefined || existing.model === opts.model) return existing.baseUrl;
+      this.deps.logger?.info(`Restarting engine "${packId}" to swap its model.`);
+      await existing.stop();
+    }
 
     const spec = ENGINE_LAUNCH_SPECS[this.providerOf(packId)];
     if (!spec) {
@@ -325,7 +336,7 @@ export class EngineManager {
       );
     }
 
-    const instance: RunningEngine = { packId, baseUrl, port, stop };
+    const instance: RunningEngine = { packId, baseUrl, port, ...(opts.model ? { model: opts.model } : {}), stop };
     this.running.set(packId, instance);
     return baseUrl;
   }

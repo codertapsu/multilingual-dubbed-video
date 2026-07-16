@@ -121,6 +121,26 @@ export interface TranslationSegmentInput {
   endMs: number;
 }
 
+/**
+ * Document-level translation context — the project's "character sheet".
+ *
+ * Carries what a single segment can never determine: who is talking to whom
+ * (which fixes Vietnamese xưng hô — thầy/cô, anh/chị, em, bạn, con…), the
+ * terminology that must stay consistent, and the overall register. Generated
+ * once per project by an LLM analysis pass, persisted, and user-editable in
+ * the editor; context-capable providers inject it into every request.
+ */
+export interface TranslationDocContext {
+  /** One/two-sentence summary of what the video is about. */
+  synopsis?: string;
+  /** Speakers/characters inferred from (or corrected by) the user. */
+  cast?: { name: string; role?: string }[];
+  /** Terms/names that must be translated the same way everywhere. */
+  glossary?: { source: string; target: string }[];
+  /** Target-language pronoun/address plan (per speaker pair where known). */
+  pronounGuide?: string;
+}
+
 /** Request payload for batch segment translation. */
 export interface TranslationInput {
   /** Source language code. */
@@ -131,6 +151,12 @@ export interface TranslationInput {
   segments: TranslationSegmentInput[];
   /** Optional glossary applied as case-insensitive whole-word replacement. */
   glossary?: Record<string, string>;
+  /**
+   * The project's character sheet. When present, context-capable providers use
+   * it verbatim (no analysis pass of their own); when absent they may generate
+   * one and return it via {@link TranslationResult.analysis} for persistence.
+   */
+  documentContext?: TranslationDocContext;
 }
 
 /** A single translated segment. */
@@ -145,6 +171,12 @@ export interface TranslationResultSegment {
 export interface TranslationResult {
   /** Translated segments in input order. */
   segments: TranslationResultSegment[];
+  /**
+   * The character sheet the provider generated for this job (only when the
+   * request carried no {@link TranslationInput.documentContext}). The caller
+   * persists it so the user can review/edit it and later runs reuse it.
+   */
+  analysis?: TranslationDocContext;
 }
 
 /** A pluggable translation provider. */

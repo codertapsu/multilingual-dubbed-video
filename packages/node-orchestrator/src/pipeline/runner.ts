@@ -44,12 +44,13 @@ import {
   type PipelineStepId,
   type Project,
   type TranscriptSegment,
-  type TtsSegmentInput,
+  type TranslationDocContext,
 } from '@videodubber/shared';
 import { alignSegments, summarizeAlignment, type AlignInputSegment } from '../alignment/align.js';
 import {
   planSynthesisGroups,
   singletonGroups,
+  voiceForGroup,
   type SynthesisGroup,
   type SynthesisGroupsArtifact,
 } from './grouping.js';
@@ -134,6 +135,22 @@ async function readSegments(path: string): Promise<TranscriptSegment[]> {
 /** Write transcript segments to a JSON artifact. */
 async function writeSegments(path: string, segments: TranscriptSegment[]): Promise<void> {
   await fsp.writeFile(path, `${JSON.stringify({ segments }, null, 2)}\n`, 'utf8');
+}
+
+/** Read the persisted translation character sheet (undefined when absent/corrupt). */
+async function readDocContext(path: string): Promise<TranslationDocContext | undefined> {
+  try {
+    const raw = await fsp.readFile(path, 'utf8');
+    const parsed = JSON.parse(raw) as TranslationDocContext;
+    return parsed && typeof parsed === 'object' ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persist the translation character sheet. */
+async function writeDocContext(path: string, ctx: TranslationDocContext): Promise<void> {
+  await fsp.writeFile(path, `${JSON.stringify(ctx, null, 2)}\n`, 'utf8');
 }
 
 /** Read the synthesis-group plan artifact (undefined when absent/corrupt). */
@@ -633,6 +650,12 @@ export class PipelineRunner {
       `Translating ${sourceSegments.length} segments ${project.settings.sourceLanguage} -> ${project.settings.targetLanguage} with "${provider.id}"...`,
     );
 
+    // The project's character sheet (cast/glossary/pronoun plan): a persisted
+    // (possibly user-edited) one is authoritative and re-used verbatim; when
+    // absent, a context-capable provider generates one and we persist it so the
+    // editor can surface it and later re-translates stay consistent.
+    const documentContext = await readDocContext(paths.translationContextJson);
+
     const result = await provider.translateSegments(
       {
         sourceLanguage: project.settings.sourceLanguage,
@@ -643,9 +666,17 @@ export class PipelineRunner {
           startMs: s.startMs,
           endMs: s.endMs,
         })),
+        ...(documentContext ? { documentContext } : {}),
       },
       signal,
     );
+
+    if (!documentContext && result.analysis) {
+      await writeDocContext(paths.translationContextJson, result.analysis);
+      this.deps.logger.info(
+        'Generated the translation character sheet (cast, glossary, pronoun plan) — review it in the editor to fine-tune pronouns/terminology, then re-run translation.',
+      );
+    }
 
     const byId = new Map(result.segments.map((s) => [s.id, s.translatedText]));
 
@@ -690,35 +721,50 @@ export class PipelineRunner {
     });
     await writeGroups(paths.synthesisGroupsJson, groups);
 
-    const ttsInputs: TtsSegmentInput[] = groups.map((g) => ({
-      id: g.id,
-      text: g.text,
-      startMs: g.startMs,
-      endMs: g.endMs,
-    }));
+    // Per-speaker voices: partition units by their resolved voice (a diarized
+    // speaker with an assignment in settings.speakerVoices gets it; everything
+    // else uses the project voice) and synthesize one batch per voice.
+    const byVoice = new Map<string | undefined, SynthesisGroup[]>();
+    for (const g of groups) {
+      const voice = voiceForGroup(g, project.settings);
+      byVoice.set(voice, [...(byVoice.get(voice) ?? []), g]);
+    }
 
     this.deps.logger.info(
-      `Synthesizing ${ttsInputs.length} utterance(s) covering ${segments.length} segment(s) with provider "${provider.id}"...`,
+      `Synthesizing ${groups.length} utterance(s) covering ${segments.length} segment(s) with provider "${provider.id}"` +
+        (byVoice.size > 1 ? ` across ${byVoice.size} voices` : '') +
+        '...',
     );
-    const result = await provider.synthesizeSegments(
-      {
-        language: project.settings.targetLanguage,
-        voiceId: project.settings.ttsVoiceId,
-        segments: ttsInputs,
-        outputDir: paths.ttsSegmentsDir,
-        speed: 1.0,
-      },
-      signal,
-    );
+
+    const synthesized = new Set<string>();
+    let engine: string | undefined;
+    let sawFallbackEngine = false;
+    let fallbackSegments = 0;
+    for (const [voiceId, voiceGroups] of byVoice) {
+      throwIfCancelled(signal);
+      const result = await provider.synthesizeSegments(
+        {
+          language: project.settings.targetLanguage,
+          voiceId,
+          segments: voiceGroups.map((g) => ({ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs })),
+          outputDir: paths.ttsSegmentsDir,
+          speed: 1.0,
+        },
+        signal,
+      );
+      for (const s of result.segments) synthesized.add(s.segmentId);
+      if (result.engine === 'fallback') sawFallbackEngine = true;
+      else engine ??= result.engine;
+      fallbackSegments += result.fallbackSegments ?? 0;
+    }
 
     // Surface incompleteness: if the worker returned fewer segments than asked,
     // the missing WAVs would otherwise only surface as 0ms timing-conflicts at
     // alignment, masking the real failure. Warn with the offending ids.
-    const synthesized = new Set(result.segments.map((s) => s.segmentId));
-    const missing = ttsInputs.filter((s) => !synthesized.has(s.id));
+    const missing = groups.filter((g) => !synthesized.has(g.id));
     if (missing.length > 0) {
       this.deps.logger.warn(
-        `TTS worker returned ${result.segments.length}/${ttsInputs.length} segments. ` +
+        `TTS worker returned ${synthesized.size}/${groups.length} segments. ` +
           `${missing.length} segment(s) were not synthesized (e.g. ${missing
             .slice(0, 3)
             .map((s) => s.id)
@@ -728,19 +774,19 @@ export class PipelineRunner {
 
     // Surface silent placeholders loudly: "fallback" means no installed voice
     // can speak the target language, so the dub would have no speech at all.
-    if (result.engine === 'fallback') {
+    if (sawFallbackEngine && engine === undefined) {
       this.deps.logger.warn(
         `TTS produced SILENT placeholder audio: no installed voice can speak ` +
           `"${project.settings.targetLanguage}". Install a Piper voice for this ` +
           `language (Settings → Setup) and re-run from the TTS step.`,
       );
-    } else if ((result.fallbackSegments ?? 0) > 0) {
+    } else if (fallbackSegments > 0) {
       this.deps.logger.warn(
-        `TTS engine "${result.engine}" failed on ${result.fallbackSegments} segment(s); ` +
+        `TTS engine "${engine}" failed on ${fallbackSegments} segment(s); ` +
           `those segments contain silent placeholder audio.`,
       );
     }
-    this.deps.logger.info(`Speech synthesis complete (engine: ${result.engine ?? 'unknown'}).`);
+    this.deps.logger.info(`Speech synthesis complete (engine: ${engine ?? (sawFallbackEngine ? 'fallback' : 'unknown')}).`);
   }
 
   private async stepAlignment(
@@ -932,11 +978,15 @@ export class PipelineRunner {
       }
       if (reqSegs.length === 0) break;
 
+      // Carry the character sheet into the refit re-translation too, so the
+      // shortened lines keep the same pronouns/terminology as the rest.
+      const documentContext = await readDocContext(paths.translationContextJson);
       const result = await translation.translateSegments(
         {
           sourceLanguage: project.settings.sourceLanguage,
           targetLanguage: project.settings.targetLanguage,
           segments: reqSegs,
+          ...(documentContext ? { documentContext } : {}),
         },
         signal,
       );
@@ -964,16 +1014,19 @@ export class PipelineRunner {
           .filter((t) => t.length > 0)
           .join(' ');
       }
-      await tts.synthesizeSegments(
-        {
-          language: project.settings.targetLanguage,
-          voiceId: project.settings.ttsVoiceId,
-          segments: [...changedGroups].map((g) => ({ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs })),
-          outputDir: paths.ttsSegmentsDir,
-          speed: 1.0,
-        },
-        signal,
-      );
+      // Re-synthesize per group so speaker-assigned voices are preserved.
+      for (const g of changedGroups) {
+        await tts.synthesizeSegments(
+          {
+            language: project.settings.targetLanguage,
+            voiceId: voiceForGroup(g, project.settings),
+            segments: [{ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs }],
+            outputDir: paths.ttsSegmentsDir,
+            speed: 1.0,
+          },
+          signal,
+        );
+      }
 
       // Re-probe the changed units' new durations, then re-align everything
       // (gap-aware alignment depends on neighbours, so re-run the whole list).
@@ -1048,7 +1101,7 @@ export class PipelineRunner {
         await tts.synthesizeSegments(
           {
             language: project.settings.targetLanguage,
-            voiceId: project.settings.ttsVoiceId,
+            voiceId: voiceForGroup(group, project.settings),
             segments: [{ id: group.id, text: group.text, startMs: group.startMs, endMs: group.endMs }],
             outputDir: paths.ttsSegmentsDir,
             speed,

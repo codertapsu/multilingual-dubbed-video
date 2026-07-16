@@ -44,6 +44,8 @@ export interface SynthesisGroup {
   startMs: number;
   /** Window end = last member's endMs. */
   endMs: number;
+  /** Diarization speaker (all members share it — groups never span speakers). */
+  speakerId?: string;
 }
 
 /** Tunables for {@link planSynthesisGroups}. */
@@ -140,6 +142,7 @@ export function planSynthesisGroups(
         text,
         startMs: seg.startMs,
         endMs: seg.endMs,
+        ...(seg.speakerId ? { speakerId: seg.speakerId } : {}),
       });
     }
     prev = seg;
@@ -151,6 +154,25 @@ export function planSynthesisGroups(
 /** Persisted shape of the synthesis-groups artifact (audio/synthesis_groups.json). */
 export interface SynthesisGroupsArtifact {
   groups: SynthesisGroup[];
+}
+
+/** The settings subset {@link voiceForGroup} reads. */
+export interface VoiceSettings {
+  ttsVoiceId?: string;
+  speakerVoices?: { speakerId: string; voiceId: string }[];
+}
+
+/**
+ * Resolve the TTS voice for a synthesis unit: a diarized speaker with an
+ * assigned voice (settings.speakerVoices) speaks with it; everything else uses
+ * the project-wide voice. Pure.
+ */
+export function voiceForGroup(group: SynthesisGroup, settings: VoiceSettings): string | undefined {
+  if (group.speakerId) {
+    const assigned = settings.speakerVoices?.find((v) => v.speakerId === group.speakerId)?.voiceId;
+    if (assigned) return assigned;
+  }
+  return settings.ttsVoiceId;
 }
 
 /** Turn segments into one-singleton-per-segment groups (legacy / fallback shape). */

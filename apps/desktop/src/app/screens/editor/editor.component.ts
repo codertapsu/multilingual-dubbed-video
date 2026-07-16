@@ -42,6 +42,7 @@ import type {
   ProjectSettings,
   RenderQuality,
   SubtitleExportMode,
+  TranslationDocContext,
 } from '../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, WhisperModelInfo } from '../../core/models/setup';
 import type { EditorSegmentVm, SegmentWithAlignment } from '../../core/models/view-models';
@@ -49,6 +50,24 @@ import type { EditorSegmentVm, SegmentWithAlignment } from '../../core/models/vi
 /** Soft cap for "long subtitle" warning (≈ 2 lines × 42 chars). */
 const LONG_SUBTITLE_CHAR_LIMIT = 84;
 const MAX_SUBTITLE_LINES = 2;
+
+/** Fully-populated editable copy of the translation character sheet. */
+interface CtxDraft {
+  synopsis: string;
+  pronounGuide: string;
+  cast: { name: string; role: string }[];
+  glossary: { source: string; target: string }[];
+}
+
+/** Normalize a persisted sheet into the editable draft shape ('' defaults). */
+function toCtxDraft(ctx: TranslationDocContext): CtxDraft {
+  return {
+    synopsis: ctx.synopsis ?? '',
+    pronounGuide: ctx.pronounGuide ?? '',
+    cast: (ctx.cast ?? []).map((c) => ({ name: c.name, role: c.role ?? '' })),
+    glossary: (ctx.glossary ?? []).map((g) => ({ source: g.source, target: g.target })),
+  };
+}
 
 /**
  * EditorComponent (route "project/:id/editor").
@@ -239,10 +258,24 @@ export class EditorComponent implements OnInit {
       this.drafts.set(drafts);
       this.dirty.set(false);
       void this.loadProjectAndSettings();
+      void this.loadTranslationContext();
     } catch (err) {
       this.error.set(toAppError(err));
     } finally {
       this.loading.set(false);
+    }
+  }
+
+  /** Load the project's translation character sheet (best-effort). */
+  private async loadTranslationContext(): Promise<void> {
+    try {
+      const { context } = await this.ipc.getTranslationContext(this.id());
+      if (context) {
+        this.ctxDraft.set(toCtxDraft(context));
+        this.ctxDirty.set(false);
+      }
+    } catch {
+      /* non-fatal: the sheet card just shows its empty state */
     }
   }
 
@@ -407,6 +440,66 @@ export class EditorComponent implements OnInit {
       this.error.set(toAppError(err));
     } finally {
       this.redubbing.set(false);
+    }
+  }
+
+  // -------- translation character sheet (cast & address) --------
+  /** Editable working copy of the sheet; null = none generated/created yet. */
+  protected readonly ctxDraft = signal<CtxDraft | null>(null);
+  protected readonly ctxDirty = signal(false);
+  protected readonly ctxSaving = signal(false);
+
+  /** Seed an empty sheet so the user can fill it in before the first LLM run. */
+  protected createCtxSheet(): void {
+    this.ctxDraft.set({ synopsis: '', pronounGuide: '', cast: [{ name: '', role: '' }], glossary: [] });
+    this.ctxDirty.set(true);
+  }
+
+  protected ctxChanged(): void {
+    this.ctxDirty.set(true);
+  }
+
+  protected ctxAddCast(): void {
+    this.ctxDraft.update((d) => (d ? { ...d, cast: [...d.cast, { name: '', role: '' }] } : d));
+    this.ctxDirty.set(true);
+  }
+
+  protected ctxRemoveCast(index: number): void {
+    this.ctxDraft.update((d) => (d ? { ...d, cast: d.cast.filter((_, i) => i !== index) } : d));
+    this.ctxDirty.set(true);
+  }
+
+  protected ctxAddGlossary(): void {
+    this.ctxDraft.update((d) => (d ? { ...d, glossary: [...d.glossary, { source: '', target: '' }] } : d));
+    this.ctxDirty.set(true);
+  }
+
+  protected ctxRemoveGlossary(index: number): void {
+    this.ctxDraft.update((d) => (d ? { ...d, glossary: d.glossary.filter((_, i) => i !== index) } : d));
+    this.ctxDirty.set(true);
+  }
+
+  /** Persist the sheet; optionally re-run translation so it takes effect. */
+  protected async saveCtx(retranslate: boolean): Promise<void> {
+    const draft = this.ctxDraft();
+    if (!draft || this.ctxSaving()) return;
+    this.ctxSaving.set(true);
+    this.error.set(null);
+    try {
+      const ctx: TranslationDocContext = {
+        synopsis: draft.synopsis,
+        pronounGuide: draft.pronounGuide,
+        cast: draft.cast.filter((c) => c.name.trim().length > 0),
+        glossary: draft.glossary.filter((g) => g.source.trim().length > 0),
+      };
+      const { context } = await this.ipc.saveTranslationContext(this.id(), ctx);
+      this.ctxDraft.set(toCtxDraft(context));
+      this.ctxDirty.set(false);
+      if (retranslate) await this.redubFrom('translation');
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.ctxSaving.set(false);
     }
   }
 

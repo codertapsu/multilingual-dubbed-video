@@ -457,6 +457,112 @@ describe('PipelineRunner — native-rate re-synthesis', () => {
   });
 });
 
+describe('PipelineRunner — per-speaker voices', () => {
+  it('synthesizes each diarized speaker with its assigned voice', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(
+      createProjectInput(video, {
+        settings: defaultSettings({
+          ttsVoiceId: 'default-voice',
+          speakerVoices: [
+            { speakerId: 'SPEAKER_00', voiceId: 'voice-a' },
+            { speakerId: 'SPEAKER_01', voiceId: 'voice-b' },
+          ],
+        }),
+      }),
+    );
+    const paths = store.paths(project.id);
+
+    // Two adjacent same-speaker cues (group together) + a speaker change.
+    const segments = makeSegments([
+      [0, 1000, 'a1'],
+      [1100, 2000, 'a2'],
+      [2100, 3000, 'b1'],
+    ]).map((s, i) => ({ ...s, speakerId: i < 2 ? 'SPEAKER_00' : 'SPEAKER_01' }));
+
+    const voiceCalls: (string | undefined)[] = [];
+    const tts: TtsProvider = {
+      id: 'piper-local',
+      displayName: 'voice-tts',
+      isLocal: true,
+      async synthesizeSegments(input: TtsInput): Promise<TtsResult> {
+        voiceCalls.push(input.voiceId);
+        const segs = await Promise.all(
+          input.segments.map(async (s, i) => {
+            const num = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
+            const audioPath = path.join(input.outputDir, `segment_${String(num).padStart(4, '0')}.wav`);
+            await fsp.mkdir(input.outputDir, { recursive: true });
+            await fsp.writeFile(audioPath, '500', 'utf8');
+            return { segmentId: s.id, text: s.text, audioPath, durationMs: 500, startMs: s.startMs, endMs: s.endMs, speedRatio: 1 };
+          }),
+        );
+        return { segments: segs, engine: 'piper' };
+      },
+    };
+
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(new FakeSttProvider(segments), new FakeTranslationProvider(), tts),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    // One call per voice; the same-speaker cues grouped, the change split them.
+    expect(voiceCalls.sort()).toEqual(['voice-a', 'voice-b']);
+    const groups = JSON.parse(await fsp.readFile(paths.synthesisGroupsJson, 'utf8'));
+    expect(groups.groups.map((g: { segmentIds: string[] }) => g.segmentIds)).toEqual([
+      ['seg_0001', 'seg_0002'],
+      ['seg_0003'],
+    ]);
+  });
+});
+
+describe('PipelineRunner — translation character sheet', () => {
+  it('persists a generated sheet and reuses it verbatim on re-translation', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+
+    const receivedContexts: (unknown | undefined)[] = [];
+    const translation: TranslationProvider = {
+      id: 'argos',
+      displayName: 'sheet-mt',
+      isLocal: true,
+      async translateSegments(input: TranslationInput): Promise<TranslationResult> {
+        receivedContexts.push(input.documentContext);
+        return {
+          segments: input.segments.map((s) => ({ id: s.id, translatedText: `[vi] ${s.sourceText}` })),
+          // Emitted only when the caller provided no sheet (mirrors real providers).
+          ...(input.documentContext ? {} : { analysis: { pronounGuide: 'học sinh -> giáo viên: thầy/em' } }),
+        };
+      },
+    };
+
+    const stt = new FakeSttProvider(makeSegments([[0, 1000, 'hello'], [2000, 3000, 'bye']]));
+    const bus = buses.get(project.id);
+    const deps: RunnerDeps = {
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(stt, translation, new FakeTtsProvider()),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    };
+    const runner = new PipelineRunner(deps);
+    await runner.run(project, { signal: new AbortController().signal });
+
+    // First run: no sheet passed in, the generated one was persisted.
+    expect(receivedContexts[0]).toBeUndefined();
+    const persisted = JSON.parse(await fsp.readFile(paths.translationContextJson, 'utf8'));
+    expect(persisted.pronounGuide).toContain('thầy/em');
+
+    // Re-translate: the persisted (user-editable) sheet is now authoritative.
+    await runner.run(project, { retryFromStep: 'translation', signal: new AbortController().signal });
+    expect(receivedContexts[1]).toEqual(persisted);
+  });
+});
+
 describe('PipelineRunner — chunked STT (long audio)', () => {
   /** Build a runner over a long (100s) media with small chunk windows. */
   async function buildChunkingProject() {

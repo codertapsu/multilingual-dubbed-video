@@ -8,6 +8,7 @@ import type {
   Project,
   ProjectSettings,
   RenderFinalVideoResult,
+  TranslationDocContext,
 } from '../models';
 import type {
   LanguagesResponse,
@@ -223,6 +224,19 @@ export class IpcService {
       `/projects/${encodeURIComponent(projectId)}/segments/${encodeURIComponent(segmentId)}/refit`,
       {},
     );
+  }
+
+  /** GET /projects/:id/translation-context — the project's character sheet (or null). */
+  getTranslationContext(projectId: string): Promise<{ context: TranslationDocContext | null }> {
+    return this.http('GET', `/projects/${encodeURIComponent(projectId)}/translation-context`);
+  }
+
+  /** PUT /projects/:id/translation-context — save the (edited) character sheet. */
+  saveTranslationContext(
+    projectId: string,
+    context: TranslationDocContext,
+  ): Promise<{ context: TranslationDocContext }> {
+    return this.http('PUT', `/projects/${encodeURIComponent(projectId)}/translation-context`, { context });
   }
 
   renderFinalVideo(

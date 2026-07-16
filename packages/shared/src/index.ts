@@ -115,6 +115,7 @@ export type {
   SttResult,
   SttProvider,
   TranslationSegmentInput,
+  TranslationDocContext,
   TranslationInput,
   TranslationResultSegment,
   TranslationResult,

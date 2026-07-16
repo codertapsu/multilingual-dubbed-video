@@ -50,6 +50,8 @@ per project in the new-project wizard — and changed again at any time.
 | Translation | `argos` | Argos Translate (offline neural MT), worker `:5102` | local | — |
 | Translation | `ollama` | Local LLM via Ollama (default `translategemma:4b`) | local | Ollama daemon |
 | Translation | `llama-cpp` | Local LLM via bundled `llama-server` (TranslateGemma) | local | runtime + model pack |
+| Translation | `llama-cpp-chat` | **Context-aware** local LLM (Gemma 3 instruct): translates scene batches following the project character sheet (cast, glossary, Vietnamese xưng hô plan) | local | runtime + chat model pack |
+| Translation | `argos-llm-repair` | **Argos draft + Gemma repair** (offline, context-aware): Argos drafts instantly, the local Gemma 3 fixes pronouns/terms/cohesion with document context | local | runtime + chat model pack |
 | Translation | `openai-translate` | OpenAI chat model (default `gpt-4o-mini`) | cloud | OpenAI key |
 | Translation | `anthropic-translate` | Anthropic Claude (default `claude-haiku-4-5`) | cloud | Anthropic key |
 | Translation | `gemini-translate` | Google Gemini (default `gemini-2.0-flash`) | cloud | Gemini key |
@@ -78,6 +80,7 @@ for the per-hardware-tier matrix behind the recommendations.
 | `whisper-cpp-metal` / `-cuda` / `-vulkan` | Accelerated STT (`whisper-cpp`) | native binary |
 | `llama-cpp-metal` / `-cuda` / `-vulkan` | Local LLM translation **runtime** (`llama-cpp`) | native binary |
 | `translategemma-4b` / `-12b` / `-27b` | **TranslateGemma** GGUF weights the runtime loads (4B from 8 GB; 12B/27B with a GPU/Apple-Silicon) | model download |
+| `chat-gemma3-4b` / `-12b` | **Gemma 3 instruct** GGUF weights for the context-aware tiers (`llama-cpp-chat`, `argos-llm-repair`) — TranslateGemma cannot follow instructions, so the pronoun/glossary sheet needs these | model download |
 | `tts-neural` | Neural multilingual + Vietnamese voices (`neural-tts`) | uv-managed Python env |
 | `tts-omnivoice` | **OmniVoice** multilingual neural voices, 600+ languages (`omnivoice`) — Apple Silicon / PyTorch MPS. **On hold**: gated out of releases pending output-quality work; see [OMNIVOICE.md](OMNIVOICE.md) | uv-managed Python env |
 | `separation-audio` | Vocal/M&E separation for the “replace voices” mix | uv-managed Python env |

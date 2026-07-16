@@ -145,3 +145,47 @@ export async function resolveLocalLlmModelPath(store: EnginePackStore): Promise<
   }
   return found.modelPath;
 }
+
+// --------------------------------------------------------------------------
+// Gemma 3 INSTRUCT chat-model packs (context-aware translation / repair)
+// --------------------------------------------------------------------------
+
+/** Chat-model packs, MOST CAPABLE first — we prefer the largest installed. */
+const LOCAL_LLM_CHAT_MODEL_PACKS = ['chat-gemma3-12b', 'chat-gemma3-4b'] as const;
+
+/**
+ * The best INSTALLED Gemma 3 instruct model pack whose GGUF is actually on
+ * disk, or undefined if none — same semantics as
+ * {@link pickInstalledLocalLlmModel}, for the `local-llm-chat-model` packs.
+ */
+export async function pickInstalledLocalLlmChatModel(
+  store: EnginePackStore,
+): Promise<{ packId: string; modelPath: string } | undefined> {
+  for (const packId of LOCAL_LLM_CHAT_MODEL_PACKS) {
+    const rec = await store.get(packId);
+    if (!rec) continue;
+    const modelPath = path.join(rec.path, LOCAL_LLM_MODEL_FILE);
+    const ok = await fsp
+      .stat(modelPath)
+      .then((s) => s.isFile())
+      .catch(() => false);
+    if (ok) return { packId, modelPath };
+  }
+  return undefined;
+}
+
+/** Resolve the best installed chat GGUF path, or throw ENGINE_PACK_MISSING. */
+export async function resolveLocalLlmChatModelPath(store: EnginePackStore): Promise<string> {
+  const found = await pickInstalledLocalLlmChatModel(store);
+  if (!found) {
+    throw new AppErrorException(
+      'ENGINE_PACK_MISSING',
+      'No Gemma 3 instruct model is installed for context-aware local translation.',
+      {
+        remediation:
+          'Install "Gemma 3 4B instruct (context-aware translation model)" in Settings → Engines, or pick another translation provider for this project.',
+      },
+    );
+  }
+  return found.modelPath;
+}

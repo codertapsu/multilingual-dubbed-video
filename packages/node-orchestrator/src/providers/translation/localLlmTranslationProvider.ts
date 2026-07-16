@@ -199,6 +199,18 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     if (opts.backend === 'llama-cpp') this.requiresEnginePack = 'local-llm';
   }
 
+  /**
+   * One-shot chat completion against the resolved local server. Public so the
+   * context-repair provider can drive the same engine (analysis + repair
+   * passes) without duplicating transport/turn-wrapping logic.
+   */
+  async chatComplete(system: string | undefined, user: string, signal?: AbortSignal): Promise<string> {
+    const baseUrl = (await this.opts.resolveBaseUrl()).replace(/\/$/, '');
+    const timeout = AbortSignal.timeout(this.opts.timeoutMs);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    return this.complete(system, user, baseUrl, combined);
+  }
+
   async translateSegments(input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
     const baseUrl = (await this.opts.resolveBaseUrl()).replace(/\/$/, '');
     const source = normalizeLanguageCode(input.sourceLanguage);
@@ -220,14 +232,18 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     input: TranslationInput,
     signal: AbortSignal,
   ): Promise<TranslationResult> {
-    // Document-level context (same design as the cloud provider): one analysis
-    // pass builds the character sheet (synopsis/cast/glossary/pronoun plan),
-    // then scene-aware batches carry a rolling window of translated pairs.
-    // Best-effort — a failed analysis never fails the translation.
-    const useContext = translationContextEnabled() && input.segments.length >= MIN_SEGMENTS_FOR_ANALYSIS;
-    let analysis: TranslationAnalysis | undefined;
-    if (useContext) {
-      analysis = await this.complete(
+    // Document-level context (same design as the cloud provider): a provided
+    // character sheet (persisted / user-edited) is authoritative; otherwise one
+    // analysis pass builds it and it is returned for persistence. Scene-aware
+    // batches then carry a rolling window of translated pairs. Best-effort — a
+    // failed analysis never fails the translation.
+    const provided = input.documentContext;
+    const useContext =
+      translationContextEnabled() && (provided !== undefined || input.segments.length >= MIN_SEGMENTS_FOR_ANALYSIS);
+    let analysis: TranslationAnalysis | undefined = provided;
+    let generated: TranslationAnalysis | undefined;
+    if (useContext && analysis === undefined) {
+      generated = await this.complete(
         'You prepare structured notes for dubbing translators. Respond with strict JSON only.',
         buildAnalysisPrompt(source, target, buildAnalysisSample(input.segments)),
         baseUrl,
@@ -235,6 +251,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       )
         .then(parseAnalysisReply)
         .catch(() => undefined);
+      analysis = generated;
     }
 
     const batches = planContextBatches(input.segments, { maxSegments: BATCH_SIZE, maxChars: 6000 });
@@ -254,7 +271,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       rolling = collectRollingPairs(batch, byId);
       previousBatch = batch;
     }
-    return { segments: results };
+    return { segments: results, ...(generated ? { analysis: generated } : {}) };
   }
 
   /** Raw-per-segment mode (translation-specialized models like TranslateGemma). */
@@ -294,10 +311,14 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
   ): Promise<string> {
     if (this.opts.backend === 'llama-cpp') {
       const prompt = wrapGemmaTurn(system ? `${system}\n\n${user}` : user);
+      // Reply budget: a raw-segment reply is one line (512 is ample), but a
+      // chat-JSON batch reply carries ~20 translated lines plus JSON scaffolding
+      // (and the analysis pass a whole character sheet) — give those headroom.
+      const nPredict = this.mode === 'chat-json-batch' ? 3072 : 512;
       const data = await this.postJson<{ content?: string }>(
         `${baseUrl}/completion`,
         {},
-        { prompt, temperature: 0, n_predict: 512, cache_prompt: true, stop: [GEMMA_END_TURN] },
+        { prompt, temperature: 0, n_predict: nPredict, cache_prompt: true, stop: [GEMMA_END_TURN] },
         signal,
       );
       return data.content ?? '';

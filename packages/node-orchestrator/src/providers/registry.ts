@@ -37,7 +37,12 @@ import { NeuralTtsProvider } from './tts/neuralTtsProvider.js';
 import { OpenAiTtsProvider } from './tts/openaiTtsProvider.js';
 import type { EngineManager } from '../engines/engineManager.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
-import { requireInstalledPack, resolveLocalLlmModelPath } from '../engines/packSelection.js';
+import {
+  requireInstalledPack,
+  resolveLocalLlmChatModelPath,
+  resolveLocalLlmModelPath,
+} from '../engines/packSelection.js';
+import { ContextRepairTranslationProvider } from './translation/contextRepairProvider.js';
 import { availablePacks } from '../engines/enginePackCatalog.js';
 import { packHardwareSupported } from '../engines/engineRecommendation.js';
 
@@ -176,7 +181,8 @@ export function createDefaultRegistry(
 
   // Local (default) providers — always present, no engine pack required.
   registry.registerStt(new FasterWhisperProvider(config.sttWorkerUrl, timeout));
-  registry.registerTranslation(new ArgosTranslationProvider(config.translationWorkerUrl, timeout));
+  const argos = new ArgosTranslationProvider(config.translationWorkerUrl, timeout);
+  registry.registerTranslation(argos);
   registry.registerTts(new LocalTtsProvider(config.ttsWorkerUrl, timeout));
 
   // Cloud providers (OpenAI / Anthropic / Gemini). We run NO servers of our own;
@@ -234,6 +240,33 @@ export function createDefaultRegistry(
           return engines.ensureRunning(packId, { exclusive: true, model });
         },
         timeoutMs: timeout,
+      }),
+    );
+    // Context-aware offline tiers (same llama.cpp runtime, a Gemma 3 INSTRUCT
+    // model pack): a chat provider that translates scene batches with the
+    // project character sheet (cast/glossary/xưng hô plan), and the
+    // Argos-draft + repair provider (fast draft, LLM fixes pronouns/terms).
+    // TranslateGemma can't power these — its trained template takes exactly one
+    // source text (no instructions/glossaries), hence the separate model packs.
+    const chatLlm = new LocalLlmTranslationProvider({
+      id: 'llama-cpp-chat',
+      displayName: 'Gemma 3 chat (built-in, context-aware)',
+      backend: 'llama-cpp',
+      mode: 'chat-json-batch',
+      model: 'gemma-3-it',
+      resolveBaseUrl: async () => {
+        const packId = await requireInstalledPack(store, 'local-llm');
+        const model = await resolveLocalLlmChatModelPath(store);
+        return engines.ensureRunning(packId, { exclusive: true, model });
+      },
+      timeoutMs: timeout,
+    });
+    registry.registerTranslation(chatLlm);
+    registry.registerTranslation(
+      new ContextRepairTranslationProvider({
+        draft: argos,
+        chat: chatLlm,
+        requiresEnginePack: 'local-llm',
       }),
     );
     }

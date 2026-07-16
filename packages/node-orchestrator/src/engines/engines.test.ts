@@ -7,9 +7,11 @@ import { EnginePackStore } from './enginePackStore.js';
 import { ENGINE_PACKS, availablePacks, findPack, packRunsOn } from './enginePackCatalog.js';
 import {
   packsForProvider,
+  pickInstalledLocalLlmChatModel,
   pickInstalledLocalLlmModel,
   pickInstalledPack,
   requireInstalledPack,
+  resolveLocalLlmChatModelPath,
   resolveLocalLlmModelPath,
 } from './packSelection.js';
 import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engineRecommendation.js';
@@ -200,6 +202,102 @@ describe('TranslateGemma model packs', () => {
     // TranslateGemma's Jinja chat template aborts llama-server at load, so we
     // must disable Jinja (we drive /completion ourselves).
     expect(capturedArgs).toContain('--no-jinja');
+    await manager.stopAll();
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('Gemma 3 instruct chat-model packs (context-aware translation)', () => {
+  it('exposes both chat packs on every platform, pinned + license-flagged', () => {
+    for (const plat of [['darwin', 'arm64'], ['win32', 'x64'], ['linux', 'x64']] as const) {
+      const ids = availablePacks(plat[0], plat[1]).map((p) => p.id);
+      expect(ids).toContain('chat-gemma3-4b');
+      expect(ids).toContain('chat-gemma3-12b');
+    }
+    const p = findPack('chat-gemma3-4b')!;
+    expect(p.packKind).toBe('model');
+    expect(p.providerId).toBe('local-llm-chat-model');
+    expect(p.licenseCategory).toBe('commercial-restricted');
+    expect(p.version).toBeTruthy();
+    expect(p.artifacts[0]!.url).toMatch(/\.gguf$/);
+    expect(p.artifacts[0]!.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(p.artifacts[0]!.destPath).toBe('model.gguf');
+  });
+
+  it('resolves the best installed chat GGUF, preferring the largest; never a TranslateGemma', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-g3-'));
+    const store = new EnginePackStore(dir);
+
+    await expect(resolveLocalLlmChatModelPath(store)).rejects.toMatchObject({
+      appError: { code: 'ENGINE_PACK_MISSING' },
+    });
+
+    // An installed TranslateGemma must NOT satisfy the chat-model requirement
+    // (it cannot follow instructions, so the context tiers would silently break).
+    const tg = store.packDir('translategemma-4b');
+    await mkdir(tg, { recursive: true });
+    await writeFile(path.join(tg, 'model.gguf'), 'x');
+    await store.add({ id: 'translategemma-4b', path: tg, installedAt: '2026-01-01T00:00:00Z' });
+    expect(await pickInstalledLocalLlmChatModel(store)).toBeUndefined();
+
+    const p4 = store.packDir('chat-gemma3-4b');
+    await mkdir(p4, { recursive: true });
+    await writeFile(path.join(p4, 'model.gguf'), 'x');
+    await store.add({ id: 'chat-gemma3-4b', path: p4, installedAt: '2026-01-01T00:00:00Z' });
+    expect((await pickInstalledLocalLlmChatModel(store))?.packId).toBe('chat-gemma3-4b');
+
+    const p12 = store.packDir('chat-gemma3-12b');
+    await mkdir(p12, { recursive: true });
+    await writeFile(path.join(p12, 'model.gguf'), 'x');
+    await store.add({ id: 'chat-gemma3-12b', path: p12, installedAt: '2026-01-01T00:00:00Z' });
+    expect((await pickInstalledLocalLlmChatModel(store))?.packId).toBe('chat-gemma3-12b');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('ensureRunning restarts the shared runtime when a different GGUF is requested', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-swap-'));
+    const store = new EnginePackStore(dir);
+    const p = store.packDir('llama-cpp-metal');
+    await mkdir(p, { recursive: true });
+    await writeFile(path.join(p, 'llama-server'), '#!/bin/sh\n');
+    await store.add({ id: 'llama-cpp-metal', path: p, installedAt: '2026-01-01T00:00:00Z' });
+
+    const spawns: string[][] = [];
+    let killed = 0;
+    let port = 52000;
+    const manager = new EngineManager({
+      store,
+      allocatePort: async () => port++,
+      healthProbe: async () => true,
+      spawnImpl: (_cmd, args) => {
+        spawns.push(args);
+        return {
+          on: () => undefined,
+          stderr: { on: () => undefined },
+          kill: () => {
+            killed++;
+            return true;
+          },
+        } as never;
+      },
+      startTimeoutMs: 1000,
+    });
+
+    const url1 = await manager.ensureRunning('llama-cpp-metal', { model: '/models/translategemma.gguf' });
+    // Same model -> reuse (no new spawn, same URL).
+    const url1b = await manager.ensureRunning('llama-cpp-metal', { model: '/models/translategemma.gguf' });
+    expect(url1b).toBe(url1);
+    expect(spawns).toHaveLength(1);
+
+    // Different model (the chat provider) -> restart with the new GGUF.
+    const url2 = await manager.ensureRunning('llama-cpp-metal', { model: '/models/gemma3-it.gguf' });
+    expect(killed).toBe(1);
+    expect(spawns).toHaveLength(2);
+    expect(url2).not.toBe(url1);
+    const last = spawns[1]!;
+    expect(last[last.indexOf('-m') + 1]).toBe('/models/gemma3-it.gguf');
+
     await manager.stopAll();
     await rm(dir, { recursive: true, force: true });
   });

@@ -65,6 +65,26 @@ const GEMMA_LICENSE_NOTE =
   'GGUF requant of google/translategemma-*-it. Output translations are yours (Gemma Terms §3.3).';
 
 /**
+ * Gemma 3 INSTRUCT GGUFs (the `local-llm-chat-model` packs), from ggml-org's
+ * official ungated llama.cpp mirrors. Unlike TranslateGemma (whose trained
+ * template takes exactly ONE source text — no instructions, no glossaries,
+ * ~2K context), these follow instructions, which is what powers the
+ * CONTEXT-AWARE offline translation tier: the character sheet (cast, glossary,
+ * Vietnamese xưng hô plan), scene batches, and the Argos-draft repair pass.
+ * File names/sizes/sha256 read from the repos' LFS pointers on 2026-07-16.
+ */
+const G3_4B_URL = 'https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf';
+const G3_12B_URL = 'https://huggingface.co/ggml-org/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q4_K_M.gguf';
+
+/** The Gemma-license note carried by the Gemma 3 instruct model packs. */
+const GEMMA_IT_LICENSE_NOTE =
+  'Gemma 3 weights are provided under the Gemma Terms of Use ' +
+  '(ai.google.dev/gemma/terms) — NOT MIT/Apache. Commercial use IS permitted, ' +
+  'subject to Google’s Prohibited Use Policy, which the app passes through in its ' +
+  'notices. Downloaded from ggml-org’s official GGUF mirror of google/gemma-3-*-it. ' +
+  'Output translations are yours (Gemma Terms §3.3).';
+
+/**
  * The full curated set. `availablePacks()` filters by platform/arch. Every pack
  * here has a reachable artifact (binary URL or uv-env), so its Install works.
  *
@@ -309,6 +329,61 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     ],
     licenseCategory: 'commercial-restricted',
     licenseNote: GEMMA_LICENSE_NOTE,
+  },
+
+  // --- Gemma 3 instruct GGUF packs (context-aware local translation) --------
+  // Same delivery as the TranslateGemma packs (weights consumed by an installed
+  // llama.cpp runtime pack), but INSTRUCTION-FOLLOWING: these power the
+  // context-aware offline translation providers ("Gemma chat" and
+  // "Argos + Gemma repair") — character sheet, xưng hô plan, scene batches —
+  // which TranslateGemma's fixed single-text template structurally cannot do.
+  {
+    id: 'chat-gemma3-4b',
+    kind: 'translation',
+    packKind: 'model',
+    displayName: 'Gemma 3 4B instruct (context-aware translation model)',
+    description:
+      'Google’s Gemma 3 4B instruct (Q4_K_M GGUF, ~2.5 GB) — powers the CONTEXT-AWARE offline translation modes: it builds and follows the project character sheet (cast, glossary, Vietnamese xưng hô/pronoun plan) so pronouns and terminology stay consistent across the whole video. CPU-friendly (8 GB RAM). Needs a llama.cpp runtime pack (installed automatically alongside).',
+    providerId: 'local-llm-chat-model',
+    version: 'Q4_K_M',
+    accel: 'cpu',
+    tier: 'balanced',
+    minRamMb: 8192,
+    approxSizeMb: 2490,
+    artifacts: [
+      {
+        url: G3_4B_URL,
+        sha256: '882e8d2db44dc554fb0ea5077cb7e4bc49e7342a1f0da57901c0802ea21a0863',
+        approxSizeMb: 2490,
+        destPath: 'model.gguf',
+      },
+    ],
+    licenseCategory: 'commercial-restricted',
+    licenseNote: GEMMA_IT_LICENSE_NOTE,
+  },
+  {
+    id: 'chat-gemma3-12b',
+    kind: 'translation',
+    packKind: 'model',
+    displayName: 'Gemma 3 12B instruct (context-aware translation model)',
+    description:
+      'The 12B Gemma 3 instruct (Q4_K_M GGUF, ~7.3 GB) — higher-quality context-aware translation (better pronoun/register judgement), best on a GPU or Apple Silicon (16 GB+). Prefer the 4B on CPU-only machines. Needs a llama.cpp runtime pack.',
+    providerId: 'local-llm-chat-model',
+    version: 'Q4_K_M',
+    accel: 'cpu',
+    tier: 'performance',
+    minRamMb: 16384,
+    approxSizeMb: 7301,
+    artifacts: [
+      {
+        url: G3_12B_URL,
+        sha256: '7bb69bff3f48a7b642355d64a90e481182a7794707b3133890646b1efa778ff5',
+        approxSizeMb: 7301,
+        destPath: 'model.gguf',
+      },
+    ],
+    licenseCategory: 'commercial-restricted',
+    licenseNote: GEMMA_IT_LICENSE_NOTE,
   },
 
   // --- neural TTS: VieNeu v2 (uv-managed Python env) -----------------------

@@ -51,6 +51,8 @@ export interface WorkspacePaths {
   readonly translatedSrt: string;
   readonly translatedVtt: string;
   readonly translatedAlignedJson: string;
+  /** The project's translation character sheet (cast/glossary/pronoun plan). */
+  readonly translationContextJson: string;
 
   readonly renderDir: string;
   readonly outputMp4: string;
@@ -115,6 +117,7 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     translatedSrt: path.join(subtitlesDir, 'translated.srt'),
     translatedVtt: path.join(subtitlesDir, 'translated.vtt'),
     translatedAlignedJson: path.join(subtitlesDir, 'translated.aligned.json'),
+    translationContextJson: path.join(subtitlesDir, 'translation_context.json'),
 
     renderDir,
     outputMp4: path.join(renderDir, 'output.mp4'),

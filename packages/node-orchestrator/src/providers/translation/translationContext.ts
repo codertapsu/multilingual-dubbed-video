@@ -24,6 +24,7 @@
  * accepts exactly one source text and treats everything else as text to
  * translate (officially confirmed — no instructions, no glossaries, 2K context).
  */
+import type { TranslationDocContext } from '@videodubber/shared';
 import { extractJsonObject } from '../cloud/cloudHttp.js';
 import type { PromptSegment } from './llmTranslationProvider.js';
 
@@ -82,20 +83,11 @@ export function planContextBatches(
   return batches;
 }
 
-/** The structured result of the transcript-analysis pass. */
-export interface TranslationAnalysis {
-  /** One/two-sentence summary of what the video is about. */
-  synopsis?: string;
-  /** Speakers/characters inferred from the transcript. */
-  cast?: { name: string; role?: string }[];
-  /** Recurring terms/names that must be translated consistently. */
-  glossary?: { source: string; target: string }[];
-  /**
-   * Target-language address/pronoun plan — for Vietnamese, the xưng hô map per
-   * speaker pair (e.g. "student → teacher: gọi 'thầy', xưng 'em'").
-   */
-  pronounGuide?: string;
-}
+/**
+ * The structured result of the transcript-analysis pass. Same shape as the
+ * persisted, user-editable character sheet ({@link TranslationDocContext}).
+ */
+export type TranslationAnalysis = TranslationDocContext;
 
 /**
  * Build a bounded sample of the source transcript for the analysis pass:

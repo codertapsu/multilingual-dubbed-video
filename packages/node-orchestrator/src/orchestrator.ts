@@ -24,6 +24,7 @@ import {
   type ProjectSettings,
   type RenderFinalVideoResult,
   type TranscriptSegment,
+  type TranslationDocContext,
   type TtsSegment,
 } from '@videodubber/shared';
 import { alignSegment, type AlignInputSegment } from './alignment/align.js';
@@ -357,9 +358,14 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       };
     });
 
+    // Voice precedence: explicit override > the speaker's assigned voice
+    // (diarized projects) > the project voice.
+    const assignedVoice = segment.speakerId
+      ? project.settings.speakerVoices?.find((v) => v.speakerId === segment.speakerId)?.voiceId
+      : undefined;
     const result = await provider.synthesizeSegments({
       language: project.settings.targetLanguage,
-      voiceId: opts.voiceId ?? project.settings.ttsVoiceId,
+      voiceId: opts.voiceId ?? assignedVoice ?? project.settings.ttsVoiceId,
       segments: memberInputs,
       outputDir: paths.ttsSegmentsDir,
       speed: opts.speed ?? 1.0,
@@ -458,10 +464,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const tightMs = Math.max(500, Math.round(availableMs * Math.max(1, project.settings.maxSpeedRatio)));
 
     const translation = this.deps.registry.getTranslation(project.settings.translationProviderId);
+    const documentContext = (await this.getTranslationContext(projectId)) ?? undefined;
     const result = await translation.translateSegments({
       sourceLanguage: project.settings.sourceLanguage,
       targetLanguage: project.settings.targetLanguage,
       segments: [{ id: segmentId, sourceText: seg.sourceText, startMs: 0, endMs: tightMs }],
+      ...(documentContext ? { documentContext } : {}),
     });
     const proposed = (result.segments[0]?.translatedText ?? '').trim();
     const finalText =
@@ -470,6 +478,52 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // Persist the shortened text + re-synthesize + re-align (handled inside).
     const { segment, alignment } = await this.synthesizeSingleSegment(projectId, segmentId, { text: finalText });
     return { segment, alignment, translatedText: finalText };
+  }
+
+  /**
+   * Read the project's translation character sheet (cast/glossary/pronoun
+   * plan), or null when none has been generated/saved yet.
+   */
+  async getTranslationContext(projectId: string): Promise<TranslationDocContext | null> {
+    const paths = this.deps.store.paths(projectId);
+    try {
+      const raw = await fsp.readFile(paths.translationContextJson, 'utf8');
+      const parsed = JSON.parse(raw) as TranslationDocContext;
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Save the (user-edited) translation character sheet. Only the known fields
+   * are persisted; context-capable providers use it verbatim on the next
+   * translation run (re-dub from the translation step to apply it).
+   */
+  async saveTranslationContext(projectId: string, ctx: TranslationDocContext): Promise<TranslationDocContext> {
+    const paths = this.deps.store.paths(projectId);
+    const clean: TranslationDocContext = {
+      ...(typeof ctx.synopsis === 'string' && ctx.synopsis.trim() ? { synopsis: ctx.synopsis.trim() } : {}),
+      ...(Array.isArray(ctx.cast)
+        ? {
+            cast: ctx.cast
+              .filter((c) => typeof c?.name === 'string' && c.name.trim().length > 0)
+              .map((c) => ({ name: c.name.trim(), ...(c.role?.trim() ? { role: c.role.trim() } : {}) })),
+          }
+        : {}),
+      ...(Array.isArray(ctx.glossary)
+        ? {
+            glossary: ctx.glossary
+              .filter((g) => typeof g?.source === 'string' && g.source.trim().length > 0 && typeof g?.target === 'string')
+              .map((g) => ({ source: g.source.trim(), target: g.target.trim() })),
+          }
+        : {}),
+      ...(typeof ctx.pronounGuide === 'string' && ctx.pronounGuide.trim()
+        ? { pronounGuide: ctx.pronounGuide.trim() }
+        : {}),
+    };
+    await fsp.writeFile(paths.translationContextJson, `${JSON.stringify(clean, null, 2)}\n`, 'utf8');
+    return clean;
   }
 
   /**

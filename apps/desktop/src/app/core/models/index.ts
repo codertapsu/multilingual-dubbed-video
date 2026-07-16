@@ -60,6 +60,7 @@ export type {
   // Worker IO contracts
   SttInput,
   SttResult,
+  TranslationDocContext,
   TranslationInput,
   TranslationResult,
   TranslationResultSegment,

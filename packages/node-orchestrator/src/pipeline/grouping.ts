@@ -1,0 +1,159 @@
+/**
+ * Synthesis grouping: merge consecutive subtitle cues into one TTS utterance.
+ *
+ * Whisper cues are TIMING units, not prosodic units — a sentence often spans
+ * two or three cues, and every independent TTS call samples a fresh intonation
+ * trajectory (VITS models literally re-draw prosody noise per call). Synthesizing
+ * cue-by-cue therefore produces the "subtitle robot" effect: a sentence-final
+ * pitch fall at every cue boundary and uncorrelated pace/energy between lines.
+ *
+ * The fix (validated by multi-sentence TTS research, arXiv 2206.14643): merge
+ * consecutive same-speaker cues separated by less than a beat of silence into
+ * one utterance, synthesize it in a single TTS call, and place the whole clip at
+ * the group's start. Intonation then only resets at real pauses/speaker changes.
+ *
+ * A group's id is its FIRST member's segment id, so the synthesized WAV lands on
+ * that member's canonical `segment_XXXX.wav` path and every downstream consumer
+ * (alignment probing, timeline placement, the editor) keeps working unchanged.
+ * Non-first members simply have no WAV of their own while grouped; editing one
+ * in the editor degroups it (see orchestrator.synthesizeSingleSegment).
+ *
+ * This module is PURE (no I/O) so it is trivially unit-testable.
+ */
+
+/** Minimal per-segment input the planner needs. */
+export interface GroupableSegmentInput {
+  id: string;
+  startMs: number;
+  endMs: number;
+  /** Text that will be synthesized (translated text, falling back upstream). */
+  text: string;
+  /** Diarization speaker id, when present. Segments never group across speakers. */
+  speakerId?: string;
+}
+
+/** One planned synthesis utterance covering one or more consecutive segments. */
+export interface SynthesisGroup {
+  /** Group id == FIRST member's segment id (drives the output WAV path). */
+  id: string;
+  /** Member segment ids, in order. */
+  segmentIds: string[];
+  /** The joined text synthesized as one utterance. */
+  text: string;
+  /** Placement start = first member's startMs. */
+  startMs: number;
+  /** Window end = last member's endMs. */
+  endMs: number;
+}
+
+/** Tunables for {@link planSynthesisGroups}. */
+export interface GroupingOptions {
+  /** Merge only when the silence between cues is below this (default 750 ms). */
+  maxGapMs?: number;
+  /** Max cues per utterance (default 4). */
+  maxSegments?: number;
+  /** Max joined-text length per utterance (default 320 chars). */
+  maxChars?: number;
+  /** Max total window (first start -> last end) per utterance (default 20 s). */
+  maxWindowMs?: number;
+  /** Master switch: false = one group per segment (legacy behavior). */
+  enabled?: boolean;
+}
+
+const DEFAULTS: Required<Omit<GroupingOptions, 'enabled'>> = {
+  maxGapMs: 750,
+  maxSegments: 4,
+  maxChars: 320,
+  maxWindowMs: 20_000,
+};
+
+/** Env-overridable default (VD_TTS_GROUP_GAP_MS etc.) with a sane fallback. */
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  const n = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** Resolve effective options (explicit > env > defaults). Exported for tests. */
+export function resolveGroupingOptions(opts?: GroupingOptions): Required<Omit<GroupingOptions, 'enabled'>> {
+  return {
+    maxGapMs: opts?.maxGapMs ?? envInt('VD_TTS_GROUP_GAP_MS', DEFAULTS.maxGapMs),
+    maxSegments: opts?.maxSegments ?? envInt('VD_TTS_GROUP_MAX_SEGMENTS', DEFAULTS.maxSegments),
+    maxChars: opts?.maxChars ?? envInt('VD_TTS_GROUP_MAX_CHARS', DEFAULTS.maxChars),
+    maxWindowMs: opts?.maxWindowMs ?? envInt('VD_TTS_GROUP_MAX_WINDOW_MS', DEFAULTS.maxWindowMs),
+  };
+}
+
+/**
+ * Plan synthesis groups over consecutive segments. Pure.
+ *
+ * Two adjacent segments join the same group only when ALL hold:
+ *   - grouping is enabled,
+ *   - both have non-empty text (empty/silent cues stay singletons),
+ *   - same speakerId (or both unset),
+ *   - the gap between them is 0..maxGapMs (overlapping cues do NOT merge:
+ *     overlap usually means cross-talk, which one voice can't render),
+ *   - the joined text stays within maxChars,
+ *   - the merged window stays within maxWindowMs,
+ *   - the group stays within maxSegments.
+ */
+export function planSynthesisGroups(
+  segments: readonly GroupableSegmentInput[],
+  opts?: GroupingOptions,
+): SynthesisGroup[] {
+  const enabled = opts?.enabled !== false;
+  const o = resolveGroupingOptions(opts);
+  const groups: SynthesisGroup[] = [];
+  /** The previous segment appended (tail of the last group), for gap/speaker checks. */
+  let prev: GroupableSegmentInput | undefined;
+
+  for (const seg of segments) {
+    const text = seg.text.trim();
+    const last = groups[groups.length - 1];
+
+    const canJoin =
+      enabled &&
+      last !== undefined &&
+      prev !== undefined &&
+      text.length > 0 &&
+      last.text.length > 0 &&
+      // Speaker continuity: never merge across (known) speaker changes.
+      prev.speakerId === seg.speakerId &&
+      // Gap in [0, maxGapMs]; a negative gap (overlap) breaks the group.
+      seg.startMs - prev.endMs >= 0 &&
+      seg.startMs - prev.endMs <= o.maxGapMs &&
+      last.segmentIds.length < o.maxSegments &&
+      last.text.length + 1 + text.length <= o.maxChars &&
+      seg.endMs - last.startMs <= o.maxWindowMs;
+
+    if (canJoin && last) {
+      last.segmentIds.push(seg.id);
+      // Space-join: whisper splits sentences across cues WITHOUT punctuation, so
+      // a plain space lets the TTS engine read the group as one flowing sentence
+      // (adding punctuation here would reintroduce the very pause we're removing).
+      last.text = `${last.text} ${text}`;
+      last.endMs = seg.endMs;
+    } else {
+      groups.push({
+        id: seg.id,
+        segmentIds: [seg.id],
+        text,
+        startMs: seg.startMs,
+        endMs: seg.endMs,
+      });
+    }
+    prev = seg;
+  }
+
+  return groups;
+}
+
+/** Persisted shape of the synthesis-groups artifact (audio/synthesis_groups.json). */
+export interface SynthesisGroupsArtifact {
+  groups: SynthesisGroup[];
+}
+
+/** Turn segments into one-singleton-per-segment groups (legacy / fallback shape). */
+export function singletonGroups(segments: readonly GroupableSegmentInput[]): SynthesisGroup[] {
+  return planSynthesisGroups(segments, { enabled: false });
+}

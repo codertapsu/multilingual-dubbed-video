@@ -106,10 +106,16 @@ describe('PipelineRunner end-to-end (mocked)', () => {
     expect(reloaded.mediaInfo).toBeDefined();
     expect(reloaded.status).toBe('completed');
 
-    // Alignment file content sane.
+    // Alignment file content sane: the two adjacent cues (gap 0ms) were merged
+    // into ONE synthesis group (id = first member), so alignment has one unit.
     const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8'));
-    expect(aligned).toHaveLength(2);
+    expect(aligned).toHaveLength(1);
     expect(aligned[0].segmentId).toBe('seg_0001');
+
+    // The group plan artifact records the merge.
+    const groups = JSON.parse(await fsp.readFile(paths.synthesisGroupsJson, 'utf8'));
+    expect(groups.groups).toHaveLength(1);
+    expect(groups.groups[0].segmentIds).toEqual(['seg_0001', 'seg_0002']);
   });
 
   it('skips already-completed steps with existing artifacts on a second run', async () => {
@@ -235,11 +241,14 @@ describe('PipelineRunner — auto-fit overflowing translations', () => {
     );
     const paths = store.paths(project.id);
 
-    // Two adjacent 1s segments -> segment 0's gap-aware window is 1000 ms.
+    // Segments 1+2 are adjacent (gap 0 -> merged into one synthesis group);
+    // segment 3 starts 900 ms later (>= the 750 ms grouping gap), so it stays
+    // its own group AND bounds the first group's gap-aware window to 2900 ms.
     const stt = new FakeSttProvider(
       makeSegments([
         [0, 1000, 'zh0'],
         [1000, 2000, 'zh1'],
+        [2900, 3900, 'zh2'],
       ]),
     );
 
@@ -292,20 +301,23 @@ describe('PipelineRunner — auto-fit overflowing translations', () => {
 
     await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
 
-    // seg 0 began as a timing-conflict (90 chars -> 2700 ms in a 1000 ms window)
-    // and was auto-fit (re-translated to 30 chars -> 900 ms -> fits).
+    // The group (seg 1+2: 2x90 chars -> 5430 ms in a 2900 ms window; needs
+    // 1.87x > 1.6x max) began as a timing-conflict and was auto-fit: BOTH
+    // members re-translated to 30 chars -> 61 chars joined -> 1830 ms -> fits.
     const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8')) as {
       segmentId: string;
       status: string;
     }[];
     expect(aligned.find((a) => a.segmentId === 'seg_0001')?.status).not.toBe('timing-conflict');
 
-    // It was re-translated once (initial + one refit) and the persisted text shrank.
+    // Members were re-translated once (initial + one refit) and the persisted text shrank.
     expect(counts.get('seg_0001')).toBe(2);
+    expect(counts.get('seg_0002')).toBe(2);
     const translated = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')) as {
       segments: { id: string; translatedText: string }[];
     };
     expect(translated.segments.find((s) => s.id === 'seg_0001')!.translatedText.length).toBe(30);
+    expect(translated.segments.find((s) => s.id === 'seg_0002')!.translatedText.length).toBe(30);
   });
 
   it('does not refit when autoFitOverflow is false', async () => {
@@ -362,6 +374,86 @@ describe('PipelineRunner — auto-fit overflowing translations', () => {
 
     // Only the initial translation ran — no refit.
     expect(counts.get('seg_0001')).toBe(1);
+  });
+});
+
+describe('PipelineRunner — native-rate re-synthesis', () => {
+  it('re-synthesizes over-long lines at native speed when the engine supports it', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video)); // maxSpeedRatio 1.15
+    const paths = store.paths(project.id);
+
+    // seg 1's gap-aware slot is 2000 ms (next line starts at 2000); its text
+    // synthesizes to 2220 ms -> ratio 1.11 (within max, so no auto-fit) —
+    // exactly the "needs time-stretch" case the native-rate pass should absorb.
+    // The 1000 ms gap keeps the two cues in separate synthesis groups.
+    const stt = new FakeSttProvider(
+      makeSegments([
+        [0, 1000, 'zh0'],
+        [2000, 3000, 'zh1'],
+      ]),
+    );
+    const texts = new Map([
+      ['seg_0001', 'x'.repeat(74)], // 74 * 30 = 2220 ms
+      ['seg_0002', 'y'.repeat(10)], // 300 ms, fits
+    ]);
+    const translation: TranslationProvider = {
+      id: 'argos',
+      displayName: 'fixed-mt',
+      isLocal: true,
+      async translateSegments(input: TranslationInput): Promise<TranslationResult> {
+        return { segments: input.segments.map((s) => ({ id: s.id, translatedText: texts.get(s.id) ?? s.sourceText })) };
+      },
+    };
+
+    // Speed-capable TTS: duration = len * 30 / speed, WAV content = duration.
+    const speeds: number[] = [];
+    const tts: TtsProvider = {
+      id: 'piper-local',
+      displayName: 'speed-tts',
+      isLocal: true,
+      supportsSpeedControl: true,
+      async synthesizeSegments(input: TtsInput): Promise<TtsResult> {
+        const speed = input.speed ?? 1.0;
+        if (Math.abs(speed - 1) > 1e-3) speeds.push(speed);
+        const segments = await Promise.all(
+          input.segments.map(async (s, i) => {
+            const num = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
+            const audioPath = path.join(input.outputDir, `segment_${String(num).padStart(4, '0')}.wav`);
+            const durationMs = Math.round((s.text.length * 30) / speed);
+            await fsp.mkdir(input.outputDir, { recursive: true });
+            await fsp.writeFile(audioPath, String(durationMs), 'utf8');
+            return { segmentId: s.id, text: s.text, audioPath, durationMs, startMs: s.startMs, endMs: s.endMs, speedRatio: speed };
+          }),
+        );
+        return { segments };
+      },
+    };
+
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(stt, translation, tts),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    // The over-long line was re-synthesized at ~1.11x native rate...
+    expect(speeds).toHaveLength(1);
+    expect(speeds[0]).toBeCloseTo(1.11, 2);
+
+    // ...so the final alignment carries NO time-stretch and flags the rate.
+    const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8')) as {
+      segmentId: string;
+      status: string;
+      speedRatio: number;
+      note?: string;
+    }[];
+    const first = aligned.find((a) => a.segmentId === 'seg_0001')!;
+    expect(first.status).toBe('ok');
+    expect(first.speedRatio).toBe(1);
+    expect(first.note).toContain('native rate');
   });
 });
 

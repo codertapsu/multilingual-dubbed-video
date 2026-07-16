@@ -7,9 +7,12 @@
  *   extract-audio   -> original.wav (full) + original_16k_mono.wav (for STT)
  *   stt             -> transcribe 16k mono -> source.json + source.srt
  *   translation     -> translate segments -> translated.json/.srt/.vtt
- *   tts             -> synthesize each segment -> tts_segments/*.wav
- *   alignment       -> align timing -> translated.aligned.json
- *   audio-mix       -> buildTtsTimeline (atempo) -> tts_full.wav -> duckAndMix -> final_mix.wav
+ *   tts             -> group cues into utterances (synthesis_groups.json) ->
+ *                      synthesize each utterance -> tts_segments/*.wav
+ *   alignment       -> align timing (per utterance; native-rate refit when the
+ *                      engine supports it) -> translated.aligned.json
+ *   audio-mix       -> buildTtsTimeline (rubberband/atempo + micro-fades) ->
+ *                      tts_full.wav -> duckAndMix (room tone) -> final_mix.wav
  *   render          -> renderFinalVideo per subtitleExportMode -> render/output.mp4 (+ sidecars)
  *
  * RESUMABILITY: before each step, if its output artifact(s) already exist and
@@ -44,6 +47,12 @@ import {
   type TtsSegmentInput,
 } from '@videodubber/shared';
 import { alignSegments, summarizeAlignment, type AlignInputSegment } from '../alignment/align.js';
+import {
+  planSynthesisGroups,
+  singletonGroups,
+  type SynthesisGroup,
+  type SynthesisGroupsArtifact,
+} from './grouping.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
 import type { PipelineMediaService, SeparationService, TimelineSegmentInput } from '../media.js';
@@ -125,6 +134,40 @@ async function readSegments(path: string): Promise<TranscriptSegment[]> {
 /** Write transcript segments to a JSON artifact. */
 async function writeSegments(path: string, segments: TranscriptSegment[]): Promise<void> {
   await fsp.writeFile(path, `${JSON.stringify({ segments }, null, 2)}\n`, 'utf8');
+}
+
+/** Read the synthesis-group plan artifact (undefined when absent/corrupt). */
+async function readGroups(path: string): Promise<SynthesisGroup[] | undefined> {
+  try {
+    const raw = await fsp.readFile(path, 'utf8');
+    const parsed = JSON.parse(raw) as SynthesisGroupsArtifact;
+    return Array.isArray(parsed.groups) ? parsed.groups : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persist the synthesis-group plan artifact. */
+async function writeGroups(path: string, groups: SynthesisGroup[]): Promise<void> {
+  const artifact: SynthesisGroupsArtifact = { groups };
+  await fsp.writeFile(path, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+}
+
+/** Map segments to the planner's input shape (text = what TTS will speak). */
+function toGroupInputs(segments: readonly TranscriptSegment[]): {
+  id: string;
+  startMs: number;
+  endMs: number;
+  text: string;
+  speakerId?: string;
+}[] {
+  return segments.map((s) => ({
+    id: s.id,
+    startMs: s.startMs,
+    endMs: s.endMs,
+    text: (s.translatedText ?? s.sourceText ?? '').trim(),
+    ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+  }));
 }
 
 /** Progress callback for a long-running step (fraction in 0..1). */
@@ -332,15 +375,20 @@ export class PipelineRunner {
       case 'translation':
         return fileExistsNonEmpty(paths.translatedJson);
       case 'tts': {
-        // TTS is complete only when EVERY translated segment has a non-empty
-        // WAV. Checking just the first file would wrongly skip a run that was
-        // interrupted mid-synthesis, leaving later segments missing (which
-        // alignment would then flag as 0ms timing-conflicts).
+        // TTS is complete only when EVERY synthesis unit has a non-empty WAV.
+        // Checking just the first file would wrongly skip a run that was
+        // interrupted mid-synthesis, leaving later units missing (which
+        // alignment would then flag as 0ms timing-conflicts). With grouping,
+        // the units are the persisted synthesis groups (one WAV per group, on
+        // the first member's path); without the artifact (older project) fall
+        // back to the legacy one-WAV-per-segment check.
         try {
           const segments = await readSegments(paths.translatedJson);
           if (segments.length === 0) return false;
-          for (const seg of segments) {
-            const idx = segmentIdToIndex(seg.id);
+          const groups = await readGroups(paths.synthesisGroupsJson);
+          const ids = groups ? groups.map((g) => g.id) : segments.map((s) => s.id);
+          for (const id of ids) {
+            const idx = segmentIdToIndex(id);
             if (!(await fileExistsNonEmpty(paths.ttsSegment(idx)))) return false;
           }
           return true;
@@ -632,14 +680,26 @@ export class PipelineRunner {
     throwIfCancelled(signal);
     const provider = this.deps.registry.getTts(project.settings.ttsProviderId);
     const segments = await readSegments(paths.translatedJson);
-    const ttsInputs: TtsSegmentInput[] = segments.map((s) => ({
-      id: s.id,
-      text: (s.translatedText ?? s.sourceText ?? '').trim(),
-      startMs: s.startMs,
-      endMs: s.endMs,
+
+    // Group consecutive same-speaker cues into whole utterances so the engine
+    // speaks them with ONE coherent intonation contour instead of resetting its
+    // prosody at every subtitle cue (see grouping.ts). The plan is persisted so
+    // alignment/mix/editor know which cues share a WAV.
+    const groups = planSynthesisGroups(toGroupInputs(segments), {
+      enabled: project.settings.synthesisGrouping !== false,
+    });
+    await writeGroups(paths.synthesisGroupsJson, groups);
+
+    const ttsInputs: TtsSegmentInput[] = groups.map((g) => ({
+      id: g.id,
+      text: g.text,
+      startMs: g.startMs,
+      endMs: g.endMs,
     }));
 
-    this.deps.logger.info(`Synthesizing ${ttsInputs.length} segments with provider "${provider.id}"...`);
+    this.deps.logger.info(
+      `Synthesizing ${ttsInputs.length} utterance(s) covering ${segments.length} segment(s) with provider "${provider.id}"...`,
+    );
     const result = await provider.synthesizeSegments(
       {
         language: project.settings.targetLanguage,
@@ -692,26 +752,32 @@ export class PipelineRunner {
     throwIfCancelled(signal);
     const segments = await readSegments(paths.translatedJson);
 
-    // Determine each synthesized segment's real duration by probing its WAV.
-    // The TTS worker names files by the numeric part of the segment id
+    // Alignment operates on SYNTHESIS UNITS: the groups persisted by the TTS
+    // step (one WAV per group, on the first member's canonical path). Older
+    // projects without the artifact fall back to one-group-per-segment, which
+    // reproduces the legacy behavior exactly.
+    const groups = (await readGroups(paths.synthesisGroupsJson)) ?? singletonGroups(toGroupInputs(segments));
+
+    // Determine each synthesized unit's real duration by probing its WAV.
+    // The TTS worker names files by the numeric part of the segment/group id
     // (seg_0001 -> segment_0001.wav), so we resolve the index from the id first
-    // and only fall back to the 1-based segment index if the id has no number.
+    // and only fall back to the positional index if the id has no number.
     // Probes are independent ffprobe runs — do them with bounded concurrency
     // (sequential probing dominated this step's wall-clock on long videos).
     const PROBE_CONCURRENCY = 8;
     const PROBE_TIMEOUT_MS = 15_000;
-    const alignInputs = new Array<AlignInputSegment>(segments.length);
-    const progressEvery = Math.max(1, Math.floor(segments.length / 20));
-    let nextSegment = 0;
+    const alignInputs = new Array<AlignInputSegment>(groups.length);
+    const progressEvery = Math.max(1, Math.floor(groups.length / 20));
+    let nextGroup = 0;
     let probedCount = 0;
     await Promise.all(
-      Array.from({ length: Math.min(PROBE_CONCURRENCY, segments.length) }, async () => {
-        while (nextSegment < segments.length) {
-          const i = nextSegment++;
-          const seg = segments[i];
-          if (!seg) continue;
-          const fromId = segmentIdToIndex(seg.id);
-          const index = fromId > 0 ? fromId : Number.isFinite(seg.index) ? seg.index + 1 : i + 1;
+      Array.from({ length: Math.min(PROBE_CONCURRENCY, groups.length) }, async () => {
+        while (nextGroup < groups.length) {
+          const i = nextGroup++;
+          const group = groups[i];
+          if (!group) continue;
+          const fromId = segmentIdToIndex(group.id);
+          const index = fromId > 0 ? fromId : i + 1;
           const audioPath = paths.ttsSegment(index);
           // Assigned on both the success and failure paths below.
           let generatedDurationMs: number;
@@ -731,17 +797,17 @@ export class PipelineRunner {
             generatedDurationMs = 0;
           }
           alignInputs[i] = {
-            segmentId: seg.id,
-            startMs: seg.startMs,
-            endMs: seg.endMs,
+            segmentId: group.id,
+            startMs: group.startMs,
+            endMs: group.endMs,
             audioPath,
             generatedDurationMs,
           };
           // Throttled progress (<=~20 emits) so long-video probing isn't a
           // silent multi-minute wait. Concurrent emits only race on the percent.
           probedCount++;
-          if (probedCount === segments.length || probedCount % progressEvery === 0) {
-            await onProgress(probedCount / segments.length);
+          if (probedCount === groups.length || probedCount % progressEvery === 0) {
+            await onProgress(probedCount / groups.length);
           }
         }
       }),
@@ -757,7 +823,7 @@ export class PipelineRunner {
     };
     let aligned = alignSegments(alignInputs, settings, totalDurationMs);
 
-    // Auto-fit: re-translate (tighter), re-synthesize, and re-align any segment
+    // Auto-fit: re-translate (tighter), re-synthesize, and re-align any unit
     // that can't fit even at max speed, so timing-conflicts self-heal instead of
     // needing a manual edit. No-op when the setting is off, there are no
     // conflicts, or the translation provider can't shorten on request (Argos).
@@ -767,6 +833,7 @@ export class PipelineRunner {
         project,
         paths,
         segments,
+        groups,
         alignInputs,
         aligned,
         settings,
@@ -774,6 +841,21 @@ export class PipelineRunner {
         signal,
       );
     }
+
+    // Native-rate fit: when the engine honors a speed parameter (Piper, OpenAI),
+    // re-synthesize still-too-long units AT the required rate instead of leaving
+    // them to the post-hoc time-stretcher — a natively faster reading keeps
+    // formants and rhythm intact, which any stretcher only approximates.
+    aligned = await this.nativeRateResynthesis(
+      project,
+      paths,
+      groups,
+      alignInputs,
+      aligned,
+      settings,
+      totalDurationMs,
+      signal,
+    );
 
     await fsp.writeFile(paths.translatedAlignedJson, `${JSON.stringify(aligned, null, 2)}\n`, 'utf8');
 
@@ -789,18 +871,21 @@ export class PipelineRunner {
   }
 
   /**
-   * Re-fit segments that can't fit even at max speed: re-translate each with a
-   * tighter word budget (achieved by handing the LLM a SHRUNK window, which
-   * lowers the prompt's word target), re-synthesize, re-probe, and re-align —
-   * up to a couple of passes. Persists the shortened translations + subtitle
-   * sidecars when they change. A provider that can't shorten on request (Argos)
-   * returns identical text, which we detect as "no change" and stop without any
-   * wasted TTS. Pure inputs are mutated in place (segments + alignInputs).
+   * Re-fit synthesis units that can't fit even at max speed: re-translate each
+   * MEMBER segment with a tighter budget (achieved by handing the LLM a SHRUNK
+   * window, which lowers the prompt's budget — distributed across a group's
+   * members proportionally to their own cue windows), rebuild the group text,
+   * re-synthesize the unit, re-probe, and re-align — up to a couple of passes.
+   * Persists the shortened translations + subtitle sidecars + group plan when
+   * they change. A provider that can't shorten on request (Argos) returns
+   * identical text, which we detect as "no change" and stop without any wasted
+   * TTS. Inputs are mutated in place (segments + groups + alignInputs).
    */
   private async refitOverflowingSegments(
     project: Project,
     paths: WorkspacePaths,
     segments: TranscriptSegment[],
+    groups: SynthesisGroup[],
     alignInputs: AlignInputSegment[],
     aligned: AlignedSegment[],
     settings: { maxSpeedRatio: number; allowedOverflowMs: number },
@@ -811,6 +896,9 @@ export class PipelineRunner {
     const translation = this.deps.registry.getTranslation(project.settings.translationProviderId);
     const tts = this.deps.registry.getTts(project.settings.ttsProviderId);
     const segById = new Map(segments.map((s) => [s.id, s]));
+    const groupById = new Map(groups.map((g) => [g.id, g]));
+    const groupOfMember = new Map<string, SynthesisGroup>();
+    for (const g of groups) for (const id of g.segmentIds) groupOfMember.set(id, g);
     const inputById = new Map(alignInputs.map((a) => [a.segmentId, a]));
     let current = aligned;
     let changedAny = false;
@@ -820,14 +908,29 @@ export class PipelineRunner {
       const conflicts = current.filter((a) => a.status === 'timing-conflict');
       if (conflicts.length === 0) break;
 
-      // Attempt 1 targets the max-speed window (relies on atempo headroom);
+      // Attempt 1 targets the max-speed window (relies on time-stretch headroom);
       // attempt 2 targets the natural window (must fit without any speed-up).
       const tightFactor = attempt === 1 ? Math.max(1, settings.maxSpeedRatio) : 1;
-      const reqSegs = conflicts.map((c) => {
+      const reqSegs: { id: string; sourceText: string; startMs: number; endMs: number }[] = [];
+      for (const c of conflicts) {
+        const group = groupById.get(c.segmentId);
+        if (!group) continue;
         const availableMs = Math.max(1, c.placedDurationMs - c.overflowMs);
-        const tightMs = Math.max(500, Math.round(availableMs * tightFactor));
-        return { id: c.segmentId, sourceText: segById.get(c.segmentId)?.sourceText ?? '', startMs: 0, endMs: tightMs };
-      });
+        const tightTotalMs = Math.max(500, Math.round(availableMs * tightFactor));
+        // Distribute the unit's budget over its members by their cue windows.
+        const windows = group.segmentIds.map((id) => {
+          const s = segById.get(id);
+          return s ? Math.max(1, s.endMs - s.startMs) : 1;
+        });
+        const windowSum = windows.reduce((a, b) => a + b, 0) || 1;
+        group.segmentIds.forEach((id, j) => {
+          const s = segById.get(id);
+          if (!s) return;
+          const memberTight = Math.max(300, Math.round((tightTotalMs * windows[j]!) / windowSum));
+          reqSegs.push({ id, sourceText: s.sourceText ?? '', startMs: 0, endMs: memberTight });
+        });
+      }
+      if (reqSegs.length === 0) break;
 
       const result = await translation.translateSegments(
         {
@@ -839,38 +942,43 @@ export class PipelineRunner {
       );
       const newTextById = new Map(result.segments.map((s) => [s.id, (s.translatedText ?? '').trim()]));
 
-      const changed: string[] = [];
-      for (const c of conflicts) {
-        const seg = segById.get(c.segmentId);
-        const newText = newTextById.get(c.segmentId);
+      const changedGroups = new Set<SynthesisGroup>();
+      for (const req of reqSegs) {
+        const seg = segById.get(req.id);
+        const newText = newTextById.get(req.id);
         if (seg && newText && newText.length > 0 && newText !== (seg.translatedText ?? '')) {
           seg.translatedText = newText;
-          changed.push(c.segmentId);
+          const g = groupOfMember.get(req.id);
+          if (g) changedGroups.add(g);
         }
       }
-      if (changed.length === 0) break; // provider can't shorten (e.g. Argos) or converged
+      if (changedGroups.size === 0) break; // provider can't shorten (e.g. Argos) or converged
 
       changedAny = true;
 
-      // Re-synthesize only the changed segments (overwrites their WAVs in place).
+      // Rebuild each changed unit's text from its (updated) members, then
+      // re-synthesize only those units (overwrites their WAVs in place).
+      for (const g of changedGroups) {
+        g.text = g.segmentIds
+          .map((id) => (segById.get(id)?.translatedText ?? segById.get(id)?.sourceText ?? '').trim())
+          .filter((t) => t.length > 0)
+          .join(' ');
+      }
       await tts.synthesizeSegments(
         {
           language: project.settings.targetLanguage,
           voiceId: project.settings.ttsVoiceId,
-          segments: changed.map((id) => {
-            const s = segById.get(id)!;
-            return { id, text: (s.translatedText ?? '').trim(), startMs: s.startMs, endMs: s.endMs };
-          }),
+          segments: [...changedGroups].map((g) => ({ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs })),
           outputDir: paths.ttsSegmentsDir,
           speed: 1.0,
         },
         signal,
       );
 
-      // Re-probe the changed segments' new durations, then re-align everything
+      // Re-probe the changed units' new durations, then re-align everything
       // (gap-aware alignment depends on neighbours, so re-run the whole list).
-      for (const id of changed) {
-        const input = inputById.get(id);
+      for (const g of changedGroups) {
+        const input = inputById.get(g.id);
         if (!input) continue;
         try {
           input.generatedDurationMs = (await this.deps.media.probe(input.audioPath)).durationMs;
@@ -880,20 +988,92 @@ export class PipelineRunner {
       }
       current = alignSegments(alignInputs, settings, totalDurationMs);
       this.deps.logger.info(
-        `Auto-fit pass ${attempt}: shortened ${changed.length} overflowing line(s); ` +
+        `Auto-fit pass ${attempt}: shortened ${changedGroups.size} overflowing line(s); ` +
           `${current.filter((a) => a.status === 'timing-conflict').length} conflict(s) remain.`,
       );
     }
 
     if (changedAny) {
-      // Persist the shortened translations + regenerate subtitle sidecars so the
-      // editor + burned/sidecar subtitles match the audio.
+      // Persist the shortened translations + regenerate subtitle sidecars + the
+      // group plan so the editor + burned/sidecar subtitles match the audio.
       await writeSegments(paths.translatedJson, segments);
       const cues = transcriptSegmentsToCues(segments);
       await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
       await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
+      await writeGroups(paths.synthesisGroupsJson, groups);
     }
     return current;
+  }
+
+  /**
+   * Fit still-too-long units by SPEAKING FASTER instead of time-stretching:
+   * when the TTS engine honors a native speed parameter, re-synthesize each
+   * unit with `speedRatio > 1.05` at that rate, re-probe, and re-align. A
+   * natively faster reading preserves formants and articulation; the stretcher
+   * then only has to correct the small residual. Engines without native rate
+   * control (VieNeu) skip this entirely. Mutates alignInputs in place.
+   */
+  private async nativeRateResynthesis(
+    project: Project,
+    paths: WorkspacePaths,
+    groups: SynthesisGroup[],
+    alignInputs: AlignInputSegment[],
+    aligned: AlignedSegment[],
+    settings: { maxSpeedRatio: number; allowedOverflowMs: number },
+    totalDurationMs: number | undefined,
+    signal: AbortSignal,
+  ): Promise<AlignedSegment[]> {
+    const MIN_NATIVE_RATE = 1.05;
+    const tts = this.deps.registry.getTts(project.settings.ttsProviderId);
+    if (tts.supportsSpeedControl !== true) return aligned;
+    const targets = aligned.filter((a) => a.speedRatio > MIN_NATIVE_RATE);
+    if (targets.length === 0) return aligned;
+
+    const groupById = new Map(groups.map((g) => [g.id, g]));
+    const inputById = new Map(alignInputs.map((a) => [a.segmentId, a]));
+    this.deps.logger.info(
+      `Re-synthesizing ${targets.length} over-long line(s) at native speaking rate (instead of time-stretching)...`,
+    );
+
+    const requestedSpeed = new Map<string, number>();
+    for (const a of targets) {
+      throwIfCancelled(signal);
+      const group = groupById.get(a.segmentId);
+      const input = inputById.get(a.segmentId);
+      if (!group || !input) continue;
+      // `speed` is a batch-level TTS parameter, so units go one call at a time
+      // (there are few of them). A failed call keeps the stretched fallback.
+      const speed = Math.min(a.speedRatio, 2);
+      try {
+        await tts.synthesizeSegments(
+          {
+            language: project.settings.targetLanguage,
+            voiceId: project.settings.ttsVoiceId,
+            segments: [{ id: group.id, text: group.text, startMs: group.startMs, endMs: group.endMs }],
+            outputDir: paths.ttsSegmentsDir,
+            speed,
+          },
+          signal,
+        );
+        input.generatedDurationMs = (await this.deps.media.probe(input.audioPath)).durationMs;
+        requestedSpeed.set(a.segmentId, speed);
+      } catch (err) {
+        if (signal.aborted) throw err;
+        this.deps.logger.warn(
+          `Native-rate re-synthesis failed for ${a.segmentId} (${String(err)}); keeping the time-stretched version.`,
+        );
+      }
+    }
+    if (requestedSpeed.size === 0) return aligned;
+
+    // Re-align everything (gap-aware windows depend on neighbours) and note the
+    // native rate on units that now fit, so the editor can still surface it.
+    const realigned = alignSegments(alignInputs, settings, totalDurationMs);
+    return realigned.map((a) => {
+      const speed = requestedSpeed.get(a.segmentId);
+      if (speed === undefined || a.status !== 'ok') return a;
+      return { ...a, note: `Spoken at ~${speed.toFixed(2)}x native rate to fit the window.` };
+    });
   }
 
   private async stepAudioMix(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
@@ -902,18 +1082,23 @@ export class PipelineRunner {
     const mediaInfo = (await this.deps.store.getProject(project.id)).mediaInfo;
     const totalDurationMs = mediaInfo?.durationMs ?? this.estimateTotalDuration(aligned);
 
-    // Build the full-length TTS timeline, applying per-segment atempo.
+    // Build the full-length TTS timeline, applying per-clip time-stretch (the
+    // engine choice is policy: rubberband when available/warranted, else atempo)
+    // and micro-fades at every join. Clip durations let the worker place the
+    // fade-outs without probing.
     const timelineSegments: TimelineSegmentInput[] = aligned.map((a) => ({
       audioPath: a.audioPath,
       startMs: a.startMs,
       speedRatio: a.speedRatio,
+      durationMs: a.generatedDurationMs,
     }));
 
-    this.deps.logger.info(`Building TTS timeline (${timelineSegments.length} segments, ${totalDurationMs}ms)...`);
+    this.deps.logger.info(`Building TTS timeline (${timelineSegments.length} clips, ${totalDurationMs}ms)...`);
     await this.deps.media.buildTtsTimeline({
       segments: timelineSegments,
       totalDurationMs,
       outputPath: paths.ttsFullWav,
+      timeStretchEngine: project.settings.timeStretchEngine ?? 'auto',
     });
 
     throwIfCancelled(signal);
@@ -963,6 +1148,10 @@ export class PipelineRunner {
       ttsGainDb: project.settings.ttsGainDb,
       includeBackground,
       duck,
+      // With the original removed there is no bed at all — pure digital silence
+      // between lines reads as "broken audio". Lay a very quiet room tone under
+      // the dub (default on; settings.roomTone=false disables).
+      roomTone: !includeBackground && project.settings.roomTone !== false,
       // Two-pass loudnorm gives a transparent, dialogue-anchored final mix.
       twoPassLoudnorm: true,
     });

@@ -37,6 +37,8 @@ export class LocalTtsProvider implements TtsProvider {
   readonly id = 'piper-local';
   readonly displayName = 'Piper / system / fallback (local)';
   readonly isLocal = true;
+  /** Piper honors `speed` natively (length_scale), as do the system engines. */
+  readonly supportsSpeedControl = true;
 
   constructor(
     private readonly workerUrl: string,

@@ -128,9 +128,12 @@ describe('Rubber Band time-stretch', () => {
     expect(shouldUseRubberband(1.1, 'rubberband', true)).toBe(true);
     expect(shouldUseRubberband(1.0, 'rubberband', true)).toBe(false);
   });
-  it('"auto" only above the threshold', () => {
-    expect(shouldUseRubberband(1.2, 'auto', true)).toBe(false);
-    expect(shouldUseRubberband(1.4, 'auto', true)).toBe(true);
+  it('"auto" only above the threshold (1.1 — atempo is transparent below ~10%)', () => {
+    expect(shouldUseRubberband(1.05, 'auto', true)).toBe(false);
+    expect(shouldUseRubberband(1.2, 'auto', true)).toBe(true);
+    // Slow-downs mirror the threshold (ratio <= 1/1.1).
+    expect(shouldUseRubberband(0.85, 'auto', true)).toBe(true);
+    expect(shouldUseRubberband(0.95, 'auto', true)).toBe(false);
   });
   it('"ffmpeg-atempo" never uses it', () => {
     expect(shouldUseRubberband(1.8, 'ffmpeg-atempo', true)).toBe(false);

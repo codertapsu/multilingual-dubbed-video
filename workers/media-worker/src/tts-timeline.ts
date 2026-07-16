@@ -25,7 +25,7 @@
 import { mkdtempSync, rmSync, statfsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AppErrorException, type AlignedSegment } from '@videodubber/shared';
+import { AppErrorException, type AlignedSegment, type TimeStretchEngine } from '@videodubber/shared';
 import {
   assertInputReadable,
   assertOutputWritable,
@@ -33,6 +33,12 @@ import {
   type RunOptions,
 } from './exec.js';
 import { probeDurationMs } from './probe.js';
+import {
+  buildRubberbandFilterChain,
+  detectStretchCapabilities,
+  shouldUseRubberband,
+  stretchWithRubberbandCli,
+} from './stretch.js';
 
 /** Max real audio inputs to feed a single amix node before chunking. */
 export const MAX_INPUTS_PER_MIX = 32;
@@ -89,11 +95,44 @@ export interface TimelineClip {
   audioPath: string;
   startMs: number;
   /**
-   * Optional tempo factor (>1 = faster/shorter) applied via `atempo` BEFORE the
-   * clip is delayed into place. Used by alignment to fit slightly-too-long TTS
-   * into its subtitle window. Omitted/1 = no time-stretch.
+   * Optional tempo factor (>1 = faster/shorter) applied BEFORE the clip is
+   * delayed into place. Used by alignment to fit slightly-too-long TTS into its
+   * subtitle window. Omitted/1 = no time-stretch.
    */
   speedRatio?: number;
+  /**
+   * Measured clip duration in ms (pre-stretch). When present, a short fade-out
+   * is placed at the clip tail (join smoothing); without it only the fade-in
+   * is applied.
+   */
+  durationMs?: number;
+  /**
+   * Resolved stretch mechanism for this clip (set by {@link buildTtsTimeline}
+   * from the engine policy + detected capabilities). Default `atempo`.
+   */
+  stretchWith?: 'atempo' | 'rubberband';
+}
+
+/**
+ * Join-smoothing micro-fades: equal short ramps at each clip's head and tail
+ * kill DC steps/clicks where clips meet silence or each other, without being
+ * audible as fades. Skipped entirely on clips too short to carry them.
+ */
+export const FADE_IN_MS = 12;
+export const FADE_OUT_MS = 18;
+const MIN_FADEABLE_MS = 80;
+
+/**
+ * Build the micro-fade fragment for a clip (trailing-comma-terminated, or ''
+ * when the clip is too short / has unknown duration for a tail fade). Fades are
+ * applied BEFORE any time-stretch, so timings refer to the natural clip. Pure.
+ */
+export function buildFadeChain(durationMs?: number): string {
+  const fadeIn = `afade=t=in:d=${(FADE_IN_MS / 1000).toFixed(3)},`;
+  if (durationMs === undefined || !Number.isFinite(durationMs)) return fadeIn;
+  if (durationMs < MIN_FADEABLE_MS) return '';
+  const outStart = Math.max(0, durationMs - FADE_OUT_MS) / 1000;
+  return `${fadeIn}afade=t=out:st=${outStart.toFixed(3)}:d=${(FADE_OUT_MS / 1000).toFixed(3)},`;
 }
 
 /**
@@ -151,17 +190,24 @@ export function buildTimelineFilterComplex(
     const delay = Math.max(0, Math.round(clip.startMs));
     // adelay needs one value per channel; resample/format to a common layout
     // first so amix never has to reconcile mismatched sample rates/layouts.
+    // Micro-fades (join smoothing) run BEFORE the stretch so their timings
+    // refer to the natural clip; the stretch fragment is either Rubber Band
+    // (formant-preserving, when resolved by policy) or the atempo chain.
     //
-    // CRITICAL: reset PTS with `asetpts=N/SR/TB` AFTER adelay. When `atempo` is
+    // CRITICAL: reset PTS with `asetpts=N/SR/TB` AFTER adelay. When a stretch is
     // present it emits frames whose timestamps break `amix`'s alignment — amix
     // then collapses every clip to the front of the timeline and ends early, so
     // the dub piles all voices on top of each other in the first stretch and
     // goes silent for the rest. Re-stamping each delayed clip on a clean,
     // sample-count PTS base lets amix place them at their true offsets. (Without
-    // any atempo it already works, but the reset is harmless and uniform.)
+    // any stretch it already works, but the reset is harmless and uniform.)
+    const stretch =
+      clip.stretchWith === 'rubberband'
+        ? buildRubberbandFilterChain(clip.speedRatio)
+        : buildAtempoChain(clip.speedRatio);
     parts.push(
       `[${i}:a]aresample=${SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `${buildAtempoChain(clip.speedRatio)}adelay=${delay}|${delay},asetpts=N/SR/TB[${label}]`,
+        `${buildFadeChain(clip.durationMs)}${stretch}adelay=${delay}|${delay},asetpts=N/SR/TB[${label}]`,
     );
     delayedLabels.push(`[${label}]`);
   });
@@ -243,6 +289,8 @@ export interface TimelineSegmentInput {
   startMs: number;
   /** Tempo factor to apply before placement (1/undefined = none). */
   speedRatio?: number;
+  /** Measured clip duration in ms (pre-stretch) for tail-fade placement. */
+  durationMs?: number;
 }
 
 /** Input object for {@link buildTtsTimeline}. */
@@ -250,12 +298,54 @@ export interface BuildTtsTimelineInput {
   segments: TimelineSegmentInput[];
   totalDurationMs: number;
   outputPath: string;
+  /**
+   * Stretcher policy for fitting clips: `auto` (rubberband when available and
+   * the ratio warrants it), `rubberband`, or `ffmpeg-atempo`. Undefined behaves
+   * like `ffmpeg-atempo` (legacy callers keep their exact behavior).
+   */
+  timeStretchEngine?: TimeStretchEngine;
+}
+
+/**
+ * Resolve each clip's stretch mechanism from the engine policy + detected
+ * capabilities. Prefers ffmpeg's `rubberband` filter (in-graph, zero-copy);
+ * clips needing Rubber Band with only the CLI available are pre-stretched to
+ * temp WAVs in `cliTmpDir`. A CLI failure silently falls back to atempo for
+ * that clip. Mutates + returns `clips`.
+ */
+async function resolveStretchMechanisms(
+  clips: TimelineClip[],
+  engine: TimeStretchEngine | undefined,
+  cliTmpDir: () => string,
+): Promise<TimelineClip[]> {
+  const wantsRubberband = engine === 'auto' || engine === 'rubberband';
+  if (!wantsRubberband || !clips.some((c) => shouldUseRubberband(c.speedRatio, engine, true))) {
+    return clips;
+  }
+  const caps = await detectStretchCapabilities();
+  for (const [i, clip] of clips.entries()) {
+    if (shouldUseRubberband(clip.speedRatio, engine, caps.ffmpegFilter)) {
+      clip.stretchWith = 'rubberband';
+    } else if (shouldUseRubberband(clip.speedRatio, engine, caps.cli)) {
+      const stretched = join(cliTmpDir(), `stretched_${String(i).padStart(4, '0')}.wav`);
+      try {
+        await stretchWithRubberbandCli(clip.audioPath, stretched, clip.speedRatio!);
+        clip.audioPath = stretched;
+        // The clip is now already at target tempo; adjust the tail-fade anchor.
+        if (clip.durationMs !== undefined) clip.durationMs = Math.round(clip.durationMs / clip.speedRatio!);
+        clip.speedRatio = undefined;
+      } catch {
+        // CLI failed for this clip — leave it to the in-graph atempo fallback.
+      }
+    }
+  }
+  return clips;
 }
 
 /**
  * Build a single full-length TTS timeline WAV ("tts_full.wav") by placing each
- * per-segment WAV at its `startMs` (with optional `atempo` time-stretch) and
- * padding/trimming to exactly `totalDurationMs`.
+ * per-segment WAV at its `startMs` (with optional time-stretch + join-smoothing
+ * micro-fades) and padding/trimming to exactly `totalDurationMs`.
  *
  * Signature matches the orchestrator's `PipelineMediaService.buildTtsTimeline`:
  * a single input object in, `{ outputPath, durationMs }` out.
@@ -273,6 +363,7 @@ export async function buildTtsTimeline(
       audioPath: s.audioPath,
       startMs: Math.max(0, Math.round(s.startMs)),
       speedRatio: s.speedRatio,
+      durationMs: s.durationMs,
     }))
     .sort((a, b) => a.startMs - b.startMs);
 
@@ -281,16 +372,42 @@ export async function buildTtsTimeline(
     assertInputReadable(clip.audioPath);
   }
 
-  // Single-pass path: few enough inputs to mix at once.
-  if (clips.length <= MAX_INPUTS_PER_MIX) {
-    await runFfmpeg(buildTimelineMixArgs(clips, totalDurationMs, outputPath), opts);
-    return { outputPath, durationMs: await probeDurationMs(outputPath) };
-  }
+  // Resolve the stretch mechanism per clip (rubberband filter / CLI / atempo).
+  // The CLI path needs a scratch dir for pre-stretched clips; create it lazily
+  // and clean it up with the rest of the temp state.
+  let stretchTmpDir: string | undefined;
+  const cliTmpDir = (): string => {
+    stretchTmpDir ??= mkdtempSync(join(tmpdir(), 'vd-stretch-'));
+    return stretchTmpDir;
+  };
 
-  // Chunked path: mix each chunk to an intermediate full-length WAV, then mix
-  // the intermediates (which already start at t=0) together. These intermediates
-  // are full-length, so a long/dense video can need many GiB of scratch — fail
-  // fast with a clear message if temp space is short.
+  try {
+    await resolveStretchMechanisms(clips, input.timeStretchEngine, cliTmpDir);
+
+    // Single-pass path: few enough inputs to mix at once.
+    if (clips.length <= MAX_INPUTS_PER_MIX) {
+      await runFfmpeg(buildTimelineMixArgs(clips, totalDurationMs, outputPath), opts);
+      return { outputPath, durationMs: await probeDurationMs(outputPath) };
+    }
+
+    return await buildChunkedTimeline(clips, totalDurationMs, outputPath, opts);
+  } finally {
+    if (stretchTmpDir) rmSync(stretchTmpDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Chunked path: mix each chunk to an intermediate full-length WAV, then mix the
+ * intermediates (which already start at t=0) together. These intermediates are
+ * full-length, so a long/dense video can need many GiB of scratch — fail fast
+ * with a clear message if temp space is short.
+ */
+async function buildChunkedTimeline(
+  clips: TimelineClip[],
+  totalDurationMs: number,
+  outputPath: string,
+  opts: RunOptions,
+): Promise<{ outputPath: string; durationMs: number }> {
   assertTmpSpace(estimateTimelineTmpBytes(clips.length, totalDurationMs));
   const tmpDir = mkdtempSync(join(tmpdir(), 'vd-tts-'));
   try {

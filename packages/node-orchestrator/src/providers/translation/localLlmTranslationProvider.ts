@@ -27,7 +27,21 @@ import {
   buildRawTranslationPrompt,
   buildTranslationPrompt,
   parseTranslationReply,
+  type PromptSegment,
 } from './llmTranslationProvider.js';
+import {
+  buildAnalysisPrompt,
+  buildAnalysisSample,
+  buildContextHeader,
+  collectRollingPairs,
+  isSceneBreak,
+  MIN_SEGMENTS_FOR_ANALYSIS,
+  parseAnalysisReply,
+  planContextBatches,
+  translationContextEnabled,
+  type RollingPair,
+  type TranslationAnalysis,
+} from './translationContext.js';
 
 /** Prompting strategy. */
 export type LocalLlmMode = 'chat-json-batch' | 'raw-segment';
@@ -206,15 +220,39 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     input: TranslationInput,
     signal: AbortSignal,
   ): Promise<TranslationResult> {
+    // Document-level context (same design as the cloud provider): one analysis
+    // pass builds the character sheet (synopsis/cast/glossary/pronoun plan),
+    // then scene-aware batches carry a rolling window of translated pairs.
+    // Best-effort — a failed analysis never fails the translation.
+    const useContext = translationContextEnabled() && input.segments.length >= MIN_SEGMENTS_FOR_ANALYSIS;
+    let analysis: TranslationAnalysis | undefined;
+    if (useContext) {
+      analysis = await this.complete(
+        'You prepare structured notes for dubbing translators. Respond with strict JSON only.',
+        buildAnalysisPrompt(source, target, buildAnalysisSample(input.segments)),
+        baseUrl,
+        signal,
+      )
+        .then(parseAnalysisReply)
+        .catch(() => undefined);
+    }
+
+    const batches = planContextBatches(input.segments, { maxSegments: BATCH_SIZE, maxChars: 6000 });
     const results: TranslationResultSegment[] = [];
-    for (let i = 0; i < input.segments.length; i += BATCH_SIZE) {
-      const batch = input.segments.slice(i, i + BATCH_SIZE);
-      const prompt = buildTranslationPrompt(source, target, batch);
+    let previousBatch: PromptSegment[] | undefined;
+    let rolling: RollingPair[] = [];
+    for (const batch of batches) {
+      const context = useContext
+        ? buildContextHeader({ analysis, previousPairs: rolling, sceneBreak: isSceneBreak(previousBatch, batch) })
+        : undefined;
+      const prompt = buildTranslationPrompt(source, target, batch, context || undefined);
       const reply = await this.complete('You are a professional subtitle/dubbing translator.', prompt, baseUrl, signal);
       const byId = parseTranslationReply(reply);
       for (const seg of batch) {
         results.push({ id: seg.id, translatedText: byId.get(seg.id) ?? seg.sourceText });
       }
+      rolling = collectRollingPairs(batch, byId);
+      previousBatch = batch;
     }
     return { segments: results };
   }

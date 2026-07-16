@@ -17,6 +17,7 @@ import type {
   MediaService,
   RenderFinalVideoInput,
   RenderFinalVideoResult,
+  TimeStretchEngine,
 } from '@videodubber/shared';
 
 /** A single placed segment for the TTS timeline build. */
@@ -25,8 +26,11 @@ export interface TimelineSegmentInput {
   audioPath: string;
   /** Placement start on the timeline (ms). */
   startMs: number;
-  /** Atempo factor to apply before placement (1 = none). */
+  /** Time-stretch factor to apply before placement (1 = none). */
   speedRatio: number;
+  /** Measured clip duration (ms), pre-stretch — lets the worker place the
+   * join-smoothing fade-out without re-probing every clip. */
+  durationMs?: number;
 }
 
 /** Options for {@link PipelineMediaService.buildTtsTimeline}. */
@@ -34,6 +38,9 @@ export interface BuildTtsTimelineInput {
   segments: TimelineSegmentInput[];
   totalDurationMs: number;
   outputPath: string;
+  /** Stretcher policy for fitting clips (default `auto`: rubberband when
+   * available and the ratio warrants it, else atempo). */
+  timeStretchEngine?: TimeStretchEngine;
 }
 
 /** Options for {@link PipelineMediaService.duckAndMix}. */
@@ -45,6 +52,9 @@ export interface DuckAndMixInput {
   ttsGainDb: number;
   includeBackground: boolean;
   duck: boolean;
+  /** Lay a very quiet pink-noise room tone under the dub when the original
+   * soundtrack is removed, so pauses are never pure digital silence. */
+  roomTone?: boolean;
   /** Two-pass EBU R128 loudness normalization for a transparent final mix. */
   twoPassLoudnorm?: boolean;
 }

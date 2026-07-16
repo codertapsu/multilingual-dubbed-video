@@ -85,6 +85,8 @@ export class OpenAiTtsProvider implements CancellableTtsProvider {
   readonly id = 'openai-tts';
   readonly displayName = 'OpenAI TTS (cloud)';
   readonly isLocal = false;
+  /** The speech API accepts a native `speed` parameter (0.25–4.0). */
+  readonly supportsSpeedControl = true;
   readonly credentialService: CloudServiceId = 'openai';
 
   constructor(

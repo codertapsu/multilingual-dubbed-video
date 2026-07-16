@@ -34,6 +34,8 @@ export interface WorkspacePaths {
   readonly ttsSegmentsDir: string;
   readonly ttsFullWav: string;
   readonly finalMixWav: string;
+  /** Synthesis-group plan (which cues were merged into one TTS utterance). */
+  readonly synthesisGroupsJson: string;
 
   /** Scratch dir for chunked-STT clips + per-chunk transcript checkpoints. */
   readonly sttChunksDir: string;
@@ -100,6 +102,7 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     ttsSegmentsDir,
     ttsFullWav: path.join(audioDir, 'tts_full.wav'),
     finalMixWav: path.join(audioDir, 'final_mix.wav'),
+    synthesisGroupsJson: path.join(audioDir, 'synthesis_groups.json'),
 
     sttChunksDir,
     sttChunkWav: (index: number) => path.join(sttChunksDir, `chunk_${padSegmentIndex(index)}.wav`),

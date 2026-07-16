@@ -214,6 +214,14 @@ export interface TtsProvider {
   displayName: string;
   /** Whether the provider runs fully locally. */
   isLocal: boolean;
+  /**
+   * True when the engine honors {@link TtsInput.speed} natively (Piper's
+   * length_scale, OpenAI's speed param). The pipeline then re-synthesizes
+   * over-long lines at the required rate — which sounds far more natural than
+   * post-hoc time-stretching — before falling back to the stretcher.
+   * Absent/false = the engine speaks at its natural rate only (e.g. VieNeu).
+   */
+  supportsSpeedControl?: boolean;
   /** Synthesize a batch of segments to audio clips. */
   synthesizeSegments(input: TtsInput): Promise<TtsResult>;
 }

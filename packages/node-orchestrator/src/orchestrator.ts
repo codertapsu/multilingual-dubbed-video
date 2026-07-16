@@ -27,6 +27,7 @@ import {
   type TtsSegment,
 } from '@videodubber/shared';
 import { alignSegment, type AlignInputSegment } from './alignment/align.js';
+import type { SynthesisGroup, SynthesisGroupsArtifact } from './pipeline/grouping.js';
 import type { OrchestratorConfig } from './config.js';
 import type { EventBusRegistry} from './events.js';
 import { type ProjectEventBus } from './events.js';
@@ -90,6 +91,8 @@ const EDITABLE_SETTING_KEYS = [
   'allowedOverflowMs',
   'autoFitOverflow',
   'timeStretchEngine',
+  'synthesisGrouping',
+  'roomTone',
   'renderQuality',
   'subtitleExportMode',
   'forcedAlignment',
@@ -337,17 +340,67 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const text = (opts.text ?? segment.translatedText ?? segment.sourceText ?? '').trim();
     const provider = this.deps.registry.getTts(project.settings.ttsProviderId);
 
+    // DEGROUP when this segment was synthesized as part of a multi-cue group:
+    // grouped cues share one WAV (on the first member's path), so regenerating
+    // one line must give EVERY member its own WAV + alignment entry again —
+    // otherwise the edit would either overwrite the shared clip (first member)
+    // or never be heard at all (later members).
+    const groups = await this.tryReadGroups(paths.synthesisGroupsJson);
+    const group = groups?.find((g) => g.segmentIds.length > 1 && g.segmentIds.includes(segmentId));
+    const memberInputs = (group ? group.segmentIds : [segmentId]).map((id) => {
+      const s = id === segmentId ? segment : segments.find((x) => x.id === id);
+      return {
+        id,
+        text: id === segmentId ? text : (s?.translatedText ?? s?.sourceText ?? '').trim(),
+        startMs: s?.startMs ?? segment.startMs,
+        endMs: s?.endMs ?? segment.endMs,
+      };
+    });
+
     const result = await provider.synthesizeSegments({
       language: project.settings.targetLanguage,
       voiceId: opts.voiceId ?? project.settings.ttsVoiceId,
-      segments: [{ id: segmentId, text, startMs: segment.startMs, endMs: segment.endMs }],
+      segments: memberInputs,
       outputDir: paths.ttsSegmentsDir,
       speed: opts.speed ?? 1.0,
     });
 
-    const ttsSegment = result.segments[0];
+    const ttsSegment = result.segments.find((s) => s.segmentId === segmentId);
     if (!ttsSegment) {
       throw new AppErrorException('UNKNOWN', `TTS produced no output for segment ${segmentId}.`);
+    }
+
+    // Persist the degrouped plan (each former member is its own singleton now)
+    // and give the OTHER members fresh alignment entries; the edited segment's
+    // own entry is patched below.
+    if (group && groups) {
+      const replacement: SynthesisGroup[] = group.segmentIds.map((id) => {
+        const input = memberInputs.find((m) => m.id === id)!;
+        return { id, segmentIds: [id], text: input.text, startMs: input.startMs, endMs: input.endMs };
+      });
+      const nextGroups = groups.flatMap((g) => (g === group ? replacement : [g]));
+      await this.writeGroups(paths.synthesisGroupsJson, nextGroups);
+
+      for (const member of result.segments) {
+        if (member.segmentId === segmentId) continue;
+        const input = memberInputs.find((m) => m.id === member.segmentId);
+        if (!input) continue;
+        const idx = segmentIdToIndex(member.segmentId);
+        const memberAligned = alignSegment(
+          {
+            segmentId: member.segmentId,
+            startMs: input.startMs,
+            endMs: input.endMs,
+            audioPath: idx > 0 ? paths.ttsSegment(idx) : member.audioPath,
+            generatedDurationMs: member.durationMs,
+          },
+          {
+            maxSpeedRatio: project.settings.maxSpeedRatio,
+            allowedOverflowMs: project.settings.allowedOverflowMs,
+          },
+        );
+        await this.patchAlignedSegment(paths, memberAligned);
+      }
     }
 
     // If text was edited, persist it back to translated.json too.
@@ -517,6 +570,23 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     } catch {
       return undefined;
     }
+  }
+
+  /** Read the synthesis-group plan (or undefined if missing/corrupt). */
+  private async tryReadGroups(path: string): Promise<SynthesisGroup[] | undefined> {
+    try {
+      const raw = await fsp.readFile(path, 'utf8');
+      const parsed = JSON.parse(raw) as SynthesisGroupsArtifact;
+      return Array.isArray(parsed.groups) ? parsed.groups : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Persist the synthesis-group plan. */
+  private async writeGroups(path: string, groups: SynthesisGroup[]): Promise<void> {
+    const artifact: SynthesisGroupsArtifact = { groups };
+    await fsp.writeFile(path, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
   }
 
   /** Read aligned segments (or undefined if missing). */

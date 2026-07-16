@@ -42,12 +42,25 @@ export interface DuckAndMixInput {
   /** Use dynamic sidechain ducking (true) vs. fixed attenuation (false). */
   duck: boolean;
   /**
+   * When the original soundtrack is dropped (includeBackground=false), lay a
+   * very quiet pink-noise room tone under the dub so the pauses between lines
+   * are never pure digital silence (which reads as "broken audio" and makes the
+   * synthetic joins obvious). Ignored while the original bed is kept.
+   */
+  roomTone?: boolean;
+  /**
    * Two-pass EBU R128 loudness normalization: measure first, then apply with
    * the measured values (linear, transparent) instead of the single-pass
    * dynamic mode. Higher quality for the final mix; one extra analysis pass.
    */
   twoPassLoudnorm?: boolean;
 }
+
+/**
+ * Room-tone level: pink noise at ~-55 dBFS peak — comfortably below dialogue,
+ * just enough that "silence" still sounds like a room and not a dropout.
+ */
+export const ROOM_TONE_AMPLITUDE = 0.0018;
 
 /** Target loudness for the final mix (streaming-friendly, dialogue-anchored). */
 const LOUDNORM_TARGET = { I: -16, TP: -1.5, LRA: 11 } as const;
@@ -150,8 +163,20 @@ export function buildMixFilterComplex(opts: DuckAndMixInput, loudnorm?: string):
   // normalization (see duckAndMix).
   const loudness = loudnorm ?? loudnormFilter();
 
-  // --- No background: output is just the (gained) TTS, normalized. ---
+  // --- No background: output is just the (gained) TTS, normalized — with an
+  // optional room-tone bed so gaps between lines never fall to digital black.
+  // anoisesrc is a filter source (no extra -i input); duration=first pins the
+  // bed to the TTS timeline's exact length.
   if (!opts.includeBackground) {
+    if (opts.roomTone) {
+      return [
+        ttsChain,
+        `anoisesrc=color=pink:amplitude=${ROOM_TONE_AMPLITUDE}:sample_rate=${SAMPLE_RATE},` +
+          `aformat=sample_fmts=fltp:channel_layouts=stereo[room]`,
+        `[tts][room]amix=inputs=2:duration=first:normalize=0:dropout_transition=0[bedded]`,
+        `[bedded]${loudness}[out]`,
+      ].join(';');
+    }
     return [ttsChain, `[tts]${loudness}[out]`].join(';');
   }
 

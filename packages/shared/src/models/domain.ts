@@ -132,8 +132,21 @@ export interface ProjectSettings {
    * — set false to keep the literal translation and fix conflicts in the editor.
    */
   autoFitOverflow?: boolean;
-  /** Time-stretch engine for fitting clips to windows (default ffmpeg-atempo). */
+  /** Time-stretch engine for fitting clips to windows (default `auto`). */
   timeStretchEngine?: TimeStretchEngine;
+  /**
+   * Merge consecutive same-speaker segments into one synthesis utterance so the
+   * TTS engine speaks whole thoughts with coherent intonation, instead of
+   * resetting its prosody at every subtitle cue. Default on — set false to
+   * synthesize strictly cue-by-cue (the pre-0.4 behavior).
+   */
+  synthesisGrouping?: boolean;
+  /**
+   * When the original soundtrack is removed, lay a very quiet pink-noise room
+   * tone under the dub so pauses are never digital silence (which reads as
+   * "broken audio"). Default on; ignored when the original audio is kept.
+   */
+  roomTone?: boolean;
   /** Final-render encode quality/speed (default `quality`). */
   renderQuality?: RenderQuality;
   /** STT model override (e.g. "large-v3-turbo"). Mirrors sttModel for clarity. */

@@ -22,6 +22,19 @@ import {
 import type { CancellableTranslationProvider } from '../types.js';
 import type { CredentialsStore } from '../../credentials/credentialsStore.js';
 import { cloudPostJson, extractJsonObject, requireCredential, SERVICE_LABELS } from '../cloud/cloudHttp.js';
+import {
+  buildAnalysisPrompt,
+  buildAnalysisSample,
+  buildContextHeader,
+  collectRollingPairs,
+  isSceneBreak,
+  MIN_SEGMENTS_FOR_ANALYSIS,
+  parseAnalysisReply,
+  planContextBatches,
+  translationContextEnabled,
+  type RollingPair,
+  type TranslationAnalysis,
+} from './translationContext.js';
 
 function envIntDefault(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
@@ -90,32 +103,69 @@ export function planTranslationBatches(
   return batches;
 }
 
-/** Words that fit naturally in a window, assuming ~2.8 spoken words/second. */
-function targetWords(startMs?: number, endMs?: number): number | undefined {
+/** How a spoken-length budget is counted in the target language. */
+export type BudgetUnit = 'words' | 'syllables' | 'characters';
+
+/**
+ * Per-language speaking rates for the duration budget. Vietnamese is written
+ * one syllable per whitespace-separated token, so a SYLLABLE budget is exactly
+ * countable — and Vietnamese (like Chinese/Japanese) has no useful "word"
+ * count. Rates are deliberately a touch under natural speed so the line fits
+ * without stretching. Everything else uses the ~2.8 words/s heuristic.
+ */
+const BUDGET_RATES: Record<string, { unit: BudgetUnit; perSecond: number }> = {
+  vi: { unit: 'syllables', perSecond: 4.6 },
+  zh: { unit: 'characters', perSecond: 4.2 },
+  ja: { unit: 'characters', perSecond: 5.5 },
+};
+const DEFAULT_RATE = { unit: 'words' as BudgetUnit, perSecond: 2.8 };
+
+/** The spoken-length budget that fits a window, in target-language units. */
+export function speechBudget(
+  targetLanguage: string,
+  startMs?: number,
+  endMs?: number,
+): { amount: number; unit: BudgetUnit } | undefined {
   if (typeof startMs !== 'number' || typeof endMs !== 'number') return undefined;
   const seconds = Math.max(0, endMs - startMs) / 1000;
-  return seconds > 0 ? Math.max(1, Math.round(seconds * 2.8)) : undefined;
+  if (seconds <= 0) return undefined;
+  const base = targetLanguage.split('-')[0]!.toLowerCase();
+  const rate = BUDGET_RATES[base] ?? DEFAULT_RATE;
+  return { amount: Math.max(1, Math.round(seconds * rate.perSecond)), unit: rate.unit };
+}
+
+/** Human wording for a budget unit ("syllables (âm tiết)" for Vietnamese). */
+export function budgetUnitLabel(unit: BudgetUnit, targetLanguage: string): string {
+  if (unit === 'syllables' && targetLanguage.split('-')[0]!.toLowerCase() === 'vi') return 'syllables (âm tiết)';
+  return unit;
 }
 
 /**
  * Build the strict-JSON translation prompt for one batch.
  *
  * Duration-aware: when a segment carries timing, the prompt states the spoken
- * time window and a target word budget so the model produces a line that fits
- * without heavy time-stretching downstream (the "HeyGen trick" from the
- * research). This is a free quality win on cloud and local alike.
+ * time window and a target budget IN TARGET-LANGUAGE UNITS (Vietnamese
+ * syllables, Chinese characters, otherwise words) so the model produces a line
+ * that fits without heavy time-stretching downstream.
+ *
+ * Context-aware: an optional `context` block (synopsis, cast, glossary,
+ * pronoun/address plan, previous translated lines — see translationContext.ts)
+ * is prepended so pronouns, registers, and terminology stay consistent across
+ * the whole video instead of resetting at every request.
  */
 export function buildTranslationPrompt(
   sourceLanguage: string,
   targetLanguage: string,
   segments: PromptSegment[],
+  context?: string,
 ): string {
+  const unitLabel = (unit: BudgetUnit): string => budgetUnitLabel(unit, targetLanguage);
   const list = segments
     .map((s) => {
-      const words = targetWords(s.startMs, s.endMs);
+      const budget = speechBudget(targetLanguage, s.startMs, s.endMs);
       const hint =
-        words !== undefined
-          ? `  [spoken window: ${((s.endMs! - s.startMs!) / 1000).toFixed(1)}s; target ${words} words or fewer]`
+        budget !== undefined
+          ? `  [spoken window: ${((s.endMs! - s.startMs!) / 1000).toFixed(1)}s; target ${budget.amount} ${unitLabel(budget.unit)} or fewer]`
           : '';
       // Collapse any internal line breaks so each segment stays on one line of
       // the numbered list the model reads.
@@ -125,12 +175,14 @@ export function buildTranslationPrompt(
     .join('\n');
   return [
     `Translate the following subtitle segments from "${sourceLanguage}" to "${targetLanguage}".`,
+    ...(context ? [context] : []),
     'Rules:',
     '- These are spoken dialogue lines for dubbing: they must fit the original spoken time window. Favor concise, natural phrasing over literal completeness — drop filler and redundancy so the line is no longer than it needs to be.',
-    '- When a target word budget is given, treat it as a firm ceiling: a shorter line that fits the timing is BETTER than a complete line that overflows. Stay at or under the budget.',
+    '- When a target length budget is given, treat it as a firm ceiling: a shorter line that fits the timing is BETTER than a complete line that overflows. Stay at or under the budget.',
     '- Preserve names, numbers, and the tone of the original.',
-    '- Translate each segment independently but consistently (same terms across segments).',
-    '- Respond with ONLY a JSON object of the form {"segments":[{"id":"seg_0001","text":"..."}]} — no prose, no markdown fences.',
+    '- Keep pronouns and terms of address consistent with the context and across ALL segments: pick the forms the speaker relationships call for (e.g. Vietnamese xưng hô — thầy/cô, anh/chị, em, bạn, con — not a generic default) and never switch mid-conversation.',
+    '- Use the same terminology for the same things across segments.',
+    '- Respond with ONLY a JSON object of the form {"segments":[{"id":"seg_0001","text":"..."}]} — no prose, no markdown fences. One entry per input segment id; never merge or split segments.',
     '',
     'Segments:',
     list,
@@ -180,10 +232,10 @@ export function buildRawTranslationPrompt(
 ): string {
   const sName = languageName(sourceLanguage);
   const tName = languageName(targetLanguage);
-  const words = targetWords(segment.startMs, segment.endMs);
+  const budget = speechBudget(targetLanguage, segment.startMs, segment.endMs);
   const fit =
-    words !== undefined
-      ? ` Keep it to ${words} words or fewer so it fits the spoken dubbing timing; prefer a concise line that fits over a longer, more literal one.`
+    budget !== undefined
+      ? ` Keep it to ${budget.amount} ${budgetUnitLabel(budget.unit, targetLanguage)} or fewer so it fits the spoken dubbing timing; prefer a concise line that fits over a longer, more literal one.`
       : '';
   const text = segment.sourceText.replace(/\r\n?/g, '\n').trim();
   return (
@@ -239,13 +291,41 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     const source = normalizeLanguageCode(input.sourceLanguage);
     const target = normalizeLanguageCode(input.targetLanguage);
 
+    const send = (prompt: string, system?: string): Promise<string> =>
+      defaults.dialect === 'anthropic'
+        ? this.callAnthropic(baseUrl, cred.apiKey, model, prompt, signal, system)
+        : this.callOpenAiCompatible(baseUrl, cred.apiKey, model, prompt, signal, system);
+
+    // Document-level context: one analysis pass over the transcript produces
+    // the "character sheet" (synopsis, cast, glossary, pronoun/address plan)
+    // that keeps Vietnamese xưng hô and terminology consistent across batches.
+    // Best-effort: an analysis failure must never fail the translation itself.
+    const useContext = translationContextEnabled() && input.segments.length >= MIN_SEGMENTS_FOR_ANALYSIS;
+    let analysis: TranslationAnalysis | undefined;
+    if (useContext) {
+      analysis = await send(
+        buildAnalysisPrompt(source, target, buildAnalysisSample(input.segments)),
+        'You prepare structured notes for dubbing translators. Respond with strict JSON only.',
+      )
+        .then(parseAnalysisReply)
+        .catch(() => undefined);
+    }
+
+    // Scene-aware batches + a rolling window of the previous batch's translated
+    // pairs, so style/pronoun decisions flow across request boundaries.
+    const batches = planContextBatches(input.segments, {
+      maxSegments: MAX_BATCH_SEGMENTS,
+      maxChars: MAX_BATCH_CHARS,
+    });
     const results: TranslationResultSegment[] = [];
-    for (const batch of planTranslationBatches(input.segments)) {
-      const prompt = buildTranslationPrompt(source, target, batch);
-      const reply =
-        defaults.dialect === 'anthropic'
-          ? await this.callAnthropic(baseUrl, cred.apiKey, model, prompt, signal)
-          : await this.callOpenAiCompatible(baseUrl, cred.apiKey, model, prompt, signal);
+    let previousBatch: PromptSegment[] | undefined;
+    let rolling: RollingPair[] = [];
+    for (const batch of batches) {
+      const context = useContext
+        ? buildContextHeader({ analysis, previousPairs: rolling, sceneBreak: isSceneBreak(previousBatch, batch) })
+        : undefined;
+      const prompt = buildTranslationPrompt(source, target, batch, context || undefined);
+      const reply = await send(prompt);
 
       const byId = parseTranslationReply(reply);
       for (const seg of batch) {
@@ -253,6 +333,8 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
         // continues; the editor surfaces it for manual review.
         results.push({ id: seg.id, translatedText: byId.get(seg.id) ?? seg.sourceText });
       }
+      rolling = collectRollingPairs(batch, byId);
+      previousBatch = batch;
     }
 
     return { segments: results };
@@ -265,6 +347,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     model: string,
     prompt: string,
     signal?: AbortSignal,
+    system = 'You are a professional subtitle/dubbing translator.',
   ): Promise<string> {
     const data = await this.postJson<{ choices?: { message?: { content?: string } }[] }>(
       `${baseUrl}/chat/completions`,
@@ -272,7 +355,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
       {
         model,
         messages: [
-          { role: 'system', content: 'You are a professional subtitle/dubbing translator.' },
+          { role: 'system', content: system },
           { role: 'user', content: prompt },
         ],
         temperature: 0.2,
@@ -290,6 +373,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     model: string,
     prompt: string,
     signal?: AbortSignal,
+    system = 'You are a professional subtitle/dubbing translator. Respond with strict JSON only.',
   ): Promise<string> {
     const data = await this.postJson<{ content?: { type: string; text?: string }[] }>(
       `${baseUrl}/messages`,
@@ -297,7 +381,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
       {
         model,
         max_tokens: 8192,
-        system: 'You are a professional subtitle/dubbing translator. Respond with strict JSON only.',
+        system,
         messages: [{ role: 'user', content: prompt }],
       },
       { service: this.credentialService, timeoutMs: this.timeoutMs, signal },

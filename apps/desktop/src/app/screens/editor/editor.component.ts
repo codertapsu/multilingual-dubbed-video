@@ -70,6 +70,22 @@ function toCtxDraft(ctx: TranslationDocContext): CtxDraft {
 }
 
 /**
+ * "Looks untranslated" heuristic — mirrors the orchestrator's
+ * looksUntranslated(): identical to the source (punctuation/case-insensitive)
+ * AND either CJK source (a vi/en voice can't speak it) or a substantial line.
+ * Short identical lines ("OK", numbers, names) are legitimate and not flagged.
+ */
+const CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+function normalizeForCompare(text: string): string {
+  return text.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '').normalize('NFC');
+}
+function looksUntranslatedText(sourceText: string, text: string): boolean {
+  const src = normalizeForCompare(sourceText);
+  if (src.length < 2 || normalizeForCompare(text) !== src) return false;
+  return CJK_RE.test(sourceText) || src.length >= 15;
+}
+
+/**
  * EditorComponent (route "project/:id/editor").
  *
  * Side-by-side review/edit of transcript segments: read-only source text and
@@ -217,6 +233,12 @@ export class EditorComponent implements OnInit {
   /** Derived per-row view models with computed warnings. */
   protected readonly rows = computed<EditorSegmentVm[]>(() => {
     const drafts = this.drafts();
+    // "Untranslated" detection only applies to real cross-language projects.
+    // When settings haven't loaded (transient IPC failure) default to ON —
+    // hiding the badges would recreate the silent-failure mode they exist for.
+    const s = this.projectSettings();
+    const crossLanguage =
+      s === null || s.sourceLanguage.split('-')[0] !== s.targetLanguage.split('-')[0];
     return this.segments().map((segment) => {
       const text = drafts[segment.id] ?? segment.translatedText ?? segment.sourceText;
       const wrappedLines = splitSubtitleLines(text, 42, MAX_SUBTITLE_LINES);
@@ -230,6 +252,7 @@ export class EditorComponent implements OnInit {
         segment,
         wrappedLines,
         longSubtitle: tooLong,
+        untranslated: crossLanguage && looksUntranslatedText(segment.sourceText, text),
         needsReview: alignment?.status === 'needs-review',
         timingConflict: alignment?.status === 'timing-conflict',
         alignmentNote: alignment?.note,
@@ -238,7 +261,7 @@ export class EditorComponent implements OnInit {
   });
 
   protected readonly anyWarnings = computed(() =>
-    this.rows().some((r) => r.longSubtitle || r.needsReview || r.timingConflict),
+    this.rows().some((r) => r.longSubtitle || r.needsReview || r.timingConflict || r.untranslated),
   );
 
   ngOnInit(): void {

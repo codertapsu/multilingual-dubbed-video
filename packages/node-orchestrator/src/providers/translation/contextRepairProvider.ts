@@ -29,6 +29,7 @@ import type { CancellableTranslationProvider } from '../types.js';
 import type { LocalLlmTranslationProvider } from './localLlmTranslationProvider.js';
 import {
   budgetUnitLabel,
+  looksUntranslated,
   parseTranslationReply,
   speechBudget,
   type PromptSegment,
@@ -124,6 +125,10 @@ export class ContextRepairTranslationProvider implements CancellableTranslationP
 
     const source = normalizeLanguageCode(input.sourceLanguage);
     const target = normalizeLanguageCode(input.targetLanguage);
+    // Echo rejection only makes sense across languages: same-language projects
+    // (and lines whose correct rendering IS the source) must be able to accept
+    // a source-identical repair.
+    const detectSourceEcho = source.split('-')[0] !== target.split('-')[0];
 
     // 2. The character sheet: provided (persisted/user-edited) wins; else one
     //    analysis pass generates it (best-effort — see class doc).
@@ -165,9 +170,13 @@ export class ContextRepairTranslationProvider implements CancellableTranslationP
       const byId = parseTranslationReply(reply);
       const mergedById = new Map<string, string>();
       for (const seg of batch) {
-        // A missing/empty repaired line keeps the draft (worse beats broken).
+        // A missing/empty repaired line keeps the draft (worse beats broken) —
+        // and so does a "repair" that merely echoes the SOURCE back (a weak
+        // model un-translating the line is strictly worse than the draft).
         const repaired = byId.get(seg.id)?.trim();
-        const text = repaired && repaired.length > 0 ? repaired : (draftById.get(seg.id) ?? seg.sourceText);
+        const usable =
+          repaired && repaired.length > 0 && !(detectSourceEcho && looksUntranslated(seg, repaired));
+        const text = usable ? repaired : (draftById.get(seg.id) ?? seg.sourceText);
         results.push({ id: seg.id, translatedText: text });
         mergedById.set(seg.id, text);
       }

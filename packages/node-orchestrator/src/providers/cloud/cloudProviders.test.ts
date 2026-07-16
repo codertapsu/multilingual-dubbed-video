@@ -112,8 +112,12 @@ describe('LlmTranslationProvider', () => {
     expect(calls[0].headers['anthropic-version']).toBeTruthy();
   });
 
-  it('falls back to the source text for ids the model dropped', async () => {
-    const provider = new LlmTranslationProvider('openai', store, 5000, async () => {
+  it('retries dropped ids once (insist prompt over just the missing lines), then falls back to source', async () => {
+    const prompts: string[] = [];
+    const provider = new LlmTranslationProvider('openai', store, 5000, async (_url, _headers, body) => {
+      const b = body as { messages: { content: string }[] };
+      prompts.push(b.messages[1]!.content);
+      // Both the first pass and the retry return only seg_0001.
       return { choices: [{ message: { content: '{"segments":[{"id":"seg_0001","text":"Một."}]}' } }] } as never;
     });
     const result = await provider.translateSegments({
@@ -124,6 +128,12 @@ describe('LlmTranslationProvider', () => {
         { id: 'seg_0002', sourceText: 'Two.', startMs: 1000, endMs: 2000 },
       ],
     });
+    // The retry targeted ONLY the dropped line, with the insist directive.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain('previous attempt left some of these segments untranslated');
+    expect(prompts[1]).toContain('seg_0002');
+    expect(prompts[1]).not.toContain('seg_0001:');
+    // Still missing after the retry -> source-text fallback.
     expect(result.segments[1]).toEqual({ id: 'seg_0002', translatedText: 'Two.' });
   });
 

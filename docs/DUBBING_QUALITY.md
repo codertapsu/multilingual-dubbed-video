@@ -83,6 +83,35 @@ Module: `packages/node-orchestrator/src/providers/translation/translationContext
   re-synthesis honor the same mapping. Live as soon as segments carry
   speaker ids (diarization pack, or an STT provider that diarizes).
 
+### B3. Robustness against weak-model output (post-mortem fixes)
+
+A real zh→vi run with `llama-cpp-chat` (Gemma 3 4B) exposed how small local
+models violate the batch contract: **169/795 lines came back untranslated**
+(skipped lines / whole batches → the silent per-line source-text fallback),
+plus trailing bracketed duplicates ("X. [X.]"), budget-hint echoes
+("… (4 syllables)"), and raw hanzi names in Vietnamese lines. Fixes:
+
+- **Reply sanitizer** (`sanitizeTranslatedLine`, applied on every parse path):
+  strips seg-id echoes, whole-line quote wrappers, trailing bracket/paren
+  duplicates of the line, and trailing budget-hint echoes — while preserving
+  legitimate brackets.
+- **Recovery ladder** (`recoverBatch`): unresolved lines (missing, empty, or
+  the source echoed back) get ONE emphatic batch retry over just those lines,
+  then — on local transports — per-line RAW prompts (a bare instruction with a
+  plain-text reply: no JSON contract left to violate). Cloud paths use the
+  retry rung only (their JSON mode is pinned and compliance is strong).
+- **Prompt hardening**: explicit "every line must be rendered in the target
+  language — transliterate names (Chinese → Sino-Vietnamese)" and "never copy
+  the bracketed timing hints/ids into the output" rules; the analysis pass now
+  demands target-language name renderings in the cast + glossary (spoken dubs
+  can't pronounce source-script characters).
+- **Repair guard**: an `argos-llm-repair` "repair" that merely echoes the
+  SOURCE keeps the Argos draft instead.
+- **Visibility**: the translation step now WARNS with counts + example ids
+  when lines look untranslated (translation identical to the source across
+  different languages), and the editor flags each such row with an
+  **"Untranslated?"** badge.
+
 ### Behavioral notes
 
 - `translated.aligned.json` now contains one entry per **synthesis unit**

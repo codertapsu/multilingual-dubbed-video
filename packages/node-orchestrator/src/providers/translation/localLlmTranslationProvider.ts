@@ -27,6 +27,8 @@ import {
   buildRawTranslationPrompt,
   buildTranslationPrompt,
   parseTranslationReply,
+  recoverBatch,
+  sanitizeTranslatedLine,
   type PromptSegment,
 } from './llmTranslationProvider.js';
 import {
@@ -206,22 +208,22 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
    */
   async chatComplete(system: string | undefined, user: string, signal?: AbortSignal): Promise<string> {
     const baseUrl = (await this.opts.resolveBaseUrl()).replace(/\/$/, '');
-    const timeout = AbortSignal.timeout(this.opts.timeoutMs);
-    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    return this.complete(system, user, baseUrl, combined);
+    return this.complete(system, user, baseUrl, signal);
   }
 
   async translateSegments(input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
     const baseUrl = (await this.opts.resolveBaseUrl()).replace(/\/$/, '');
     const source = normalizeLanguageCode(input.sourceLanguage);
     const target = normalizeLanguageCode(input.targetLanguage);
-    const timeout = AbortSignal.timeout(this.opts.timeoutMs);
-    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
 
+    // NOTE: timeoutMs is applied PER REQUEST inside complete(), not across the
+    // whole job — a long video is many requests (and the recovery ladder adds
+    // more), so a job-wide budget would abort exactly the runs that need the
+    // extra calls. Cancellation still propagates instantly via `signal`.
     if (this.mode === 'raw-segment') {
-      return this.translateRaw(baseUrl, source, target, input, combined);
+      return this.translateRaw(baseUrl, source, target, input, signal);
     }
-    return this.translateBatch(baseUrl, source, target, input, combined);
+    return this.translateBatch(baseUrl, source, target, input, signal);
   }
 
   /** Chat-JSON-batch mode (general LLMs via Ollama). */
@@ -230,7 +232,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     source: string,
     target: string,
     input: TranslationInput,
-    signal: AbortSignal,
+    signal: AbortSignal | undefined,
   ): Promise<TranslationResult> {
     // Document-level context (same design as the cloud provider): a provided
     // character sheet (persisted / user-edited) is authoritative; otherwise one
@@ -256,6 +258,8 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
 
     const batches = planContextBatches(input.segments, { maxSegments: BATCH_SIZE, maxChars: 6000 });
     const results: TranslationResultSegment[] = [];
+    const detectSourceEcho = source.split('-')[0] !== target.split('-')[0];
+    const system = 'You are a professional subtitle/dubbing translator.';
     let previousBatch: PromptSegment[] | undefined;
     let rolling: RollingPair[] = [];
     for (const batch of batches) {
@@ -263,8 +267,22 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
         ? buildContextHeader({ analysis, previousPairs: rolling, sceneBreak: isSceneBreak(previousBatch, batch) })
         : undefined;
       const prompt = buildTranslationPrompt(source, target, batch, context || undefined);
-      const reply = await this.complete('You are a professional subtitle/dubbing translator.', prompt, baseUrl, signal);
-      const byId = parseTranslationReply(reply);
+      const reply = await this.complete(system, prompt, baseUrl, signal);
+
+      // Small local models routinely violate the batch contract (truncated /
+      // malformed JSON, skipped lines, source echoes) — recover with one
+      // emphatic batch retry, then per-line RAW prompts (a bare instruction
+      // with a plain-text reply: no JSON left to get wrong).
+      const byId = await recoverBatch(batch, parseTranslationReply(reply), {
+        sendBatch: (segs, insist) =>
+          this.complete(system, buildTranslationPrompt(source, target, segs, context || undefined, { insist }), baseUrl, signal),
+        // Per-line raw prompts return one bare line — a small reply budget
+        // keeps the (up to 20) fallback calls fast.
+        sendSingle: async (seg) =>
+          stripTurnTokens(
+            await this.complete(undefined, buildRawTranslationPrompt(source, target, seg), baseUrl, signal, 512),
+          ),
+      }, detectSourceEcho, signal);
       for (const seg of batch) {
         results.push({ id: seg.id, translatedText: byId.get(seg.id) ?? seg.sourceText });
       }
@@ -280,7 +298,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     source: string,
     target: string,
     input: TranslationInput,
-    signal: AbortSignal,
+    signal: AbortSignal | undefined,
   ): Promise<TranslationResult> {
     // Bounded concurrency: still one request per segment (preserving the strict
     // 1:1 mapping dubbing needs), but overlapped so a long video isn't
@@ -288,7 +306,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     const segments = await mapWithConcurrency(input.segments, this.concurrency, async (seg) => {
       const prompt = buildRawTranslationPrompt(source, target, seg);
       const reply = await this.complete(undefined, prompt, baseUrl, signal);
-      const text = stripTurnTokens(reply).trim();
+      const text = sanitizeTranslatedLine(stripTurnTokens(reply));
       return { id: seg.id, translatedText: text || seg.sourceText } satisfies TranslationResultSegment;
     });
     return { segments };
@@ -307,19 +325,24 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     system: string | undefined,
     user: string,
     baseUrl: string,
-    signal: AbortSignal,
+    signal: AbortSignal | undefined,
+    nPredictOverride?: number,
   ): Promise<string> {
+    // Per-REQUEST timeout: the step's total budget is unbounded (a long video
+    // is many requests), but no single request may hang the pipeline.
+    const timeout = AbortSignal.timeout(this.opts.timeoutMs);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     if (this.opts.backend === 'llama-cpp') {
       const prompt = wrapGemmaTurn(system ? `${system}\n\n${user}` : user);
       // Reply budget: a raw-segment reply is one line (512 is ample), but a
       // chat-JSON batch reply carries ~20 translated lines plus JSON scaffolding
       // (and the analysis pass a whole character sheet) — give those headroom.
-      const nPredict = this.mode === 'chat-json-batch' ? 3072 : 512;
+      const nPredict = nPredictOverride ?? (this.mode === 'chat-json-batch' ? 3072 : 512);
       const data = await this.postJson<{ content?: string }>(
         `${baseUrl}/completion`,
         {},
         { prompt, temperature: 0, n_predict: nPredict, cache_prompt: true, stop: [GEMMA_END_TURN] },
-        signal,
+        combined,
       );
       return data.content ?? '';
     }
@@ -333,7 +356,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       `${baseUrl}/chat/completions`,
       {},
       { model: this.opts.model, messages, temperature: 0, stream: false },
-      signal,
+      combined,
     );
     return data.choices?.[0]?.message?.content ?? '';
   }

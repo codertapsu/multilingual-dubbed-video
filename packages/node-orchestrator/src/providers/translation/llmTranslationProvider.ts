@@ -13,6 +13,7 @@
  * whole pipeline. SDK-free by design — see cloudHttp.ts.
  */
 import {
+  AppErrorException,
   normalizeLanguageCode,
   type CloudServiceId,
   type TranslationInput,
@@ -158,8 +159,16 @@ export function buildTranslationPrompt(
   targetLanguage: string,
   segments: PromptSegment[],
   context?: string,
+  opts?: {
+    /**
+     * Retry emphasis: a previous reply skipped these segments or echoed the
+     * source back. Prepends a hard "translate EVERY segment" directive.
+     */
+    insist?: boolean;
+  },
 ): string {
   const unitLabel = (unit: BudgetUnit): string => budgetUnitLabel(unit, targetLanguage);
+  const tName = languageName(targetLanguage);
   const list = segments
     .map((s) => {
       const budget = speechBudget(targetLanguage, s.startMs, s.endMs);
@@ -175,18 +184,158 @@ export function buildTranslationPrompt(
     .join('\n');
   return [
     `Translate the following subtitle segments from "${sourceLanguage}" to "${targetLanguage}".`,
+    ...(opts?.insist
+      ? [
+          `IMPORTANT: a previous attempt left some of these segments untranslated. You MUST translate EVERY segment below into ${tName} — do not skip any, and do not return the source text unchanged.`,
+        ]
+      : []),
     ...(context ? [context] : []),
     'Rules:',
     '- These are spoken dialogue lines for dubbing: they must fit the original spoken time window. Favor concise, natural phrasing over literal completeness — drop filler and redundancy so the line is no longer than it needs to be.',
     '- When a target length budget is given, treat it as a firm ceiling: a shorter line that fits the timing is BETTER than a complete line that overflows. Stay at or under the budget.',
     '- Preserve names, numbers, and the tone of the original.',
+    `- EVERY segment must be rendered in ${tName} — never return a line unchanged and never leave source-script characters in the output. Render names with the target language's convention (e.g. Chinese names into Sino-Vietnamese when translating into Vietnamese: 唐三藏 → Đường Tam Tạng). When the context lists a name as "target form (source form)", use ONLY the target form in the spoken line — never copy the parenthesized source form.`,
     '- Keep pronouns and terms of address consistent with the context and across ALL segments: pick the forms the speaker relationships call for (e.g. Vietnamese xưng hô — thầy/cô, anh/chị, em, bạn, con — not a generic default) and never switch mid-conversation.',
     '- Use the same terminology for the same things across segments.',
+    '- The "text" value must be ONLY the spoken translation. Never copy the bracketed timing hints, segment ids, or any annotation into it — no "(4 syllables)", no "[spoken window...]", no repeated copy of the line.',
     '- Respond with ONLY a JSON object of the form {"segments":[{"id":"seg_0001","text":"..."}]} — no prose, no markdown fences. One entry per input segment id; never merge or split segments.',
     '',
     'Segments:',
     list,
   ].join('\n');
+}
+
+// ---- Batch recovery (missing ids / source echoes) ---------------------------
+
+/** True when a reply line is effectively "not translated": absent, empty, or
+ * the source text echoed back (compared punctuation/case-insensitively). Only
+ * meaningful when source and target languages differ.
+ *
+ * Identical-to-source is only damning when the source actually needed
+ * transforming: a CJK-script source in a non-CJK dub can NEVER legitimately
+ * survive verbatim (the voice can't say it), while short Latin lines often do
+ * ("OK", "2023", "Anna!", "iPhone 15", "No, no, no!"). So: CJK echo → always a
+ * failure; otherwise only a substantial line (≥15 normalized chars) counts —
+ * flagging those short lines would burn retries and pressure the model into
+ * mutating already-correct output. */
+export function looksUntranslated(seg: PromptSegment, text: string | undefined): boolean {
+  if (text === undefined || text.trim().length === 0) return true;
+  const src = normalizeForCompare(seg.sourceText);
+  if (src.length < 2 || normalizeForCompare(text) !== src) return false;
+  if (CJK_RE.test(seg.sourceText)) return true;
+  return src.length >= 15;
+}
+
+/** True for cancellation/timeout errors that must ABORT recovery, not be
+ * swallowed as a per-line failure (structural checks: no hard dependency on
+ * the throwing layer). */
+function isCancellation(err: unknown): boolean {
+  const name = (err as Error | undefined)?.name;
+  if (name === 'AbortError' || name === 'TimeoutError') return true;
+  const code = (err as { appError?: { code?: string } } | undefined)?.appError?.code;
+  return code === 'CANCELLED' || code === 'WORKER_TIMEOUT';
+}
+
+/** Transport hooks {@link recoverBatch} drives (per provider). */
+export interface BatchRecoveryIO {
+  /** JSON-batch request over a subset of segments, with retry emphasis. */
+  sendBatch: (segments: PromptSegment[], insist: boolean) => Promise<string>;
+  /**
+   * Optional last-resort per-line request: a plain raw-MT prompt returning the
+   * bare translation (no JSON to comply with — the most robust shape for small
+   * local models). Absent for transports without a plain-text mode.
+   */
+  sendSingle?: (segment: PromptSegment) => Promise<string>;
+}
+
+/**
+ * Recover a batch's unresolved lines instead of silently keeping source text.
+ *
+ * Small local models routinely violate the batch contract: a truncated or
+ * malformed JSON reply loses the WHOLE batch, and weak compliance leaves
+ * individual lines skipped or echoed back untranslated. (A real zh→vi run left
+ * 169/795 lines in Chinese this way — silently.) The ladder:
+ *
+ *   1. detect unresolved lines (missing / empty / source echo),
+ *   2. ONE batch retry over just those lines with an explicit directive,
+ *   3. per-line raw-prompt fallback where the transport supports it.
+ *
+ * Returns the merged id→text map; anything still unresolved keeps whatever the
+ * model produced (or nothing — the caller's per-line source fallback applies).
+ * Errors from retry calls degrade gracefully (the earlier result stands).
+ */
+export async function recoverBatch(
+  batch: PromptSegment[],
+  byId: Map<string, string>,
+  io: BatchRecoveryIO,
+  detectSourceEcho: boolean,
+  signal?: AbortSignal,
+): Promise<Map<string, string>> {
+  const throwIfAborted = (): void => {
+    if (signal?.aborted) throw new AppErrorException('CANCELLED', 'Translation was cancelled.');
+  };
+  const unresolved = (): PromptSegment[] =>
+    batch.filter((s) => {
+      const text = byId.get(s.id);
+      if (text === undefined || text.trim().length === 0) return true;
+      return detectSourceEcho && looksUntranslated(s, text);
+    });
+
+  let missing = unresolved();
+  if (missing.length === 0) return byId;
+
+  // Rung 2: one emphatic batch retry over just the unresolved lines.
+  throwIfAborted();
+  try {
+    const retryById = parseTranslationReply(await io.sendBatch(missing, true));
+    for (const seg of missing) {
+      const text = retryById.get(seg.id);
+      if (text !== undefined && text.trim().length > 0 && !(detectSourceEcho && looksUntranslated(seg, text))) {
+        byId.set(seg.id, text);
+      }
+    }
+  } catch (err) {
+    // Cancellation/timeout must abort the run, not degrade into fallbacks —
+    // otherwise a cancel during the last batch "succeeds" with untranslated
+    // lines and the completed step is never re-run on resume.
+    if (isCancellation(err)) throw err;
+    /* otherwise keep what we have; the per-line rung may still recover */
+  }
+
+  // Rung 3: per-line raw prompts (no JSON contract to violate). A few lanes in
+  // parallel — a persistently-failing batch is up to 20 extra calls, and a
+  // strictly serial loop would dominate the step's wall-clock.
+  missing = unresolved();
+  if (missing.length > 0 && io.sendSingle) {
+    const lanes = Math.min(3, missing.length);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: lanes }, async () => {
+        while (next < missing.length) {
+          const seg = missing[next++]!;
+          throwIfAborted();
+          try {
+            const text = sanitizeTranslatedLine(await io.sendSingle!(seg));
+            if (text.length > 0 && !(detectSourceEcho && looksUntranslated(seg, text))) {
+              byId.set(seg.id, text);
+            }
+          } catch (err) {
+            if (isCancellation(err)) throw err;
+            /* leave unresolved — the caller's source-text fallback applies */
+          }
+        }
+      }),
+    );
+  }
+
+  // Drop still-unresolved entries entirely: a lingering echo (even one with a
+  // cosmetic punctuation delta) would otherwise (a) ship as the "translation"
+  // while dodging the exact-equality warnings downstream, and (b) poison the
+  // rolling-context exemplars with "source -> source" pairs that teach the
+  // model that echoing is acceptable. Absent entries fall back to the source
+  // text at the call site AND stay visible to the runner warning/editor badge.
+  for (const seg of unresolved()) byId.delete(seg.id);
+  return byId;
 }
 
 /** Display names for the common dubbing languages (falls back to the code). */
@@ -247,7 +396,102 @@ export function buildRawTranslationPrompt(
   );
 }
 
-/** Parse the model reply into id->text, tolerating fences and stray prose. */
+/** Case/punctuation/width-insensitive comparison key for echo detection. */
+function normalizeForCompare(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, '')
+    .normalize('NFC');
+}
+
+/** CJK detection (Han/Kana/Hangul) — the scripts a spoken vi/en dub can't say. */
+const CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+/**
+ * Bracket/paren content that IS a leaked timing/budget annotation — matched
+ * against the WHOLE inner text (anchored both ends), so legitimate
+ * parentheticals that merely START with a digit are preserved. The
+ * seconds-form requires a decimal ("2.5s") so decades ("1980s") and ages
+ * ("20s") survive, and unit words are matched as full alternatives so
+ * "(2 số cuối)" / "(2 từ thôi)" survive too.
+ */
+const HINT_ECHO_RE =
+  /^(?:spoken window\b.*|target\s*\d.*|≤\s*\d.*|\d+[.,]\d+\s*(?:s|secs?|seconds?|giây)|\d+\s*(?:syllables?|âm tiết|characters?|words?|từ|ký tự)(?:\s*(?:or fewer|trở xuống))?)$/iu;
+
+/** A trailing bracketed group, tolerating ONE level of nesting inside (the
+ * standard vi hint "[... 11 syllables (âm tiết) or fewer]" nests parens). */
+const TRAILING_GROUP_RE = /^(.*\S)\s*[([]((?:[^()[\]]|\([^()[\]]*\)|\[[^()[\]]*\])*)[)\]]$/s;
+/** A line that is NOTHING but one bracketed group (same nesting tolerance). */
+const WHOLE_LINE_GROUP_RE = /^[([]((?:[^()[\]]|\([^()[\]]*\)|\[[^()[\]]*\])*)[)\]]$/s;
+
+/**
+ * Clean one translated line of the artifacts weak models leak from the prompt:
+ *   - a `seg_0001:`-style id echo at the head,
+ *   - quotes wrapping the WHOLE line,
+ *   - a trailing bracketed/parenthesized duplicate of the line itself
+ *     (mimicking the prompt's `text  [hint]` layout),
+ *   - trailing bracketed/parenthesized budget-hint echoes
+ *     ("(4 syllables)", "[spoken window: 2.5s; target 11 syllables (âm tiết) or fewer]"), and
+ *   - a line that is NOTHING but the annotation (returned as '' so the
+ *     recovery ladder treats it as unresolved instead of speaking it).
+ * Legit content is preserved: only trailing groups that duplicate the text or
+ * match the hint grammar are removed; a fully-bracketed non-hint line
+ * ("[âm nhạc]") is left alone. Passes run to a fixpoint so compound artifacts
+ * ('"seg_0001: Xin chào."') are fully cleaned. Pure / unit-tested.
+ */
+export function sanitizeTranslatedLine(text: string): string {
+  let out = text.replace(/\s+/g, ' ').trim();
+
+  // Quotes wrapping the whole line (curly, double, or CJK corner quotes).
+  // Deliberately NOT the straight apostrophe: both ends of a line can be
+  // legitimate elision marks ("'Cause we keep on runnin'").
+  const quotePairs: [string, string][] = [['"', '"'], ['“', '”'], ['‘', '’'], ['「', '」'], ['『', '』']];
+
+  // Run all passes to a fixpoint: artifacts nest ('"seg_0001: Xin chào."'
+  // needs quote-strip then id-strip; 'text" (text)"' the reverse).
+  for (let pass = 0; pass < 4; pass++) {
+    const before = out;
+
+    // Leading segment-id echo ("seg_0001: ...").
+    out = out.replace(/^seg[_-]?\d{1,6}\s*[:.\-–—]\s*/i, '').trim();
+
+    for (const [open, close] of quotePairs) {
+      if (
+        out.length > 2 &&
+        out.startsWith(open) &&
+        out.endsWith(close) &&
+        !out.slice(1, -1).includes(open) &&
+        !out.slice(1, -1).includes(close)
+      ) {
+        out = out.slice(1, -1).trim();
+      }
+    }
+
+    // Trailing bracketed/parenthesized groups that are duplicates or hint
+    // echoes. Loop: a line can carry several ("text (text) [4 syllables]").
+    for (;;) {
+      const m = out.match(TRAILING_GROUP_RE);
+      if (!m) break;
+      const head = m[1]!;
+      const inner = m[2]!.trim();
+      const isDuplicate = inner.length > 0 && normalizeForCompare(inner) === normalizeForCompare(head);
+      const isHintEcho = HINT_ECHO_RE.test(inner);
+      if (!isDuplicate && !isHintEcho) break;
+      out = head.trim();
+    }
+
+    if (out === before) break;
+  }
+
+  // A line that is ONLY the annotation ("(4 âm tiết)", "[spoken window: ...]")
+  // is no translation at all — empty it so recovery/fallback kicks in.
+  const whole = out.match(WHOLE_LINE_GROUP_RE);
+  if (whole && HINT_ECHO_RE.test(whole[1]!.trim())) return '';
+
+  return out;
+}
+
+/** Parse the model reply into id->text (sanitized), tolerating fences and prose. */
 export function parseTranslationReply(reply: string): Map<string, string> {
   const parsed = extractJsonObject(reply) as
     | { segments?: { id?: unknown; text?: unknown }[] }
@@ -255,7 +499,7 @@ export function parseTranslationReply(reply: string): Map<string, string> {
   const out = new Map<string, string>();
   for (const seg of parsed?.segments ?? []) {
     if (typeof seg.id === 'string' && typeof seg.text === 'string') {
-      out.set(seg.id, seg.text);
+      out.set(seg.id, sanitizeTranslatedLine(seg.text));
     }
   }
   return out;
@@ -324,6 +568,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
       maxChars: MAX_BATCH_CHARS,
     });
     const results: TranslationResultSegment[] = [];
+    const detectSourceEcho = source.split('-')[0] !== target.split('-')[0];
     let previousBatch: PromptSegment[] | undefined;
     let rolling: RollingPair[] = [];
     for (const batch of batches) {
@@ -333,10 +578,16 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
       const prompt = buildTranslationPrompt(source, target, batch, context || undefined);
       const reply = await send(prompt);
 
-      const byId = parseTranslationReply(reply);
+      // Recover skipped/echoed lines with one emphatic retry instead of
+      // silently keeping the source text. (No per-line raw rung here: the
+      // JSON response_format is pinned on this transport, and cloud models'
+      // batch compliance makes the retry sufficient.)
+      const byId = await recoverBatch(batch, parseTranslationReply(reply), {
+        sendBatch: (segs, insist) => send(buildTranslationPrompt(source, target, segs, context || undefined, { insist })),
+      }, detectSourceEcho, signal);
       for (const seg of batch) {
-        // Missing translation: fall back to the source text so the pipeline
-        // continues; the editor surfaces it for manual review.
+        // Still-missing translation: fall back to the source text so the
+        // pipeline continues; the runner + editor surface it for review.
         results.push({ id: seg.id, translatedText: byId.get(seg.id) ?? seg.sourceText });
       }
       rolling = collectRollingPairs(batch, byId);

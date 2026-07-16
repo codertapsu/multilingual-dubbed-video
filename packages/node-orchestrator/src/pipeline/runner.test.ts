@@ -519,6 +519,54 @@ describe('PipelineRunner — per-speaker voices', () => {
   });
 });
 
+describe('PipelineRunner — untranslated-line visibility', () => {
+  it('warns when translations come back identical to the source', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video)); // en-US -> vi-VN
+    const paths = store.paths(project.id);
+
+    // The provider "translates" line 1 but echoes line 2 back untouched —
+    // exactly what a skipping model produces after the source-text fallback.
+    const translation: TranslationProvider = {
+      id: 'argos',
+      displayName: 'echo-mt',
+      isLocal: true,
+      async translateSegments(input: TranslationInput): Promise<TranslationResult> {
+        return {
+          segments: input.segments.map((s, i) => ({
+            id: s.id,
+            translatedText: i === 0 ? `[vi] ${s.sourceText}` : s.sourceText,
+          })),
+        };
+      },
+    };
+
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(
+        new FakeSttProvider(
+          makeSegments([
+            [0, 1000, 'hello there'],
+            // Long enough (>=15 normalized chars) that an echo is damning —
+            // short identical lines ("OK", numbers) are deliberately tolerated.
+            [2000, 3000, 'this entire sentence stayed in english'],
+          ]),
+        ),
+        translation,
+        new FakeTtsProvider(),
+      ),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    const log = await fsp.readFile(paths.pipelineLog, 'utf8');
+    expect(log).toContain('look UNTRANSLATED');
+    expect(log).toContain('seg_0002');
+  });
+});
+
 describe('PipelineRunner — translation character sheet', () => {
   it('persists a generated sheet and reuses it verbatim on re-translation', async () => {
     const video = await writeDummyVideo(tmp);

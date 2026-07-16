@@ -47,6 +47,7 @@ import {
   type TranslationDocContext,
 } from '@videodubber/shared';
 import { alignSegments, summarizeAlignment, type AlignInputSegment } from '../alignment/align.js';
+import { looksUntranslated } from '../providers/translation/llmTranslationProvider.js';
 import {
   planSynthesisGroups,
   singletonGroups,
@@ -698,6 +699,27 @@ export class PipelineRunner {
       ...s,
       translatedText: byId.get(s.id) ?? s.translatedText ?? '',
     }));
+
+    // Surface lines that came back looking UNTRANSLATED. Providers fall back
+    // to the source text when a model skips a line, which used to be
+    // completely silent — a zh→vi run once shipped 169 Chinese lines into a
+    // Vietnamese dub without a single warning. looksUntranslated() tolerates
+    // legitimately-identical short lines ("OK", numbers, names), so a healthy
+    // run doesn't cry wolf.
+    if (project.settings.sourceLanguage.split('-')[0] !== project.settings.targetLanguage.split('-')[0]) {
+      const echoes = merged.filter((s) =>
+        looksUntranslated({ id: s.id, sourceText: s.sourceText }, s.translatedText),
+      );
+      if (echoes.length > 0) {
+        this.deps.logger.warn(
+          `${echoes.length} line(s) look UNTRANSLATED (translation identical to the source, e.g. ${echoes
+            .slice(0, 3)
+            .map((s) => s.id)
+            .join(', ')}). ` +
+            'The translator likely skipped them — re-run the translation step, try a stronger model, or edit them in the editor (flagged with an "Untranslated?" badge).',
+        );
+      }
+    }
 
     await writeSegments(paths.translatedJson, merged);
 

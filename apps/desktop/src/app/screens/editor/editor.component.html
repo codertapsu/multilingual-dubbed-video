@@ -400,7 +400,7 @@
 
   @if (anyWarnings()) {
     <div class="badge badge-warning warnings-hint">
-      ⚠ Some segments have warnings — over-long subtitles or timing conflicts.
+      ⚠ Some segments have warnings — untranslated lines, over-long subtitles, or timing conflicts.
     </div>
   }
 
@@ -445,6 +445,13 @@
             ></textarea>
 
             <div class="seg-badges">
+              @if (row.untranslated) {
+                <span
+                  class="badge badge-failed"
+                  title="The translation is identical to the source — the translator likely skipped this line. Edit it or re-run translation."
+                  >Untranslated?</span
+                >
+              }
               @if (row.longSubtitle) {
                 <span class="badge badge-warning" title="Exceeds 2 lines / ~84 chars"
                   >Long subtitle</span

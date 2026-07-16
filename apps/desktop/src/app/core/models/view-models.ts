@@ -131,6 +131,9 @@ export interface EditorSegmentVm {
   wrappedLines: string[];
   /** True when the (translated) text exceeds 2 lines / ~84 chars. */
   longSubtitle: boolean;
+  /** True when the translation is identical to the source (likely skipped by
+   * the translator) while the project translates between different languages. */
+  untranslated: boolean;
   /** Alignment-derived flags. */
   needsReview: boolean;
   timingConflict: boolean;

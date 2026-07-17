@@ -17,6 +17,7 @@ import {
   createInitialPipelineState,
   isValidLanguageCode,
   normalizeLanguageCode,
+  normalizePipelineState,
   type CreateProjectInput,
   type PipelineState,
   type Project,
@@ -169,7 +170,10 @@ export class ProjectStore {
    */
   async getPipeline(projectId: string): Promise<PipelineState> {
     const pipeline = await readJson<PipelineState>(this.paths(projectId).pipelineJson);
-    return pipeline ?? createInitialPipelineState(projectId);
+    // Normalize: a pipeline.json written by an older app version may miss
+    // steps added since (e.g. `refine`); insert them as pending so the runner
+    // and the UI see the full canonical sequence.
+    return pipeline ? normalizePipelineState(pipeline) : createInitialPipelineState(projectId);
   }
 
   /**

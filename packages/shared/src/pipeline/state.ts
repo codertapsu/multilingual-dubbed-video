@@ -42,6 +42,28 @@ export function createInitialPipelineState(
   };
 }
 
+/**
+ * Reconcile a persisted pipeline state with the CURRENT canonical step list:
+ * steps added in newer app versions (e.g. `refine`) are inserted as `pending`
+ * in canonical order, and labels are refreshed. Without this, a pipeline.json
+ * written by an older version silently drops the new step — `setStepStatus`
+ * maps over existing entries, so the runner's transitions for it would no-op
+ * and the UI would never show it. Steps whose ids are no longer known are
+ * removed. Returns the input unchanged (same reference) when already current.
+ */
+export function normalizePipelineState(state: PipelineState): PipelineState {
+  const byId = new Map(state.steps.map((s) => [s.id, s]));
+  const isCurrent =
+    state.steps.length === PIPELINE_STEP_DEFS.length &&
+    PIPELINE_STEP_DEFS.every((def, i) => state.steps[i]?.id === def.id && state.steps[i]?.label === def.label);
+  if (isCurrent) return state;
+  const steps: PipelineStepState[] = PIPELINE_STEP_DEFS.map((def) => {
+    const existing = byId.get(def.id);
+    return existing ? { ...existing, label: def.label } : { id: def.id, label: def.label, status: 'pending', progressPercent: 0 };
+  });
+  return { ...state, steps };
+}
+
 /** Fields of a step that callers may patch alongside a status change. */
 export type StepPatch = Partial<
   Pick<PipelineStepState, 'progressPercent' | 'startedAt' | 'finishedAt' | 'error'>

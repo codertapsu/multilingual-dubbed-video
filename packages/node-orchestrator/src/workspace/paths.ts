@@ -53,6 +53,11 @@ export interface WorkspacePaths {
   readonly translatedAlignedJson: string;
   /** The project's translation character sheet (cast/glossary/pronoun plan). */
   readonly translationContextJson: string;
+  /** Report of the optional review-and-refine pass (also its resume marker). */
+  readonly refineReportJson: string;
+  /** Per-cue subtitle timing overrides (voice-synced), applied to every sidecar
+   * regeneration so an editor edit doesn't revert the sync. */
+  readonly cueTimingJson: string;
 
   readonly renderDir: string;
   readonly outputMp4: string;
@@ -118,6 +123,8 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     translatedVtt: path.join(subtitlesDir, 'translated.vtt'),
     translatedAlignedJson: path.join(subtitlesDir, 'translated.aligned.json'),
     translationContextJson: path.join(subtitlesDir, 'translation_context.json'),
+    refineReportJson: path.join(subtitlesDir, 'refine_report.json'),
+    cueTimingJson: path.join(subtitlesDir, 'cue_timing.json'),
 
     renderDir,
     outputMp4: path.join(renderDir, 'output.mp4'),

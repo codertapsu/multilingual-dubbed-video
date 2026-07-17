@@ -228,11 +228,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // contract uses this to block a run while a worker is still booting — so a run
   // can't start and then fail against a not-yet-listening faster-whisper/argos/
   // piper worker. Same source of truth feeds /providers + run-preflight + the gate.
-  const probeWorker = async (phase: 'stt' | 'translation' | 'tts'): Promise<boolean> => {
+  const probeWorker = async (phase: 'stt' | 'translation' | 'refine' | 'tts'): Promise<boolean> => {
     const url =
       phase === 'stt'
         ? config.sttWorkerUrl
-        : phase === 'translation'
+        : phase === 'translation' || phase === 'refine' // refine's only bundled-worker provider is Argos
           ? config.translationWorkerUrl
           : config.ttsWorkerUrl;
     return (await probeWorkerHealth(url, `${phase} worker`)).available;

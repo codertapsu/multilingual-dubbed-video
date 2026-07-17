@@ -33,7 +33,7 @@ const WORKERS_HEALTH_POLL_MS = 5000;
 /**
  * ProcessingComponent (route "project/:id/processing").
  *
- * Subscribes to the live SSE pipeline stream and renders the 8 steps with
+ * Subscribes to the live SSE pipeline stream and renders the pipeline steps with
  * per-step progress, an overall progress bar, the current step, and a live log
  * panel. Offers Cancel and per-failed-step Retry. All async — never blocks the
  * UI (signals + the events service drive change detection).

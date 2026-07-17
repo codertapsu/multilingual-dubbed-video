@@ -150,6 +150,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     const phases: string[] = [];
     if (find(provs.stt, s.sttProviderId)?.isLocal === false) phases.push('speech-to-text (uploads the audio track)');
     if (find(provs.translation, s.translationProviderId)?.isLocal === false) phases.push('translation (sends the transcript text)');
+    if (s.refineProviderId && find(provs.translation, s.refineProviderId)?.isLocal === false)
+      phases.push('review & refine (sends the transcript + translations)');
     if (find(provs.tts, s.ttsProviderId)?.isLocal === false) phases.push('text-to-speech (sends the translated text)');
     return phases;
   });
@@ -442,6 +444,17 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     if (key === 'ttsProviderId' && this.voiceEngine() !== null) {
       void this.loadVoicesForTarget();
     }
+  }
+
+  /** Translation providers able to run the optional review-and-refine pass. */
+  protected refinerOptions(provs: ProvidersResponse): ProviderInfo[] {
+    return provs.translation.filter((p) => p.supportsRefinement === true);
+  }
+
+  /** Change (or clear) the optional refine provider. */
+  protected setRefineProvider(providerId: string): void {
+    this.patchSettings('refineProviderId', providerId === 'none' ? undefined : providerId);
+    this.syncProcessingMode();
   }
 
   /** Target language changed — re-patch and reload the per-language voices. */

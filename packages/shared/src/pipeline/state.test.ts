@@ -8,9 +8,9 @@ import { PIPELINE_STEP_DEFS } from './steps.js';
 const FIXED = '2026-01-01T00:00:00.000Z';
 
 describe('createInitialPipelineState', () => {
-  it('creates all 8 steps in pending status', () => {
+  it('creates all 9 steps in pending status', () => {
     const state = createInitialPipelineState('p1', FIXED);
-    expect(state.steps).toHaveLength(8);
+    expect(state.steps).toHaveLength(9);
     expect(state.steps.every((s) => s.status === 'pending')).toBe(true);
   });
 
@@ -80,17 +80,17 @@ describe('setStepStatus', () => {
 
   it('recomputes overall progress as completed/total*100', () => {
     let state = createInitialPipelineState('p1', FIXED);
-    // complete 2 of 8 steps -> 25%
+    // complete 2 of 9 steps -> 22%
     state = setStepStatus(state, 'probe-video', 'completed', undefined, FIXED);
     state = setStepStatus(state, 'extract-audio', 'completed', undefined, FIXED);
-    expect(state.progressPercent).toBe(25);
+    expect(state.progressPercent).toBe(22);
   });
 
   it('counts skipped steps toward progress', () => {
     let state = createInitialPipelineState('p1', FIXED);
     state = setStepStatus(state, 'probe-video', 'skipped', undefined, FIXED);
     state = setStepStatus(state, 'extract-audio', 'completed', undefined, FIXED);
-    expect(state.progressPercent).toBe(25);
+    expect(state.progressPercent).toBe(22);
   });
 
   it('advances currentStep to the next non-done step', () => {

@@ -40,6 +40,7 @@ import { assertRunReady, type ProviderReadiness } from './providers/readiness.js
 import { PipelineRunner, type RunnerDeps } from './pipeline/runner.js';
 import type { ProjectStore } from './workspace/projectStore.js';
 import { segmentIdToIndex, type WorkspacePaths } from './workspace/paths.js';
+import { applyCueOverrides, clearCueOverridesFor, readCueOverrides } from './workspace/subtitleTiming.js';
 
 /** Injected dependencies for the orchestrator (all mockable in tests). */
 export interface OrchestratorDeps {
@@ -81,6 +82,7 @@ const EDITABLE_SETTING_KEYS = [
   'sttProviderId',
   'sttModel',
   'translationProviderId',
+  'refineProviderId',
   'ttsProviderId',
   'ttsVoiceId',
   'includeOriginalBackgroundAudio',
@@ -93,6 +95,7 @@ const EDITABLE_SETTING_KEYS = [
   'autoFitOverflow',
   'timeStretchEngine',
   'synthesisGrouping',
+  'syncSubtitlesToVoice',
   'roomTone',
   'renderQuality',
   'subtitleExportMode',
@@ -313,8 +316,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
     await fsp.writeFile(paths.translatedJson, `${JSON.stringify({ segments: merged }, null, 2)}\n`, 'utf8');
 
-    // Regenerate subtitle sidecars to keep them in sync with edits.
-    const cues = transcriptSegmentsToCues(merged);
+    // Regenerate subtitle sidecars to keep them in sync with edits — REAPPLYING
+    // the persisted voice-sync cue overrides so a text edit doesn't revert the
+    // whole track to source-speech timing.
+    const overrides = await readCueOverrides(paths.cueTimingJson);
+    const cues = transcriptSegmentsToCues(applyCueOverrides(merged, overrides));
     await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
     await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
   }
@@ -386,6 +392,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       });
       const nextGroups = groups.flatMap((g) => (g === group ? replacement : [g]));
       await this.writeGroups(paths.synthesisGroupsJson, nextGroups);
+      // The former group is now singletons: each member speaks from its own
+      // cue, so its voice-sync override no longer applies — drop them, and
+      // saveTranslatedSegments (below) regenerates sidecars with the rest.
+      await clearCueOverridesFor(paths.cueTimingJson, group.segmentIds);
 
       for (const member of result.segments) {
         if (member.segmentId === segmentId) continue;

@@ -521,6 +521,104 @@ describe('PipelineRunner — per-speaker voices', () => {
   });
 });
 
+describe('PipelineRunner — review & refine step', () => {
+  it('skips instantly (with a report) when no refine provider is configured', async () => {
+    const { project, deps } = await buildProject();
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    const paths = store.paths(project.id);
+    const report = JSON.parse(await fsp.readFile(paths.refineReportJson, 'utf8'));
+    expect(report.skipped).toBe(true);
+    const pipeline = await store.getPipeline(project.id);
+    expect(pipeline.steps.find((s) => s.id === 'refine')?.status).toBe('completed');
+  });
+
+  it('refines translations with a refinement-capable provider and persists the changes', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(
+      createProjectInput(video, { settings: defaultSettings({ refineProviderId: 'refiner-x' }) }),
+    );
+    const paths = store.paths(project.id);
+
+    // A refinement-capable provider: translateSegments unused by the step;
+    // chatComplete answers the review batches (improving seg_0001 only).
+    const refiner: TranslationProvider & { supportsRefinement: boolean; chatComplete: (s: string | undefined, u: string) => Promise<string> } = {
+      id: 'refiner-x',
+      displayName: 'Refiner X',
+      isLocal: true,
+      supportsRefinement: true,
+      async translateSegments(input: TranslationInput): Promise<TranslationResult> {
+        return { segments: input.segments.map((s) => ({ id: s.id, translatedText: `[direct] ${s.sourceText}` })) };
+      },
+      async chatComplete(_system: string | undefined, user: string): Promise<string> {
+        if (user.includes('Analyze the following transcript')) return '{"synopsis":"a test"}';
+        return '{"segments":[{"id":"seg_0001","text":"[vi-polished] Hello"}]}';
+      },
+    };
+
+    const stt = new FakeSttProvider(makeSegments([[0, 1000, 'Hello'], [2000, 3000, 'World']]));
+    const registry = fakeRegistry(stt, new FakeTranslationProvider(), new FakeTtsProvider());
+    registry.registerTranslation(refiner as never);
+
+    // Real per-segment durations so alignment fits cleanly — otherwise the
+    // auto-fit loop re-translates (with the base provider) OVER the refinement.
+    const segmentDurations = new Map<string, number>([
+      [paths.ttsSegment(1), 800],
+      [paths.ttsSegment(2), 800],
+    ]);
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000), segmentDurations }),
+      registry,
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    const translated = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')) as {
+      segments: { id: string; translatedText: string }[];
+    };
+    expect(translated.segments.find((s) => s.id === 'seg_0001')!.translatedText).toBe('[vi-polished] Hello');
+    // Unchanged (or rejected) lines keep the translation-step text.
+    expect(translated.segments.find((s) => s.id === 'seg_0002')!.translatedText).toBe('[vi] World');
+    const report = JSON.parse(await fsp.readFile(paths.refineReportJson, 'utf8'));
+    expect(report.changed).toBe(1);
+    expect(report.changedIds).toEqual(['seg_0001']);
+    // TTS then spoke the REFINED text (groups are planned after refinement).
+    const groups = JSON.parse(await fsp.readFile(paths.synthesisGroupsJson, 'utf8'));
+    const texts = groups.groups.map((g: { text: string }) => g.text).join(' ');
+    expect(texts).toContain('[vi-polished] Hello');
+  });
+
+  it('skips with a warning when the configured provider cannot refine', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(
+      createProjectInput(video, { settings: defaultSettings({ refineProviderId: 'argos' }) }),
+    );
+    const paths = store.paths(project.id);
+    const { deps } = { deps: undefined as unknown };
+    void deps;
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(
+        new FakeSttProvider(makeSegments([[0, 1000, 'Hello']])),
+        new FakeTranslationProvider(), // id 'argos', no refinement capability
+        new FakeTtsProvider(),
+      ),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    const report = JSON.parse(await fsp.readFile(paths.refineReportJson, 'utf8'));
+    expect(report.skipped).toBe(true);
+    const log = await fsp.readFile(paths.pipelineLog, 'utf8');
+    expect(log).toContain('cannot run the review pass');
+    // The pipeline still completed.
+    expect((await store.getPipeline(project.id)).status).toBe('completed');
+  });
+});
+
 describe('PipelineRunner — drift-bounded grouping', () => {
   it('degroups + re-synthesizes cue-by-cue when the voice would drift from the subtitles', async () => {
     const video = await writeDummyVideo(tmp);

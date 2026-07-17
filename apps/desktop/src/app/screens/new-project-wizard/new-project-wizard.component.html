@@ -356,6 +356,30 @@
                 }
               </select>
             </div>
+            @if (refinerOptions(provs); as refiners) {
+              @if (refiners.length > 0) {
+                <div class="field">
+                  <label for="provRefine">Review &amp; refine (optional)</label>
+                  <select
+                    id="provRefine"
+                    name="provRefine"
+                    [ngModel]="settings().refineProviderId ?? 'none'"
+                    (ngModelChange)="setRefineProvider($event)"
+                  >
+                    <option value="none">Off — keep the translation as-is</option>
+                    @for (p of refiners; track p.id) {
+                      <option [value]="p.id" [disabled]="!p.available">
+                        {{ p.displayName }}{{ providerHint(p) }}
+                      </option>
+                    }
+                  </select>
+                  <span class="hint">
+                    A second AI pass re-reads the whole transcript and polishes pronouns, terminology, and
+                    flow for consistency. Most useful when Translation runs on Argos or TranslateGemma.
+                  </span>
+                </div>
+              }
+            }
             <div class="field">
               <label for="provTts">Text to speech</label>
               <select

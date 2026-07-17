@@ -65,6 +65,7 @@ export type PipelineStepId =
   | 'extract-audio'
   | 'stt'
   | 'translation'
+  | 'refine'
   | 'tts'
   | 'alignment'
   | 'audio-mix'
@@ -132,6 +133,23 @@ export interface ProjectSettings {
    * — set false to keep the literal translation and fix conflicts in the editor.
    */
   autoFitOverflow?: boolean;
+  /**
+   * Optional review-and-refine pass after translation: a context-capable LLM
+   * (cloud, or the local Gemma 3 chat model) re-reads the whole transcript
+   * with the character sheet and polishes each line — pronouns/terms of
+   * address, terminology consistency, naturalness — returning lines unchanged
+   * when they're already good. Unset/'none' skips the step. Especially useful
+   * when the TRANSLATION provider is context-free (Argos, TranslateGemma).
+   */
+  refineProviderId?: string;
+  /**
+   * Re-time the SUBTITLE cues (SRT/VTT sidecars + burned-in) to when the dub
+   * voice actually speaks each line inside a merged synthesis group, instead
+   * of the original speech's cue times. Bounded by the group drift cap, so
+   * cues move at most a few hundred ms. Default on; the canonical segment
+   * timings (editor, re-runs) are never altered.
+   */
+  syncSubtitlesToVoice?: boolean;
   /** Time-stretch engine for fitting clips to windows (default `auto`). */
   timeStretchEngine?: TimeStretchEngine;
   /**

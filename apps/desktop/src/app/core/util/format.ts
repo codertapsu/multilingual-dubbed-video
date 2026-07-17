@@ -82,12 +82,13 @@ export const PROCESSING_MODE_LABELS: Record<ProcessingMode, string> = {
   'cloud-enhanced': 'Cloud-enhanced',
 };
 
-/** Human labels for the 8 pipeline steps (mirrors PIPELINE_STEP_DEFS). */
+/** Human labels for the 9 pipeline steps (mirrors PIPELINE_STEP_DEFS). */
 export const PIPELINE_STEP_LABELS: Record<PipelineStepId, string> = {
   'probe-video': 'Probe video',
   'extract-audio': 'Extract audio',
   stt: 'Transcribe (STT)',
   translation: 'Translate',
+  refine: 'Review & refine',
   tts: 'Synthesize speech (TTS)',
   alignment: 'Align timing',
   'audio-mix': 'Mix audio',

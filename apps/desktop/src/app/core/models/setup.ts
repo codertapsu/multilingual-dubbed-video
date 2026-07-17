@@ -176,6 +176,8 @@ export interface ProviderInfo {
   displayName: string;
   isLocal: boolean;
   credentialService?: CloudServiceId;
+  /** Translation providers only: can run the optional review-and-refine pass. */
+  supportsRefinement?: boolean;
   available: boolean;
   /** Readiness verdict + remediation, so the UI can disable + explain + offer a fix. */
   readinessStatus?: ProviderReadinessStatus;

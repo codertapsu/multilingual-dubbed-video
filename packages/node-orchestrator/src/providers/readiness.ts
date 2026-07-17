@@ -51,6 +51,7 @@ export type ReadinessStatus =
 const PHASE_LABEL: Record<ProviderPhase, string> = {
   stt: 'speech-to-text',
   translation: 'translation',
+  refine: 'translation refinement',
   tts: 'text-to-speech',
 };
 
@@ -72,7 +73,7 @@ export interface ProviderReadiness {
   action?: ReadinessAction;
 }
 
-export type ProviderPhase = 'stt' | 'translation' | 'tts';
+export type ProviderPhase = 'stt' | 'translation' | 'refine' | 'tts';
 
 /** Result of probing the Ollama daemon for liveness + a specific model. */
 export interface OllamaProbe {
@@ -135,6 +136,7 @@ async function defaultProbeOllama(model: string): Promise<OllamaProbe> {
 const PHASES: { phase: ProviderPhase; step: PipelineStepId }[] = [
   { phase: 'stt', step: 'stt' },
   { phase: 'translation', step: 'translation' },
+  { phase: 'refine', step: 'refine' },
   { phase: 'tts', step: 'tts' },
 ];
 
@@ -144,6 +146,9 @@ function providerFor(phase: ProviderPhase, registry: ProviderRegistry, project: 
       return registry.getStt(project.settings.sttProviderId);
     case 'translation':
       return registry.getTranslation(project.settings.translationProviderId);
+    case 'refine':
+      // Only reached when a refine provider is configured (see the phase filter).
+      return registry.getTranslation(project.settings.refineProviderId);
     case 'tts':
       return registry.getTts(project.settings.ttsProviderId);
   }
@@ -368,7 +373,11 @@ export async function checkProviderReadiness(
 ): Promise<ProviderReadiness[]> {
   const ctx = await buildReadinessContext(deps);
   const retryIndex = fromStep ? pipelineStepIndex(fromStep) : 0;
-  const phases = PHASES.filter((p) => pipelineStepIndex(p.step) >= retryIndex);
+  const refineConfigured =
+    Boolean(project.settings.refineProviderId) && project.settings.refineProviderId !== 'none';
+  const phases = PHASES.filter(
+    (p) => pipelineStepIndex(p.step) >= retryIndex && (p.phase !== 'refine' || refineConfigured),
+  );
 
   // Which of this project's DEFAULT-pipeline models aren't downloaded yet, so the
   // gate can block before a run dies on a missing model. computeRequiredResources
@@ -381,6 +390,7 @@ export async function checkProviderReadiness(
     if (!required) return false;
     if (phase === 'stt') return Boolean(required.whisperModel);
     if (phase === 'translation') return (required.argosPairs?.length ?? 0) > 0;
+    if (phase === 'refine') return false; // refiners are LLMs, not default-pipeline models
     return (required.piperVoices?.length ?? 0) > 0; // tts
   };
 

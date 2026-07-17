@@ -183,6 +183,8 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
   readonly isLocal = true;
   /** Engine pack required to run (undefined for the user-run Ollama daemon). */
   readonly requiresEnginePack?: string;
+  /** Chat-batch instances follow instructions + context → can run refine. */
+  readonly supportsRefinement: boolean;
 
   private readonly mode: LocalLlmMode;
   private readonly postJson: LocalPostJson;
@@ -199,6 +201,8 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     // pack-resolution/readiness paths find them. (The model GGUF is a second,
     // separate 'local-llm-model' pack, checked alongside in readiness.ts.)
     if (opts.backend === 'llama-cpp') this.requiresEnginePack = 'local-llm';
+    // Raw-segment instances (TranslateGemma) can't take instructions/context.
+    this.supportsRefinement = this.mode === 'chat-json-batch';
   }
 
   /**

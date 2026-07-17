@@ -52,6 +52,7 @@ per project in the new-project wizard — and changed again at any time.
 | Translation | `llama-cpp` | Local LLM via bundled `llama-server` (TranslateGemma) | local | runtime + model pack |
 | Translation | `llama-cpp-chat` | **Context-aware** local LLM (Gemma 3 instruct): translates scene batches following the project character sheet (cast, glossary, Vietnamese xưng hô plan) | local | runtime + chat model pack |
 | Translation | `argos-llm-repair` | **Argos draft + Gemma repair** (offline, context-aware): Argos drafts instantly, the local Gemma 3 fixes pronouns/terms/cohesion with document context | local | runtime + chat model pack |
+| Refine (optional step) | any provider with `supportsRefinement` (the cloud LLMs, `llama-cpp-chat`) | **Review & refine**: a second pass after Translate re-reads the whole transcript with the character sheet and polishes every line for consistency/naturalness (`settings.refineProviderId`; off by default) | per provider | per provider |
 | Translation | `openai-translate` | OpenAI chat model (default `gpt-4o-mini`) | cloud | OpenAI key |
 | Translation | `anthropic-translate` | Anthropic Claude (default `claude-haiku-4-5`) | cloud | Anthropic key |
 | Translation | `gemini-translate` | Google Gemini (default `gemini-2.0-flash`) | cloud | Gemini key |

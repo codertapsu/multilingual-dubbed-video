@@ -514,6 +514,8 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
   readonly displayName: string;
   readonly isLocal = false;
   readonly credentialService: CloudServiceId;
+  /** Instruction-following + context-capable → can run the refine pass. */
+  readonly supportsRefinement = true;
 
   constructor(
     service: CloudServiceId,
@@ -524,6 +526,22 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     this.credentialService = service;
     this.id = `${service}-translate`;
     this.displayName = `${SERVICE_LABELS[service]} translation (cloud)`;
+  }
+
+  /**
+   * One-shot chat completion (system + user → text) — the primitive the
+   * review/refine pass drives. Credentials resolve per call, like
+   * translateSegments.
+   */
+  async chatComplete(system: string | undefined, user: string, signal?: AbortSignal): Promise<string> {
+    const cred = await requireCredential(this.credentials, this.credentialService);
+    const defaults = SERVICE_DEFAULTS[this.credentialService];
+    const baseUrl = (cred.baseUrl ?? defaults.baseUrl).replace(/\/$/, '');
+    const model = cred.model ?? defaults.model;
+    const sys = system ?? 'You are a professional subtitle/dubbing translator.';
+    return defaults.dialect === 'anthropic'
+      ? this.callAnthropic(baseUrl, cred.apiKey, model, user, signal, sys)
+      : this.callOpenAiCompatible(baseUrl, cred.apiKey, model, user, signal, sys);
   }
 
   async translateSegments(input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult> {

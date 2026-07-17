@@ -77,6 +77,8 @@ export interface ProviderDescriptor {
   credentialService?: CloudServiceId;
   /** Engine-pack family this provider needs (local pack-gated providers). */
   requiresEnginePack?: string;
+  /** Translation providers only: can run the review-and-refine pass. */
+  supportsRefinement?: boolean;
 }
 
 /** Holds all known providers and resolves them by id. */
@@ -123,12 +125,14 @@ export class ProviderRegistry {
       isLocal: boolean;
       credentialService?: CloudServiceId;
       requiresEnginePack?: string;
+      supportsRefinement?: boolean;
     }): ProviderDescriptor => ({
       id: p.id,
       displayName: p.displayName,
       isLocal: p.isLocal,
       ...(p.credentialService ? { credentialService: p.credentialService } : {}),
       ...(p.requiresEnginePack ? { requiresEnginePack: p.requiresEnginePack } : {}),
+      ...(p.supportsRefinement ? { supportsRefinement: true } : {}),
     });
     return {
       stt: [...this.stt.values()].map(map),

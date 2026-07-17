@@ -31,6 +31,28 @@ export interface CancellableSttProvider extends SttProvider {
 /** Translation provider that optionally accepts a cancellation signal. */
 export interface CancellableTranslationProvider extends TranslationProvider {
   translateSegments(input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult>;
+  /**
+   * Can run the review-and-refine pass (instruction-following + document
+   * context). Providers set this true when they also expose
+   * {@link TranslationRefiner.chatComplete}.
+   */
+  supportsRefinement?: boolean;
+}
+
+/**
+ * The refine pass's engine capability: a provider that exposes a one-shot
+ * chat completion. The refine step type-narrows a translation provider to
+ * this via {@link isTranslationRefiner}.
+ */
+export interface TranslationRefiner {
+  chatComplete(system: string | undefined, user: string, signal?: AbortSignal): Promise<string>;
+}
+
+/** Structural check: a refinement-capable provider with the chat primitive. */
+export function isTranslationRefiner(
+  p: CancellableTranslationProvider,
+): p is CancellableTranslationProvider & TranslationRefiner {
+  return p.supportsRefinement === true && typeof (p as Partial<TranslationRefiner>).chatComplete === 'function';
 }
 
 /** TTS provider that optionally accepts a cancellation signal. */

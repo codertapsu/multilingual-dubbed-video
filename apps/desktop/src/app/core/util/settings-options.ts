@@ -79,6 +79,8 @@ export const SETTING_AFFECTS_STEP: Partial<Record<keyof ProjectSettings, Pipelin
   targetLanguage: 'translation',
   translationProviderId: 'translation',
   autoFitOverflow: 'translation',
+  refineProviderId: 'refine',
+  syncSubtitlesToVoice: 'alignment',
   ttsProviderId: 'tts',
   ttsVoiceId: 'tts',
   maxSpeedRatio: 'alignment',
@@ -98,6 +100,7 @@ export const SETTING_AFFECTS_STEP: Partial<Record<keyof ProjectSettings, Pipelin
 export const REDUB_STAGES: readonly PipelineStepId[] = [
   'stt',
   'translation',
+  'refine',
   'tts',
   'alignment',
   'audio-mix',

@@ -13,16 +13,20 @@ export interface PipelineStepDef {
 }
 
 /**
- * The eight pipeline steps, in execution order.
+ * The nine pipeline steps, in execution order.
  *
- * probe-video -> extract-audio -> stt -> translation -> tts -> alignment ->
- * audio-mix -> render
+ * probe-video -> extract-audio -> stt -> translation -> refine -> tts ->
+ * alignment -> audio-mix -> render
+ *
+ * `refine` is the optional AI review pass (settings.refineProviderId); it
+ * completes instantly as a no-op when not configured.
  */
 export const PIPELINE_STEP_DEFS: readonly PipelineStepDef[] = [
   { id: 'probe-video', label: 'Probe Video' },
   { id: 'extract-audio', label: 'Extract Audio' },
   { id: 'stt', label: 'Transcribe (Speech-to-Text)' },
   { id: 'translation', label: 'Translate' },
+  { id: 'refine', label: 'Review & Refine Translation' },
   { id: 'tts', label: 'Synthesize Speech (Text-to-Speech)' },
   { id: 'alignment', label: 'Align Timing' },
   { id: 'audio-mix', label: 'Mix Audio' },

@@ -38,7 +38,7 @@ describe('ProjectStore round-trip', () => {
 
     const pipeline = await store.getPipeline(project.id);
     expect(pipeline.projectId).toBe(project.id);
-    expect(pipeline.steps).toHaveLength(8);
+    expect(pipeline.steps).toHaveLength(9);
     expect(pipeline.status).toBe('idle');
     expect(pipeline.steps.every((s) => s.status === 'pending')).toBe(true);
   });

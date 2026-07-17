@@ -138,6 +138,32 @@ A real zh→vi run with VieNeu v3 exposed two issues:
   timing-conflicts — pace whiplash between a 1.5× line and natural-rate
   neighbours was the other half of the "different speaker" impression.
 
+### B5. Optional "Review & refine" pipeline step + voice-synced subtitles
+
+- **`refine` step** (between Translate and TTS, 9-step pipeline now): when
+  `settings.refineProviderId` names a context-capable LLM (cloud
+  OpenAI/Anthropic/Gemini, or the local Gemma 3 chat model), the whole
+  translated transcript is re-read with the character sheet + scene context
+  and each line is polished — pronouns/terms of address, terminology,
+  naturalness — returning lines unchanged when already good. Unset = the step
+  completes instantly. Most valuable when Translation runs on a context-free
+  engine (Argos, TranslateGemma). Output: updated `translated.json` + sidecars
+  and `subtitles/refine_report.json` (reviewed/changed counts; also the
+  step's resume marker). The shared review core (`refinement.ts`) also powers
+  `argos-llm-repair`. Older projects' `pipeline.json` files are normalized on
+  load (missing steps inserted as pending).
+- **Voice-synced subtitles** (`syncSubtitlesToVoice`, default on): after
+  alignment, cues inside merged synthesis groups are re-timed in the SRT/VTT
+  sidecars (and thus burned-in subs) to when the dub voice actually speaks
+  them — the canonical segment timings in `translated.json` are untouched, so
+  the editor and re-runs are unaffected. Fixes the residual "voice slightly
+  before the subtitle" cases the drift cap tolerates. Retimed cues are
+  clamped in one timeline-ordered pass so none overlaps the next (within OR
+  across groups, even when alignment accepted overflow), and the overrides are
+  persisted to `subtitles/cue_timing.json` so an editor edit / per-segment
+  refit reapplies them instead of reverting the whole track to source timing
+  (degrouping a group clears its members' overrides).
+
 ### Behavioral notes
 
 - `translated.aligned.json` now contains one entry per **synthesis unit**

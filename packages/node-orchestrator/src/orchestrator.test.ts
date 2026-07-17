@@ -70,6 +70,29 @@ describe('LocalJobOrchestrator extras', () => {
     expect(vtt.startsWith('WEBVTT')).toBe(true);
   });
 
+  it('reapplies voice-synced cue overrides when an edit regenerates sidecars (review finding 3)', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+
+    const segments = makeSegments([[0, 1000, 'A'], [1000, 2000, 'B']]);
+    await fsp.writeFile(paths.sourceJson, JSON.stringify({ segments }), 'utf8');
+    // Alignment produced a voice-sync override for seg_0002 (spoken at 1400ms).
+    await fsp.writeFile(
+      paths.cueTimingJson,
+      JSON.stringify({ overrides: { seg_0002: { startMs: 1400, endMs: 2600 } } }),
+      'utf8',
+    );
+
+    // A plain text edit of the OTHER line must NOT revert seg_0002's timing.
+    await orchestrator.saveTranslatedSegments(project.id, [{ id: 'seg_0001', translatedText: 'Xin chào' }]);
+
+    const srt = await fsp.readFile(paths.translatedSrt, 'utf8');
+    // SRT timecode for 1400ms = 00:00:01,400 — the override, not canonical 1000ms.
+    expect(srt).toContain('00:00:01,400');
+    expect(srt).not.toContain('00:00:01,000 -->');
+  });
+
   it('getSegments merges alignment status when available', async () => {
     const video = await writeDummyVideo(tmp);
     const project = await orchestrator.createProject(createProjectInput(video));

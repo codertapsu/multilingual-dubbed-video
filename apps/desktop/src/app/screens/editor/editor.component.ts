@@ -401,6 +401,11 @@ export class EditorComponent implements OnInit {
     return p.available ? p.displayName : `${p.displayName} — unavailable`;
   }
 
+  /** Translation providers able to run the optional review-and-refine pass. */
+  protected refinerOptions(): ProviderInfo[] {
+    return (this.providers()?.translation ?? []).filter((p) => p.supportsRefinement === true);
+  }
+
   /** Whether a persisted provider id is present in the selectable list (so the
    *  template can append it as a fallback option and never render a blank select). */
   protected providerInList(phase: 'stt' | 'translation' | 'tts', id: string | undefined): boolean {

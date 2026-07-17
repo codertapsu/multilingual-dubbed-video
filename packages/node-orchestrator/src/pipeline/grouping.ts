@@ -158,6 +158,94 @@ export function planSynthesisGroups(
   return groups;
 }
 
+/** A subtitle cue retimed to when the dub voice actually speaks it. */
+export interface RetimedCue {
+  id: string;
+  startMs: number;
+  endMs: number;
+}
+
+/** Preferred minimum on-screen duration for a retimed cue (yielded when the
+ * next cue leaves less room — no cue is ever extended INTO its neighbour). */
+const MIN_RETIMED_CUE_MS = 400;
+
+/**
+ * Re-time subtitle cues inside multi-cue groups to the dub voice.
+ *
+ * A group is spoken as one continuous utterance from its placement start, so
+ * member k's words occupy the proportional span of the placed clip (same
+ * token/char weights as {@link estimateGroupDriftMs}). The original cue times
+ * follow the SOURCE speech instead; re-timing the SUBTITLE sidecars to the
+ * voice makes each line appear exactly when it is spoken.
+ *
+ * Multi-cue members get their proportional voice START; every cue's END is then
+ * clamped in a single timeline-ordered pass so NO cue overlaps the next — this
+ * closes both overlap gaps: (a) the intra-group minimum-duration clamp used to
+ * push a short cue's end past the following member's start, and (b) a group's
+ * last cue used to overrun the next group's first cue when alignment accepted
+ * overflow (placedDuration > gap-aware slot). Cues stay contiguous and strictly
+ * start-ordered (required by SRT/VTT). Pure; the returned map holds EVERY cue
+ * whose timing changed (a neighbour clamped down to avoid an overlap is
+ * included, not just the members that moved).
+ */
+export function retimeCuesToVoice(
+  groups: readonly SynthesisGroup[],
+  placedById: ReadonlyMap<string, { startMs: number; placedDurationMs: number }>,
+  members: readonly { id: string; startMs: number; endMs: number; text: string }[],
+): Map<string, RetimedCue> {
+  const byId = new Map(members.map((m) => [m.id, m]));
+
+  // 1. Desired voice-proportional START for each multi-cue member.
+  const retimedStart = new Map<string, number>();
+  for (const g of groups) {
+    if (g.segmentIds.length < 2) continue;
+    const placed = placedById.get(g.id);
+    if (!placed || placed.placedDurationMs <= 0) continue;
+    const weights = g.segmentIds.map((id) => {
+      const text = (byId.get(id)?.text ?? '').trim();
+      const tokens = text.split(/\s+/).filter((t) => t.length > 0).length;
+      return Math.max(1, tokens > 1 ? tokens : text.length);
+    });
+    const total = weights.reduce((a, b) => a + b, 0);
+    let before = 0;
+    for (const [k, id] of g.segmentIds.entries()) {
+      if (byId.has(id)) {
+        retimedStart.set(id, Math.round(placed.startMs + (before / total) * placed.placedDurationMs));
+      }
+      before += weights[k]!;
+    }
+  }
+  if (retimedStart.size === 0) return new Map();
+
+  // 2. Full timeline: retimed members take their voice start, others keep
+  //    canonical. Sort by start (SRT/VTT require start-ordered cues).
+  const ordered = members
+    .map((m) => ({ id: m.id, startMs: retimedStart.get(m.id) ?? m.startMs, endMs: m.endMs }))
+    .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+
+  // 3. Forward pass: keep starts non-decreasing, and clamp each end so it never
+  //    reaches the next cue's start (contiguous, non-overlapping).
+  for (let i = 0; i < ordered.length; i++) {
+    const cur = ordered[i]!;
+    if (i > 0) cur.startMs = Math.max(cur.startMs, ordered[i - 1]!.startMs);
+    const nextStart = i + 1 < ordered.length ? ordered[i + 1]!.startMs : Number.POSITIVE_INFINITY;
+    // Aim for the canonical/target end or a readable minimum, but never spill
+    // into the next cue.
+    const desiredEnd = Math.max(cur.endMs, cur.startMs + MIN_RETIMED_CUE_MS);
+    cur.endMs = Math.max(cur.startMs, Math.min(desiredEnd, nextStart));
+  }
+
+  // 4. Emit every cue whose timing actually changed.
+  const out = new Map<string, RetimedCue>();
+  for (const c of ordered) {
+    const m = byId.get(c.id)!;
+    if (m.startMs !== c.startMs || m.endMs !== c.endMs) {
+      out.set(c.id, { id: c.id, startMs: c.startMs, endMs: c.endMs });
+    }
+  }
+  return out;
+}
+
 /** Persisted shape of the synthesis-groups artifact (audio/synthesis_groups.json). */
 export interface SynthesisGroupsArtifact {
   groups: SynthesisGroup[];

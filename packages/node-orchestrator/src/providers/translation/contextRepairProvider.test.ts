@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TranslationInput, TranslationResult } from '@videodubber/shared';
-import { buildRepairPrompt, ContextRepairTranslationProvider } from './contextRepairProvider.js';
+import { ContextRepairTranslationProvider } from './contextRepairProvider.js';
+import { buildReviewPrompt } from './refinement.js';
 import type { CancellableTranslationProvider } from '../types.js';
 
 /** Draft provider: uppercases the source (stands in for Argos). */
@@ -33,13 +34,14 @@ function seg(id: string, text: string, startMs: number, endMs: number) {
   return { id, sourceText: text, startMs, endMs };
 }
 
-describe('buildRepairPrompt', () => {
-  it('shows source + draft per segment with a target-language budget', () => {
-    const prompt = buildRepairPrompt(
+describe('buildReviewPrompt', () => {
+  it('shows source + draft per segment with a target-language budget (repair mode)', () => {
+    const prompt = buildReviewPrompt(
       'en',
       'vi',
       [seg('seg_0001', 'Thank you, teacher.', 0, 2000)],
       new Map([['seg_0001', 'Cảm ơn bạn.']]),
+      'repair',
       'Context (do NOT translate this block; use it for consistency):\nPronouns: student -> teacher: thầy/em\n',
     );
     expect(prompt).toContain('source: Thank you, teacher.');
@@ -47,7 +49,21 @@ describe('buildRepairPrompt', () => {
     expect(prompt).toContain('syllables (âm tiết)');
     expect(prompt).toContain('thầy/em');
     expect(prompt).toContain('xưng hô');
+    expect(prompt).toContain('NO conversation context');
     expect(prompt).toContain('ONLY a JSON object');
+  });
+
+  it('refine mode frames a conservative whole-dialogue polish', () => {
+    const prompt = buildReviewPrompt(
+      'zh',
+      'vi',
+      [seg('seg_0001', '你好', 0, 1000)],
+      new Map([['seg_0001', 'Xin chào']]),
+      'refine',
+    );
+    expect(prompt).toContain('Review the WHOLE dialogue');
+    expect(prompt).not.toContain('NO conversation context');
+    expect(prompt).toContain('return it unchanged');
   });
 });
 

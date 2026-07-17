@@ -154,13 +154,27 @@
               }
             </select>
           </label>
+          <label class="setting-row">
+            <span class="label">Review &amp; refine</span>
+            <select
+              [ngModel]="s.refineProviderId ?? 'none'"
+              (ngModelChange)="onSettingChange('refineProviderId', $event === 'none' ? undefined : $event)"
+              [disabled]="redubbing()"
+            >
+              <option value="none">Off</option>
+              @for (p of refinerOptions(); track p.id) {
+                <option [value]="p.id">{{ providerLabel(p) }}</option>
+              }
+            </select>
+          </label>
           <div class="setting-row">
             <span class="label">Auto-fit overflow</span>
             <span class="value">{{ s.autoFitOverflow ? 'On' : 'Off' }}</span>
           </div>
           <p class="hint">
-            Model size (e.g. TranslateGemma 4B → 12B) is managed in Settings →
-            Engines; re-dub from Translate to apply a newly-installed model.
+            Review &amp; refine re-reads the whole transcript with a context-capable AI and polishes
+            pronouns/terminology (re-dub from “Review &amp; refine” to apply). Model size (e.g.
+            TranslateGemma 4B → 12B) is managed in Settings → Engines.
           </p>
         </div>
 

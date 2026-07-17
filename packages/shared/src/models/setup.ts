@@ -208,6 +208,12 @@ export interface ProviderInfo {
   /** Cloud service whose API key this provider needs (cloud providers only). */
   credentialService?: CloudServiceId;
   /**
+   * Translation providers only: can run the optional review-and-refine pass
+   * (needs instruction-following + document context — cloud LLMs and the local
+   * Gemma 3 chat model; not Argos/TranslateGemma).
+   */
+  supportsRefinement?: boolean;
+  /**
    * Logical engine-pack family this provider needs (e.g. "whisper-cpp",
    * "llama-cpp", "neural-tts"). Present for local providers that are gated on a
    * downloaded engine pack rather than always-available.

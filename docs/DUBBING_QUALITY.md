@@ -112,6 +112,32 @@ plus trailing bracketed duplicates ("X. [X.]"), budget-hint echoes
   different languages), and the editor flags each such row with an
   **"Untranslated?"** badge.
 
+### B4. Voice-subtitle sync + voice consistency (post-mortem fixes)
+
+A real zh→vi run with VieNeu v3 exposed two issues:
+
+- **Voice drifted from the subtitles inside merged groups** (192/520 grouped
+  cues had the voice leading its subtitle by >400 ms; worst −10 s): a group is
+  read as ONE continuous utterance from the group start, so when the
+  translated pace deviates from the original cue spacing, mid-group words play
+  before/after their cues. Fixes: tighter planning caps (window 20 s → 12 s,
+  chars 320 → 240 — also keeps every group inside VieNeu's 256-char internal
+  chunk limit), plus a **post-synthesis drift guard**: with real durations
+  known, `estimateGroupDriftMs` bounds each multi-cue group's worst
+  voice-vs-subtitle drift and groups exceeding `VD_TTS_GROUP_MAX_DRIFT_MS`
+  (default 700 ms) are **degrouped and re-synthesized cue-by-cue**. Replayed
+  on the failing project: 90 groups degroup, 131 keep the prosody win with
+  residual drift ≤ 700 ms.
+- **The voice audibly changed between lines** ("two different speakers"):
+  VieNeu v3 samples its speech tokens at temperature 0.8 via the GLOBAL
+  unseeded numpy RNG (`np.random.choice`, no seed parameter) — every utterance
+  re-rolls the delivery. `vd_tts_engine` now **pins all RNGs to a per-voice
+  seed before every synthesis call** (same voice → same sampling stream), the
+  OmniVoice trick. Additionally, **auto-fit now also shortens lines that only
+  fit with a heavy stretch** (> 1.25×, targeting ≤ 1.15×) instead of just
+  timing-conflicts — pace whiplash between a 1.5× line and natural-rate
+  neighbours was the other half of the "different speaker" impression.
+
 ### Behavioral notes
 
 - `translated.aligned.json` now contains one entry per **synthesis unit**

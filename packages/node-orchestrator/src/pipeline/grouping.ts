@@ -65,8 +65,15 @@ export interface GroupingOptions {
 const DEFAULTS: Required<Omit<GroupingOptions, 'enabled'>> = {
   maxGapMs: 750,
   maxSegments: 4,
-  maxChars: 320,
-  maxWindowMs: 20_000,
+  // <= 240: VieNeu v3's SDK chunks text above ~256 chars and samples each chunk
+  // independently — the voice could change mid-utterance. Staying under keeps
+  // every group a single continuous generation on all engines.
+  maxChars: 240,
+  // Long windows accumulate voice-vs-subtitle drift (the group is read as one
+  // continuous utterance from the group start, so a translation whose pace
+  // deviates from the original cue spacing desyncs mid-group). 12s bounds the
+  // worst case; the post-synthesis drift check (runner) handles the rest.
+  maxWindowMs: 12_000,
 };
 
 /** Env-overridable default (VD_TTS_GROUP_GAP_MS etc.) with a sane fallback. */
@@ -173,6 +180,56 @@ export function voiceForGroup(group: SynthesisGroup, settings: VoiceSettings): s
     if (assigned) return assigned;
   }
   return settings.ttsVoiceId;
+}
+
+/** Default worst tolerated voice-vs-subtitle drift inside a group (ms). */
+export const DEFAULT_MAX_GROUP_DRIFT_MS = 700;
+
+/** Env-overridable drift cap (VD_TTS_GROUP_MAX_DRIFT_MS). */
+export function maxGroupDriftMs(): number {
+  return envInt('VD_TTS_GROUP_MAX_DRIFT_MS', DEFAULT_MAX_GROUP_DRIFT_MS);
+}
+
+/**
+ * Estimate the worst voice-vs-subtitle drift (ms) inside a multi-cue group.
+ *
+ * The group is spoken as ONE continuous utterance placed at `group.startMs`,
+ * so member k's words start at roughly (text before k / total text) into the
+ * clip — while its subtitle appears at the member's original `startMs`. The
+ * mismatch grows when the translated pace deviates from the original cue
+ * spacing (a 5s Chinese cue rendered as 2s of Vietnamese pulls every later
+ * member's words several seconds ahead of its subtitle).
+ *
+ * `placedDurationMs` is the clip's duration as it will sit on the timeline
+ * (measured natural duration, capped by the slot when alignment will compress
+ * it). Member weight = whitespace token count (≈ syllables in Vietnamese),
+ * char count as fallback for unsegmented scripts. Pure; returns 0 for
+ * singletons.
+ */
+export function estimateGroupDriftMs(
+  group: SynthesisGroup,
+  members: readonly { id: string; startMs: number; text: string }[],
+  placedDurationMs: number,
+): number {
+  if (group.segmentIds.length < 2 || placedDurationMs <= 0) return 0;
+  const byId = new Map(members.map((m) => [m.id, m]));
+  const weights = group.segmentIds.map((id) => {
+    const text = (byId.get(id)?.text ?? '').trim();
+    const tokens = text.split(/\s+/).filter((t) => t.length > 0).length;
+    return Math.max(1, tokens > 1 ? tokens : text.length);
+  });
+  const total = weights.reduce((a, b) => a + b, 0);
+  let worst = 0;
+  let before = 0;
+  for (const [k, id] of group.segmentIds.entries()) {
+    const member = byId.get(id);
+    if (member) {
+      const estVoiceStartMs = group.startMs + (before / total) * placedDurationMs;
+      worst = Math.max(worst, Math.abs(estVoiceStartMs - member.startMs));
+    }
+    before += weights[k]!;
+  }
+  return Math.round(worst);
 }
 
 /** Turn segments into one-singleton-per-segment groups (legacy / fallback shape). */

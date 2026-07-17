@@ -491,9 +491,11 @@ describe('PipelineRunner — per-speaker voices', () => {
           input.segments.map(async (s, i) => {
             const num = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
             const audioPath = path.join(input.outputDir, `segment_${String(num).padStart(4, '0')}.wav`);
+            // Duration close to the window so the group passes the drift check.
+            const durationMs = Math.max(500, s.endMs - s.startMs - 100);
             await fsp.mkdir(input.outputDir, { recursive: true });
-            await fsp.writeFile(audioPath, '500', 'utf8');
-            return { segmentId: s.id, text: s.text, audioPath, durationMs: 500, startMs: s.startMs, endMs: s.endMs, speedRatio: 1 };
+            await fsp.writeFile(audioPath, String(durationMs), 'utf8');
+            return { segmentId: s.id, text: s.text, audioPath, durationMs, startMs: s.startMs, endMs: s.endMs, speedRatio: 1 };
           }),
         );
         return { segments: segs, engine: 'piper' };
@@ -516,6 +518,77 @@ describe('PipelineRunner — per-speaker voices', () => {
       ['seg_0001', 'seg_0002'],
       ['seg_0003'],
     ]);
+  });
+});
+
+describe('PipelineRunner — drift-bounded grouping', () => {
+  it('degroups + re-synthesizes cue-by-cue when the voice would drift from the subtitles', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+
+    // Two adjacent cues merged into one group spanning 0-8000ms, but the
+    // synthesized speech is only ~2s: cue 2's words would play ~6s before its
+    // subtitle -> the drift guard must split the group and synthesize per cue.
+    const stt = new FakeSttProvider(
+      makeSegments([
+        [0, 4000, 'long chinese line one'],
+        [4400, 8000, 'long chinese line two'],
+        [15_000, 16_000, 'far away line'],
+      ]),
+    );
+    const ttsCalls: string[][] = [];
+    const tts: TtsProvider = {
+      id: 'piper-local',
+      displayName: 'short-tts',
+      isLocal: true,
+      async synthesizeSegments(input: TtsInput): Promise<TtsResult> {
+        ttsCalls.push(input.segments.map((s) => s.id));
+        const segs = await Promise.all(
+          input.segments.map(async (s, i) => {
+            const num = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
+            const audioPath = path.join(input.outputDir, `segment_${String(num).padStart(4, '0')}.wav`);
+            // Vietnamese much shorter than the original span: 2s for the big
+            // group, 800ms for singles.
+            const durationMs = input.segments.length === 1 && s.id !== 'seg_0001' ? 800 : 2000;
+            await fsp.mkdir(input.outputDir, { recursive: true });
+            await fsp.writeFile(audioPath, String(durationMs), 'utf8');
+            return { segmentId: s.id, text: s.text, audioPath, durationMs, startMs: s.startMs, endMs: s.endMs, speedRatio: 1 };
+          }),
+        );
+        return { segments: segs, engine: 'piper' };
+      },
+    };
+
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(20_000) }),
+      registry: fakeRegistry(stt, new FakeTranslationProvider(), tts),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    // The persisted plan ends up fully degrouped for the drifting pair.
+    const groups = JSON.parse(await fsp.readFile(paths.synthesisGroupsJson, 'utf8'));
+    expect(groups.groups.map((g: { segmentIds: string[] }) => g.segmentIds)).toEqual([
+      ['seg_0001'],
+      ['seg_0002'],
+      ['seg_0003'],
+    ]);
+    // A second synthesis pass covered the degrouped members individually.
+    expect(ttsCalls.some((ids) => ids.includes('seg_0001') && ids.includes('seg_0002') && ids.length === 2)).toBe(true);
+
+    // Alignment now has one entry per cue, placed at each cue's own start.
+    const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8')) as {
+      segmentId: string;
+      startMs: number;
+    }[];
+    expect(aligned.map((a) => a.segmentId)).toEqual(['seg_0001', 'seg_0002', 'seg_0003']);
+    expect(aligned[1]!.startMs).toBe(4400);
+
+    const log = await fsp.readFile(paths.pipelineLog, 'utf8');
+    expect(log).toContain('keep the voice in sync with the subtitles');
   });
 });
 

@@ -49,6 +49,8 @@ import {
 import { alignSegments, summarizeAlignment, type AlignInputSegment } from '../alignment/align.js';
 import { looksUntranslated } from '../providers/translation/llmTranslationProvider.js';
 import {
+  estimateGroupDriftMs,
+  maxGroupDriftMs,
   planSynthesisGroups,
   singletonGroups,
   voiceForGroup,
@@ -190,6 +192,29 @@ function toGroupInputs(segments: readonly TranscriptSegment[]): {
 
 /** Progress callback for a long-running step (fraction in 0..1). */
 export type StepProgress = (fraction: number) => Promise<void>;
+
+/**
+ * Above this time-stretch ratio a fitted line audibly changes delivery (rushed
+ * pace ≈ "a different speaker"), so auto-fit prefers re-translating it shorter.
+ */
+const STRETCH_SOFT_CAP = 1.25;
+/** The stretch auto-fit aims for when shortening a heavy-stretch line. */
+const STRETCH_COMFORT = 1.15;
+
+/** True when a unit should go through the shorten-retranslate loop. */
+function needsDurationFit(a: AlignedSegment): boolean {
+  return a.status === 'timing-conflict' || a.speedRatio > STRETCH_SOFT_CAP;
+}
+
+/** Aggregate result of synthesizing a set of groups (see synthesizeGroups). */
+interface GroupSynthesisOutcome {
+  synthesizedIds: Set<string>;
+  /** Measured WAV duration per group id (drives the drift check). */
+  durations: Map<string, number>;
+  engine?: string;
+  sawFallbackEngine: boolean;
+  fallbackSegments: number;
+}
 
 /** Parse a positive-int env var with a fallback (local, to avoid a config import). */
 function envIntMs(name: string, fallback: number): number {
@@ -743,50 +768,78 @@ export class PipelineRunner {
     });
     await writeGroups(paths.synthesisGroupsJson, groups);
 
-    // Per-speaker voices: partition units by their resolved voice (a diarized
-    // speaker with an assignment in settings.speakerVoices gets it; everything
-    // else uses the project voice) and synthesize one batch per voice.
-    const byVoice = new Map<string | undefined, SynthesisGroup[]>();
-    for (const g of groups) {
-      const voice = voiceForGroup(g, project.settings);
-      byVoice.set(voice, [...(byVoice.get(voice) ?? []), g]);
+    this.deps.logger.info(
+      `Synthesizing ${groups.length} utterance(s) covering ${segments.length} segment(s) with provider "${provider.id}"...`,
+    );
+    const first = await this.synthesizeGroups(project, paths, groups, signal);
+
+    // Drift-bounded grouping: a group is read as ONE continuous utterance from
+    // its start, so when the translated pace deviates from the original cue
+    // spacing, mid-group words play seconds before/after their subtitles. Now
+    // that real durations are known, estimate each multi-cue group's worst
+    // member drift and DEGROUP the offenders — re-synthesizing their cues
+    // individually so every cue's audio starts exactly at its subtitle.
+    const driftCap = maxGroupDriftMs();
+    const memberInfo = segments.map((s) => ({
+      id: s.id,
+      startMs: s.startMs,
+      text: (s.translatedText ?? s.sourceText ?? '').trim(),
+    }));
+    const segById = new Map(segments.map((s) => [s.id, s]));
+    const finalGroups: SynthesisGroup[] = [];
+    const degrouped: SynthesisGroup[] = [];
+    let degroupedGroupCount = 0;
+    for (const [i, g] of groups.entries()) {
+      const generated = first.durations.get(g.id);
+      if (g.segmentIds.length < 2 || generated === undefined) {
+        finalGroups.push(g);
+        continue;
+      }
+      // The clip's on-timeline duration: alignment compresses it into the
+      // gap-aware slot when it overruns (cap at the slot; stretch limits make
+      // this approximate, which a ~700ms threshold comfortably absorbs).
+      const nextStart = groups[i + 1]?.startMs;
+      const slot = Math.max(g.endMs - g.startMs, (nextStart ?? g.endMs) - g.startMs);
+      const placed = Math.min(generated, slot);
+      const drift = estimateGroupDriftMs(g, memberInfo, placed);
+      if (drift <= driftCap) {
+        finalGroups.push(g);
+        continue;
+      }
+      const singles: SynthesisGroup[] = g.segmentIds.map((id) => {
+        const seg = segById.get(id)!;
+        return {
+          id,
+          segmentIds: [id],
+          text: (seg.translatedText ?? seg.sourceText ?? '').trim(),
+          startMs: seg.startMs,
+          endMs: seg.endMs,
+          ...(g.speakerId ? { speakerId: g.speakerId } : {}),
+        };
+      });
+      degrouped.push(...singles);
+      finalGroups.push(...singles);
+      degroupedGroupCount += 1;
     }
 
-    this.deps.logger.info(
-      `Synthesizing ${groups.length} utterance(s) covering ${segments.length} segment(s) with provider "${provider.id}"` +
-        (byVoice.size > 1 ? ` across ${byVoice.size} voices` : '') +
-        '...',
-    );
-
-    const synthesized = new Set<string>();
-    let engine: string | undefined;
-    let sawFallbackEngine = false;
-    let fallbackSegments = 0;
-    for (const [voiceId, voiceGroups] of byVoice) {
-      throwIfCancelled(signal);
-      const result = await provider.synthesizeSegments(
-        {
-          language: project.settings.targetLanguage,
-          voiceId,
-          segments: voiceGroups.map((g) => ({ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs })),
-          outputDir: paths.ttsSegmentsDir,
-          speed: 1.0,
-        },
-        signal,
+    let second: GroupSynthesisOutcome | undefined;
+    if (degrouped.length > 0) {
+      this.deps.logger.info(
+        `Re-synthesizing ${degrouped.length} cue(s) individually to keep the voice in sync with the subtitles ` +
+          `(estimated drift exceeded ${driftCap}ms in ${degroupedGroupCount} merged group(s)).`,
       );
-      for (const s of result.segments) synthesized.add(s.segmentId);
-      if (result.engine === 'fallback') sawFallbackEngine = true;
-      else engine ??= result.engine;
-      fallbackSegments += result.fallbackSegments ?? 0;
+      await writeGroups(paths.synthesisGroupsJson, finalGroups);
+      second = await this.synthesizeGroups(project, paths, degrouped, signal);
     }
 
     // Surface incompleteness: if the worker returned fewer segments than asked,
     // the missing WAVs would otherwise only surface as 0ms timing-conflicts at
     // alignment, masking the real failure. Warn with the offending ids.
-    const missing = groups.filter((g) => !synthesized.has(g.id));
+    const synthesized = new Set([...first.synthesizedIds, ...(second?.synthesizedIds ?? [])]);
+    const missing = finalGroups.filter((g) => !synthesized.has(g.id));
     if (missing.length > 0) {
       this.deps.logger.warn(
-        `TTS worker returned ${synthesized.size}/${groups.length} segments. ` +
+        `TTS worker returned ${synthesized.size}/${finalGroups.length} segments. ` +
           `${missing.length} segment(s) were not synthesized (e.g. ${missing
             .slice(0, 3)
             .map((s) => s.id)
@@ -796,6 +849,9 @@ export class PipelineRunner {
 
     // Surface silent placeholders loudly: "fallback" means no installed voice
     // can speak the target language, so the dub would have no speech at all.
+    const engine = first.engine ?? second?.engine;
+    const sawFallbackEngine = first.sawFallbackEngine || second?.sawFallbackEngine === true;
+    const fallbackSegments = first.fallbackSegments + (second?.fallbackSegments ?? 0);
     if (sawFallbackEngine && engine === undefined) {
       this.deps.logger.warn(
         `TTS produced SILENT placeholder audio: no installed voice can speak ` +
@@ -809,6 +865,53 @@ export class PipelineRunner {
       );
     }
     this.deps.logger.info(`Speech synthesis complete (engine: ${engine ?? (sawFallbackEngine ? 'fallback' : 'unknown')}).`);
+  }
+
+  /**
+   * Synthesize a set of groups, partitioned per resolved voice (a diarized
+   * speaker with an assignment in settings.speakerVoices gets it; everything
+   * else the project voice). Returns ids, measured durations, and engine info.
+   */
+  private async synthesizeGroups(
+    project: Project,
+    paths: WorkspacePaths,
+    groups: readonly SynthesisGroup[],
+    signal: AbortSignal,
+  ): Promise<GroupSynthesisOutcome> {
+    const provider = this.deps.registry.getTts(project.settings.ttsProviderId);
+    const byVoice = new Map<string | undefined, SynthesisGroup[]>();
+    for (const g of groups) {
+      const voice = voiceForGroup(g, project.settings);
+      byVoice.set(voice, [...(byVoice.get(voice) ?? []), g]);
+    }
+
+    const outcome: GroupSynthesisOutcome = {
+      synthesizedIds: new Set<string>(),
+      durations: new Map<string, number>(),
+      sawFallbackEngine: false,
+      fallbackSegments: 0,
+    };
+    for (const [voiceId, voiceGroups] of byVoice) {
+      throwIfCancelled(signal);
+      const result = await provider.synthesizeSegments(
+        {
+          language: project.settings.targetLanguage,
+          voiceId,
+          segments: voiceGroups.map((g) => ({ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs })),
+          outputDir: paths.ttsSegmentsDir,
+          speed: 1.0,
+        },
+        signal,
+      );
+      for (const s of result.segments) {
+        outcome.synthesizedIds.add(s.segmentId);
+        outcome.durations.set(s.segmentId, s.durationMs);
+      }
+      if (result.engine === 'fallback') outcome.sawFallbackEngine = true;
+      else outcome.engine ??= result.engine;
+      outcome.fallbackSegments += result.fallbackSegments ?? 0;
+    }
+    return outcome;
   }
 
   private async stepAlignment(
@@ -892,10 +995,12 @@ export class PipelineRunner {
     let aligned = alignSegments(alignInputs, settings, totalDurationMs);
 
     // Auto-fit: re-translate (tighter), re-synthesize, and re-align any unit
-    // that can't fit even at max speed, so timing-conflicts self-heal instead of
-    // needing a manual edit. No-op when the setting is off, there are no
-    // conflicts, or the translation provider can't shorten on request (Argos).
-    if (project.settings.autoFitOverflow !== false && aligned.some((a) => a.status === 'timing-conflict')) {
+    // that can't fit even at max speed OR that only fits with a heavy
+    // time-stretch (> STRETCH_SOFT_CAP): pace whiplash between a 1.5x line and
+    // its natural-rate neighbours reads as a different speaker, so shortening
+    // the text beats stretching the audio. No-op when the setting is off,
+    // nothing needs fitting, or the provider can't shorten on request (Argos).
+    if (project.settings.autoFitOverflow !== false && aligned.some(needsDurationFit)) {
       this.deps.logger.info('Auto-fitting overflowing translations to their timing windows...');
       aligned = await this.refitOverflowingSegments(
         project,
@@ -973,17 +1078,23 @@ export class PipelineRunner {
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       throwIfCancelled(signal);
-      const conflicts = current.filter((a) => a.status === 'timing-conflict');
+      const conflicts = current.filter(needsDurationFit);
       if (conflicts.length === 0) break;
 
-      // Attempt 1 targets the max-speed window (relies on time-stretch headroom);
-      // attempt 2 targets the natural window (must fit without any speed-up).
-      const tightFactor = attempt === 1 ? Math.max(1, settings.maxSpeedRatio) : 1;
       const reqSegs: { id: string; sourceText: string; startMs: number; endMs: number }[] = [];
       for (const c of conflicts) {
         const group = groupById.get(c.segmentId);
         if (!group) continue;
         const availableMs = Math.max(1, c.placedDurationMs - c.overflowMs);
+        // Attempt 1 targets a window that still uses some speed-up headroom
+        // (max speed for real conflicts; a comfortable ~1.15x for lines that
+        // fit but only via a heavy stretch); attempt 2 targets the natural
+        // window (must fit without any speed-up).
+        const headroom =
+          c.status === 'timing-conflict'
+            ? Math.max(1, settings.maxSpeedRatio)
+            : Math.min(STRETCH_COMFORT, Math.max(1, settings.maxSpeedRatio));
+        const tightFactor = attempt === 1 ? headroom : 1;
         const tightTotalMs = Math.max(500, Math.round(availableMs * tightFactor));
         // Distribute the unit's budget over its members by their cue windows.
         const windows = group.segmentIds.map((id) => {
@@ -1063,8 +1174,8 @@ export class PipelineRunner {
       }
       current = alignSegments(alignInputs, settings, totalDurationMs);
       this.deps.logger.info(
-        `Auto-fit pass ${attempt}: shortened ${changedGroups.size} overflowing line(s); ` +
-          `${current.filter((a) => a.status === 'timing-conflict').length} conflict(s) remain.`,
+        `Auto-fit pass ${attempt}: shortened ${changedGroups.size} overflowing/over-stretched line(s); ` +
+          `${current.filter(needsDurationFit).length} still need fitting.`,
       );
     }
 

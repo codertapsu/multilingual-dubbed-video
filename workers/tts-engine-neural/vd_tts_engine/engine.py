@@ -19,13 +19,43 @@ dir) on first use.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import random
 import threading
 
 from . import voices
 from .wavio import write_pcm16_wav
 
 logger = logging.getLogger("vd_tts_engine.engine")
+
+
+def _pin_rng(voice_key: str) -> None:
+    """Pin every RNG the SDK may sample from to a per-voice seed.
+
+    VieNeu v3 samples its speech tokens with ``np.random.choice`` at
+    temperature 0.8 from the GLOBAL, unseeded numpy RNG (and exposes no seed
+    parameter), so every utterance re-rolls the delivery — across a whole dub
+    the same preset audibly drifts, which users hear as "two different
+    speakers". Re-seeding per synthesis call from the VOICE id removes the
+    per-utterance dice roll (same voice -> same sampling stream) while
+    different voices keep distinct streams. Same trick OmniVoice uses
+    (fixed per-voice seed) for cross-segment speaker consistency.
+    """
+    seed = int.from_bytes(hashlib.sha256(voice_key.encode("utf-8")).digest()[:4], "big") & 0x7FFFFFFF
+    random.seed(seed)
+    try:  # numpy is a hard dep of the vieneu SDK, but guard anyway
+        import numpy as np  # noqa: PLC0415
+
+        np.random.seed(seed)
+    except Exception:  # noqa: BLE001
+        pass
+    try:  # torch only exists in the v2 (GGUF/NeuCodec) venv
+        import torch  # noqa: PLC0415
+
+        torch.manual_seed(seed)
+    except Exception:  # noqa: BLE001
+        pass
 
 # Native output rate per variant (the SDK's own save() uses it; we mirror it for
 # the silent-fallback clip so placeholder audio matches).
@@ -131,6 +161,10 @@ class VieNeuEngine:
         if not clean:
             raise ValueError("empty text")
 
+        # Deterministic per-voice sampling: without this the SDK's temperature
+        # sampling re-rolls the delivery on every call and the dub's voice
+        # audibly drifts between lines.
+        _pin_rng(f"{self._variant}:{voice.sdk_name}")
         audio = self._infer(clean, voice)
         _save_via_backend_or_pcm(self._backend, audio, out_path, self.sample_rate)
 

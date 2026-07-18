@@ -48,6 +48,13 @@ export interface PipelineState {
   status: PipelineStatus;
   /** Overall error message, if the run failed. */
   error?: string;
+  /**
+   * The run paused at the transcript-review checkpoint
+   * (settings.reviewBeforeSynthesis): the translated transcript is ready for
+   * the user to review/edit in the editor; no voice has been synthesized yet.
+   * Cleared when the next run starts.
+   */
+  awaitingReview?: boolean;
   /** ISO-8601 last-updated timestamp. */
   updatedAt: string;
 }

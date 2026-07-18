@@ -24,6 +24,26 @@
 
   <vd-error-banner [error]="displayError()" (dismiss)="dismissError()" />
 
+  <!-- Transcript-review checkpoint: the run paused after translation so the
+       user can adjust the segments before any voice is synthesized. -->
+  @if (awaitingReview()) {
+    <div class="card banner-info stack" role="status">
+      <strong>📝 Transcript ready for review</strong>
+      <p class="muted">
+        The transcript is transcribed and translated — no voice has been synthesized yet. Review and
+        adjust the segments (text, per-line fixes, the cast &amp; pronoun sheet), then continue dubbing.
+      </p>
+      <div class="row">
+        <button type="button" class="btn btn-primary" (click)="goToEditor()">
+          Review &amp; edit transcript
+        </button>
+        <button type="button" class="btn" (click)="continueDubbing()" [disabled]="continuing()">
+          {{ continuing() ? 'Continuing…' : 'Continue dubbing' }}
+        </button>
+      </div>
+    </div>
+  }
+
   <!-- Live service-health: warn if a required bundled service drops mid-run. -->
   @if (degradedServices().length > 0) {
     <div class="card banner-warning" role="alert">
@@ -43,6 +63,7 @@
     <div
       class="progress"
       role="progressbar"
+      aria-label="Overall pipeline progress"
       [attr.aria-valuenow]="overallPercent()"
       aria-valuemin="0"
       aria-valuemax="100"
@@ -83,6 +104,7 @@
           <div
             class="progress step-progress"
             role="progressbar"
+            [attr.aria-label]="stepLabels[step.id] + ' progress'"
             [attr.aria-valuenow]="stepPercent(step)"
             aria-valuemin="0"
             aria-valuemax="100"

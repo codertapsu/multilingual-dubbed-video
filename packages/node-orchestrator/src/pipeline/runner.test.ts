@@ -619,6 +619,85 @@ describe('PipelineRunner — review & refine step', () => {
   });
 });
 
+describe('PipelineRunner — transcript-review checkpoint', () => {
+  it('pauses after the text is ready, then a plain re-run continues to completion', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(
+      createProjectInput(video, { settings: defaultSettings({ reviewBeforeSynthesis: true }) }),
+    );
+    const paths = store.paths(project.id);
+    const tts = new FakeTtsProvider();
+    const registry = fakeRegistry(
+      new FakeSttProvider(makeSegments([[0, 1000, 'Hello']])),
+      new FakeTranslationProvider(),
+      tts,
+    );
+    const segmentDurations = new Map<string, number>([[paths.ttsSegment(1), 800]]);
+    const bus = buses.get(project.id);
+    const deps: RunnerDeps = {
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000), segmentDurations }),
+      registry,
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    };
+    const runner = new PipelineRunner(deps);
+
+    // First run: stops at the checkpoint — transcript ready, NO speech yet.
+    await runner.run(project, { signal: new AbortController().signal });
+    let pipeline = await store.getPipeline(project.id);
+    expect(pipeline.awaitingReview).toBe(true);
+    expect(pipeline.steps.find((s) => s.id === 'refine')?.status).toBe('completed');
+    expect(pipeline.steps.find((s) => s.id === 'tts')?.status).toBe('pending');
+    expect(tts.calls).toBe(0);
+    expect((await store.getProject(project.id)).status).toBe('paused');
+    await expect(fsp.stat(paths.translatedJson)).resolves.toBeTruthy();
+
+    // Plain re-run = "done reviewing": clears the flag, skips the done steps,
+    // and finishes the dub.
+    await runner.run(await store.getProject(project.id), { signal: new AbortController().signal });
+    pipeline = await store.getPipeline(project.id);
+    expect(pipeline.awaitingReview).toBeFalsy();
+    expect(pipeline.status).toBe('completed');
+    expect(tts.calls).toBeGreaterThan(0);
+  });
+
+  it('a retry from translation pauses again (the text changed)', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(
+      createProjectInput(video, { settings: defaultSettings({ reviewBeforeSynthesis: true }) }),
+    );
+    const paths = store.paths(project.id);
+    const registry = fakeRegistry(
+      new FakeSttProvider(makeSegments([[0, 1000, 'Hello']])),
+      new FakeTranslationProvider(),
+      new FakeTtsProvider(),
+    );
+    const bus = buses.get(project.id);
+    const deps: RunnerDeps = {
+      store,
+      media: new FakeMediaService({
+        mediaInfo: fakeMediaInfo(10_000),
+        segmentDurations: new Map([[paths.ttsSegment(1), 800]]),
+      }),
+      registry,
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    };
+    const runner = new PipelineRunner(deps);
+
+    await runner.run(project, { signal: new AbortController().signal }); // pause #1
+    await runner.run(await store.getProject(project.id), { signal: new AbortController().signal }); // finish
+    await runner.run(await store.getProject(project.id), {
+      retryFromStep: 'translation',
+      signal: new AbortController().signal,
+    }); // re-translate -> refine re-executes -> pause #2
+    const pipeline = await store.getPipeline(project.id);
+    expect(pipeline.awaitingReview).toBe(true);
+    expect(pipeline.steps.find((s) => s.id === 'tts')?.status).toBe('pending');
+  });
+});
+
 describe('PipelineRunner — drift-bounded grouping', () => {
   it('degroups + re-synthesizes cue-by-cue when the voice would drift from the subtitles', async () => {
     const video = await writeDummyVideo(tmp);

@@ -381,6 +381,21 @@
               }
             }
             <div class="field">
+              <label class="checkbox-row">
+                <input
+                  type="checkbox"
+                  name="reviewBeforeSynthesis"
+                  [ngModel]="settings().reviewBeforeSynthesis ?? false"
+                  (ngModelChange)="patchSettings('reviewBeforeSynthesis', $event)"
+                />
+                <span>Pause for transcript review before voice synthesis</span>
+              </label>
+              <span class="hint">
+                The pipeline stops once the transcript is translated (and refined) so you can review and
+                hand-adjust the segments in the editor, then continue dubbing when it reads right.
+              </span>
+            </div>
+            <div class="field">
               <label for="provTts">Text to speech</label>
               <select
                 id="provTts"

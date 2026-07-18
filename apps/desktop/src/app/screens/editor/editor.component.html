@@ -412,6 +412,23 @@
     </div>
   }
 
+  <!-- Transcript-review checkpoint: the pipeline paused before synthesis and
+       is waiting for the user to confirm the transcript. -->
+  @if (awaitingReview()) {
+    <div class="card review-banner" role="status">
+      <div>
+        <strong>📝 Reviewing before synthesis</strong>
+        <p class="hint">
+          No voice has been synthesized yet. Adjust the translations below (and the cast &amp; pronoun
+          sheet), save, then continue — dubbing resumes at speech synthesis.
+        </p>
+      </div>
+      <button type="button" class="btn btn-primary" (click)="continueDubbing()" [disabled]="continuing()">
+        {{ continuing() ? 'Continuing…' : 'Continue dubbing' }}
+      </button>
+    </div>
+  }
+
   @if (anyWarnings()) {
     <div class="badge badge-warning warnings-hint">
       ⚠ Some segments have warnings — untranslated lines, over-long subtitles, or timing conflicts.

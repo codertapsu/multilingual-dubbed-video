@@ -219,3 +219,17 @@
   gap: var(--vd-sp-3);
   flex-wrap: wrap;
 }
+
+/* Transcript-review checkpoint banner (paused before synthesis). */
+.review-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vd-sp-3);
+  flex-wrap: wrap;
+  border: 1px solid var(--vd-accent, var(--vd-border));
+
+  p {
+    margin: 0;
+  }
+}

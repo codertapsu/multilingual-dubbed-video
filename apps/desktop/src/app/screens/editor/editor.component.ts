@@ -153,6 +153,9 @@ export class EditorComponent implements OnInit {
   protected readonly draftVoices = signal<PiperVoiceInfo[]>([]);
   /** A re-dub is being started (disables the stage buttons + selects). */
   protected readonly redubbing = signal(false);
+  /** Paused at the transcript-review checkpoint — show the continue banner. */
+  protected readonly awaitingReview = signal(false);
+  protected readonly continuing = signal(false);
 
   protected readonly originalAudioModeLabels = ORIGINAL_AUDIO_MODE_LABELS;
   protected readonly renderQualityLabels = RENDER_QUALITY_LABELS;
@@ -319,6 +322,7 @@ export class EditorComponent implements OnInit {
       // i.e. the render step finished (project may also be marked completed).
       const renderDone = pipeline?.steps.some((s) => s.id === 'render' && s.status === 'completed');
       this.rendered.set(renderDone === true || project.status === 'completed');
+      this.awaitingReview.set(pipeline?.awaitingReview === true);
 
       // Provider/model catalogs for the pickers (each best-effort + parallel).
       const [providers, catalog, engines] = await Promise.all([
@@ -528,6 +532,26 @@ export class EditorComponent implements OnInit {
       this.error.set(toAppError(err));
     } finally {
       this.ctxSaving.set(false);
+    }
+  }
+
+  /**
+   * Leave the transcript-review checkpoint: save any pending edits, then
+   * resume the pipeline at speech synthesis and watch it on the processing
+   * screen.
+   */
+  protected async continueDubbing(): Promise<void> {
+    if (this.continuing()) return;
+    this.continuing.set(true);
+    this.error.set(null);
+    try {
+      if (this.dirty()) await this.save();
+      await this.ipc.retryPipelineStep(this.id(), 'tts');
+      await this.router.navigate(['/project', this.id(), 'processing']);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.continuing.set(false);
     }
   }
 

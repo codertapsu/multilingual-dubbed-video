@@ -96,6 +96,7 @@ const EDITABLE_SETTING_KEYS = [
   'timeStretchEngine',
   'synthesisGrouping',
   'syncSubtitlesToVoice',
+  'reviewBeforeSynthesis',
   'roomTone',
   'renderQuality',
   'subtitleExportMode',

@@ -164,6 +164,18 @@ A real zh→vi run with VieNeu v3 exposed two issues:
   refit reapplies them instead of reverting the whole track to source timing
   (degrouping a group clears its members' overrides).
 
+### B6. Transcript-review checkpoint (new projects)
+
+`settings.reviewBeforeSynthesis` (wizard checkbox, default off): the pipeline
+pauses right after the transcript is translated (and refined, when configured)
+— before ANY voice is synthesized. The processing screen shows a "Transcript
+ready for review" card and the editor a "Reviewing before synthesis" banner:
+the user reviews/edits the segments (and the cast & pronoun sheet), then
+**Continue dubbing** resumes at the TTS step (unsaved edits are saved first).
+A plain "Run" on the paused project also continues; a retry from Translation
+re-runs the text steps and pauses again. State: `PipelineState.awaitingReview`
+(persisted; cleared when the next run starts).
+
 ### Behavioral notes
 
 - `translated.aligned.json` now contains one entry per **synthesis unit**

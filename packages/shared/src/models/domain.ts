@@ -150,6 +150,13 @@ export interface ProjectSettings {
    * timings (editor, re-runs) are never altered.
    */
   syncSubtitlesToVoice?: boolean;
+  /**
+   * Pause the pipeline after the transcript is translated (and refined, when
+   * configured) so the user can review and hand-adjust the segments in the
+   * editor BEFORE any voice is synthesized. Continuing (run again, or the
+   * editor's "Continue dubbing") resumes from the TTS step. Default off.
+   */
+  reviewBeforeSynthesis?: boolean;
   /** Time-stretch engine for fitting clips to windows (default `auto`). */
   timeStretchEngine?: TimeStretchEngine;
   /**

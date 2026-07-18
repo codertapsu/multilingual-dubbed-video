@@ -113,3 +113,12 @@
   background: var(--vd-warning-bg);
   border: 1px solid var(--vd-warning);
 }
+
+/* Transcript-review checkpoint (paused before synthesis, awaiting the user). */
+.banner-info {
+  border: 1px solid var(--vd-accent, var(--vd-border));
+
+  p {
+    margin: 0;
+  }
+}

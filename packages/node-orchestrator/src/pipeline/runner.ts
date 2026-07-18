@@ -303,6 +303,15 @@ export class PipelineRunner {
 
     logger.info(`Pipeline started for project "${project.name}" (${project.id}).`);
 
+    // Any (re)start leaves the transcript-review checkpoint: a plain "Run" on
+    // a paused-for-review project means "I'm done reviewing — continue" (the
+    // completed early steps skip straight through to TTS).
+    if (state.awaitingReview) {
+      state = { ...state, awaitingReview: false };
+      await store.savePipeline(state);
+      bus.emit({ type: 'state', pipeline: state });
+    }
+
     try {
       for (const stepId of PIPELINE_STEP_IDS) {
         throwIfCancelled(options.signal);
@@ -349,6 +358,24 @@ export class PipelineRunner {
 
         state = await transition(this.deps, state, stepId, 'completed', { progressPercent: 100 });
         logger.info(`Step "${pipelineStepLabel(stepId)}" completed.`);
+
+        // Transcript-review checkpoint: after the last text-shaping step
+        // EXECUTES (refine — a no-op pass-through when unconfigured), pause so
+        // the user can review/edit the segments before any voice is
+        // synthesized. Only an EXECUTED step pauses — on the continue run the
+        // earlier steps are 'skipped', so the pipeline flows straight to TTS;
+        // a retry from translation re-runs refine and pauses again (the text
+        // changed, so it deserves another look).
+        if (stepId === 'refine' && project.settings.reviewBeforeSynthesis === true) {
+          state = { ...state, awaitingReview: true };
+          await store.savePipeline(state);
+          bus.emit({ type: 'state', pipeline: state });
+          await this.markProjectStatus(project, 'paused');
+          logger.info(
+            'Paused for transcript review: check the segments in the editor, then continue dubbing (resumes at speech synthesis).',
+          );
+          return;
+        }
       }
 
       logger.info('Pipeline completed successfully.');

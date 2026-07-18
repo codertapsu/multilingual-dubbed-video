@@ -104,6 +104,9 @@ export class ProcessingComponent implements OnInit, OnDestroy {
     () => this.overallStatus() === 'completed' || this.events.done(),
   );
   protected readonly hasFailure = computed(() => this.overallStatus() === 'failed');
+  /** Paused at the transcript-review checkpoint (reviewBeforeSynthesis). */
+  protected readonly awaitingReview = computed(() => this.pipeline()?.awaitingReview === true);
+  protected readonly continuing = signal(false);
 
   /** Error to display: an SSE error event takes precedence over action errors. */
   protected readonly displayError = computed<AppError | null>(
@@ -174,6 +177,20 @@ export class ProcessingComponent implements OnInit, OnDestroy {
 
   protected goToEditor(): void {
     void this.router.navigate(['/project', this.id(), 'editor']);
+  }
+
+  /** Leave the transcript-review checkpoint: resume the pipeline at TTS. */
+  protected async continueDubbing(): Promise<void> {
+    if (this.continuing()) return;
+    this.continuing.set(true);
+    this.actionError.set(null);
+    try {
+      await this.ipc.retryPipelineStep(this.id(), 'tts');
+    } catch (err) {
+      this.actionError.set(toAppError(err));
+    } finally {
+      this.continuing.set(false);
+    }
   }
 
   protected goToExport(): void {

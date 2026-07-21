@@ -237,6 +237,8 @@ export class EngineManager {
   private readonly running = new Map<string, RunningEngine>();
   /** Owner currently holding the exclusive heavy-engine lane (see engineOwner.ts). */
   private heavyOwner: string | undefined;
+  /** In-flight starts per pack, so concurrent calls share one spawn. */
+  private readonly starting = new Map<string, Promise<string>>();
 
   constructor(private readonly deps: EngineManagerDeps) {}
 
@@ -289,6 +291,8 @@ export class EngineManager {
     // caller changes nothing (in particular it must not restart-for-model-swap
     // an engine the current holder is using).
     const wantsHeavyLane = opts.exclusive === true && spec.heavy === true;
+    /** Set when THIS call took a previously-free lane (so it can hand it back). */
+    let claimedLane: string | undefined;
     if (wantsHeavyLane) {
       const owner = opts.ownerId ?? currentEngineOwner() ?? ANONYMOUS_OWNER;
       if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
@@ -297,8 +301,47 @@ export class EngineManager {
           `The "${this.providerOf(packId)}" engine is in use by another dub (${this.heavyOwner}).`,
         );
       }
+      if (this.heavyOwner === undefined) claimedLane = owner;
       this.heavyOwner = owner;
     }
+
+    try {
+      return await this.startOrReuse(packId, spec, opts, wantsHeavyLane);
+    } catch (err) {
+      // A start that never produced a usable engine must not keep the lane —
+      // otherwise one missing pack locks out every later heavy run.
+      if (claimedLane !== undefined && this.heavyOwner === claimedLane) this.heavyOwner = undefined;
+      throw err;
+    }
+  }
+
+  /** The body of {@link ensureRunning}, after the heavy-lane decision. */
+  private async startOrReuse(
+    packId: string,
+    spec: EngineLaunchSpec,
+    opts: { exclusive?: boolean; model?: string; ownerId?: string },
+    wantsHeavyLane: boolean,
+  ): Promise<string> {
+    // In-flight dedup: two concurrent calls for the same pack (same owner —
+    // different owners are already refused above) must not spawn two servers
+    // and orphan one.
+    const inFlight = this.starting.get(packId);
+    if (inFlight) return inFlight;
+    const started = this.startOrReuseUnguarded(packId, spec, opts, wantsHeavyLane);
+    this.starting.set(packId, started);
+    try {
+      return await started;
+    } finally {
+      this.starting.delete(packId);
+    }
+  }
+
+  private async startOrReuseUnguarded(
+    packId: string,
+    spec: EngineLaunchSpec,
+    opts: { exclusive?: boolean; model?: string; ownerId?: string },
+    wantsHeavyLane: boolean,
+  ): Promise<string> {
 
     const existing = this.running.get(packId);
     if (existing) {

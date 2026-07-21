@@ -32,7 +32,7 @@
         <div class="row row-between">
           <strong>Now dubbing</strong>
           <a routerLink="/settings" class="hint"
-            >{{ q.running.length }} of {{ q.maxProjects }} slots in use — change limit</a
+            >{{ q.running.length }} dubbing · limit {{ q.maxProjects }} at a time — change</a
           >
         </div>
         @for (r of q.running; track r.projectId) {

@@ -88,3 +88,19 @@ describe('effectiveCapacity', () => {
     expect(effectiveCapacity(recommended, { mode: 'manual', maxProjects: 8 }).heavyLanes).toBe(1);
   });
 });
+
+describe('recommendCapacity — degenerate hardware probes', () => {
+  it('survives zero/NaN core or RAM readings with the safe minimum', () => {
+    for (const bad of [
+      { cpuCores: 0, totalRamMb: 0 },
+      { cpuCores: Number.NaN, totalRamMb: 16384 },
+      { cpuCores: 8, totalRamMb: Number.NaN },
+      { cpuCores: -4, totalRamMb: -1 },
+    ]) {
+      const c = recommendCapacity(profile(bad));
+      expect(c.maxProjects).toBeGreaterThanOrEqual(1);
+      expect(c.maxProjects).toBeLessThanOrEqual(4);
+      expect(c.budgetPoints).toBe(c.maxProjects * 2);
+    }
+  });
+});

@@ -368,3 +368,88 @@ describe('run queue (simultaneous-dub capacity)', () => {
     expect(state.entries.map((e) => e.projectId)).toContain(queuedProject.id);
   });
 });
+
+describe('run queue — review-finding regressions', () => {
+  function sched(maxProjects: number, extra: Partial<Parameters<typeof LocalJobOrchestrator.prototype.constructor>[0]> = {}): LocalJobOrchestrator {
+    return new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media: new FakeMediaService(),
+      registry: fakeRegistry(
+        new FakeSttProvider(makeSegments([[0, 1000, 'hi']])),
+        new FakeTranslationProvider(),
+        new FakeTtsProvider(() => 900),
+      ),
+      bus: new EventBusRegistry(),
+      setup: {
+        getPreferences: async () => ({
+          autoUpdate: true,
+          concurrency: { mode: 'manual' as const, maxProjects },
+        }),
+      },
+      ...extra,
+    } as never);
+  }
+
+  it('retrying a QUEUED project does not double-enqueue or poison previousStatus', async () => {
+    const video = await writeDummyVideo(tmp);
+    const a = await orchestrator.createProject(createProjectInput(video, { name: 'A' }));
+    const b = await orchestrator.createProject(createProjectInput(video, { name: 'B' }));
+    const s = sched(1);
+    await s.runPipeline(a.id);
+    await s.runPipeline(b.id); // queued
+
+    // Re-retrying the queued project must not register it twice.
+    await s.retryStep(b.id, 'tts');
+    const state = await s.queueState();
+    expect(state.entries.filter((e) => e.projectId === b.id)).toHaveLength(1);
+
+    // Cancelling restores a REAL status, never 'queued'.
+    await s.cancelJob(b.id);
+    expect((await store.getProject(b.id)).status).not.toBe('queued');
+    expect((await store.getProject(b.id)).queue).toBeUndefined();
+    await s.cancelJob(a.id);
+  });
+
+  it('keeps a project queued (not failed) while a bundled worker is still booting', async () => {
+    const video = await writeDummyVideo(tmp);
+    const p = await orchestrator.createProject(createProjectInput(video, { name: 'Boot' }));
+    let booting = true;
+    const s = sched(2, {
+      checkReadiness: async () =>
+        booting
+          ? [
+              {
+                phase: 'stt' as const,
+                providerId: 'faster-whisper',
+                status: 'worker-loading' as const,
+                ready: false,
+                message: 'The speech-to-text service is still starting.',
+              },
+            ]
+          : [],
+    });
+
+    // Enqueue directly (readiness at enqueue is bypassed here by construction:
+    // runPipeline gates on the same checker, so drive the queue path).
+    await store.saveProject({
+      ...(await store.getProject(p.id)),
+      status: 'queued',
+      queue: { queuedAt: new Date().toISOString(), previousStatus: 'created' },
+    });
+    await s.reconcileQueue();
+
+    // Still queued — a booting worker must NOT mark the project failed.
+    expect((await store.getProject(p.id)).status).toBe('queued');
+    expect((await s.queueState()).entries.map((e) => e.projectId)).toContain(p.id);
+
+    // Once the worker is up, the retry dispatches it.
+    booting = false;
+    await s.pumpQueue();
+    await vi.waitFor(async () => {
+      expect((await store.getProject(p.id)).status).not.toBe('queued');
+    });
+    await s.cancelJob(p.id);
+    s.stopScheduler();
+  });
+});

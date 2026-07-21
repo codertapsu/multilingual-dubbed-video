@@ -399,9 +399,9 @@ export class IpcService {
   /** Convenience: persist just the autoUpdate flag. */
   async setUpdatePreference(body: UpdatePreferences): Promise<{ ok: boolean }> {
     if (this.tauri) {
-      return this.invoke<{ ok: boolean }>('set_update_preference', {
-        preferences: body,
-      });
+      // The Rust command's parameter is `prefs` (commands.rs); Tauri matches
+      // args BY NAME, so sending `preferences` fails the invoke outright.
+      return this.invoke<{ ok: boolean }>('set_update_preference', { prefs: body });
     }
     return this.setPreferences(body);
   }

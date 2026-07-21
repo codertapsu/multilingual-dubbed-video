@@ -48,7 +48,15 @@ export const POINTS_PER_LOCAL_RUN = 2;
 export const POINTS_PER_CLOUD_RUN = 1;
 
 function clamp(n: number, min: number, max: number): number {
+  // A non-finite input (a failed hardware probe reporting NaN) must collapse to
+  // the SAFE minimum, not propagate NaN through the whole recommendation.
+  if (!Number.isFinite(n)) return min;
   return Math.max(min, Math.min(max, n));
+}
+
+/** A spec reading we can compute with: finite and non-negative, else 0. */
+function sane(n: number): number {
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 /**
@@ -56,8 +64,9 @@ function clamp(n: number, min: number, max: number): number {
  * the same profile always yields the same limit.
  */
 export function recommendCapacity(profile: SystemProfile): CapacityRecommendation {
-  const ramGb = profile.totalRamMb / 1024;
-  const cpuSlots = Math.floor((profile.cpuCores - CORES_RESERVED) / CORES_PER_RUN);
+  const cores = sane(profile.cpuCores);
+  const ramGb = sane(profile.totalRamMb) / 1024;
+  const cpuSlots = Math.floor((cores - CORES_RESERVED) / CORES_PER_RUN);
   const ramSlots = Math.floor((ramGb - RAM_RESERVED_GB) / ramPerRunGb(profile));
   const uncapped = Math.min(cpuSlots, ramSlots);
   const maxProjects = clamp(uncapped, 1, HARD_CAP);
@@ -66,12 +75,12 @@ export function recommendCapacity(profile: SystemProfile): CapacityRecommendatio
   const reasons: string[] = [];
   if (maxProjects === 1) {
     reasons.push(
-      `With ${profile.cpuCores} CPU cores and ${Math.round(ramGb)} GB of RAM, one dub at a time keeps this ` +
+      `With ${cores} CPU cores and ${Math.round(ramGb)} GB of RAM, one dub at a time keeps this ` +
         'computer responsive — a second would mostly make both slower.',
     );
   } else {
     reasons.push(
-      `${profile.cpuCores} CPU cores and ${Math.round(ramGb)} GB of RAM comfortably cover ${maxProjects} ` +
+      `${cores} CPU cores and ${Math.round(ramGb)} GB of RAM comfortably cover ${maxProjects} ` +
         'dubs at once (each one wants about 3 cores and a few GB at its peak).',
     );
   }

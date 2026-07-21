@@ -59,6 +59,13 @@ export interface AdmissionContext {
   paused: boolean;
   /** Resolve a project id to a display name for the messages. */
   nameOf?: (projectId: string) => string | undefined;
+  /**
+   * The heavy-engine lane is held by something that is NOT a pipeline run —
+   * an editor action ("editor:<projectId>"). Without this the scheduler would
+   * dispatch a heavy run straight into an ENGINE_BUSY failure instead of
+   * waiting for the lane.
+   */
+  externalHeavyOwner?: string;
 }
 
 /**
@@ -84,18 +91,27 @@ export function decideAdmissions(
   }
 
   let usedPoints = running.reduce((sum, r) => sum + r.points, 0);
-  let heavyHolder: string | undefined = running.find((r) => r.needsHeavyEngine)?.projectId;
+  let heavyHolder: string | undefined =
+    running.find((r) => r.needsHeavyEngine)?.projectId ?? ctx.externalHeavyOwner;
   /** Points reserved for the first entry we could not admit (anti-starvation). */
   let reserved = 0;
 
   const nameFor = (projectId: string | undefined): string => {
     if (!projectId) return 'another dub';
+    // An editor action holds the lane under "editor:<projectId>".
+    if (projectId.startsWith('editor:')) {
+      const name = ctx.nameOf?.(projectId.slice('editor:'.length));
+      return name ? `an edit in ${name}` : 'an edit in the editor';
+    }
     return ctx.nameOf?.(projectId) ?? 'another dub';
   };
 
   for (const c of candidates) {
     if (c.needsHeavyEngine && heavyHolder !== undefined) {
-      const message = `Needs the machine to itself — waiting for “${nameFor(heavyHolder)}” to finish.`;
+      const holder = nameFor(heavyHolder);
+      const message = holder.startsWith('an edit')
+        ? `Needs the machine to itself — waiting for ${holder} to finish.`
+        : `Needs the machine to itself — waiting for “${holder}” to finish.`;
       held.set(c.projectId, { reason: 'heavy-busy', message });
       // A blocked heavy run reserves its points too: otherwise a stream of
       // cloud runs could consume the budget it will need the moment the lane

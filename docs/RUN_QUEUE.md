@@ -125,6 +125,27 @@ Progressive disclosure — invisible until it costs the user something:
   "Pause the queue", and a "Why this limit?" expander generated from the same
   `capacity.reasons` the scheduler used.
 
+## Hardening (from the adversarial review of 4a3f5a3)
+
+A 39-agent review confirmed 25 findings against the first cut. The substantive
+ones, and what changed:
+
+| Defect | Fix |
+|---|---|
+| **`pump()` could loop forever and permanently wedge the queue** — an admitted candidate that was skipped (already running / no longer queued) stayed in `queue[]`, so the pass repeated identically while `pumping` stayed `true`, silently disabling every future dispatch | the skip path now `forget()`s the entry, and loop termination is driven by **progress** (`pumpOnce()` returns whether it dispatched) instead of `queue.length` |
+| **Boot reconcile could mark every queued project `failed`** — `reconcileQueue()` runs milliseconds after launch, while the bundled Python workers are still binding their ports, so the dispatch-time readiness check failed them all | a **transient** failure (`worker-loading`) keeps the project queued and schedules a short retry; only a real problem fails it |
+| **`retryStep` had no `queued` guard** — retrying a queued project double-enqueued it and poisoned `previousStatus` to `'queued'`, so cancelling could never restore a real status | it now `dequeue()`s a stale entry before re-scheduling |
+| **`scheduleRun` awaited between the guard and registration** — two concurrent `/run` calls could start the same project twice | re-checks `running`/`queued` after the awaits, and persists the queue entry **before** registering it in memory |
+| **A fresh run could jump the queue** — admission was decided against a single-candidate list, bypassing FIFO and the head reservation | a non-empty queue always wins: the request is enqueued and the pump dispatches in order |
+| **`pumpAgain` was dropped on both `break` paths** — raising the limit or un-pausing during a pass was silently lost | the loop re-runs whenever the pass progressed **or** a wakeup arrived |
+| **The scheduler was blind to an editor-held lane** — it would dispatch a heavy dub straight into `ENGINE_BUSY` while "Regenerate"/"Tighten to fit" held the engine | `externalHeavyOwner` is passed into admission, and the queued reason names the edit |
+| **The editor lane was not reference-counted** — two concurrent editor actions share one owner id, and the first to finish freed the lane under the second | claims are ref-counted; the **last** action out releases (and re-pumps) |
+| **A failed engine start kept the lane** — one missing pack locked out every later heavy run | a start that never produced a usable engine hands the lane back |
+| **`ensureRunning` had no in-flight dedup** — two same-owner concurrent calls spawned two servers and orphaned one | concurrent starts for a pack share one promise |
+| **`classifyWorkload` ignored `retryFromStep`** — a retry-from-render occupied the heavy lane for engines it would never touch | classification is step-aware, and only claims the lane for separation/alignment when those engines are actually wired |
+| **NaN/zero hardware readings propagated** through the capacity formula | non-finite specs collapse to the safe minimum (1) |
+| **Tauri preference saves were broken** (pre-existing) — the invoke sent `preferences` but the Rust command's parameter is `prefs`, so *auto-update* and the new limit could not be saved in the packaged app | arg name corrected |
+
 ## Known gap / follow-ups
 
 - **Auto-resume after a crash is deliberately NOT enabled.** The runner's

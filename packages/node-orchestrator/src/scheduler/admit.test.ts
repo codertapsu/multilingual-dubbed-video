@@ -85,3 +85,28 @@ describe('decideAdmissions', () => {
     expect(decideAdmissions([], [runningLocal('a')], ctx(4))).toEqual({ start: [], held: new Map() });
   });
 });
+
+describe('decideAdmissions — external heavy-lane holder (editor actions)', () => {
+  it('holds a heavy candidate while an EDITOR action owns the lane', () => {
+    // Review finding: the scheduler only saw pipeline runs, so it dispatched a
+    // heavy dub straight into ENGINE_BUSY while the editor held the lane.
+    const d = decideAdmissions([heavy('b')], [], { ...ctx(100), externalHeavyOwner: 'editor:p1' });
+    expect(d.start).toEqual([]);
+    expect(d.held.get('b')?.reason).toBe('heavy-busy');
+    expect(d.held.get('b')?.message).toMatch(/edit/i);
+  });
+
+  it('names the project being edited when it can be resolved', () => {
+    const d = decideAdmissions([heavy('b')], [], {
+      ...ctx(100),
+      externalHeavyOwner: 'editor:p1',
+      nameOf: (id) => (id === 'p1' ? 'Ocean Doc' : undefined),
+    });
+    expect(d.held.get('b')?.message).toContain('Ocean Doc');
+  });
+
+  it('still admits LIGHT runs while the editor holds the lane', () => {
+    const d = decideAdmissions([cloud('b')], [], { ...ctx(4), externalHeavyOwner: 'editor:p1' });
+    expect(d.start).toEqual(['b']);
+  });
+});

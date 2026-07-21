@@ -95,6 +95,9 @@ const FALLBACK_PROFILE: SystemProfile = {
   appleSilicon: false,
 };
 
+/** How long to wait before retrying a dispatch blocked by a booting worker. */
+const QUEUE_RETRY_MS = 2000;
+
 /** A tracked, in-flight pipeline run. */
 interface RunningJob {
   projectId: string;
@@ -176,6 +179,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   private pumpAgain = false;
   /** Memoized hardware capacity (specs don't change while the app runs). */
   private capacityPromise: Promise<CapacityRecommendation> | undefined;
+  /** Pending re-pump for a transient dispatch failure (worker still booting). */
+  private queueRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** In-flight editor actions per owner id, so the LAST one frees the lane. */
+  private readonly editorLaneRefs = new Map<string, number>();
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -261,6 +268,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       // Cancel the current run before retrying to avoid overlap.
       await this.cancelJob(projectId);
     }
+    // A QUEUED project must leave the queue before being re-scheduled: without
+    // this it would be enqueued twice (and its `previousStatus` poisoned to
+    // 'queued', so cancelling could never restore a real status).
+    if (this.queued.has(projectId)) await this.dequeue(projectId);
     const project = await this.deps.store.getProject(projectId);
     // Gate the retry too — but only on the providers whose phases will actually
     // re-run from `stepId` (a retry-from-render isn't blocked by the translator).
@@ -399,16 +410,37 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     segmentId: string,
     opts: { text?: string; voiceId?: string; speed?: number },
   ): Promise<{ segment: TtsSegment; alignment: AlignedSegment }> {
-    // Editor actions touch the SAME heavy engines a run uses. Give them their
-    // own owner so they can claim a free lane, but get a clear ENGINE_BUSY
-    // instead of unloading the engine a running dub is mid-request against.
-    return withEngineOwner(`editor:${projectId}`, async () => {
-      try {
-        return await this.synthesizeSingleSegmentImpl(projectId, segmentId, opts);
-      } finally {
-        this.deps.engines?.releaseHeavyLane(`editor:${projectId}`);
+    return this.withEditorLane(projectId, () =>
+      this.synthesizeSingleSegmentImpl(projectId, segmentId, opts),
+    );
+  }
+
+  /**
+   * Run an editor action under its own heavy-engine owner.
+   *
+   * Editor actions touch the SAME heavy engines a run uses, so they get their
+   * own owner id: they may claim a FREE lane, but get a clear ENGINE_BUSY
+   * instead of unloading the engine a running dub is mid-request against.
+   * Claims are reference-counted — the editor allows concurrent actions on
+   * different segments, and the first to finish must not free a lane the
+   * others are still using.
+   */
+  private async withEditorLane<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+    const owner = `editor:${projectId}`;
+    this.editorLaneRefs.set(owner, (this.editorLaneRefs.get(owner) ?? 0) + 1);
+    try {
+      return await withEngineOwner(owner, fn);
+    } finally {
+      const remaining = (this.editorLaneRefs.get(owner) ?? 1) - 1;
+      if (remaining > 0) {
+        this.editorLaneRefs.set(owner, remaining);
+      } else {
+        this.editorLaneRefs.delete(owner);
+        this.deps.engines?.releaseHeavyLane(owner);
+        // The lane may now be free for a queued heavy dub.
+        void this.pump();
       }
-    });
+    }
   }
 
   private async synthesizeSingleSegmentImpl(
@@ -539,13 +571,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   ): Promise<{ segment: TtsSegment; alignment: AlignedSegment; translatedText: string }> {
     // Same engine-ownership rule as synthesizeSingleSegment: this re-translates
     // (possibly on a heavy local LLM) before re-synthesizing.
-    return withEngineOwner(`editor:${projectId}`, async () => {
-      try {
-        return await this.refitSegmentImpl(projectId, segmentId);
-      } finally {
-        this.deps.engines?.releaseHeavyLane(`editor:${projectId}`);
-      }
-    });
+    return this.withEditorLane(projectId, () => this.refitSegmentImpl(projectId, segmentId));
   }
 
   private async refitSegmentImpl(
@@ -719,38 +745,78 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     project: Project,
     retryFromStep: PipelineStepId | undefined,
   ): Promise<RunScheduleResult> {
-    const workload = classifyWorkload(project.settings, this.deps.registry);
-    this.workloads.set(project.id, workload);
+    const workload = classifyWorkload(project.settings, this.deps.registry, {
+      fromStep: retryFromStep,
+      separationAvailable: this.deps.separation !== undefined,
+      alignmentAvailable: this.deps.alignment !== undefined,
+    });
 
     const capacity = await this.effectiveCapacity();
     const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
-    const decision = decideAdmissions(
-      [{ projectId: project.id, points: workload.points, needsHeavyEngine: workload.needsHeavyEngine }],
-      this.runningRuns(),
-      { budgetPoints: capacity.budgetPoints, paused: prefs?.concurrency?.paused === true },
-    );
+
+    // Re-check AFTER the awaits above: a concurrent /run (double-click, or Home
+    // + Processing both firing) may have started or queued this project while
+    // we were reading preferences/capacity. Without this the same project could
+    // be registered twice.
+    if (this.running.has(project.id)) return { started: true, queued: false };
+    if (this.queued.has(project.id)) {
+      return { started: false, queued: true, position: this.queuePosition(project.id) };
+    }
+
+    // A non-empty queue always wins: starting a fresh request ahead of projects
+    // that are already waiting would jump the FIFO order and defeat the
+    // head-reservation that keeps the queue starvation-free.
+    const decision =
+      this.queue.length > 0
+        ? { start: [] as string[] }
+        : decideAdmissions(
+            [{ projectId: project.id, points: workload.points, needsHeavyEngine: workload.needsHeavyEngine }],
+            this.runningRuns(),
+            {
+              budgetPoints: capacity.budgetPoints,
+              paused: prefs?.concurrency?.paused === true,
+              ...(this.externalHeavyOwner() ? { externalHeavyOwner: this.externalHeavyOwner() } : {}),
+            },
+          );
 
     if (decision.start.includes(project.id)) {
+      this.workloads.set(project.id, workload);
       this.startRun(project, retryFromStep);
       return { started: true, queued: false };
     }
 
-    // No room: persist the queue entry (project.json is written atomically, so
-    // the queue survives a restart with no second source of truth).
+    // No room: persist the queue entry FIRST (project.json is written
+    // atomically, so the queue survives a restart with no second source of
+    // truth), then register in memory — a failed write must not leave a
+    // phantom queue entry the user cannot see or cancel.
     const entry: ProjectQueueEntry = {
       queuedAt: new Date().toISOString(),
       previousStatus: project.status,
       ...(retryFromStep ? { fromStep: retryFromStep } : {}),
     };
+    await this.deps.store.saveProject({ ...project, status: 'queued', queue: entry });
+    if (this.running.has(project.id) || this.queued.has(project.id)) {
+      return { started: false, queued: true, position: this.queuePosition(project.id) };
+    }
+    this.workloads.set(project.id, workload);
     this.queue.push(project.id);
     this.queued.add(project.id);
-    await this.deps.store.saveProject({ ...project, status: 'queued', queue: entry });
     return { started: false, queued: true, position: this.queuePosition(project.id) };
   }
 
   /** 1-based queue position (0 when not queued). */
   private queuePosition(projectId: string): number {
     return this.queue.indexOf(projectId) + 1;
+  }
+
+  /**
+   * The heavy-engine lane holder when it is NOT one of our runs — i.e. an
+   * editor action (`editor:<projectId>`). The scheduler must see it, or it
+   * would dispatch a heavy run straight into an ENGINE_BUSY failure.
+   */
+  private externalHeavyOwner(): string | undefined {
+    const owner = this.deps.engines?.heavyLaneOwner();
+    return owner !== undefined && !this.running.has(owner) ? owner : undefined;
   }
 
   /** Running jobs in the shape the admission rule reads. */
@@ -769,6 +835,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * Dispatch every queued run the machine now has room for. The ONLY place
    * queued runs start. Serialized via {@link pumping}; requests arriving during
    * a pass set {@link pumpAgain} so a slot freed mid-pass is never missed.
+   *
+   * Termination is driven by PROGRESS, not by `queue.length`: a pass that
+   * dispatches nothing ends the loop. (Keying it on the queue emptying could
+   * spin forever if an admitted candidate is skipped — e.g. it started via
+   * another path — while remaining in the queue.)
    */
   private async pump(): Promise<void> {
     if (this.pumping) {
@@ -777,58 +848,119 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     }
     this.pumping = true;
     try {
-      do {
+      for (;;) {
         this.pumpAgain = false;
-        if (this.queue.length === 0) break;
-
-        const capacity = await this.effectiveCapacity();
-        const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
-        const candidates = this.queue.map((projectId) => {
-          const w = this.workloads.get(projectId);
-          return {
-            projectId,
-            points: w?.points ?? POINTS_PER_LOCAL_RUN,
-            needsHeavyEngine: w?.needsHeavyEngine ?? false,
-          };
-        });
-        const decision = decideAdmissions(candidates, this.runningRuns(), {
-          budgetPoints: capacity.budgetPoints,
-          paused: prefs?.concurrency?.paused === true,
-        });
-        if (decision.start.length === 0) break;
-
-        for (const projectId of decision.start) {
-          // Re-load: settings/status may have changed while queued.
-          let project: Project;
-          try {
-            project = await this.deps.store.getProject(projectId);
-          } catch {
-            this.forget(projectId);
-            continue;
-          }
-          // A queue must never stall on one bad entry: re-check readiness at
-          // dispatch and fail THAT project, then carry on with the rest.
-          if (this.deps.checkReadiness) {
-            try {
-              assertRunReady(await this.deps.checkReadiness(project, project.queue?.fromStep));
-            } catch (err) {
-              this.forget(projectId);
-              await this.deps.store
-                .saveProject({ ...project, status: 'failed', queue: undefined })
-                .catch(() => undefined);
-              this.deps.bus.get(projectId).emit({ type: 'error', error: toAppError(err) });
-              continue;
-            }
-          }
-          // Someone may have started/cancelled it while we awaited.
-          if (!this.queued.has(projectId) || this.running.has(projectId)) continue;
-          const fromStep = project.queue?.fromStep;
-          this.forget(projectId);
-          this.startRun({ ...project, queue: undefined }, fromStep);
-        }
-      } while (this.pumpAgain || this.queue.length > 0);
+        const dispatched = await this.pumpOnce();
+        // Re-run only when this pass achieved something, or a wakeup arrived
+        // while it was running (a freed slot / raised limit / un-pause).
+        if (!dispatched && !this.pumpAgain) break;
+      }
     } finally {
       this.pumping = false;
+    }
+  }
+
+  /** One admission pass. Returns true when at least one run was dispatched. */
+  private async pumpOnce(): Promise<boolean> {
+    if (this.queue.length === 0) return false;
+
+    const capacity = await this.effectiveCapacity();
+    const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
+    const candidates = this.queue.map((projectId) => {
+      const w = this.workloads.get(projectId);
+      return {
+        projectId,
+        points: w?.points ?? POINTS_PER_LOCAL_RUN,
+        needsHeavyEngine: w?.needsHeavyEngine ?? false,
+      };
+    });
+    const externalHeavyOwner = this.externalHeavyOwner();
+    const decision = decideAdmissions(candidates, this.runningRuns(), {
+      budgetPoints: capacity.budgetPoints,
+      paused: prefs?.concurrency?.paused === true,
+      ...(externalHeavyOwner ? { externalHeavyOwner } : {}),
+    });
+    if (decision.start.length === 0) return false;
+
+    let dispatched = false;
+    for (const projectId of decision.start) {
+      // Re-load: settings/status may have changed while queued.
+      let project: Project;
+      try {
+        project = await this.deps.store.getProject(projectId);
+      } catch {
+        this.forget(projectId);
+        continue;
+      }
+      // A queue must never stall on one bad entry: re-check readiness at
+      // dispatch. A TRANSIENT problem (a bundled worker still booting — the
+      // normal state moments after launch, when reconcileQueue runs) keeps the
+      // project queued and retries shortly; anything else fails that project
+      // and the queue moves on.
+      if (this.deps.checkReadiness) {
+        let problems: ProviderReadiness[];
+        try {
+          problems = (await this.deps.checkReadiness(project, project.queue?.fromStep)).filter((r) => !r.ready);
+        } catch {
+          // The checker itself failed — don't punish the project for that; let
+          // the run start and surface any real problem in its own step.
+          problems = [];
+        }
+        if (problems.length > 0) {
+          if (problems.every((p) => p.status === 'worker-loading')) {
+            this.scheduleQueueRetry();
+            continue;
+          }
+          this.forget(projectId);
+          this.workloads.delete(projectId);
+          await this.deps.store
+            .saveProject({ ...project, status: 'failed', queue: undefined })
+            .catch(() => undefined);
+          const first = problems[0]!;
+          this.deps.bus.get(projectId).emit({
+            type: 'error',
+            error: toAppError(
+              new AppErrorException('ENGINE_UNAVAILABLE', first.message, {
+                ...(first.remediation ? { remediation: first.remediation } : {}),
+              }),
+            ),
+          });
+          continue;
+        }
+      }
+      // Someone may have started/cancelled it while we awaited. Drop it from
+      // the queue either way — leaving it would make this pass repeat forever.
+      if (!this.queued.has(projectId) || this.running.has(projectId)) {
+        this.forget(projectId);
+        continue;
+      }
+      const fromStep = project.queue?.fromStep;
+      this.forget(projectId);
+      this.startRun({ ...project, queue: undefined }, fromStep);
+      dispatched = true;
+    }
+    return dispatched;
+  }
+
+  /**
+   * Re-pump shortly, for TRANSIENT dispatch failures (a bundled worker still
+   * booting). One pending timer at a time; cleared on shutdown.
+   */
+  private scheduleQueueRetry(): void {
+    if (this.queueRetryTimer) return;
+    this.queueRetryTimer = setTimeout(() => {
+      this.queueRetryTimer = undefined;
+      void this.pump();
+    }, QUEUE_RETRY_MS);
+    // Never hold the process open just for a retry tick.
+    this.queueRetryTimer.unref?.();
+  }
+
+  /** Stop the pending queue-retry timer (call on shutdown). */
+  stopScheduler(): void {
+    if (this.queueRetryTimer) {
+      clearTimeout(this.queueRetryTimer);
+      this.queueRetryTimer = undefined;
     }
   }
 
@@ -874,7 +1006,14 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       .sort((a, b) => (a.queue!.queuedAt < b.queue!.queuedAt ? -1 : 1));
     for (const p of queued) {
       if (this.queued.has(p.id) || this.running.has(p.id)) continue;
-      this.workloads.set(p.id, classifyWorkload(p.settings, this.deps.registry));
+      this.workloads.set(
+        p.id,
+        classifyWorkload(p.settings, this.deps.registry, {
+          ...(p.queue?.fromStep ? { fromStep: p.queue.fromStep } : {}),
+          separationAvailable: this.deps.separation !== undefined,
+          alignmentAvailable: this.deps.alignment !== undefined,
+        }),
+      );
       this.queue.push(p.id);
       this.queued.add(p.id);
     }
@@ -907,10 +1046,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         needsHeavyEngine: w?.needsHeavyEngine ?? false,
       };
     });
+    const externalHeavyOwner = this.externalHeavyOwner();
     const { held } = decideAdmissions(candidates, this.runningRuns(), {
       budgetPoints: capacity.budgetPoints,
       paused,
       nameOf: (id) => names.get(id),
+      ...(externalHeavyOwner ? { externalHeavyOwner } : {}),
     });
     return {
       maxProjects: capacity.maxProjects,

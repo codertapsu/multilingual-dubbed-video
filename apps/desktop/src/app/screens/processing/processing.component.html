@@ -31,8 +31,7 @@
       <p class="muted">{{ entry.message }}</p>
       @if (queue(); as q) {
         <p class="hint">
-          {{ q.usedPoints >= q.budgetPoints ? 'All' : 'Some' }} dubbing slots are in use
-          ({{ q.maxProjects }} at a time on this computer).
+          This computer dubs {{ q.maxProjects }} project{{ q.maxProjects === 1 ? '' : 's' }} at a time.
           @if (q.running.length > 0) {
             Now dubbing: {{ runningNames() }}.
           }

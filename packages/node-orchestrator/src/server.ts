@@ -296,6 +296,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // Stop any running engine servers (whisper.cpp / llama.cpp / uv-env workers)
   // when the orchestrator shuts down, so no child process is orphaned.
   app.addHook('onClose', async () => {
+    orchestrator.stopScheduler();
     await engineManager.stopAll();
   });
 

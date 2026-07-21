@@ -120,6 +120,7 @@ export interface ProviderDefaults {
 export interface UpdatePreferences {
   autoUpdate: boolean;
   providerDefaults?: ProviderDefaults;
+  concurrency?: ConcurrencyPreferences;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,10 +239,59 @@ export interface HardwareRecommendation {
   reasons: string[];
 }
 
+/** How many dubs this machine should run at once (mirrors the shared type). */
+export interface CapacityRecommendation {
+  maxProjects: number;
+  budgetPoints: number;
+  heavyLanes: 1;
+  cpuSlots: number;
+  ramSlots: number;
+  hardCapped: boolean;
+  reasons: string[];
+}
+
 /** GET /system response envelope. */
 export interface SystemProfileResponse {
   profile: SystemProfile;
   recommendation: HardwareRecommendation;
+  capacity: CapacityRecommendation;
+}
+
+/** User control over simultaneous dubbing runs (persisted in preferences). */
+export interface ConcurrencyPreferences {
+  mode: 'auto' | 'manual';
+  maxProjects?: number;
+  paused?: boolean;
+}
+
+/** Why a queued project has not started yet. */
+export type QueueReason = 'no-slot' | 'heavy-busy' | 'paused';
+
+/** One project waiting for a run slot. */
+export interface QueueEntry {
+  projectId: string;
+  name: string;
+  position: number;
+  reason: QueueReason;
+  message: string;
+}
+
+/** A currently-executing run. */
+export interface RunningEntry {
+  projectId: string;
+  name: string;
+  heavy: boolean;
+}
+
+/** GET /queue — the live scheduler state. */
+export interface QueueState {
+  maxProjects: number;
+  budgetPoints: number;
+  usedPoints: number;
+  paused: boolean;
+  running: RunningEntry[];
+  entries: QueueEntry[];
+  capacity: CapacityRecommendation;
 }
 
 /** Result of `check_for_update` (tauri-plugin-updater). */

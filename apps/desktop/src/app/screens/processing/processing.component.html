@@ -24,6 +24,29 @@
 
   <vd-error-banner [error]="displayError()" (dismiss)="dismissError()" />
 
+  <!-- Waiting for a free dubbing slot: this project is queued behind others. -->
+  @if (queueEntry(); as entry) {
+    <div class="card banner-info stack" role="status">
+      <strong>⏳ Waiting to start — #{{ entry.position }} in the queue</strong>
+      <p class="muted">{{ entry.message }}</p>
+      @if (queue(); as q) {
+        <p class="hint">
+          {{ q.usedPoints >= q.budgetPoints ? 'All' : 'Some' }} dubbing slots are in use
+          ({{ q.maxProjects }} at a time on this computer).
+          @if (q.running.length > 0) {
+            Now dubbing: {{ runningNames() }}.
+          }
+        </p>
+      }
+      <div class="row">
+        <button type="button" class="btn" (click)="runNext()">Start this one next</button>
+        <button type="button" class="btn btn-danger" (click)="cancel()" [disabled]="cancelling()">
+          {{ cancelling() ? 'Removing…' : 'Remove from queue' }}
+        </button>
+      </div>
+    </div>
+  }
+
   <!-- Transcript-review checkpoint: the run paused after translation so the
        user can adjust the segments before any voice is synthesized. -->
   @if (awaitingReview()) {

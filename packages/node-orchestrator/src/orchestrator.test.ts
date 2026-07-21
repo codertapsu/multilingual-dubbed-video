@@ -1,7 +1,7 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocalJobOrchestrator } from './orchestrator.js';
 import type { ProviderReadiness } from './providers/readiness.js';
 import { loadConfig } from './config.js';
@@ -229,7 +229,7 @@ describe('run readiness gate', () => {
       { phase: 'stt', providerId: 'faster-whisper', status: 'ready', ready: true, message: 'Ready.' },
     ]);
 
-    await expect(gated.runPipeline(project.id)).resolves.toBeUndefined();
+    await expect(gated.runPipeline(project.id)).resolves.toEqual({ started: true, queued: false });
     await gated.cancelJob(project.id); // clean up the scheduled background run
   });
 });
@@ -244,5 +244,127 @@ describe('ProviderRegistry resolution', () => {
     expect(registry.getStt('does-not-exist').id).toBe('faster-whisper');
     expect(registry.getTranslation().id).toBe('argos');
     expect(registry.getTts(undefined).id).toBe('piper-local');
+  });
+});
+
+describe('run queue (simultaneous-dub capacity)', () => {
+  /** An orchestrator pinned to `maxProjects` via manual concurrency prefs. */
+  function queuedOrchestrator(maxProjects: number, paused = false): LocalJobOrchestrator {
+    return new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media: new FakeMediaService(),
+      registry: fakeRegistry(
+        new FakeSttProvider(makeSegments([[0, 1000, 'hi']])),
+        new FakeTranslationProvider(),
+        new FakeTtsProvider(() => 900),
+      ),
+      bus: new EventBusRegistry(),
+      setup: {
+        getPreferences: async () => ({
+          autoUpdate: true,
+          concurrency: { mode: 'manual' as const, maxProjects, paused },
+        }),
+      },
+    });
+  }
+
+  async function twoProjects(): Promise<[string, string]> {
+    const video = await writeDummyVideo(tmp);
+    const a = await orchestrator.createProject(createProjectInput(video, { name: 'A' }));
+    const b = await orchestrator.createProject(createProjectInput(video, { name: 'B' }));
+    return [a.id, b.id];
+  }
+
+  it('queues the second project when the limit is 1, then runs it when the first finishes', async () => {
+    const [a, b] = await twoProjects();
+    const sched = queuedOrchestrator(1);
+
+    expect(await sched.runPipeline(a)).toEqual({ started: true, queued: false });
+    const second = await sched.runPipeline(b);
+    expect(second.queued).toBe(true);
+    expect(second.position).toBe(1);
+    expect((await store.getProject(b)).status).toBe('queued');
+    expect((await store.getProject(b)).queue?.queuedAt).toBeTruthy();
+
+    // The queue view explains itself.
+    const state = await sched.queueState();
+    expect(state.maxProjects).toBe(1);
+    expect(state.running.map((r) => r.projectId)).toEqual([a]);
+    expect(state.entries[0]).toMatchObject({ projectId: b, position: 1, reason: 'no-slot' });
+
+    // When A's run settles, B is dispatched automatically.
+    await sched.cancelJob(a);
+    await vi.waitFor(async () => {
+      expect((await store.getProject(b)).status).not.toBe('queued');
+    });
+    await sched.cancelJob(b);
+  });
+
+  it('starts both when the limit allows it', async () => {
+    const [a, b] = await twoProjects();
+    const sched = queuedOrchestrator(2);
+    expect((await sched.runPipeline(a)).started).toBe(true);
+    expect((await sched.runPipeline(b)).started).toBe(true);
+    await sched.cancelJob(a);
+    await sched.cancelJob(b);
+  });
+
+  it('cancelling a QUEUED project removes it and restores its previous status', async () => {
+    const [a, b] = await twoProjects();
+    const sched = queuedOrchestrator(1);
+    await sched.runPipeline(a);
+    await sched.runPipeline(b);
+    expect((await store.getProject(b)).status).toBe('queued');
+
+    await sched.cancelJob(b);
+    const restored = await store.getProject(b);
+    expect(restored.status).toBe('created');
+    expect(restored.queue).toBeUndefined();
+    expect((await sched.queueState()).entries).toEqual([]);
+    await sched.cancelJob(a);
+  });
+
+  it('refuses settings edits while queued (the workload classification is frozen)', async () => {
+    const [a, b] = await twoProjects();
+    const sched = queuedOrchestrator(1);
+    await sched.runPipeline(a);
+    await sched.runPipeline(b);
+    await expect(sched.updateProjectSettings(b, { maxSpeedRatio: 1.4 })).rejects.toMatchObject({
+      appError: { code: 'RUN_IN_PROGRESS' },
+    });
+    await sched.cancelJob(a);
+    await sched.cancelJob(b);
+  });
+
+  it('a paused queue holds everything, and says why', async () => {
+    const [a] = await twoProjects();
+    const sched = queuedOrchestrator(4, true);
+    const result = await sched.runPipeline(a);
+    expect(result.queued).toBe(true);
+    const state = await sched.queueState();
+    expect(state.paused).toBe(true);
+    expect(state.entries[0]?.reason).toBe('paused');
+    await sched.cancelJob(a);
+  });
+
+  it('reconcileQueue restores queued projects and demotes crashed runs to paused', async () => {
+    const video = await writeDummyVideo(tmp);
+    const queuedProject = await orchestrator.createProject(createProjectInput(video, { name: 'Q' }));
+    const crashed = await orchestrator.createProject(createProjectInput(video, { name: 'C' }));
+    await store.saveProject({
+      ...(await store.getProject(queuedProject.id)),
+      status: 'queued',
+      queue: { queuedAt: '2026-01-01T00:00:00.000Z', previousStatus: 'created' },
+    });
+    await store.saveProject({ ...(await store.getProject(crashed.id)), status: 'running' });
+
+    // Limit 0 -> clamped to 1, but pause it so reconcile doesn't start anything.
+    const sched = queuedOrchestrator(1, true);
+    await sched.reconcileQueue();
+
+    expect((await store.getProject(crashed.id)).status).toBe('paused');
+    const state = await sched.queueState();
+    expect(state.entries.map((e) => e.projectId)).toContain(queuedProject.id);
   });
 });

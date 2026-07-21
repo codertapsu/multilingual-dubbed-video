@@ -21,6 +21,7 @@ import type {
   SystemProfile,
   SystemProfileResponse,
 } from '@videodubber/shared';
+import { recommendCapacity } from './capacity.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -167,5 +168,5 @@ export function recommendSetup(profile: SystemProfile): HardwareRecommendation {
 /** Full GET /system payload. */
 export async function buildSystemResponse(): Promise<SystemProfileResponse> {
   const profile = await getSystemProfile();
-  return { profile, recommendation: recommendSetup(profile) };
+  return { profile, recommendation: recommendSetup(profile), capacity: recommendCapacity(profile) };
 }

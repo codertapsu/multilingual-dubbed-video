@@ -20,6 +20,7 @@ import { StatusBadgeComponent } from '../../shared/status-badge/status-badge.com
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import { PIPELINE_STEP_LABELS } from '../../core/util/format';
 import type { WorkersHealth } from '../../core/models/view-models';
+import type { QueueEntry, QueueState } from '../../core/models/setup';
 import type {
   AppError,
   PipelineState,
@@ -29,6 +30,8 @@ import type {
 
 /** How often to re-probe the bundled services' health while on this screen. */
 const WORKERS_HEALTH_POLL_MS = 5000;
+/** Queue poll cadence while this project waits for a free slot. */
+const QUEUE_POLL_MS = 3000;
 
 /**
  * ProcessingComponent (route "project/:id/processing").
@@ -108,6 +111,20 @@ export class ProcessingComponent implements OnInit, OnDestroy {
   protected readonly awaitingReview = computed(() => this.pipeline()?.awaitingReview === true);
   protected readonly continuing = signal(false);
 
+  // -------- run queue (waiting for a free slot) --------
+  /** Live queue state, polled while this project is waiting. */
+  protected readonly queue = signal<QueueState | null>(null);
+  private queueTimer: ReturnType<typeof setInterval> | null = null;
+  /** This project's queue entry, when it is waiting for capacity. */
+  protected readonly queueEntry = computed<QueueEntry | null>(
+    () => this.queue()?.entries.find((e) => e.projectId === this.id()) ?? null,
+  );
+  protected readonly isQueued = computed(() => this.queueEntry() !== null);
+  /** Names of the dubs currently occupying the slots (for the waiting panel). */
+  protected readonly runningNames = computed(() =>
+    (this.queue()?.running ?? []).map((r) => r.name).join(', '),
+  );
+
   /** Error to display: an SSE error event takes precedence over action errors. */
   protected readonly displayError = computed<AppError | null>(
     () => this.events.error() ?? this.actionError(),
@@ -136,11 +153,28 @@ export class ProcessingComponent implements OnInit, OnDestroy {
     // drops mid-run (the run-gate already ensured they were up at start).
     void this.refreshWorkersHealth();
     this.workersHealthTimer = setInterval(() => void this.refreshWorkersHealth(), WORKERS_HEALTH_POLL_MS);
+    // The queue has no SSE channel yet; poll it (loopback, tiny payload) so a
+    // waiting project shows its position and starts the moment a slot frees.
+    void this.refreshQueue();
+    this.queueTimer = setInterval(() => void this.refreshQueue(), QUEUE_POLL_MS);
   }
 
   ngOnDestroy(): void {
     this.events.disconnect();
     if (this.workersHealthTimer) clearInterval(this.workersHealthTimer);
+    if (this.queueTimer) clearInterval(this.queueTimer);
+  }
+
+  /** Poll the scheduler state; refresh the project when it leaves the queue. */
+  private async refreshQueue(): Promise<void> {
+    const wasQueued = this.isQueued();
+    try {
+      this.queue.set(await this.ipc.getQueue());
+    } catch {
+      // Non-fatal: the panel just keeps its last known state.
+      return;
+    }
+    if (wasQueued && !this.isQueued()) void this.store.loadProject(this.id());
   }
 
   private async refreshWorkersHealth(): Promise<void> {
@@ -148,6 +182,17 @@ export class ProcessingComponent implements OnInit, OnDestroy {
       this.workersHealth.set(await this.ipc.getWorkersHealth());
     } catch {
       // Non-fatal: leave the last known health; the pipeline errors surface real failures.
+    }
+  }
+
+  /** Jump this project to the front of the dubbing queue. */
+  protected async runNext(): Promise<void> {
+    this.actionError.set(null);
+    try {
+      await this.ipc.runNext(this.id());
+      await this.refreshQueue();
+    } catch (err) {
+      this.actionError.set(toAppError(err));
     }
   }
 

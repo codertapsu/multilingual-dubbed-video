@@ -228,6 +228,9 @@ export class SetupStore {
       ...(stored.providerDefaults && typeof stored.providerDefaults === 'object'
         ? { providerDefaults: stored.providerDefaults }
         : {}),
+      ...(stored.concurrency && typeof stored.concurrency === 'object'
+        ? { concurrency: stored.concurrency }
+        : {}),
     };
   }
 
@@ -236,6 +239,7 @@ export class SetupStore {
     const next: UpdatePreferences = {
       autoUpdate: prefs.autoUpdate === true,
       ...(prefs.providerDefaults ? { providerDefaults: prefs.providerDefaults } : {}),
+      ...(prefs.concurrency ? { concurrency: prefs.concurrency } : {}),
     };
     await writeJsonAtomic(this.preferencesPath, next);
     return next;

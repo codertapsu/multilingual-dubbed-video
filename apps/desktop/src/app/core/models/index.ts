@@ -68,6 +68,7 @@ export type {
   TtsInput,
   TtsResult,
   TtsSegmentInput,
+  RunScheduleResult,
   // Errors
   ErrorCode,
   AppError,

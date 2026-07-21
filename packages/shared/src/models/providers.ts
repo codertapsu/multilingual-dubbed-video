@@ -262,18 +262,29 @@ export interface TtsProvider {
 // Orchestration
 // ---------------------------------------------------------------------------
 
+/**
+ * Outcome of scheduling a run: it either started, or was QUEUED because the
+ * machine is already at its simultaneous-dub capacity (see CapacityRecommendation).
+ */
+export interface RunScheduleResult {
+  started: boolean;
+  queued: boolean;
+  /** 1-based queue position when `queued`. */
+  position?: number;
+}
+
 /** High-level job orchestration surface (maps to the HTTP API / Tauri cmds). */
 export interface JobOrchestrator {
   /** Create a new project from input + settings. */
   createProject(input: CreateProjectInput): Promise<Project>;
-  /** Run (or resume) the full pipeline for a project. */
-  runPipeline(projectId: string): Promise<void>;
+  /** Run (or resume) the full pipeline — starts now, or queues behind others. */
+  runPipeline(projectId: string): Promise<RunScheduleResult>;
   /** Pause a running job. */
   pauseJob(jobId: string): Promise<void>;
-  /** Cancel a running job. */
+  /** Cancel a running (or queued) job. */
   cancelJob(jobId: string): Promise<void>;
   /** Reset a step (and everything downstream) and rerun from there. */
-  retryStep(projectId: string, stepId: PipelineStepId): Promise<void>;
+  retryStep(projectId: string, stepId: PipelineStepId): Promise<RunScheduleResult>;
 }
 
 // Re-export the alignment type for convenience to providers consumers.

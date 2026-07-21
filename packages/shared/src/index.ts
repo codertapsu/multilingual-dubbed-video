@@ -32,6 +32,7 @@ export type {
   SubtitleStyle,
   ProjectSettings,
   ProjectStatus,
+  ProjectQueueEntry,
   Project,
   TranscriptWord,
   TranscriptSegment,
@@ -100,6 +101,12 @@ export type {
   ProvidersResponse,
   GpuInfo,
   SystemProfile,
+  CapacityRecommendation,
+  ConcurrencyPreferences,
+  QueueReason,
+  QueueEntry,
+  RunningEntry,
+  QueueState,
   HardwareTier,
   HardwareRecommendation,
   SystemProfileResponse,
@@ -125,6 +132,7 @@ export type {
   TtsResult,
   TtsProvider,
   JobOrchestrator,
+  RunScheduleResult,
 } from './models/providers.js';
 
 // ---- Subtitle utilities ----------------------------------------------------

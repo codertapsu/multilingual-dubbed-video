@@ -24,6 +24,7 @@ import type {
 import type {
   ArgosPair,
   CloudCredentialInfo,
+  ConcurrencyPreferences,
   CloudServiceId,
   CredentialTestResult,
   ProviderDefaults,
@@ -629,10 +630,63 @@ export class SettingsComponent implements OnInit, OnDestroy {
     try {
       const pref = await this.ipc.getUpdatePreference();
       this.autoUpdate.set(pref.autoUpdate);
+      const c = pref.concurrency;
+      this.concurrencyValue.set(
+        c?.mode === 'manual' && c.maxProjects ? String(c.maxProjects) : 'auto',
+      );
+      this.queuePaused.set(c?.paused === true);
     } catch (err) {
       this.error.set(toAppError(err));
     } finally {
       this.prefLoading.set(false);
+    }
+  }
+
+  // -------------------- simultaneous dubs (run queue) --------------------
+  /** 'auto' (follow the hardware recommendation) or a pinned number. */
+  protected readonly concurrencyValue = signal<string>('auto');
+  protected readonly queuePaused = signal(false);
+  protected readonly concurrencyChoices = [1, 2, 3, 4, 5, 6, 7, 8];
+
+  /** Persist the simultaneous-dub limit (auto = follow the recommendation). */
+  protected async setConcurrency(value: string): Promise<void> {
+    if (this.prefSaving()) return;
+    const previous = this.concurrencyValue();
+    this.concurrencyValue.set(value);
+    await this.saveConcurrency(
+      value === 'auto'
+        ? { mode: 'auto', paused: this.queuePaused() }
+        : { mode: 'manual', maxProjects: Number(value), paused: this.queuePaused() },
+      () => this.concurrencyValue.set(previous),
+    );
+  }
+
+  /** Pause/resume dispatching queued dubs. */
+  protected async setQueuePaused(paused: boolean): Promise<void> {
+    if (this.prefSaving()) return;
+    const previous = this.queuePaused();
+    this.queuePaused.set(paused);
+    const pinned = this.concurrencyValue();
+    await this.saveConcurrency(
+      pinned === 'auto'
+        ? { mode: 'auto', paused }
+        : { mode: 'manual', maxProjects: Number(pinned), paused },
+      () => this.queuePaused.set(previous),
+    );
+  }
+
+  private async saveConcurrency(concurrency: ConcurrencyPreferences, rollback: () => void): Promise<void> {
+    this.prefSaving.set(true);
+    this.error.set(null);
+    try {
+      // Send autoUpdate too: /preferences merges partials, but the Tauri
+      // command mirrors the whole object.
+      await this.ipc.setUpdatePreference({ autoUpdate: this.autoUpdate(), concurrency });
+    } catch (err) {
+      rollback();
+      this.error.set(toAppError(err));
+    } finally {
+      this.prefSaving.set(false);
     }
   }
 

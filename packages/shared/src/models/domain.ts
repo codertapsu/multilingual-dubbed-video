@@ -186,7 +186,22 @@ export interface ProjectSettings {
 }
 
 /** Lifecycle status of a project. */
-export type ProjectStatus = 'created' | 'running' | 'paused' | 'failed' | 'completed';
+export type ProjectStatus = 'created' | 'queued' | 'running' | 'paused' | 'failed' | 'completed';
+
+/**
+ * Queue bookkeeping for a project waiting for a run slot. Persisted on
+ * `project.json` (already written atomically) so the queue survives a restart
+ * with no second source of truth to reconcile. `queuedAt` is the ONLY ordering
+ * authority — "run next" rewrites it rather than storing a position.
+ */
+export interface ProjectQueueEntry {
+  /** ISO-8601 enqueue time; the ordering key. */
+  queuedAt: string;
+  /** Retry origin, when the queued run is a retry-from-step. */
+  fromStep?: PipelineStepId;
+  /** Status to restore if the user cancels while still queued. */
+  previousStatus: ProjectStatus;
+}
 
 /** A dubbing project: input, workspace, settings, and current status. */
 export interface Project {
@@ -210,6 +225,8 @@ export interface Project {
   updatedAt: string;
   /** Cached media probe result, if available. */
   mediaInfo?: MediaInfo;
+  /** Set while `status === 'queued'` (waiting for a run slot). */
+  queue?: ProjectQueueEntry;
 }
 
 /** A single word with timing inside a transcript segment. */

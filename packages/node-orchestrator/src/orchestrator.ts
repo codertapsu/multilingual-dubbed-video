@@ -11,6 +11,7 @@
 import fsp from 'node:fs/promises';
 import {
   AppErrorException,
+  toAppError,
   segmentsToSrt,
   segmentsToVtt,
   transcriptSegmentsToCues,
@@ -20,9 +21,14 @@ import {
   type MediaInfo,
   type PipelineState,
   type PipelineStepId,
+  type CapacityRecommendation,
   type Project,
+  type ProjectQueueEntry,
   type ProjectSettings,
+  type QueueState,
+  type RunScheduleResult,
   type RenderFinalVideoResult,
+  type SystemProfile,
   type TranscriptSegment,
   type TranslationDocContext,
   type TtsSegment,
@@ -30,6 +36,13 @@ import {
 import { alignSegment, type AlignInputSegment } from './alignment/align.js';
 import type { SynthesisGroup, SynthesisGroupsArtifact } from './pipeline/grouping.js';
 import type { OrchestratorConfig } from './config.js';
+import type { EngineManager } from './engines/engineManager.js';
+import { withEngineOwner } from './engines/engineOwner.js';
+import { decideAdmissions, type RunningRun } from './scheduler/admit.js';
+import { classifyWorkload, type RunWorkload } from './scheduler/workload.js';
+import { effectiveCapacity, POINTS_PER_LOCAL_RUN, recommendCapacity } from './system/capacity.js';
+import { getSystemProfile } from './system/systemProfile.js';
+import type { SetupStore } from './setup/setupStore.js';
 import type { EventBusRegistry} from './events.js';
 import { type ProjectEventBus } from './events.js';
 import { ProjectLogger } from './logging.js';
@@ -53,6 +66,10 @@ export interface OrchestratorDeps {
   separation?: SeparationService;
   /** Optional forced-alignment/diarization engine for tighter timing. */
   alignment?: AlignmentService;
+  /** Engine lifecycle manager, so a finished run releases its heavy-engine lane. */
+  engines?: EngineManager;
+  /** Preferences store (the user's concurrency limit / queue-paused flag). */
+  setup?: Pick<SetupStore, 'getPreferences'>;
   /**
    * Optional readiness checker. When present, a run is gated on it: the selected
    * providers (for the phases that will execute) are checked BEFORE the run is
@@ -62,6 +79,21 @@ export interface OrchestratorDeps {
    */
   checkReadiness?: (project: Project, fromStep?: PipelineStepId) => Promise<ProviderReadiness[]>;
 }
+
+/**
+ * Profile assumed when hardware detection fails: a modest 4-core / 8 GB
+ * machine, which yields the safe minimum of 1 simultaneous dub.
+ */
+const FALLBACK_PROFILE: SystemProfile = {
+  platform: process.platform,
+  arch: process.arch,
+  cpuModel: 'unknown',
+  cpuCores: 4,
+  totalRamMb: 8192,
+  freeRamMb: 0,
+  gpus: [],
+  appleSilicon: false,
+};
 
 /** A tracked, in-flight pipeline run. */
 interface RunningJob {
@@ -133,6 +165,17 @@ function hasListLanguages(value: unknown): value is ListLanguagesCapable {
 /** Local, offline-first orchestration engine. */
 export class LocalJobOrchestrator implements JobOrchestrator {
   private readonly running = new Map<string, RunningJob>();
+  /** Queued project ids in dispatch order (oldest `queue.queuedAt` first). */
+  private queue: string[] = [];
+  /** O(1) membership for the queue (kept in step with {@link queue}). */
+  private readonly queued = new Set<string>();
+  /** Workload classification per scheduled project (running + queued). */
+  private readonly workloads = new Map<string, RunWorkload>();
+  /** Serializes {@link pump}; `pumpAgain` coalesces requests that arrive mid-pump. */
+  private pumping = false;
+  private pumpAgain = false;
+  /** Memoized hardware capacity (specs don't change while the app runs). */
+  private capacityPromise: Promise<CapacityRecommendation> | undefined;
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -171,17 +214,20 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * the run is scheduled; progress is observed via SSE. Idempotent guard: a
    * second call while a run is active is a no-op.
    */
-  async runPipeline(projectId: string): Promise<void> {
-    if (this.running.has(projectId)) return;
+  async runPipeline(projectId: string): Promise<RunScheduleResult> {
+    if (this.running.has(projectId)) return { started: true, queued: false };
+    if (this.queued.has(projectId)) return { started: false, queued: true, position: this.queuePosition(projectId) };
     const project = await this.deps.store.getProject(projectId);
     // Gate the run: refuse to start (with an actionable error) if a selected
-    // provider isn't ready, so the run never dies deep in a step.
+    // provider isn't ready, so the run never dies deep in a step. Done at
+    // ENQUEUE time (not only at dispatch) so the user gets the actionable error
+    // while they are standing there, exactly as before queueing existed.
     if (this.deps.checkReadiness) assertRunReady(await this.deps.checkReadiness(project));
     // Re-check after the await(s): a concurrent run() request may have started
     // one while we were loading/validating. startRun() registers the job
     // synchronously (no await before this.running.set), so this guard is safe.
-    if (this.running.has(projectId)) return;
-    this.startRun(project, undefined);
+    if (this.running.has(projectId)) return { started: true, queued: false };
+    return this.scheduleRun(project, undefined);
   }
 
   /** Pause == cancel for the MVP (the run can be re-started/resumed). */
@@ -189,8 +235,16 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     await this.cancelJob(jobId);
   }
 
-  /** Cancel an in-flight run (the AbortController stops it between steps). */
+  /**
+   * Cancel a run. A RUNNING job is aborted between steps; a QUEUED one is
+   * simply removed from the queue (nothing to abort) and its previous status
+   * restored.
+   */
   async cancelJob(jobId: string): Promise<void> {
+    if (this.queued.has(jobId)) {
+      await this.dequeue(jobId);
+      return;
+    }
     const job = this.running.get(jobId);
     if (!job) return;
     job.controller.abort(new AppErrorException('CANCELLED', 'Cancelled by user.'));
@@ -202,7 +256,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /** Reset a step + downstream and re-run from there (resumable retry). */
-  async retryStep(projectId: string, stepId: PipelineStepId): Promise<void> {
+  async retryStep(projectId: string, stepId: PipelineStepId): Promise<RunScheduleResult> {
     if (this.running.has(projectId)) {
       // Cancel the current run before retrying to avoid overlap.
       await this.cancelJob(projectId);
@@ -211,7 +265,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // Gate the retry too — but only on the providers whose phases will actually
     // re-run from `stepId` (a retry-from-render isn't blocked by the translator).
     if (this.deps.checkReadiness) assertRunReady(await this.deps.checkReadiness(project, stepId));
-    this.startRun(project, stepId);
+    return this.scheduleRun(project, stepId);
   }
 
   /**
@@ -231,6 +285,16 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       throw new AppErrorException(
         'RUN_IN_PROGRESS',
         'Cannot change settings while the pipeline is running. Cancel the run first.',
+      );
+    }
+    // Queued runs are frozen too: the scheduler classified this project's cost
+    // (heavy engine? cloud-only?) at enqueue time, and letting the settings
+    // change underneath would make that classification — and therefore the
+    // queue's ordering decisions — silently wrong.
+    if (this.queued.has(projectId)) {
+      throw new AppErrorException(
+        'RUN_IN_PROGRESS',
+        'This project is waiting in the dubbing queue. Cancel it to change settings.',
       );
     }
     const project = await this.deps.store.getProject(projectId);
@@ -331,6 +395,23 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * Returns the new {@link TtsSegment} and its {@link AlignedSegment}.
    */
   async synthesizeSingleSegment(
+    projectId: string,
+    segmentId: string,
+    opts: { text?: string; voiceId?: string; speed?: number },
+  ): Promise<{ segment: TtsSegment; alignment: AlignedSegment }> {
+    // Editor actions touch the SAME heavy engines a run uses. Give them their
+    // own owner so they can claim a free lane, but get a clear ENGINE_BUSY
+    // instead of unloading the engine a running dub is mid-request against.
+    return withEngineOwner(`editor:${projectId}`, async () => {
+      try {
+        return await this.synthesizeSingleSegmentImpl(projectId, segmentId, opts);
+      } finally {
+        this.deps.engines?.releaseHeavyLane(`editor:${projectId}`);
+      }
+    });
+  }
+
+  private async synthesizeSingleSegmentImpl(
     projectId: string,
     segmentId: string,
     opts: { text?: string; voiceId?: string; speed?: number },
@@ -456,6 +537,21 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     projectId: string,
     segmentId: string,
   ): Promise<{ segment: TtsSegment; alignment: AlignedSegment; translatedText: string }> {
+    // Same engine-ownership rule as synthesizeSingleSegment: this re-translates
+    // (possibly on a heavy local LLM) before re-synthesizing.
+    return withEngineOwner(`editor:${projectId}`, async () => {
+      try {
+        return await this.refitSegmentImpl(projectId, segmentId);
+      } finally {
+        this.deps.engines?.releaseHeavyLane(`editor:${projectId}`);
+      }
+    });
+  }
+
+  private async refitSegmentImpl(
+    projectId: string,
+    segmentId: string,
+  ): Promise<{ segment: TtsSegment; alignment: AlignedSegment; translatedText: string }> {
     const project = await this.deps.store.getProject(projectId);
     const paths = this.deps.store.paths(projectId);
     const segments =
@@ -487,7 +583,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       proposed && proposed !== (seg.translatedText ?? '') ? proposed : (seg.translatedText ?? seg.sourceText ?? '');
 
     // Persist the shortened text + re-synthesize + re-align (handled inside).
-    const { segment, alignment } = await this.synthesizeSingleSegment(projectId, segmentId, { text: finalText });
+    const { segment, alignment } = await this.synthesizeSingleSegmentImpl(projectId, segmentId, { text: finalText });
     return { segment, alignment, translatedText: finalText };
   }
 
@@ -596,6 +692,269 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
   // ----- Internals ---------------------------------------------------------
 
+  // ----- Run scheduling (capacity limit + queue) ----------------------------
+
+  /** The hardware capacity recommendation (memoized; specs are stable). */
+  async capacity(): Promise<CapacityRecommendation> {
+    this.capacityPromise ??= getSystemProfile()
+      .then(recommendCapacity)
+      .catch(() => recommendCapacity(FALLBACK_PROFILE));
+    return this.capacityPromise;
+  }
+
+  /** The limit actually in force (hardware recommendation or the manual pin). */
+  private async effectiveCapacity(): Promise<CapacityRecommendation> {
+    const recommended = await this.capacity();
+    const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
+    return effectiveCapacity(recommended, prefs?.concurrency);
+  }
+
+  /**
+   * Schedule a run: start it immediately when the machine has room, otherwise
+   * mark the project `queued` and let {@link pump} dispatch it when a slot
+   * frees. Registration is synchronous (no `await` between the decision and
+   * `running.set`/`queued.add`) so the idempotence guards stay race-free.
+   */
+  private async scheduleRun(
+    project: Project,
+    retryFromStep: PipelineStepId | undefined,
+  ): Promise<RunScheduleResult> {
+    const workload = classifyWorkload(project.settings, this.deps.registry);
+    this.workloads.set(project.id, workload);
+
+    const capacity = await this.effectiveCapacity();
+    const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
+    const decision = decideAdmissions(
+      [{ projectId: project.id, points: workload.points, needsHeavyEngine: workload.needsHeavyEngine }],
+      this.runningRuns(),
+      { budgetPoints: capacity.budgetPoints, paused: prefs?.concurrency?.paused === true },
+    );
+
+    if (decision.start.includes(project.id)) {
+      this.startRun(project, retryFromStep);
+      return { started: true, queued: false };
+    }
+
+    // No room: persist the queue entry (project.json is written atomically, so
+    // the queue survives a restart with no second source of truth).
+    const entry: ProjectQueueEntry = {
+      queuedAt: new Date().toISOString(),
+      previousStatus: project.status,
+      ...(retryFromStep ? { fromStep: retryFromStep } : {}),
+    };
+    this.queue.push(project.id);
+    this.queued.add(project.id);
+    await this.deps.store.saveProject({ ...project, status: 'queued', queue: entry });
+    return { started: false, queued: true, position: this.queuePosition(project.id) };
+  }
+
+  /** 1-based queue position (0 when not queued). */
+  private queuePosition(projectId: string): number {
+    return this.queue.indexOf(projectId) + 1;
+  }
+
+  /** Running jobs in the shape the admission rule reads. */
+  private runningRuns(): RunningRun[] {
+    return [...this.running.keys()].map((projectId) => {
+      const w = this.workloads.get(projectId);
+      return {
+        projectId,
+        points: w?.points ?? POINTS_PER_LOCAL_RUN,
+        needsHeavyEngine: w?.needsHeavyEngine ?? false,
+      };
+    });
+  }
+
+  /**
+   * Dispatch every queued run the machine now has room for. The ONLY place
+   * queued runs start. Serialized via {@link pumping}; requests arriving during
+   * a pass set {@link pumpAgain} so a slot freed mid-pass is never missed.
+   */
+  private async pump(): Promise<void> {
+    if (this.pumping) {
+      this.pumpAgain = true;
+      return;
+    }
+    this.pumping = true;
+    try {
+      do {
+        this.pumpAgain = false;
+        if (this.queue.length === 0) break;
+
+        const capacity = await this.effectiveCapacity();
+        const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
+        const candidates = this.queue.map((projectId) => {
+          const w = this.workloads.get(projectId);
+          return {
+            projectId,
+            points: w?.points ?? POINTS_PER_LOCAL_RUN,
+            needsHeavyEngine: w?.needsHeavyEngine ?? false,
+          };
+        });
+        const decision = decideAdmissions(candidates, this.runningRuns(), {
+          budgetPoints: capacity.budgetPoints,
+          paused: prefs?.concurrency?.paused === true,
+        });
+        if (decision.start.length === 0) break;
+
+        for (const projectId of decision.start) {
+          // Re-load: settings/status may have changed while queued.
+          let project: Project;
+          try {
+            project = await this.deps.store.getProject(projectId);
+          } catch {
+            this.forget(projectId);
+            continue;
+          }
+          // A queue must never stall on one bad entry: re-check readiness at
+          // dispatch and fail THAT project, then carry on with the rest.
+          if (this.deps.checkReadiness) {
+            try {
+              assertRunReady(await this.deps.checkReadiness(project, project.queue?.fromStep));
+            } catch (err) {
+              this.forget(projectId);
+              await this.deps.store
+                .saveProject({ ...project, status: 'failed', queue: undefined })
+                .catch(() => undefined);
+              this.deps.bus.get(projectId).emit({ type: 'error', error: toAppError(err) });
+              continue;
+            }
+          }
+          // Someone may have started/cancelled it while we awaited.
+          if (!this.queued.has(projectId) || this.running.has(projectId)) continue;
+          const fromStep = project.queue?.fromStep;
+          this.forget(projectId);
+          this.startRun({ ...project, queue: undefined }, fromStep);
+        }
+      } while (this.pumpAgain || this.queue.length > 0);
+    } finally {
+      this.pumping = false;
+    }
+  }
+
+  /** Drop a project from the queue bookkeeping (in-memory only). */
+  private forget(projectId: string): void {
+    this.queued.delete(projectId);
+    this.queue = this.queue.filter((id) => id !== projectId);
+  }
+
+  /** Remove a queued project and restore the status it had before queueing. */
+  private async dequeue(projectId: string): Promise<void> {
+    if (!this.queued.has(projectId)) return;
+    this.forget(projectId);
+    this.workloads.delete(projectId);
+    try {
+      const project = await this.deps.store.getProject(projectId);
+      await this.deps.store.saveProject({
+        ...project,
+        status: project.queue?.previousStatus ?? 'created',
+        queue: undefined,
+      });
+    } catch {
+      /* project vanished; nothing to restore */
+    }
+    void this.pump();
+  }
+
+  /**
+   * Re-establish the queue from disk at startup: `queued` projects re-enter in
+   * `queuedAt` order, and any project left `running` by a crash is demoted to
+   * `paused` (conservative — the runner's artifact writes are not atomic, so
+   * auto-resuming could treat a truncated artifact as complete). Best-effort.
+   */
+  async reconcileQueue(): Promise<void> {
+    let projects: Project[];
+    try {
+      projects = await this.deps.store.listProjects();
+    } catch {
+      return;
+    }
+    const queued = projects
+      .filter((p) => p.status === 'queued' && p.queue)
+      .sort((a, b) => (a.queue!.queuedAt < b.queue!.queuedAt ? -1 : 1));
+    for (const p of queued) {
+      if (this.queued.has(p.id) || this.running.has(p.id)) continue;
+      this.workloads.set(p.id, classifyWorkload(p.settings, this.deps.registry));
+      this.queue.push(p.id);
+      this.queued.add(p.id);
+    }
+    for (const p of projects) {
+      if (p.status === 'running' && !this.running.has(p.id)) {
+        await this.deps.store.saveProject({ ...p, status: 'paused' }).catch(() => undefined);
+      }
+    }
+    if (this.queue.length > 0) void this.pump();
+  }
+
+  /** Live scheduler state for the UI (GET /queue). */
+  async queueState(): Promise<QueueState> {
+    const capacity = await this.effectiveCapacity();
+    const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
+    const paused = prefs?.concurrency?.paused === true;
+    const names = new Map<string, string>();
+    for (const id of [...this.running.keys(), ...this.queue]) {
+      try {
+        names.set(id, (await this.deps.store.getProject(id)).name);
+      } catch {
+        /* skip */
+      }
+    }
+    const candidates = this.queue.map((projectId) => {
+      const w = this.workloads.get(projectId);
+      return {
+        projectId,
+        points: w?.points ?? POINTS_PER_LOCAL_RUN,
+        needsHeavyEngine: w?.needsHeavyEngine ?? false,
+      };
+    });
+    const { held } = decideAdmissions(candidates, this.runningRuns(), {
+      budgetPoints: capacity.budgetPoints,
+      paused,
+      nameOf: (id) => names.get(id),
+    });
+    return {
+      maxProjects: capacity.maxProjects,
+      budgetPoints: capacity.budgetPoints,
+      usedPoints: this.runningRuns().reduce((sum, r) => sum + r.points, 0),
+      paused,
+      capacity,
+      running: [...this.running.keys()].map((projectId) => ({
+        projectId,
+        name: names.get(projectId) ?? projectId,
+        heavy: this.workloads.get(projectId)?.needsHeavyEngine === true,
+      })),
+      entries: this.queue.map((projectId, i) => ({
+        projectId,
+        name: names.get(projectId) ?? projectId,
+        position: i + 1,
+        reason: held.get(projectId)?.reason ?? 'no-slot',
+        message: held.get(projectId)?.message ?? 'Waiting for a free slot.',
+      })),
+    };
+  }
+
+  /** Re-evaluate the queue (e.g. after the user changed the limit or resumed). */
+  async pumpQueue(): Promise<void> {
+    await this.pump();
+  }
+
+  /** Move a queued project to the head (rewrites its ordering key). */
+  async runNext(projectId: string): Promise<void> {
+    if (!this.queued.has(projectId)) return;
+    const head = this.queue[0];
+    if (head === projectId) return;
+    const project = await this.deps.store.getProject(projectId);
+    const headProject = head ? await this.deps.store.getProject(head).catch(() => undefined) : undefined;
+    const headAt = headProject?.queue?.queuedAt ?? project.queue?.queuedAt ?? new Date().toISOString();
+    const queuedAt = new Date(Date.parse(headAt) - 1).toISOString();
+    await this.deps.store.saveProject({
+      ...project,
+      queue: { ...(project.queue ?? { previousStatus: 'created' }), queuedAt },
+    });
+    this.queue = [projectId, ...this.queue.filter((id) => id !== projectId)];
+    void this.pump();
+  }
+
   /** Schedule and track a pipeline run. */
   /**
    * Start a run and register it in {@link running} SYNCHRONOUSLY (no `await`
@@ -603,21 +962,29 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * free. The actual work (mark-running + runner.run) executes in the stored
    * promise; errors are recorded by the runner (pipeline state + SSE), so we
    * swallow the promise rejection here to avoid an unhandled rejection.
+   *
+   * The run executes inside {@link withEngineOwner} so every heavy engine it
+   * starts is attributed to this project — a concurrent run or an editor action
+   * then gets ENGINE_BUSY instead of unloading this run's engine mid-request.
    */
   private startRun(project: Project, retryFromStep: PipelineStepId | undefined): void {
     const controller = new AbortController();
     const { runner } = this.runnerDeps(project.id);
 
-    const promise = (async () => {
+    const promise = withEngineOwner(project.id, async () => {
       // Mark the project running immediately for snappy UI feedback.
-      await this.deps.store.saveProject({ ...project, status: 'running' });
+      await this.deps.store.saveProject({ ...project, status: 'running', queue: undefined });
       await runner.run(
         project,
         retryFromStep ? { retryFromStep, signal: controller.signal } : { signal: controller.signal },
       );
-    })()
+    })
       .finally(() => {
         this.running.delete(project.id);
+        this.workloads.delete(project.id);
+        this.deps.engines?.releaseHeavyLane(project.id);
+        // A slot just freed — dispatch whatever was waiting on it.
+        void this.pump();
       })
       .catch(() => {
         /* runner records its own failure; nothing to do here */

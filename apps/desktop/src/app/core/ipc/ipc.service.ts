@@ -8,6 +8,7 @@ import type {
   Project,
   ProjectSettings,
   RenderFinalVideoResult,
+  RunScheduleResult,
   TranslationDocContext,
 } from '../models';
 import type {
@@ -34,6 +35,7 @@ import type {
   SetupCatalog,
   SetupInstallRequest,
   SetupStatus,
+  QueueState,
   SystemProfileResponse,
   UpdateInfo,
   UpdatePreferences,
@@ -129,14 +131,28 @@ export class IpcService {
     );
   }
 
-  /** Starts the pipeline asynchronously (202 from the orchestrator). */
-  runPipeline(projectId: string): Promise<{ started: boolean }> {
-    return this.call<{ started: boolean }>(
+  /**
+   * Starts the pipeline asynchronously (202 from the orchestrator). When the
+   * machine is already at its simultaneous-dub capacity the project is QUEUED
+   * instead — `{ started: false, queued: true, position }`.
+   */
+  runPipeline(projectId: string): Promise<RunScheduleResult> {
+    return this.call<RunScheduleResult>(
       'run_pipeline',
       { projectId },
       'POST',
       `/projects/${encodeURIComponent(projectId)}/run`,
     );
+  }
+
+  /** GET /queue — running + queued dubs and the capacity in force. */
+  getQueue(): Promise<QueueState> {
+    return this.http('GET', '/queue');
+  }
+
+  /** POST /projects/:id/run-next — move a queued project to the head. */
+  runNext(projectId: string): Promise<{ ok: boolean }> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/run-next`, {});
   }
 
   cancelPipeline(projectId: string): Promise<{ ok: boolean }> {

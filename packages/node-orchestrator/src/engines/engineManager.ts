@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { AppErrorException } from '@videodubber/shared';
 import type { EnginePackStore } from './enginePackStore.js';
 import { findPack } from './enginePackCatalog.js';
+import { currentEngineOwner } from './engineOwner.js';
 
 /**
  * Directory holding the bundled first-party engine-pack worker source (e.g. the
@@ -203,6 +204,20 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
   },
 };
 
+/**
+ * True when an engine FAMILY (a provider's `requiresEnginePack`, which is the
+ * key of {@link ENGINE_LAUNCH_SPECS}) runs as a "heavy" engine — one that the
+ * sequential-memory policy unloads others for. Exported so the run scheduler
+ * classifies workloads from the same table the launcher uses, and the two can
+ * never drift apart.
+ */
+export function isHeavyEngineFamily(family: string | undefined): boolean {
+  return family !== undefined && ENGINE_LAUNCH_SPECS[family]?.heavy === true;
+}
+
+/** Owner recorded for heavy work that runs outside any {@link withEngineOwner}. */
+const ANONYMOUS_OWNER = 'anonymous';
+
 /** Injectable seams (tests provide fakes). */
 export interface EngineManagerDeps {
   store: EnginePackStore;
@@ -220,8 +235,25 @@ export interface EngineManagerDeps {
 
 export class EngineManager {
   private readonly running = new Map<string, RunningEngine>();
+  /** Owner currently holding the exclusive heavy-engine lane (see engineOwner.ts). */
+  private heavyOwner: string | undefined;
 
   constructor(private readonly deps: EngineManagerDeps) {}
+
+  /** The owner holding the heavy lane, if any (for scheduler/UI messaging). */
+  heavyLaneOwner(): string | undefined {
+    return this.heavyOwner;
+  }
+
+  /**
+   * Release the heavy lane held by `ownerId` (no-op when someone else holds it,
+   * so a late release can never free another owner's lane). The engines stay
+   * resident — only the claim is dropped, so the next owner reuses a warm
+   * engine when it happens to want the same one.
+   */
+  releaseHeavyLane(ownerId: string): void {
+    if (this.heavyOwner === ownerId) this.heavyOwner = undefined;
+  }
 
   /** Base URL of a running engine, or undefined. */
   baseUrl(packId: string): string | undefined {
@@ -237,8 +269,37 @@ export class EngineManager {
    * Ensure a pack's server is running and return its base URL. Idempotent: a
    * second call returns the existing instance. When `exclusive` is set, other
    * *heavy* engines are stopped first to free RAM/VRAM for sequential phases.
+   *
+   * OWNERSHIP: a heavy+exclusive start claims the single heavy lane for the
+   * calling context's owner ({@link withEngineOwner}). While a lane is held,
+   * work belonging to ANY other owner is refused with ENGINE_BUSY instead of
+   * silently unloading the holder's engine mid-request. Enforcing it here — at
+   * the chokepoint — means a new call site added later is safe by default.
    */
-  async ensureRunning(packId: string, opts: { exclusive?: boolean; model?: string } = {}): Promise<string> {
+  async ensureRunning(
+    packId: string,
+    opts: { exclusive?: boolean; model?: string; ownerId?: string } = {},
+  ): Promise<string> {
+    const spec = ENGINE_LAUNCH_SPECS[this.providerOf(packId)];
+    if (!spec) {
+      throw new AppErrorException('ENGINE_UNAVAILABLE', `No launch spec for engine pack "${packId}".`);
+    }
+
+    // Claim/verify the heavy lane BEFORE touching any process, so a refused
+    // caller changes nothing (in particular it must not restart-for-model-swap
+    // an engine the current holder is using).
+    const wantsHeavyLane = opts.exclusive === true && spec.heavy === true;
+    if (wantsHeavyLane) {
+      const owner = opts.ownerId ?? currentEngineOwner() ?? ANONYMOUS_OWNER;
+      if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
+        throw new AppErrorException(
+          'ENGINE_BUSY',
+          `The "${this.providerOf(packId)}" engine is in use by another dub (${this.heavyOwner}).`,
+        );
+      }
+      this.heavyOwner = owner;
+    }
+
     const existing = this.running.get(packId);
     if (existing) {
       // Same pack, same (or unspecified) model -> reuse the running server.
@@ -251,12 +312,7 @@ export class EngineManager {
       await existing.stop();
     }
 
-    const spec = ENGINE_LAUNCH_SPECS[this.providerOf(packId)];
-    if (!spec) {
-      throw new AppErrorException('ENGINE_UNAVAILABLE', `No launch spec for engine pack "${packId}".`);
-    }
-
-    if (opts.exclusive && spec.heavy) {
+    if (wantsHeavyLane) {
       await this.unloadHeavyExcept(packId);
     }
 
@@ -348,6 +404,7 @@ export class EngineManager {
 
   /** Stop every running engine (call on app shutdown / project completion). */
   async stopAll(): Promise<void> {
+    this.heavyOwner = undefined;
     await Promise.all([...this.running.values()].map((e) => e.stop()));
   }
 

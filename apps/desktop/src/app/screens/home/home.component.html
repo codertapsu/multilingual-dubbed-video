@@ -24,6 +24,33 @@
     (dismiss)="store.clearError()"
   />
 
+  <!-- Capacity summary: only surfaces once dubbing is actually happening, so
+       the limit is explained at the first moment it costs the user something. -->
+  @if (queue(); as q) {
+    @if (q.running.length > 0 || q.entries.length > 0) {
+      <div class="card stack-sm queue-summary">
+        <div class="row row-between">
+          <strong>Now dubbing</strong>
+          <a routerLink="/settings" class="hint"
+            >{{ q.running.length }} of {{ q.maxProjects }} slots in use — change limit</a
+          >
+        </div>
+        @for (r of q.running; track r.projectId) {
+          <p class="hint">▶ {{ r.name }}{{ r.heavy ? ' — using a local engine (runs alone)' : '' }}</p>
+        }
+        @if (q.entries.length > 0) {
+          <strong class="up-next">Up next</strong>
+          @for (e of q.entries; track e.projectId) {
+            <p class="hint">#{{ e.position }} {{ e.name }} — {{ e.message }}</p>
+          }
+        }
+        @if (q.paused) {
+          <p class="hint">⏸ The queue is paused — resume it in Settings.</p>
+        }
+      </div>
+    }
+  }
+
   @if (store.loading() && store.recentProjects().length === 0) {
     <div class="card muted">Loading projects…</div>
   } @else if (store.recentProjects().length === 0) {

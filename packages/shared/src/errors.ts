@@ -33,6 +33,7 @@ export type ErrorCode =
   | 'ENGINE_PACK_MISSING'
   | 'ENGINE_PACK_FAILED'
   | 'ENGINE_UNAVAILABLE'
+  | 'ENGINE_BUSY'
   | 'CANCELLED'
   | 'RUN_IN_PROGRESS'
   | 'UNKNOWN';
@@ -148,6 +149,11 @@ export const REMEDIATIONS: Record<ErrorCode, { remediation: string; docsRef: str
   ENGINE_PACK_FAILED: {
     remediation:
       'The engine pack could not be downloaded or verified. Check your network and disk space, then retry the install; corrupt downloads are discarded automatically.',
+    docsRef: 'docs/PROVIDERS.md#engine-packs',
+  },
+  ENGINE_BUSY: {
+    remediation:
+      'Another dub is using this local engine right now. These engines take over the machine and can only serve one project at a time — wait for that dub to finish (or cancel it), then try again.',
     docsRef: 'docs/PROVIDERS.md#engine-packs',
   },
   ENGINE_UNAVAILABLE: {

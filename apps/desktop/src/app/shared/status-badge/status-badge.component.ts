@@ -3,6 +3,7 @@ import { ChangeDetectionStrategy, Component, computed, input } from '@angular/co
 /** Union of all status-like strings we render as a pill. */
 export type BadgeStatus =
   | 'created'
+  | 'queued'
   | 'running'
   | 'paused'
   | 'failed'
@@ -16,6 +17,7 @@ const STATUS_META: Record<BadgeStatus, { cls: string; label: string }> = {
   created: { cls: 'badge-pending', label: 'Created' },
   idle: { cls: 'badge-pending', label: 'Idle' },
   pending: { cls: 'badge-pending', label: 'Pending' },
+  queued: { cls: 'badge-warning', label: 'Queued' },
   running: { cls: 'badge-running', label: 'Running' },
   paused: { cls: 'badge-warning', label: 'Paused' },
   failed: { cls: 'badge-failed', label: 'Failed' },

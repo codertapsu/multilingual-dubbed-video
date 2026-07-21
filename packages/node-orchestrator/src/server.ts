@@ -258,11 +258,20 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       bus,
       separation,
       alignment,
+      // Engine lifecycle + preferences: the scheduler releases a finished run's
+      // heavy-engine lane, and reads the user's simultaneous-dub limit.
+      engines: engineManager,
+      setup: setupStore,
       // Gate runs on provider readiness so an unready provider (e.g. Ollama with
       // no daemon, a missing engine pack, or an unconfigured cloud key) fails
       // fast with remediation instead of dying mid-pipeline.
       checkReadiness: (project, fromStep) => checkProviderReadiness(project, readinessDeps(), fromStep),
     });
+
+  // Re-establish the dubbing queue from disk: projects left `queued` re-enter in
+  // their original order, and any project the app died on mid-run is demoted to
+  // `paused` rather than silently resumed. Best-effort; never blocks boot.
+  void orchestrator.reconcileQueue();
 
   // Tracks background Ollama model pulls (lazy on-demand for the large, optional
   // local-LLM translation models). The UI polls /providers/ollama/pull-status.
@@ -479,12 +488,41 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           : current.providerDefaults !== undefined
             ? { providerDefaults: current.providerDefaults }
             : {}),
+        ...(body.concurrency !== undefined
+          ? { concurrency: body.concurrency }
+          : current.concurrency !== undefined
+            ? { concurrency: current.concurrency }
+            : {}),
       });
+      // A limit change (or un-pausing) may let queued dubs start immediately.
+      void orchestrator.pumpQueue();
       return { ok: true };
     } catch (err) {
       return sendError(reply, err);
     }
   });
+
+  // ---- Run queue (simultaneous-dub capacity) -------------------------------
+
+  app.get('/queue', async (_req, reply) => {
+    try {
+      return await orchestrator.queueState();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post(
+    '/projects/:id/run-next',
+    async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      try {
+        await orchestrator.runNext(req.params.id);
+        return { ok: true };
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
 
   // ---- Providers (per-phase pickers in wizard + settings) ------------------
 
@@ -893,8 +931,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   app.post('/projects/:id/run', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     try {
-      await orchestrator.runPipeline(req.params.id);
-      return reply.status(202).send({ started: true });
+      const result = await orchestrator.runPipeline(req.params.id);
+      return reply.status(202).send(result);
     } catch (err) {
       return sendError(reply, err);
     }

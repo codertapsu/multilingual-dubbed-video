@@ -35,6 +35,24 @@ set -euo pipefail
 # instead of stopping to prompt. Set it yourself if you use a password-protected key.
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
 
+# `tauri build` signs the updater artifact DURING the build and reads the key
+# from TAURI_SIGNING_PRIVATE_KEY. Without it the build stops with "A public key
+# has been found, but no private key". Default to the standard local key
+# (CONTENT, not a path — that form also works for the `tauri signer sign`
+# re-sign below, which passes it via --private-key). Set the var yourself to
+# override (e.g. a CI secret).
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+  _default_key="${HOME}/.tauri/videodubber.key"
+  if [ -f "$_default_key" ]; then
+    TAURI_SIGNING_PRIVATE_KEY="$(cat "$_default_key")"
+    export TAURI_SIGNING_PRIVATE_KEY
+  else
+    echo "::error::TAURI_SIGNING_PRIVATE_KEY is unset and $_default_key not found —" \
+         "the updater signature can't be produced. Point it at your updater key." >&2
+    exit 1
+  fi
+fi
+
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 
 if [ "${SIDECARS:-}" = "1" ]; then

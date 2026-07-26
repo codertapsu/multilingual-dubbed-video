@@ -35,6 +35,19 @@ import { execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 
+// Make failures LEGIBLE. The script is driven by top-level `await`s (fetch,
+// git-credential); an unhandled rejection or a thrown network error can
+// otherwise surface to the caller as a bare fatal exit code (on Windows the
+// PowerShell wrapper reported `-1073740791` / 0xC0000409, which hides the real
+// cause). Print the actual error and exit 1 so the wrapper's `$LASTEXITCODE`
+// check has something to show.
+for (const signal of ['unhandledRejection', 'uncaughtException']) {
+  process.on(signal, (err) => {
+    console.error(`error: ${err?.stack ?? err}`);
+    process.exit(1);
+  });
+}
+
 function arg(name, fallback = undefined) {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : fallback;

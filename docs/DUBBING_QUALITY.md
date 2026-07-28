@@ -68,10 +68,12 @@ Module: `packages/node-orchestrator/src/providers/translation/translationContext
   **Save & re-translate** — fix "gọi 'thầy', xưng 'em'" once, apply it to the
   whole video. API: `GET/PUT /projects/:id/translation-context`.
 - **Fully-offline context-aware tiers** (both need a llama.cpp runtime pack +
-  a `chat-gemma3-4b`/`-12b` model pack — Gemma 3 INSTRUCT, ungated ggml-org
-  GGUFs, sha256-pinned; TranslateGemma structurally can't follow the sheet):
-  - `llama-cpp-chat` — Gemma 3 chat translates scene batches with the sheet.
-  - `argos-llm-repair` — **Argos drafts instantly, Gemma 3 repairs** pronouns/
+  a `chat-gemma3-*` or `chat-gemma4-*` model pack — Gemma INSTRUCT, ungated
+  ggml-org GGUFs, sha256-pinned; the largest installed wins (Gemma 4 packs are
+  the Apache-2.0 pilot generation, see PROVIDERS.md); TranslateGemma
+  structurally can't follow the sheet):
+  - `llama-cpp-chat` — Gemma chat translates scene batches with the sheet.
+  - `argos-llm-repair` — **Argos drafts instantly, Gemma repairs** pronouns/
     terminology/cohesion with document context (the research-backed best
     pronoun quality per compute; drafts are kept wherever the repair reply is
     missing/malformed).
@@ -142,7 +144,7 @@ A real zh→vi run with VieNeu v3 exposed two issues:
 
 - **`refine` step** (between Translate and TTS, 9-step pipeline now): when
   `settings.refineProviderId` names a context-capable LLM (cloud
-  OpenAI/Anthropic/Gemini, or the local Gemma 3 chat model), the whole
+  OpenAI/Anthropic/Gemini, or the local Gemma chat model), the whole
   translated transcript is re-read with the character sheet + scene context
   and each line is polished — pronouns/terms of address, terminology,
   naturalness — returning lines unchanged when already good. Unset = the step

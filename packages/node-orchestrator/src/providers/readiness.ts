@@ -243,7 +243,9 @@ export async function describeProviderReadiness(
   }
 
   // The context-aware offline tiers share the llama.cpp runtime but load a
-  // Gemma 3 INSTRUCT model pack (chat-gemma3-*) instead of TranslateGemma.
+  // Gemma INSTRUCT model pack (chat-gemma3-* / chat-gemma4-*) instead of
+  // TranslateGemma. The suggested install stays the 4B — the cheapest way to
+  // get the tier working; larger packs (incl. Gemma 4) are opt-in upgrades.
   if (provider.id === 'llama-cpp-chat' || provider.id === 'argos-llm-repair') {
     const usable = deps.packUsable ?? ((id: string) => isPackUsable(deps.enginePackStore, id));
     const runtime = await pickInstalledPack(deps.enginePackStore, 'local-llm');
@@ -254,7 +256,7 @@ export async function describeProviderReadiness(
         ready: false,
         message: `${name} needs the llama.cpp runtime engine pack.`,
         remediation:
-          'Install the llama.cpp runtime (and a Gemma 3 instruct model) in Settings → Engines, or pick Argos for this phase.',
+          'Install the llama.cpp runtime (and a Gemma instruct model) in Settings → Engines, or pick Argos for this phase.',
         action: { kind: 'install-pack', ref: recommendedPackFor('local-llm')?.id ?? 'local-llm' },
       };
     }
@@ -264,7 +266,7 @@ export async function describeProviderReadiness(
         ...base,
         status: 'engine-pack-missing',
         ready: false,
-        message: `${name} has the runtime but no Gemma 3 instruct model installed.`,
+        message: `${name} has the runtime but no Gemma instruct model installed.`,
         remediation: 'Install "Gemma 3 4B instruct (context-aware translation model)" in Settings → Engines.',
         action: { kind: 'install-pack', ref: 'chat-gemma3-4b' },
       };

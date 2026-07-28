@@ -11,7 +11,7 @@ import {
   pickInstalledLocalLlmModel,
   pickInstalledPack,
   requireInstalledPack,
-  resolveLocalLlmChatModelPath,
+  resolveLocalLlmChatModel,
   resolveLocalLlmModelPath,
 } from './packSelection.js';
 import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engineRecommendation.js';
@@ -207,8 +207,8 @@ describe('TranslateGemma model packs', () => {
   });
 });
 
-describe('Gemma 3 instruct chat-model packs (context-aware translation)', () => {
-  it('exposes both chat packs on every platform, pinned + license-flagged', () => {
+describe('Gemma instruct chat-model packs (context-aware translation)', () => {
+  it('exposes the Gemma 3 chat packs on every platform, pinned + license-flagged', () => {
     for (const plat of [['darwin', 'arm64'], ['win32', 'x64'], ['linux', 'x64']] as const) {
       const ids = availablePacks(plat[0], plat[1]).map((p) => p.id);
       expect(ids).toContain('chat-gemma3-4b');
@@ -224,11 +224,34 @@ describe('Gemma 3 instruct chat-model packs (context-aware translation)', () => 
     expect(p.artifacts[0]!.destPath).toBe('model.gguf');
   });
 
+  it('exposes the Gemma 4 chat packs everywhere — pinned, and PERMISSIVE (Apache 2.0, unlike Gemma 3)', () => {
+    for (const plat of [['darwin', 'arm64'], ['win32', 'x64'], ['linux', 'x64']] as const) {
+      const ids = availablePacks(plat[0], plat[1]).map((p) => p.id);
+      expect(ids).toContain('chat-gemma4-12b');
+      expect(ids).toContain('chat-gemma4-26b-a4b');
+    }
+    for (const id of ['chat-gemma4-12b', 'chat-gemma4-26b-a4b']) {
+      const p = findPack(id)!;
+      expect(p.packKind).toBe('model');
+      expect(p.providerId).toBe('local-llm-chat-model');
+      // Gemma 4 dropped the Gemma Terms of Use — a plain Apache 2.0 release.
+      // 'commercial-restricted' here would wrongly scare users off the newer
+      // packs; 'permissive' on a Gemma 3 pack would be a license violation.
+      expect(p.licenseCategory).toBe('permissive');
+      expect(p.licenseNote).toContain('Apache');
+      expect(p.artifacts[0]!.url).toContain('ggml-org/gemma-4');
+      expect(p.artifacts[0]!.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(p.artifacts[0]!.destPath).toBe('model.gguf');
+    }
+    // The MoE runs 26B-class weights: keep it gated to workstation-tier RAM.
+    expect(findPack('chat-gemma4-26b-a4b')!.minRamMb).toBeGreaterThan(findPack('chat-gemma4-12b')!.minRamMb!);
+  });
+
   it('resolves the best installed chat GGUF, preferring the largest; never a TranslateGemma', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-g3-'));
     const store = new EnginePackStore(dir);
 
-    await expect(resolveLocalLlmChatModelPath(store)).rejects.toMatchObject({
+    await expect(resolveLocalLlmChatModel(store)).rejects.toMatchObject({
       appError: { code: 'ENGINE_PACK_MISSING' },
     });
 
@@ -251,6 +274,55 @@ describe('Gemma 3 instruct chat-model packs (context-aware translation)', () => 
     await writeFile(path.join(p12, 'model.gguf'), 'x');
     await store.add({ id: 'chat-gemma3-12b', path: p12, installedAt: '2026-01-01T00:00:00Z' });
     expect((await pickInstalledLocalLlmChatModel(store))?.packId).toBe('chat-gemma3-12b');
+
+    // Gemma 4 12B outranks Gemma 3 12B (newer generation at the same size)…
+    const g4 = store.packDir('chat-gemma4-12b');
+    await mkdir(g4, { recursive: true });
+    await writeFile(path.join(g4, 'model.gguf'), 'x');
+    await store.add({ id: 'chat-gemma4-12b', path: g4, installedAt: '2026-01-01T00:00:00Z' });
+    expect((await pickInstalledLocalLlmChatModel(store))?.packId).toBe('chat-gemma4-12b');
+
+    // …and the 26B-A4B MoE outranks everything.
+    const moe = store.packDir('chat-gemma4-26b-a4b');
+    await mkdir(moe, { recursive: true });
+    await writeFile(path.join(moe, 'model.gguf'), 'x');
+    await store.add({ id: 'chat-gemma4-26b-a4b', path: moe, installedAt: '2026-01-01T00:00:00Z' });
+    expect((await pickInstalledLocalLlmChatModel(store))?.packId).toBe('chat-gemma4-26b-a4b');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('reports the prompt grammar of the SELECTED pack (gemma4 turns differ from gemma)', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-g4fmt-'));
+    const store = new EnginePackStore(dir);
+
+    const p12 = store.packDir('chat-gemma3-12b');
+    await mkdir(p12, { recursive: true });
+    await writeFile(path.join(p12, 'model.gguf'), 'x');
+    await store.add({ id: 'chat-gemma3-12b', path: p12, installedAt: '2026-01-01T00:00:00Z' });
+    expect((await resolveLocalLlmChatModel(store)).promptFormat).toBe('gemma');
+
+    // Installing a Gemma 4 pack flips BOTH the selection and the grammar the
+    // provider must render — if these ever came from different packs, the
+    // engine would load one model and the prompts would target the other.
+    const g4 = store.packDir('chat-gemma4-12b');
+    await mkdir(g4, { recursive: true });
+    await writeFile(path.join(g4, 'model.gguf'), 'x');
+    await store.add({ id: 'chat-gemma4-12b', path: g4, installedAt: '2026-01-01T00:00:00Z' });
+    const selected = await resolveLocalLlmChatModel(store);
+    expect(selected.packId).toBe('chat-gemma4-12b');
+    expect(selected.promptFormat).toBe('gemma4');
+    expect(selected.modelPath).toContain('chat-gemma4-12b');
+
+    // The top-ranked MoE pack is Gemma 4 too — pin its grammar as well so a
+    // future pack-list edit can't silently pair it with the wrong wrapper.
+    const moe = store.packDir('chat-gemma4-26b-a4b');
+    await mkdir(moe, { recursive: true });
+    await writeFile(path.join(moe, 'model.gguf'), 'x');
+    await store.add({ id: 'chat-gemma4-26b-a4b', path: moe, installedAt: '2026-01-01T00:00:00Z' });
+    const top = await resolveLocalLlmChatModel(store);
+    expect(top.packId).toBe('chat-gemma4-26b-a4b');
+    expect(top.promptFormat).toBe('gemma4');
 
     await rm(dir, { recursive: true, force: true });
   });

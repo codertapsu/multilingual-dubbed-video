@@ -115,8 +115,26 @@ async function defaultPostJson<T>(url: string, headers: Record<string, string>, 
   return (await res.json()) as T;
 }
 
+/**
+ * Chat-turn grammar the resolved GGUF was trained on. Gemma 1–3 (and
+ * TranslateGemma) use `<start_of_turn>`/`<end_of_turn>`; Gemma 4 replaced them
+ * with `<|turn>`/`<turn|>` plus thought channels. Which one applies is a
+ * property of the MODEL PACK the engine loaded, so llama-cpp resolvers report
+ * it per call via {@link LocalLlmEndpoint} (default: 'gemma').
+ */
+export type LocalLlmPromptFormat = 'gemma' | 'gemma4';
+
+/** A resolved llama-server endpoint plus the prompt grammar its model expects. */
+export interface LocalLlmEndpoint {
+  baseUrl: string;
+  promptFormat?: LocalLlmPromptFormat;
+}
+
 /** Gemma chat-turn control tokens (the format TranslateGemma was trained on). */
 const GEMMA_END_TURN = '<end_of_turn>';
+
+/** Gemma 4 end-of-turn control token (also the generation stop). */
+const GEMMA4_END_TURN = '<turn|>';
 
 /**
  * Wrap an instruction in Gemma's chat turn so we can drive llama.cpp's
@@ -148,6 +166,41 @@ function stripTurnTokens(text: string): string {
   return text.replace(/<end_of_turn>/g, '').replace(/<start_of_turn>(?:model|user)?/g, '');
 }
 
+/**
+ * Wrap a system+user exchange in Gemma 4's chat grammar. Verified byte-identical
+ * to Google's canonical `chat_template.jinja` (google/gemma-4-12B-it, published
+ * 2026-07-09, fetched 2026-07-28) rendered with `enable_thinking=false` — its
+ * default, and what we want: the template then PRE-CLOSES the thought channel
+ * (`<|channel>thought\n<channel|>`) in the generation prompt, so the model
+ * answers directly instead of spending hundreds of tokens reasoning before
+ * every deterministic MT/refine batch. Content is trimmed exactly as the
+ * template's `| trim` does; with no system message the system turn is omitted
+ * entirely (the template only emits one for tools/thinking/system input). BOS
+ * is added by llama-server's tokenizer, same as {@link wrapGemmaTurn}.
+ */
+function wrapGemma4Turn(system: string | undefined, user: string): string {
+  const systemTurn = system ? `<|turn>system\n${system.trim()}${GEMMA4_END_TURN}\n` : '';
+  return `${systemTurn}<|turn>user\n${user.trim()}${GEMMA4_END_TURN}\n<|turn>model\n<|channel>thought\n<channel|>`;
+}
+
+/**
+ * Remove Gemma 4 channel/turn markers from a reply. Mirrors the canonical
+ * template's `strip_thinking` macro: everything from a `<|channel>` opener up
+ * to its closing `<channel|>` (or end of text, if the reply was cut off
+ * mid-thought) is dropped, keeping only final-answer content. Applied to every
+ * gemma4 completion — including JSON batch replies, which would otherwise
+ * reach the parser with a stray thought block if the model re-opens a channel
+ * despite the pre-closed one in the prompt.
+ */
+function stripGemma4Markers(text: string): string {
+  let result = '';
+  for (const part of text.split('<channel|>')) {
+    const opener = part.indexOf('<|channel>');
+    result += opener >= 0 ? part.slice(0, opener) : part;
+  }
+  return result.replace(/<turn\|>/g, '').replace(/<\|turn>(?:system|user|model)?/g, '');
+}
+
 export interface LocalLlmOptions {
   /** Provider id in the registry (e.g. "ollama", "llama-cpp"). */
   id?: string;
@@ -163,8 +216,13 @@ export interface LocalLlmOptions {
   mode?: LocalLlmMode;
   /** Model name to request (e.g. "translategemma:12b", "qwen3:14b"). */
   model: string;
-  /** Resolve the OpenAI-compatible base URL (may start an engine on demand). */
-  resolveBaseUrl: () => Promise<string>;
+  /**
+   * Resolve the OpenAI-compatible base URL (may start an engine on demand).
+   * llama-cpp resolvers whose model pack can vary (the chat packs span Gemma 3
+   * AND Gemma 4) return a {@link LocalLlmEndpoint} so the prompt grammar
+   * follows the pack that actually loaded; a bare string means 'gemma'.
+   */
+  resolveBaseUrl: () => Promise<string | LocalLlmEndpoint>;
   timeoutMs: number;
   /**
    * Max segments translated concurrently in raw-segment mode. Modern local
@@ -206,17 +264,29 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
   }
 
   /**
+   * Resolve the endpoint plus the prompt grammar its loaded model expects.
+   * Resolved per JOB (and per chatComplete call), not per construction — the
+   * chat resolver picks the best INSTALLED pack each time, so the format must
+   * ride along with the URL it came from.
+   */
+  private async resolveEndpoint(): Promise<{ baseUrl: string; format: LocalLlmPromptFormat }> {
+    const resolved = await this.opts.resolveBaseUrl();
+    const endpoint: LocalLlmEndpoint = typeof resolved === 'string' ? { baseUrl: resolved } : resolved;
+    return { baseUrl: endpoint.baseUrl.replace(/\/$/, ''), format: endpoint.promptFormat ?? 'gemma' };
+  }
+
+  /**
    * One-shot chat completion against the resolved local server. Public so the
    * context-repair provider can drive the same engine (analysis + repair
    * passes) without duplicating transport/turn-wrapping logic.
    */
   async chatComplete(system: string | undefined, user: string, signal?: AbortSignal): Promise<string> {
-    const baseUrl = (await this.opts.resolveBaseUrl()).replace(/\/$/, '');
-    return this.complete(system, user, baseUrl, signal);
+    const endpoint = await this.resolveEndpoint();
+    return this.complete(system, user, endpoint, signal);
   }
 
   async translateSegments(input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
-    const baseUrl = (await this.opts.resolveBaseUrl()).replace(/\/$/, '');
+    const endpoint = await this.resolveEndpoint();
     const source = normalizeLanguageCode(input.sourceLanguage);
     const target = normalizeLanguageCode(input.targetLanguage);
 
@@ -225,14 +295,14 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     // more), so a job-wide budget would abort exactly the runs that need the
     // extra calls. Cancellation still propagates instantly via `signal`.
     if (this.mode === 'raw-segment') {
-      return this.translateRaw(baseUrl, source, target, input, signal);
+      return this.translateRaw(endpoint, source, target, input, signal);
     }
-    return this.translateBatch(baseUrl, source, target, input, signal);
+    return this.translateBatch(endpoint, source, target, input, signal);
   }
 
   /** Chat-JSON-batch mode (general LLMs via Ollama). */
   private async translateBatch(
-    baseUrl: string,
+    endpoint: { baseUrl: string; format: LocalLlmPromptFormat },
     source: string,
     target: string,
     input: TranslationInput,
@@ -252,7 +322,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       generated = await this.complete(
         'You prepare structured notes for dubbing translators. Respond with strict JSON only.',
         buildAnalysisPrompt(source, target, buildAnalysisSample(input.segments)),
-        baseUrl,
+        endpoint,
         signal,
       )
         .then(parseAnalysisReply)
@@ -271,7 +341,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
         ? buildContextHeader({ analysis, previousPairs: rolling, sceneBreak: isSceneBreak(previousBatch, batch) })
         : undefined;
       const prompt = buildTranslationPrompt(source, target, batch, context || undefined);
-      const reply = await this.complete(system, prompt, baseUrl, signal);
+      const reply = await this.complete(system, prompt, endpoint, signal);
 
       // Small local models routinely violate the batch contract (truncated /
       // malformed JSON, skipped lines, source echoes) — recover with one
@@ -279,12 +349,12 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       // with a plain-text reply: no JSON left to get wrong).
       const byId = await recoverBatch(batch, parseTranslationReply(reply), {
         sendBatch: (segs, insist) =>
-          this.complete(system, buildTranslationPrompt(source, target, segs, context || undefined, { insist }), baseUrl, signal),
+          this.complete(system, buildTranslationPrompt(source, target, segs, context || undefined, { insist }), endpoint, signal),
         // Per-line raw prompts return one bare line — a small reply budget
         // keeps the (up to 20) fallback calls fast.
         sendSingle: async (seg) =>
           stripTurnTokens(
-            await this.complete(undefined, buildRawTranslationPrompt(source, target, seg), baseUrl, signal, 512),
+            await this.complete(undefined, buildRawTranslationPrompt(source, target, seg), endpoint, signal, 512),
           ),
       }, detectSourceEcho, signal);
       for (const seg of batch) {
@@ -298,7 +368,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
 
   /** Raw-per-segment mode (translation-specialized models like TranslateGemma). */
   private async translateRaw(
-    baseUrl: string,
+    endpoint: { baseUrl: string; format: LocalLlmPromptFormat },
     source: string,
     target: string,
     input: TranslationInput,
@@ -309,7 +379,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     // translated strictly one segment at a time. Result order is preserved.
     const segments = await mapWithConcurrency(input.segments, this.concurrency, async (seg) => {
       const prompt = buildRawTranslationPrompt(source, target, seg);
-      const reply = await this.complete(undefined, prompt, baseUrl, signal);
+      const reply = await this.complete(undefined, prompt, endpoint, signal);
       const text = sanitizeTranslatedLine(stripTurnTokens(reply));
       return { id: seg.id, translatedText: text || seg.sourceText } satisfies TranslationResultSegment;
     });
@@ -322,13 +392,15 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
    *   - `ollama`    → POST `<baseUrl>/chat/completions` (Ollama applies the
    *     model's own baked-in template, so TranslateGemma's chat format works).
    *   - `llama-cpp` → POST `<baseUrl>/completion` with the prompt pre-wrapped in
-   *     Gemma turn tokens, bypassing llama-server's broken TranslateGemma chat
-   *     template (see {@link wrapGemmaTurn}).
+   *     the loaded model's turn grammar ({@link wrapGemmaTurn} /
+   *     {@link wrapGemma4Turn}), bypassing llama-server's Jinja templating
+   *     (`--no-jinja`; its TranslateGemma parse is broken and Gemma 4's
+   *     canonical template postdates our pinned server build).
    */
   private async complete(
     system: string | undefined,
     user: string,
-    baseUrl: string,
+    endpoint: { baseUrl: string; format: LocalLlmPromptFormat },
     signal: AbortSignal | undefined,
     nPredictOverride?: number,
   ): Promise<string> {
@@ -336,8 +408,12 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     // is many requests), but no single request may hang the pipeline.
     const timeout = AbortSignal.timeout(this.opts.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    const { baseUrl, format } = endpoint;
     if (this.opts.backend === 'llama-cpp') {
-      const prompt = wrapGemmaTurn(system ? `${system}\n\n${user}` : user);
+      const prompt =
+        format === 'gemma4'
+          ? wrapGemma4Turn(system, user)
+          : wrapGemmaTurn(system ? `${system}\n\n${user}` : user);
       // Reply budget: a raw-segment reply is one line (512 is ample), but a
       // chat-JSON batch reply carries ~20 translated lines plus JSON scaffolding
       // (and the analysis pass a whole character sheet) — give those headroom.
@@ -345,10 +421,19 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       const data = await this.postJson<{ content?: string }>(
         `${baseUrl}/completion`,
         {},
-        { prompt, temperature: 0, n_predict: nPredict, cache_prompt: true, stop: [GEMMA_END_TURN] },
+        {
+          prompt,
+          temperature: 0,
+          n_predict: nPredict,
+          cache_prompt: true,
+          stop: [format === 'gemma4' ? GEMMA4_END_TURN : GEMMA_END_TURN],
+        },
         combined,
       );
-      return data.content ?? '';
+      const content = data.content ?? '';
+      // gemma4 replies are scrubbed HERE (not only in the raw path) so JSON
+      // batch parsing never sees a re-opened thought channel.
+      return format === 'gemma4' ? stripGemma4Markers(content) : content;
     }
     const messages = system
       ? [

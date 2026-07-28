@@ -147,20 +147,49 @@ export async function resolveLocalLlmModelPath(store: EnginePackStore): Promise<
 }
 
 // --------------------------------------------------------------------------
-// Gemma 3 INSTRUCT chat-model packs (context-aware translation / repair)
+// Gemma INSTRUCT chat-model packs (context-aware translation / repair)
 // --------------------------------------------------------------------------
 
 /** Chat-model packs, MOST CAPABLE first — we prefer the largest installed. */
-const LOCAL_LLM_CHAT_MODEL_PACKS = ['chat-gemma3-12b', 'chat-gemma3-4b'] as const;
+const LOCAL_LLM_CHAT_MODEL_PACKS = [
+  'chat-gemma4-26b-a4b',
+  'chat-gemma4-12b',
+  'chat-gemma3-12b',
+  'chat-gemma3-4b',
+] as const;
 
 /**
- * The best INSTALLED Gemma 3 instruct model pack whose GGUF is actually on
+ * The chat-turn format each pack's model was TRAINED on. Gemma 4 replaced the
+ * `<start_of_turn>`/`<end_of_turn>` turns of Gemma 1–3 with `<|turn>`/`<turn|>`
+ * plus thought channels, so the local-LLM provider (which renders turns itself
+ * because we run llama-server with `--no-jinja`) must know which grammar the
+ * selected GGUF expects. Wrong format = degraded output, not an error, so this
+ * lives HERE, keyed by the same ids as the preference list — a new pack id
+ * without a format entry fails the typecheck instead of silently defaulting.
+ */
+export type ChatModelPromptFormat = 'gemma' | 'gemma4';
+const CHAT_MODEL_PROMPT_FORMATS: Record<(typeof LOCAL_LLM_CHAT_MODEL_PACKS)[number], ChatModelPromptFormat> = {
+  'chat-gemma4-26b-a4b': 'gemma4',
+  'chat-gemma4-12b': 'gemma4',
+  'chat-gemma3-12b': 'gemma',
+  'chat-gemma3-4b': 'gemma',
+};
+
+/** The selected chat model: which pack, where its GGUF is, how to prompt it. */
+export interface LocalLlmChatModelSelection {
+  packId: string;
+  modelPath: string;
+  promptFormat: ChatModelPromptFormat;
+}
+
+/**
+ * The best INSTALLED Gemma instruct model pack whose GGUF is actually on
  * disk, or undefined if none — same semantics as
  * {@link pickInstalledLocalLlmModel}, for the `local-llm-chat-model` packs.
  */
 export async function pickInstalledLocalLlmChatModel(
   store: EnginePackStore,
-): Promise<{ packId: string; modelPath: string } | undefined> {
+): Promise<LocalLlmChatModelSelection | undefined> {
   for (const packId of LOCAL_LLM_CHAT_MODEL_PACKS) {
     const rec = await store.get(packId);
     if (!rec) continue;
@@ -169,23 +198,23 @@ export async function pickInstalledLocalLlmChatModel(
       .stat(modelPath)
       .then((s) => s.isFile())
       .catch(() => false);
-    if (ok) return { packId, modelPath };
+    if (ok) return { packId, modelPath, promptFormat: CHAT_MODEL_PROMPT_FORMATS[packId] };
   }
   return undefined;
 }
 
-/** Resolve the best installed chat GGUF path, or throw ENGINE_PACK_MISSING. */
-export async function resolveLocalLlmChatModelPath(store: EnginePackStore): Promise<string> {
+/** Resolve the best installed chat model, or throw ENGINE_PACK_MISSING. */
+export async function resolveLocalLlmChatModel(store: EnginePackStore): Promise<LocalLlmChatModelSelection> {
   const found = await pickInstalledLocalLlmChatModel(store);
   if (!found) {
     throw new AppErrorException(
       'ENGINE_PACK_MISSING',
-      'No Gemma 3 instruct model is installed for context-aware local translation.',
+      'No Gemma instruct model is installed for context-aware local translation.',
       {
         remediation:
-          'Install "Gemma 3 4B instruct (context-aware translation model)" in Settings → Engines, or pick another translation provider for this project.',
+          'Install a Gemma instruct model pack (e.g. "Gemma 3 4B instruct") in Settings → Engines, or pick another translation provider for this project.',
       },
     );
   }
-  return found.modelPath;
+  return found;
 }

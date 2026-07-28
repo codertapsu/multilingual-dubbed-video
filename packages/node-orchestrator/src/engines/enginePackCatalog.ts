@@ -85,6 +85,33 @@ const GEMMA_IT_LICENSE_NOTE =
   'Output translations are yours (Gemma Terms §3.3).';
 
 /**
+ * Gemma 4 INSTRUCT GGUFs — the newest-generation `local-llm-chat-model` packs,
+ * from ggml-org's official ungated mirrors (LFS names/sizes/sha256 read
+ * 2026-07-28). Two things changed vs Gemma 3:
+ *   - LICENSE: Gemma 4 is plain Apache 2.0 (ai.google.dev/gemma/apache_2) —
+ *     the first Gemma with NO Terms-of-Use / Prohibited-Use pass-through, so
+ *     these packs are `permissive`, unlike every Gemma 3 pack above.
+ *   - TEMPLATE: the chat format moved from `<start_of_turn>` to
+ *     `<|turn>`/`<turn|>` with thought channels; packSelection.ts maps each
+ *     chat pack to its prompt format and the local-LLM provider renders it.
+ * ggml-org publishes Q4_0/Q8_0 only (no Q4_K_M); Q4_0 is the intended 4-bit
+ * target for this generation. Our pinned llama.cpp b9592 already runs the
+ * arch (merged upstream 2026-04-02). Known upstream issue: PR #21587 (open)
+ * fixes a tokenizer crash on ~8K-token prompts with NO newlines — our prompts
+ * are newline-rich so it doesn't bite, but bump LLAMA_CPP once it lands.
+ */
+const G4_12B_URL = 'https://huggingface.co/ggml-org/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12B-it-Q4_0.gguf';
+const G4_26B_A4B_URL =
+  'https://huggingface.co/ggml-org/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q4_0.gguf';
+
+/** The license note carried by the Gemma 4 instruct model packs (Apache 2.0). */
+const GEMMA4_IT_LICENSE_NOTE =
+  'Gemma 4 weights are released under the Apache License 2.0 ' +
+  '(ai.google.dev/gemma/apache_2) — the first Gemma generation with a standard ' +
+  'permissive license and no Gemma Terms of Use pass-through. Downloaded from ' +
+  'ggml-org’s official GGUF mirror of google/gemma-4-*-it.';
+
+/**
  * The full curated set. `availablePacks()` filters by platform/arch. Every pack
  * here has a reachable artifact (binary URL or uv-env), so its Install works.
  *
@@ -384,6 +411,61 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     ],
     licenseCategory: 'commercial-restricted',
     licenseNote: GEMMA_IT_LICENSE_NOTE,
+  },
+
+  // --- Gemma 4 instruct GGUF packs (newest-generation, Apache 2.0) ----------
+  // Same providerId as the Gemma 3 packs above; packSelection prefers these
+  // when installed (largest first). PILOT status: strong published multilingual
+  // gains over Gemma 3 (MMMLU 12B 83.4 / 26B-A4B 86.3 vs Gemma 3 27B 70.7) but
+  // no Vietnamese-specific benchmark yet — A/B a real project before relying
+  // on it (docs/PROVIDERS.md).
+  {
+    id: 'chat-gemma4-12b',
+    kind: 'translation',
+    packKind: 'model',
+    displayName: 'Gemma 4 12B instruct (context-aware translation model)',
+    description:
+      'Google’s newest-generation Gemma 4 12B instruct (Q4_0 GGUF, ~7.2 GB) — a large multilingual quality jump over Gemma 3 for the CONTEXT-AWARE offline translation modes (character sheet, glossary, Vietnamese xưng hô/pronoun plan). Apache 2.0 licensed. Best on a GPU or Apple Silicon (16 GB+). Needs a llama.cpp runtime pack.',
+    providerId: 'local-llm-chat-model',
+    version: 'Q4_0',
+    accel: 'cpu',
+    tier: 'performance',
+    minRamMb: 16384,
+    approxSizeMb: 7220,
+    artifacts: [
+      {
+        url: G4_12B_URL,
+        sha256: '3712b9bd32cae83a22f67ee7a4466d8d7a4f21646ac8a07d19bf9418e8767a70',
+        approxSizeMb: 7220,
+        destPath: 'model.gguf',
+      },
+    ],
+    licenseCategory: 'permissive',
+    licenseNote: GEMMA4_IT_LICENSE_NOTE,
+  },
+  {
+    id: 'chat-gemma4-26b-a4b',
+    kind: 'translation',
+    packKind: 'model',
+    displayName: 'Gemma 4 26B-A4B instruct (MoE, context-aware translation model)',
+    description:
+      'Gemma 4’s mixture-of-experts flagship for local use (Q4_0 GGUF, ~14.6 GB): 26B-class translation quality with only ~4B parameters active per token, so it generates at near-12B speed. The highest-quality context-aware offline option. Apache 2.0 licensed. Needs 24 GB+ RAM and a llama.cpp runtime pack.',
+    providerId: 'local-llm-chat-model',
+    version: 'Q4_0',
+    accel: 'cpu',
+    tier: 'workstation',
+    minRamMb: 24576,
+    approxSizeMb: 14618,
+    artifacts: [
+      {
+        url: G4_26B_A4B_URL,
+        sha256: 'd208665ab1cd3a69f7a9a4bc59430e8448c8093d9b06334f566ac59d6d504a03',
+        approxSizeMb: 14618,
+        destPath: 'model.gguf',
+      },
+    ],
+    licenseCategory: 'permissive',
+    licenseNote: GEMMA4_IT_LICENSE_NOTE,
   },
 
   // --- neural TTS: VieNeu v2 (uv-managed Python env) -----------------------

@@ -50,8 +50,8 @@ per project in the new-project wizard — and changed again at any time.
 | Translation | `argos` | Argos Translate (offline neural MT), worker `:5102` | local | — |
 | Translation | `ollama` | Local LLM via Ollama (default `translategemma:4b`) | local | Ollama daemon |
 | Translation | `llama-cpp` | Local LLM via bundled `llama-server` (TranslateGemma) | local | runtime + model pack |
-| Translation | `llama-cpp-chat` | **Context-aware** local LLM (Gemma 3 instruct): translates scene batches following the project character sheet (cast, glossary, Vietnamese xưng hô plan) | local | runtime + chat model pack |
-| Translation | `argos-llm-repair` | **Argos draft + Gemma repair** (offline, context-aware): Argos drafts instantly, the local Gemma 3 fixes pronouns/terms/cohesion with document context | local | runtime + chat model pack |
+| Translation | `llama-cpp-chat` | **Context-aware** local LLM (Gemma instruct, 3 or 4 — the largest installed chat pack wins): translates scene batches following the project character sheet (cast, glossary, Vietnamese xưng hô plan) | local | runtime + chat model pack |
+| Translation | `argos-llm-repair` | **Argos draft + Gemma repair** (offline, context-aware): Argos drafts instantly, the local Gemma instruct model fixes pronouns/terms/cohesion with document context | local | runtime + chat model pack |
 | Refine (optional step) | any provider with `supportsRefinement` (the cloud LLMs, `llama-cpp-chat`) | **Review & refine**: a second pass after Translate re-reads the whole transcript with the character sheet and polishes every line for consistency/naturalness (`settings.refineProviderId`; off by default) | per provider | per provider |
 | Translation | `openai-translate` | OpenAI chat model (default `gpt-4o-mini`) | cloud | OpenAI key |
 | Translation | `anthropic-translate` | Anthropic Claude (default `claude-haiku-4-5`) | cloud | Anthropic key |
@@ -82,6 +82,7 @@ for the per-hardware-tier matrix behind the recommendations.
 | `llama-cpp-metal` / `-cuda` / `-vulkan` | Local LLM translation **runtime** (`llama-cpp`) | native binary |
 | `translategemma-4b` / `-12b` / `-27b` | **TranslateGemma** GGUF weights the runtime loads (4B from 8 GB; 12B/27B with a GPU/Apple-Silicon) | model download |
 | `chat-gemma3-4b` / `-12b` | **Gemma 3 instruct** GGUF weights for the context-aware tiers (`llama-cpp-chat`, `argos-llm-repair`) — TranslateGemma cannot follow instructions, so the pronoun/glossary sheet needs these | model download |
+| `chat-gemma4-12b` / `-26b-a4b` | **Gemma 4 instruct** GGUF weights (newest generation, **Apache 2.0** — no Gemma ToU) for the same context-aware tiers; preferred over Gemma 3 when installed. The 26B-A4B is a mixture-of-experts: 26B-class quality, ~4B active params (24 GB+ RAM). **Pilot**: strong published multilingual gains, no Vietnamese benchmark yet — A/B against Gemma 3 on a real project before standardizing (see below) | model download |
 | `tts-neural` | Neural multilingual + Vietnamese voices (`neural-tts`) | uv-managed Python env |
 | `tts-omnivoice` | **OmniVoice** multilingual neural voices, 600+ languages (`omnivoice`) — Apple Silicon / PyTorch MPS. **On hold**: gated out of releases pending output-quality work; see [OMNIVOICE.md](OMNIVOICE.md) | uv-managed Python env |
 | `separation-audio` | Vocal/M&E separation for the “replace voices” mix | uv-managed Python env |
@@ -114,7 +115,30 @@ How packs run:
 > before install; if you redistribute VideoDubber **with** the weights bundled,
 > you must also ship the Gemma Terms + the NOTICE string and reflect the Use Policy
 > in your EULA (see [`../NOTICE.md`](../NOTICE.md)). Argos and LibreTranslate carry
-> no such obligation, which is why they stay the defaults.
+> no such obligation, which is why they stay the defaults. The same terms apply to
+> the **Gemma 3** chat packs. **Gemma 4 is different**: released under plain
+> **Apache 2.0** ([ai.google.dev/gemma/apache_2](https://ai.google.dev/gemma/apache_2))
+> with no ToU pass-through — the `chat-gemma4-*` packs are `permissive`.
+
+### Gemma 4 pilot (chat packs)
+
+The `chat-gemma4-*` packs are the newest Gemma generation and are preferred by
+the chat-model selection when installed. Two things to know:
+
+- **Prompt grammar changed.** Gemma 4 dropped `<start_of_turn>`/`<end_of_turn>`
+  for `<|turn>`/`<turn|>` turns with *thought channels*. We run llama-server
+  with `--no-jinja` and render turns ourselves, so `packSelection.ts` maps each
+  chat pack to its grammar and the provider renders the canonical
+  `enable_thinking=false` form (thought channel pre-closed — no reasoning
+  tokens before deterministic MT batches). Adding a new chat pack means adding
+  its grammar to `CHAT_MODEL_PROMPT_FORMATS` (the typecheck enforces this).
+- **A/B before standardizing.** Gemma 4 has large published multilingual gains
+  (MMMLU 12B 83.4 / 26B-A4B 86.3 vs Gemma 3 27B 70.7) but no
+  Vietnamese-specific benchmark. To compare on a real project: run Translation
+  (or the Refine step) with only `chat-gemma3-12b` installed, export the
+  subtitles, install `chat-gemma4-12b` (it now outranks), re-run the step, and
+  diff pronouns/xưng hô consistency and terminology. Uninstalling the Gemma 4
+  pack reverts the selection.
 
 The orchestrator's **EngineManager** starts a pack's server on demand, waits for
 health, and — because the dubbing pipeline runs one heavy phase at a time —

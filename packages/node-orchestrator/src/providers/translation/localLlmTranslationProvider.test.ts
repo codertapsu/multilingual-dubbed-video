@@ -114,6 +114,78 @@ describe('LocalLlmTranslationProvider transport', () => {
   });
 });
 
+describe('LocalLlmTranslationProvider — Gemma 4 prompt grammar', () => {
+  /** A chat provider whose resolver reports the gemma4 grammar (a Gemma 4 pack loaded). */
+  function gemma4Provider(post: LocalPostJson): LocalLlmTranslationProvider {
+    return new LocalLlmTranslationProvider({
+      id: 'llama-cpp-chat',
+      backend: 'llama-cpp',
+      mode: 'chat-json-batch',
+      model: 'gemma-it',
+      resolveBaseUrl: async () => ({ baseUrl: 'http://127.0.0.1:8080', promptFormat: 'gemma4' as const }),
+      timeoutMs: 1000,
+      postJson: post,
+    });
+  }
+
+  it('renders the canonical no-thinking turn structure, byte-exact, and stops on <turn|>', async () => {
+    const { post, calls } = spy({ content: 'ok' });
+    await gemma4Provider(post).chatComplete('Be terse.', 'Say ok.');
+    // Byte-identical to google/gemma-4-12B-it's chat_template.jinja rendered
+    // with enable_thinking=false (its default): system turn, user turn, then a
+    // generation prompt whose thought channel is PRE-CLOSED so the model
+    // answers directly instead of reasoning before every deterministic batch.
+    // (BOS is added by llama-server's tokenizer, not the prompt string.)
+    expect(calls[0]!.body.prompt).toBe(
+      '<|turn>system\nBe terse.<turn|>\n<|turn>user\nSay ok.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>',
+    );
+    expect(calls[0]!.body.stop).toEqual(['<turn|>']);
+    expect(calls[0]!.body.prompt).not.toContain('<start_of_turn>');
+  });
+
+  it('omits the system turn entirely when there is no system message (template parity)', async () => {
+    const { post, calls } = spy({ content: 'ok' });
+    await gemma4Provider(post).chatComplete(undefined, 'Say ok.');
+    expect(calls[0]!.body.prompt).toBe(
+      '<|turn>user\nSay ok.<turn|>\n<|turn>model\n<|channel>thought\n<channel|>',
+    );
+  });
+
+  it('strips a re-opened thought channel so batch JSON parsing sees only the answer', async () => {
+    // Despite the pre-closed channel, a model may still open one. The scrub
+    // must run in the shared transport (not just the raw path): otherwise the
+    // JSON parser reads the thought text and the whole batch goes to recovery.
+    const { post } = spy({
+      content:
+        '<|channel>thought\nThe user wants a greeting translated.\n<channel|>{"segments":[{"id":"seg_0","text":"Xin chào."}]}<turn|>',
+    });
+    const out = await gemma4Provider(post).translateSegments(oneSeg);
+    expect(out.segments[0]!.translatedText).toBe('Xin chào.');
+  });
+
+  it('drops an UNCLOSED thought channel (reply truncated mid-reasoning) instead of leaking it', async () => {
+    const { post } = spy({ content: 'Xin chào.<|channel>thought\nNow I should also conside' });
+    const reply = await gemma4Provider(post).chatComplete(undefined, 'x');
+    expect(reply).toBe('Xin chào.');
+  });
+
+  it('a bare-string resolver still means the classic Gemma grammar (TranslateGemma unaffected)', async () => {
+    const { post, calls } = spy({ content: 'Xin chào.' });
+    const provider = new LocalLlmTranslationProvider({
+      id: 'llama-cpp',
+      backend: 'llama-cpp',
+      model: 'translategemma',
+      resolveBaseUrl: async () => 'http://127.0.0.1:8080',
+      timeoutMs: 1000,
+      postJson: post,
+    });
+    await provider.translateSegments(oneSeg);
+    expect(calls[0]!.body.prompt).toContain('<start_of_turn>user');
+    expect(calls[0]!.body.stop).toEqual(['<end_of_turn>']);
+    expect(calls[0]!.body.prompt).not.toContain('<|turn>');
+  });
+});
+
 describe('buildRawTranslationPrompt (TranslateGemma shape)', () => {
   it('names the languages, asks for translation only, and normalizes CRLF', () => {
     const prompt = buildRawTranslationPrompt('en', 'vi', { id: 's', sourceText: 'Line one.\r\nLine two.' });

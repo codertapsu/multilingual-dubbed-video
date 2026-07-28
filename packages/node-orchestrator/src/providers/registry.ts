@@ -39,7 +39,7 @@ import type { EngineManager } from '../engines/engineManager.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
 import {
   requireInstalledPack,
-  resolveLocalLlmChatModelPath,
+  resolveLocalLlmChatModel,
   resolveLocalLlmModelPath,
 } from '../engines/packSelection.js';
 import { ContextRepairTranslationProvider } from './translation/contextRepairProvider.js';
@@ -246,22 +246,26 @@ export function createDefaultRegistry(
         timeoutMs: timeout,
       }),
     );
-    // Context-aware offline tiers (same llama.cpp runtime, a Gemma 3 INSTRUCT
-    // model pack): a chat provider that translates scene batches with the
-    // project character sheet (cast/glossary/xưng hô plan), and the
-    // Argos-draft + repair provider (fast draft, LLM fixes pronouns/terms).
-    // TranslateGemma can't power these — its trained template takes exactly one
-    // source text (no instructions/glossaries), hence the separate model packs.
+    // Context-aware offline tiers (same llama.cpp runtime, a Gemma INSTRUCT
+    // model pack — Gemma 3 or the newer Gemma 4): a chat provider that
+    // translates scene batches with the project character sheet
+    // (cast/glossary/xưng hô plan), and the Argos-draft + repair provider
+    // (fast draft, LLM fixes pronouns/terms). TranslateGemma can't power
+    // these — its trained template takes exactly one source text (no
+    // instructions/glossaries), hence the separate model packs. The resolved
+    // endpoint carries the pack's prompt format because Gemma 4 uses a
+    // different chat grammar than Gemma 3 (see packSelection.ts).
     const chatLlm = new LocalLlmTranslationProvider({
       id: 'llama-cpp-chat',
-      displayName: 'Gemma 3 chat (built-in, context-aware)',
+      displayName: 'Gemma chat (built-in, context-aware)',
       backend: 'llama-cpp',
       mode: 'chat-json-batch',
-      model: 'gemma-3-it',
+      model: 'gemma-it',
       resolveBaseUrl: async () => {
         const packId = await requireInstalledPack(store, 'local-llm');
-        const model = await resolveLocalLlmChatModelPath(store);
-        return engines.ensureRunning(packId, { exclusive: true, model });
+        const chatModel = await resolveLocalLlmChatModel(store);
+        const baseUrl = await engines.ensureRunning(packId, { exclusive: true, model: chatModel.modelPath });
+        return { baseUrl, promptFormat: chatModel.promptFormat };
       },
       timeoutMs: timeout,
     });

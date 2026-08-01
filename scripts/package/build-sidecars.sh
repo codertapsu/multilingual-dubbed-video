@@ -184,6 +184,26 @@ if [[ "${ASSERT_BUNDLE:-1}" == "1" ]]; then
   fi
   [[ "${SKIP_UV:-0}" == "1" ]]     || need "uv binary"        "${BIN_DIR}/vd-uv-${TRIPLE}${EXE_SUFFIX}"
   [[ "${SKIP_PYTHON:-0}" == "1" ]] || need "bundled CPython"  "${PY_RES}/cpython-"*
+
+  # ffmpeg/ffprobe must be PORTABLE. A dynamically-linked build (e.g. staged from
+  # Homebrew because FFMPEG_PATH was exported for dev) signs, notarizes and
+  # installs fine, then fails to launch on every machine but this one — taking
+  # all dubbing with it. v0.3.0 shipped exactly that, so the gate lives here too,
+  # not only in fetch-ffmpeg.sh: this is the last point before `tauri build`.
+  if command -v otool >/dev/null 2>&1; then
+    for _b in ffmpeg ffprobe; do
+      _p="${BIN_DIR}/${_b}-${TRIPLE}${EXE_SUFFIX}"
+      [[ -f "${_p}" ]] || continue
+      _bad="$(otool -L "${_p}" 2>/dev/null | tail -n +2 | awk '{print $1}' \
+        | grep -v -E '^(/usr/lib/|/System/Library/)' || true)"
+      if [[ -n "${_bad}" ]]; then
+        echo "::error:: bundled ${_b} links non-system libraries (not portable):"
+        printf '  %s\n' ${_bad}
+        echo "::error:: re-stage it with: unset FFMPEG_PATH FFPROBE_PATH FFMPEG_BIN FFPROBE_BIN; bash scripts/package/fetch-ffmpeg.sh"
+        miss=1
+      fi
+    done
+  fi
   if [[ "${miss}" == "1" ]]; then
     echo "::error:: release bundle is MISSING required built-in dependencies (see above)." >&2
     echo "          Re-run with network, or set ASSERT_BUNDLE=0 to ship a degraded build on purpose." >&2

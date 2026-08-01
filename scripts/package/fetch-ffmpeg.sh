@@ -28,6 +28,11 @@
 #   TARGET_TRIPLE     Override the auto-detected Rust host triple.
 #   FFMPEG_URL        Direct URL to an archive containing ffmpeg(+ffprobe).
 #   FFMPEG_FROM_BREW  "1" => copy from `brew --prefix ffmpeg` (macOS only).
+#                     NOT portable — rejected for release builds by the
+#                     portability check unless the brew build is static.
+#   FFMPEG_BIN /      Stage these exact binaries instead of downloading
+#   FFPROBE_BIN       (build-time opt-in; must be a STATIC build). The runtime
+#                     FFMPEG_PATH/FFPROBE_PATH are deliberately NOT honored here.
 #   FFMPEG_VERSION    Version tag used in default URLs (best-effort).
 #
 set -euo pipefail
@@ -63,6 +68,53 @@ FFMPEG_VERSION="${FFMPEG_VERSION:-7.1}"
 # Stage helper: copy a found ffmpeg/ffprobe pair to the triple-suffixed names
 # after verifying the `subtitles` (libass) filter exists.
 # ---------------------------------------------------------------------------
+##
+# Refuse a binary that depends on libraries the USER'S machine won't have.
+#
+# WHY THIS IS A HARD ERROR: a dynamically-linked ffmpeg runs perfectly on the
+# build machine and then fails to launch on every other Mac — and because
+# ffmpeg drives probe/extract/render, EVERY dub fails, not some edge case. This
+# actually shipped: v0.3.0's macOS bundle linked
+# /opt/homebrew/Cellar/ffmpeg-full/8.1.2_1/lib/*.dylib. The Windows script has
+# always required a static single-file build; this is the missing bash half.
+#
+# Allowed: OS-guaranteed locations only (/usr/lib, /System/Library on macOS;
+# the core glibc set on Linux). Anything under /opt, /usr/local, $HOME, or a
+# relative @rpath/@loader_path is a build-machine artifact.
+assert_portable() {
+  local bin="$1" label="$2"
+  case "$(uname -s)" in
+    Darwin)
+      command -v otool >/dev/null 2>&1 || return 0
+      local bad
+      bad="$(otool -L "${bin}" 2>/dev/null | tail -n +2 | awk '{print $1}' \
+        | grep -v -E '^(/usr/lib/|/System/Library/)' || true)"
+      if [[ -n "${bad}" ]]; then
+        echo "ERROR: ${label} is NOT portable — it links non-system libraries:" >&2
+        printf '       %s\n' ${bad} >&2
+        echo "       Those paths exist only on this build machine, so the app would fail" >&2
+        echo "       on every other Mac (all dubbing needs ffmpeg)." >&2
+        echo "       Fix: unset FFMPEG_PATH/FFPROBE_PATH (and FFMPEG_BIN/FFPROBE_BIN) so this" >&2
+        echo "       script downloads a STATIC build, or point them at a static ffmpeg." >&2
+        exit 1
+      fi
+      ;;
+    Linux)
+      command -v ldd >/dev/null 2>&1 || return 0
+      local bad_l
+      bad_l="$(ldd "${bin}" 2>/dev/null | awk '{print $1}' \
+        | grep -v -E '^(linux-vdso|libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|ld-linux|libgcc_s\.so|libstdc\+\+\.so)' \
+        | grep -E '^lib' || true)"
+      if [[ -n "${bad_l}" ]]; then
+        echo "ERROR: ${label} is NOT portable — it needs non-core libraries:" >&2
+        printf '       %s\n' ${bad_l} >&2
+        echo "       Use a STATIC build (unset FFMPEG_PATH/FFPROBE_BIN to auto-download one)." >&2
+        exit 1
+      fi
+      ;;
+  esac
+}
+
 verify_and_stage() {
   local ffmpeg_src="$1" ffprobe_src="$2"
   if [[ ! -f "${ffmpeg_src}" || ! -f "${ffprobe_src}" ]]; then
@@ -72,6 +124,14 @@ verify_and_stage() {
     exit 1
   fi
   chmod +x "${ffmpeg_src}" "${ffprobe_src}" || true
+
+  # Portability BEFORE anything else: staging a machine-local build is the one
+  # failure that silently survives the whole release pipeline (it signs,
+  # notarizes, and installs — it just can't run).
+  echo "==> Verifying portability (no build-machine libraries)..."
+  assert_portable "${ffmpeg_src}" "ffmpeg (${ffmpeg_src})"
+  assert_portable "${ffprobe_src}" "ffprobe (${ffprobe_src})"
+  echo "    portable OK."
 
   echo "==> Verifying libass (subtitles filter)..."
   # Capture first (avoids set -o pipefail / BSD-grep \b portability surprises).
@@ -208,10 +268,20 @@ fetch_windows() {
 #   portable (they depend on system dylibs). For distributable installers, CI
 #   should use a STATIC libass build via the download branches above.
 # ---------------------------------------------------------------------------
-LOCAL_FFMPEG="${FFMPEG_BIN:-${FFMPEG_PATH:-}}"
-LOCAL_FFPROBE="${FFPROBE_BIN:-${FFPROBE_PATH:-}}"
+# Local-copy mode is opt-in via FFMPEG_BIN/FFPROBE_BIN ONLY.
+#
+# It used to also accept FFMPEG_PATH/FFPROBE_PATH — but those are the
+# ORCHESTRATOR'S RUNTIME vars (node-orchestrator/src/config.ts), and this script
+# sources `.env` (above), where a developer naturally sets them so dev runs find
+# ffmpeg. The result: a release build silently staged the build machine's
+# Homebrew binaries. That is exactly how v0.3.0 shipped a macOS bundle linked to
+# /opt/homebrew/Cellar/ffmpeg-full — unrunnable on any other Mac. A runtime
+# setting must never steer a build, so the two namespaces are now separate
+# (assert_portable() is the backstop, not the only defense).
+LOCAL_FFMPEG="${FFMPEG_BIN:-}"
+LOCAL_FFPROBE="${FFPROBE_BIN:-}"
 if [[ -n "${LOCAL_FFMPEG}" && -n "${LOCAL_FFPROBE}" ]]; then
-  echo "==> Staging ffmpeg/ffprobe from local paths (not portable — local build only)."
+  echo "==> Staging ffmpeg/ffprobe from local paths (must be a STATIC build)."
   verify_and_stage "${LOCAL_FFMPEG}" "${LOCAL_FFPROBE}"
   echo ""
   echo "==> ffmpeg sidecars staged:"

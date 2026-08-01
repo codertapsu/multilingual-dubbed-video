@@ -89,13 +89,23 @@ pnpm install --frozen-lockfile
 pwsh scripts\package\release-windows.ps1 -Sidecars -Upload
 ```
 
-This builds the sidecars (auto-downloads a **static** libass ffmpeg — do **not**
-set `FFMPEG_PATH` to a shared build), runs `tauri build` (the NSIS `-setup.exe`
+This builds the sidecars (always auto-downloads a **static** libass ffmpeg;
+`FFMPEG_PATH`/`FFPROBE_PATH` are ignored by the build since 0.4.0 — only
+`FFMPEG_BIN`/`FFPROBE_BIN` can override it, and a non-portable binary is
+rejected), runs `tauri build` (the NSIS `-setup.exe`
 with an updater `.sig`), uploads it to the same `vX.Y.Z` draft, and merges the
 `windows-x86_64` entry into `latest.json`. Windows ships the **NSIS `-setup.exe`
 only** (no MSI — `bundle.targets` excludes it; the `.exe` is a complete installer
 and is what auto-update uses). The installer is unsigned → first launch shows
 SmartScreen: **More info → Run anyway**.
+
+> **macOS notarization takes TWO submissions.** The first notarizes the DMG
+> built from the freshly signed app. The ticket that submission issues for the
+> nested `.app` is then stapled to the bundle, and the DMG is rebuilt around the
+> stapled app so first launch works offline — but those rebuilt bytes have a new
+> cdhash Apple has never seen, so the image is submitted a second time (fast,
+> its contents are already notarized) and stapled. `macos-sign-notarize.sh`
+> handles this automatically; expect two `Accepted` lines, not one.
 
 ### 4. Verify the draft
 

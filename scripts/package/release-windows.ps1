@@ -21,8 +21,9 @@
     2. pnpm app:build — Tauri build. TAURI_SIGNING_PRIVATE_KEY must be set so the
        NSIS -setup.exe gets an updater signature (.sig). The key password is
        empty -> TAURI_SIGNING_PRIVATE_KEY_PASSWORD defaults to ''. bundle.targets
-       is ["app","dmg","nsis"], so Windows produces the NSIS -setup.exe (no MSI;
-       the .exe is a complete installer and is what auto-update uses).
+       is ["app","dmg","nsis","msi"], so Windows produces the NSIS -setup.exe AND
+       the .msi (WiX). Both ship: the updater looks up {os}-{arch}-{installer}
+       before {os}-{arch}, so MSI-installed users need their own manifest key.
     3. Verifies the required artifacts: -setup.exe + its .sig. (An MSI is uploaded
        too if you re-enable the msi target and it builds; otherwise skipped.)
     4. (-Upload) uploads them to the vX.Y.Z DRAFT (release-upload.ps1) and merges

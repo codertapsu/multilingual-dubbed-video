@@ -30,6 +30,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
+# NOTE: the v0.1.0 default is a footgun when run BY HAND - always set
+# $env:RELEASE_TAG. The release wrappers always set it; a bare run would
+# otherwise upload into the v0.1.0 release.
 $Tag  = if ($env:RELEASE_TAG) { $env:RELEASE_TAG } else { 'v0.1.0' }
 $Repo = if ($env:GH_REPO)     { $env:GH_REPO }     else { 'codertapsu/multilingual-dubbed-video' }
 

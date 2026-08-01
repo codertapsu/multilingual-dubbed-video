@@ -20,6 +20,9 @@
 #   bash scripts/package/release-upload.sh upload <file> [file...] # ensure + upload (replacing)
 set -euo pipefail
 
+# NOTE: this default is a footgun when the script is run BY HAND — always export
+# RELEASE_TAG. The release wrappers always set it; a bare run would otherwise
+# upload into the v0.1.0 release.
 TAG="${RELEASE_TAG:-v0.1.0}"
 REPO="${GH_REPO:-codertapsu/multilingual-dubbed-video}"
 RELEASE_NAME="VideoDubber ${TAG}"

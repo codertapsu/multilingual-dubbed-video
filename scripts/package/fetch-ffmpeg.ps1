@@ -30,8 +30,9 @@ $RepoRoot  = Resolve-Path (Join-Path $ScriptDir "..\..")
 $BinDir    = Join-Path $RepoRoot "apps\desktop\src-tauri\binaries"
 $Work      = Join-Path $BinDir ".ffmpeg"
 
-# Load .env (when run standalone) so the local-copy mode below can find a
-# libass-enabled ffmpeg via FFMPEG_PATH/FFPROBE_PATH instead of downloading.
+# Load .env (when run standalone) for machine-specific settings. NOTE: the
+# runtime FFMPEG_PATH/FFPROBE_PATH it usually carries do NOT select a build
+# source here — only the explicit FFMPEG_BIN/FFPROBE_BIN do.
 function Import-DotEnv($path) {
   if (-not (Test-Path $path)) { return }
   Get-Content $path | ForEach-Object {
@@ -61,10 +62,16 @@ New-Item -ItemType Directory -Force -Path $BinDir, $Work | Out-Null
 Get-ChildItem $Work -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 
 # Local-copy mode: stage an existing libass-enabled ffmpeg/ffprobe instead of
-# downloading (handy for local builds). Set FFMPEG_BIN+FFPROBE_BIN, or
-# FFMPEG_PATH+FFPROBE_PATH (e.g. in .env). Verified for the subtitles filter below.
-$LocalFfmpeg  = if ($env:FFMPEG_BIN)  { $env:FFMPEG_BIN }  else { $env:FFMPEG_PATH }
-$LocalFfprobe = if ($env:FFPROBE_BIN) { $env:FFPROBE_BIN } else { $env:FFPROBE_PATH }
+# downloading (handy for local builds). Opt in with FFMPEG_BIN+FFPROBE_BIN.
+#
+# FFMPEG_PATH/FFPROBE_PATH are deliberately NOT honored: they are the
+# ORCHESTRATOR'S RUNTIME vars, normally set in .env (which this script imports)
+# so dev runs find ffmpeg — on this machine that is a SHARED D:\ffmpeg build,
+# which cannot be bundled. Letting a runtime setting steer the build is exactly
+# how the macOS release shipped Homebrew-linked binaries; here it merely stopped
+# the build, but the same separation applies.
+$LocalFfmpeg  = $env:FFMPEG_BIN
+$LocalFfprobe = $env:FFPROBE_BIN
 if ($LocalFfmpeg -and $LocalFfprobe -and (Test-Path $LocalFfmpeg) -and (Test-Path $LocalFfprobe)) {
   Write-Host "==> Staging ffmpeg/ffprobe from local paths (not portable - local build only)."
   $filters = & $LocalFfmpeg -hide_banner -filters 2>$null
@@ -81,7 +88,7 @@ if ($LocalFfmpeg -and $LocalFfprobe -and (Test-Path $LocalFfmpeg) -and (Test-Pat
   if ($ffDlls) {
     throw ("local ffmpeg at $LocalFfmpeg is a SHARED build (found $($ffDlls[0].Name) beside it) - " +
       "the bundled sidecar ships the exe ALONE, so a shared build breaks at app runtime. " +
-      "Use a STATIC single-file build (e.g. BtbN win64-gpl), or unset FFMPEG_PATH/FFPROBE_PATH " +
+      "Use a STATIC single-file build (e.g. BtbN win64-gpl), or unset FFMPEG_BIN/FFPROBE_BIN " +
       "to let this script auto-download one.")
   }
   Copy-Item -Force $LocalFfmpeg  (Join-Path $BinDir "ffmpeg-$Triple.exe")

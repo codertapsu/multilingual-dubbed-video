@@ -127,6 +127,21 @@ if ($Upload) {
   Write-Host '==> merge the windows-x86_64 entry into latest.json (preserves the mac entry)'
   node (Join-Path $ScriptDir 'merge-latest-json.mjs') --tag $Tag --platform windows-x86_64 --artifact $setup.FullName --fix-tag
   if ($LASTEXITCODE -ne 0) { throw "merge-latest-json.mjs failed ($LASTEXITCODE)" }
+
+  # MSI-installed users need their OWN manifest key. The updater looks up
+  # `{os}-{arch}-{installer}` FIRST and only then falls back to `{os}-{arch}`
+  # (tauri-plugin-updater updater.rs: targets = [windows-x86_64-msi, windows-x86_64]),
+  # so without this entry an MSI install is handed the NSIS setup.exe and has to
+  # go through an elevated msiexec uninstall mid-update — or ends up with two
+  # parallel installs. v0.1.0+v0.2.0 have 26 MSI downloads, so this is a real
+  # population, not a hypothetical one.
+  if ($msi -and (Test-Path "$($msi.FullName).sig")) {
+    Write-Host '==> merge the windows-x86_64-msi entry into latest.json'
+    node (Join-Path $ScriptDir 'merge-latest-json.mjs') --tag $Tag --platform windows-x86_64-msi --artifact $msi.FullName --fix-tag
+    if ($LASTEXITCODE -ne 0) { throw "merge-latest-json.mjs (msi) failed ($LASTEXITCODE)" }
+  } else {
+    Write-Warning 'no signed .msi - MSI-installed users will fall back to the NSIS setup.exe (elevated msiexec uninstall mid-update).'
+  }
 }
 
 Write-Host ''

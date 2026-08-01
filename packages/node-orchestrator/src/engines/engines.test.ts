@@ -11,6 +11,7 @@ import {
   pickInstalledLocalLlmModel,
   pickInstalledPack,
   requireInstalledPack,
+  resolveActivePackSelections,
   resolveLocalLlmChatModel,
   resolveLocalLlmModelPath,
 } from './packSelection.js';
@@ -18,6 +19,10 @@ import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './
 import { ENGINE_LAUNCH_SPECS, EngineManager, findFile, waitFor } from './engineManager.js';
 import { _resetUvCache, resolveUvPath, uvAvailable } from './uv.js';
 import { recommendSetup } from '../system/systemProfile.js';
+
+/** A machine big enough that every pack fits — ranking tests must not depend
+ * on the developer's RAM (they did, and failed below 24 GB). */
+const BIG_MACHINE = (): SystemProfile => profile({ totalRamMb: 64 * 1024, freeRamMb: 32 * 1024 });
 
 function profile(o: Partial<SystemProfile> = {}): SystemProfile {
   return {
@@ -157,20 +162,20 @@ describe('TranslateGemma model packs', () => {
     await mkdir(p4, { recursive: true });
     await writeFile(path.join(p4, 'model.gguf'), 'x');
     await store.add({ id: 'translategemma-4b', path: p4, installedAt: '2026-01-01T00:00:00Z' });
-    expect((await pickInstalledLocalLlmModel(store))?.packId).toBe('translategemma-4b');
+    expect((await pickInstalledLocalLlmModel(store, BIG_MACHINE()))?.packId).toBe('translategemma-4b');
 
     // Also install 12B → the larger one wins.
     const p12 = store.packDir('translategemma-12b');
     await mkdir(p12, { recursive: true });
     await writeFile(path.join(p12, 'model.gguf'), 'x');
     await store.add({ id: 'translategemma-12b', path: p12, installedAt: '2026-01-01T00:00:00Z' });
-    expect((await pickInstalledLocalLlmModel(store))?.packId).toBe('translategemma-12b');
+    expect((await pickInstalledLocalLlmModel(store, BIG_MACHINE()))?.packId).toBe('translategemma-12b');
 
     // A recorded pack whose gguf never downloaded is skipped (not green-lit).
     const p27 = store.packDir('translategemma-27b');
     await mkdir(p27, { recursive: true });
     await store.add({ id: 'translategemma-27b', path: p27, installedAt: '2026-01-01T00:00:00Z' });
-    expect((await pickInstalledLocalLlmModel(store))?.packId).toBe('translategemma-12b'); // 27b skipped (no gguf)
+    expect((await pickInstalledLocalLlmModel(store, BIG_MACHINE()))?.packId).toBe('translategemma-12b'); // 27b skipped (no gguf)
 
     await rm(dir, { recursive: true, force: true });
   });
@@ -261,33 +266,138 @@ describe('Gemma instruct chat-model packs (context-aware translation)', () => {
     await mkdir(tg, { recursive: true });
     await writeFile(path.join(tg, 'model.gguf'), 'x');
     await store.add({ id: 'translategemma-4b', path: tg, installedAt: '2026-01-01T00:00:00Z' });
-    expect(await pickInstalledLocalLlmChatModel(store)).toBeUndefined();
+    expect(await pickInstalledLocalLlmChatModel(store, BIG_MACHINE())).toBeUndefined();
 
     const p4 = store.packDir('chat-gemma3-4b');
     await mkdir(p4, { recursive: true });
     await writeFile(path.join(p4, 'model.gguf'), 'x');
     await store.add({ id: 'chat-gemma3-4b', path: p4, installedAt: '2026-01-01T00:00:00Z' });
-    expect((await pickInstalledLocalLlmChatModel(store))?.packId).toBe('chat-gemma3-4b');
+    expect((await pickInstalledLocalLlmChatModel(store, BIG_MACHINE()))?.packId).toBe('chat-gemma3-4b');
 
     const p12 = store.packDir('chat-gemma3-12b');
     await mkdir(p12, { recursive: true });
     await writeFile(path.join(p12, 'model.gguf'), 'x');
     await store.add({ id: 'chat-gemma3-12b', path: p12, installedAt: '2026-01-01T00:00:00Z' });
-    expect((await pickInstalledLocalLlmChatModel(store))?.packId).toBe('chat-gemma3-12b');
+    expect((await pickInstalledLocalLlmChatModel(store, BIG_MACHINE()))?.packId).toBe('chat-gemma3-12b');
 
     // Gemma 4 12B outranks Gemma 3 12B (newer generation at the same size)…
     const g4 = store.packDir('chat-gemma4-12b');
     await mkdir(g4, { recursive: true });
     await writeFile(path.join(g4, 'model.gguf'), 'x');
     await store.add({ id: 'chat-gemma4-12b', path: g4, installedAt: '2026-01-01T00:00:00Z' });
-    expect((await pickInstalledLocalLlmChatModel(store))?.packId).toBe('chat-gemma4-12b');
+    expect((await pickInstalledLocalLlmChatModel(store, BIG_MACHINE()))?.packId).toBe('chat-gemma4-12b');
 
     // …and the 26B-A4B MoE outranks everything.
     const moe = store.packDir('chat-gemma4-26b-a4b');
     await mkdir(moe, { recursive: true });
     await writeFile(path.join(moe, 'model.gguf'), 'x');
     await store.add({ id: 'chat-gemma4-26b-a4b', path: moe, installedAt: '2026-01-01T00:00:00Z' });
-    expect((await pickInstalledLocalLlmChatModel(store))?.packId).toBe('chat-gemma4-26b-a4b');
+    expect((await pickInstalledLocalLlmChatModel(store, BIG_MACHINE()))?.packId).toBe('chat-gemma4-26b-a4b');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('picks the best model the MACHINE can run, not blindly the biggest installed', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-fit-'));
+    const store = new EnginePackStore(dir);
+    for (const id of ['chat-gemma3-4b', 'chat-gemma3-12b', 'chat-gemma4-12b', 'chat-gemma4-26b-a4b']) {
+      const p = store.packDir(id);
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, 'model.gguf'), 'x');
+      await store.add({ id, path: p, installedAt: '2026-01-01T00:00:00Z' });
+    }
+    const machine = (ramMb: number): SystemProfile => profile({ totalRamMb: ramMb, freeRamMb: Math.round(ramMb / 2) });
+
+    // 32 GB: everything fits, so the most capable (the MoE) wins outright.
+    const big = (await pickInstalledLocalLlmChatModel(store, machine(32768)))!;
+    expect(big.packId).toBe('chat-gemma4-26b-a4b');
+    expect(big.skipped).toBeUndefined();
+
+    // 16 GB: the 26B (needs 24 GB) would thrash — fall to the best that fits,
+    // and say WHY, so Settings can explain the idle install.
+    const mid = (await pickInstalledLocalLlmChatModel(store, machine(16384)))!;
+    expect(mid.packId).toBe('chat-gemma4-12b');
+    expect(mid.promptFormat).toBe('gemma4');
+    expect(mid.skipped?.packId).toBe('chat-gemma4-26b-a4b');
+    expect(mid.skipped?.reason).toMatch(/24 GB/);
+
+    // 8 GB: only the 4B fits.
+    expect((await pickInstalledLocalLlmChatModel(store, machine(8192)))!.packId).toBe('chat-gemma3-4b');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('honours a machine that reports slightly under its nominal RAM (Windows/Linux under-report)', async () => {
+    // os.totalmem() excludes firmware/kernel reservations on Windows
+    // (ullTotalPhys) and Linux (MemTotal), so a real 32 GB box reports ~31.8 GB
+    // while every catalog gate is an exact GiB power of two. A strict compare
+    // made EVERY tier boundary unreachable there: the user's deliberately
+    // installed 27B would be silently replaced by the 12B, explained by the
+    // self-contradicting "needs about 32 GB; this computer has 32 GB".
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-slack-'));
+    const store = new EnginePackStore(dir);
+    for (const id of ['translategemma-12b', 'translategemma-27b']) {
+      const p = store.packDir(id);
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, 'model.gguf'), 'x');
+      await store.add({ id, path: p, installedAt: '2026-01-01T00:00:00Z' });
+    }
+    const win32gb = profile({ platform: 'win32', arch: 'x64', totalRamMb: 32614, gpus: [], appleSilicon: false });
+    const picked = (await pickInstalledLocalLlmModel(store, win32gb))!;
+    expect(picked.packId).toBe('translategemma-27b');
+    expect(picked.skipped).toBeUndefined();
+
+    // The tolerance is narrow, not a blank cheque: a genuine 16 GB machine
+    // still must not be handed the 32 GB-gated model.
+    const win16gb = profile({ platform: 'win32', arch: 'x64', totalRamMb: 16244, gpus: [], appleSilicon: false });
+    expect((await pickInstalledLocalLlmModel(store, win16gb))!.packId).toBe('translategemma-12b');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('falls back to the least demanding install when NOTHING fits (run something, not nothing)', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-nofit-'));
+    const store = new EnginePackStore(dir);
+    for (const id of ['chat-gemma3-12b', 'chat-gemma4-26b-a4b']) {
+      const p = store.packDir(id);
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, 'model.gguf'), 'x');
+      await store.add({ id, path: p, installedAt: '2026-01-01T00:00:00Z' });
+    }
+    const tiny = profile({ platform: 'win32', arch: 'x64', cpuCores: 4, totalRamMb: 8192, freeRamMb: 3000, gpus: [], appleSilicon: false });
+    const picked = (await pickInstalledLocalLlmChatModel(store, tiny))!;
+    expect(picked.packId).toBe('chat-gemma3-12b'); // 16 GB ask beats the 24 GB one
+    expect(picked.skipped?.packId).toBe('chat-gemma4-26b-a4b');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('reports the ACTIVE pack per function only when packs actually compete', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-active-'));
+    const store = new EnginePackStore(dir);
+    const install = async (id: string) => {
+      const p = store.packDir(id);
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, 'model.gguf'), 'x');
+      await store.add({ id, path: p, installedAt: '2026-01-01T00:00:00Z' });
+    };
+
+    // One chat model installed → nothing to disambiguate, so nothing reported.
+    await install('chat-gemma3-4b');
+    expect(await resolveActivePackSelections(store, BIG_MACHINE())).toEqual([]);
+
+    // A second one → report which wins, so Settings can label the idle install.
+    await install('chat-gemma4-12b');
+    const selections = await resolveActivePackSelections(store, BIG_MACHINE());
+    expect(selections).toHaveLength(1);
+    expect(selections[0]!.providerId).toBe('local-llm-chat-model');
+    expect(selections[0]!.packId).toBe('chat-gemma4-12b');
+
+    // A DIFFERENT family (TranslateGemma) is tracked separately, not merged.
+    await install('translategemma-4b');
+    await install('translategemma-12b');
+    const families = (await resolveActivePackSelections(store, BIG_MACHINE())).map((s) => s.providerId).sort();
+    expect(families).toEqual(['local-llm-chat-model', 'local-llm-model']);
 
     await rm(dir, { recursive: true, force: true });
   });
@@ -300,7 +410,7 @@ describe('Gemma instruct chat-model packs (context-aware translation)', () => {
     await mkdir(p12, { recursive: true });
     await writeFile(path.join(p12, 'model.gguf'), 'x');
     await store.add({ id: 'chat-gemma3-12b', path: p12, installedAt: '2026-01-01T00:00:00Z' });
-    expect((await resolveLocalLlmChatModel(store)).promptFormat).toBe('gemma');
+    expect((await resolveLocalLlmChatModel(store, BIG_MACHINE())).promptFormat).toBe('gemma');
 
     // Installing a Gemma 4 pack flips BOTH the selection and the grammar the
     // provider must render — if these ever came from different packs, the
@@ -309,7 +419,7 @@ describe('Gemma instruct chat-model packs (context-aware translation)', () => {
     await mkdir(g4, { recursive: true });
     await writeFile(path.join(g4, 'model.gguf'), 'x');
     await store.add({ id: 'chat-gemma4-12b', path: g4, installedAt: '2026-01-01T00:00:00Z' });
-    const selected = await resolveLocalLlmChatModel(store);
+    const selected = await resolveLocalLlmChatModel(store, BIG_MACHINE());
     expect(selected.packId).toBe('chat-gemma4-12b');
     expect(selected.promptFormat).toBe('gemma4');
     expect(selected.modelPath).toContain('chat-gemma4-12b');
@@ -320,7 +430,7 @@ describe('Gemma instruct chat-model packs (context-aware translation)', () => {
     await mkdir(moe, { recursive: true });
     await writeFile(path.join(moe, 'model.gguf'), 'x');
     await store.add({ id: 'chat-gemma4-26b-a4b', path: moe, installedAt: '2026-01-01T00:00:00Z' });
-    const top = await resolveLocalLlmChatModel(store);
+    const top = await resolveLocalLlmChatModel(store, BIG_MACHINE());
     expect(top.packId).toBe('chat-gemma4-26b-a4b');
     expect(top.promptFormat).toBe('gemma4');
 

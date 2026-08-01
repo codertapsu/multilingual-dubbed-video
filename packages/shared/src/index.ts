@@ -52,6 +52,7 @@ export type {
   InstalledEnginePack,
   EnginePrerequisites,
   EnginesResponse,
+  ActivePackSelection,
   EnginePackInstallRequest,
   EnginePackUninstallRequest,
   EngineInstallEvent,

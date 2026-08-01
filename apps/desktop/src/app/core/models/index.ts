@@ -28,6 +28,7 @@ export type {
   // Engine packs
   EnginePackInfo,
   InstalledEnginePack,
+  ActivePackSelection,
   EnginePrerequisites,
   EnginesResponse,
   EngineInstallEvent,

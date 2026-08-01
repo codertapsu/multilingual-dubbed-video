@@ -31,6 +31,39 @@ export function packFitsMachine(pack: EnginePackInfo, profile: SystemProfile): b
   return true;
 }
 
+/**
+ * Tolerance applied when a fit decision CHOOSES a pack rather than badging one.
+ *
+ * `os.totalmem()` reports physical RAM minus firmware/kernel reservations on
+ * Windows (`ullTotalPhys`) and Linux (`MemTotal`), so a genuine 32 GB machine
+ * reports ~31.8 GB. Every catalog gate is an exact GiB power of two (8192 /
+ * 16384 / 24576 / 32768), so a strict compare makes EVERY tier boundary
+ * unreachable on those platforms — a 32 GB workstation would be told its 27B
+ * model "needs about 32 GB; this computer has 32 GB".
+ *
+ * This is the same trap commit f2f765e fixed for pack VISIBILITY ("RAM is a
+ * soft badge"); selection must not reintroduce it one layer down. 5% covers the
+ * reservation on every machine we've measured while still rejecting a genuinely
+ * smaller tier (16 GB vs a 24 GB gate fails by a wide margin).
+ */
+const SELECTION_RAM_SLACK = 0.95;
+
+/**
+ * Fit check for CHOOSING between installed packs of the same function.
+ * Like {@link packFitsMachine} but tolerant of the under-reporting above —
+ * picking a smaller model than the user installed is a real cost, so the
+ * benefit of the doubt goes to the more capable pack.
+ */
+export function packFitsForSelection(pack: EnginePackInfo, profile: SystemProfile): boolean {
+  if (pack.minRamMb && profile.totalRamMb < pack.minRamMb * SELECTION_RAM_SLACK) return false;
+  if (pack.minVramMb) {
+    const vram = Math.max(0, ...profile.gpus.map((g) => g.vramMb ?? 0));
+    const effectiveVram = profile.appleSilicon ? profile.totalRamMb : vram;
+    if (effectiveVram < pack.minVramMb * SELECTION_RAM_SLACK) return false;
+  }
+  return true;
+}
+
 /** GPU marketing names that indicate an NVIDIA (CUDA-capable) GPU. */
 const NVIDIA_RE = /nvidia|geforce|quadro|tesla|\brtx\b|\bgtx\b/i;
 

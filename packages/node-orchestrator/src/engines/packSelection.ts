@@ -8,8 +8,16 @@
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { AppErrorException, type EngineAccel, type EnginePackInfo } from '@videodubber/shared';
+import {
+  AppErrorException,
+  type ActivePackSelection,
+  type EngineAccel,
+  type EnginePackInfo,
+  type SystemProfile,
+} from '@videodubber/shared';
 import { availablePacks, findPack } from './enginePackCatalog.js';
+import { packFitsForSelection } from './engineRecommendation.js';
+import { getSystemProfile } from '../system/systemProfile.js';
 import type { EnginePackStore } from './enginePackStore.js';
 
 /**
@@ -103,35 +111,114 @@ export function recommendedPackFor(
 }
 
 // --------------------------------------------------------------------------
-// TranslateGemma model packs (consumed by the llama.cpp `local-llm` runtime)
+// Model packs of the same FUNCTION: pick the best one the machine can run
 // --------------------------------------------------------------------------
 
 /** Fixed GGUF filename every `local-llm-model` pack installs (see the catalog). */
 const LOCAL_LLM_MODEL_FILE = 'model.gguf';
 
-/** Model packs, MOST CAPABLE first — we prefer the largest the user installed. */
+/** A chosen model pack, plus why a more capable installed one was passed over. */
+export interface ModelPackSelection {
+  packId: string;
+  modelPath: string;
+  /**
+   * Set when a MORE capable pack is installed but was not chosen (it needs more
+   * memory than this machine has). Surfaced in Settings so the user understands
+   * which model is actually running — and can free the disk space.
+   */
+  skipped?: { packId: string; reason: string };
+}
+
+/** Is `modelPath` a real file (a half-finished download has no GGUF)? */
+function isFile(p: string): Promise<boolean> {
+  return fsp
+    .stat(p)
+    .then((s) => s.isFile())
+    .catch(() => false);
+}
+
+/** Machine profile, or undefined when detection fails (selection must not break). */
+async function machineProfile(): Promise<SystemProfile | undefined> {
+  try {
+    return await getSystemProfile();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Choose among installed packs of the SAME function.
+ *
+ * `ranked` is most-capable-first, so the naive rule is "take the first
+ * installed". That is wrong when the user installs a model bigger than the
+ * machine: a 26B on a 16 GB laptop would be picked and then thrash. So we take
+ * the most capable pack that FITS (catalog `minRamMb`/`minVramMb` vs the real
+ * machine), and only if none fits fall back to the LEAST demanding installed
+ * one — running something beats running nothing.
+ *
+ * Hardware detection failing is not a reason to change the answer: we then use
+ * the plain ranked order, exactly as before.
+ */
+async function pickRankedModelPack(
+  store: EnginePackStore,
+  ranked: readonly string[],
+  profileOverride?: SystemProfile,
+): Promise<ModelPackSelection | undefined> {
+  const candidates: { packId: string; modelPath: string }[] = [];
+  for (const packId of ranked) {
+    const rec = await store.get(packId);
+    if (!rec) continue;
+    const modelPath = path.join(rec.path, LOCAL_LLM_MODEL_FILE);
+    if (await isFile(modelPath)) candidates.push({ packId, modelPath });
+  }
+  if (candidates.length === 0) return undefined;
+  const best = candidates[0]!;
+
+  const profile = profileOverride ?? (await machineProfile());
+  if (!profile) return best;
+
+  const fits = (packId: string): boolean => {
+    const pack = findPack(packId);
+    // Tolerant fit: os.totalmem() under-reports on Windows/Linux, and every
+    // catalog gate is an exact GiB power of two, so a strict compare would make
+    // every tier boundary unreachable there (see packFitsForSelection).
+    return !pack || packFitsForSelection(pack, profile);
+  };
+  const chosen =
+    candidates.find((c) => fits(c.packId)) ??
+    // Nothing fits — use the least memory-hungry installed pack.
+    [...candidates].sort((a, b) => (findPack(a.packId)?.minRamMb ?? 0) - (findPack(b.packId)?.minRamMb ?? 0))[0]!;
+
+  if (chosen.packId === best.packId) return chosen;
+  const bestPack = findPack(best.packId);
+  const needGb = bestPack?.minRamMb ? Math.round(bestPack.minRamMb / 1024) : undefined;
+  const haveGb = Math.floor(profile.totalRamMb / 1024);
+  return {
+    ...chosen,
+    skipped: {
+      packId: best.packId,
+      reason: needGb
+        ? `${bestPack?.displayName ?? best.packId} needs about ${needGb} GB of memory; this computer has ${haveGb} GB.`
+        : `${bestPack?.displayName ?? best.packId} needs more memory than this computer has (${haveGb} GB).`,
+    },
+  };
+}
+
+/** Model packs, MOST CAPABLE first — we prefer the largest the machine can run. */
 const LOCAL_LLM_MODEL_PACKS = ['translategemma-27b', 'translategemma-12b', 'translategemma-4b'] as const;
 
 /**
  * The best INSTALLED TranslateGemma model pack whose GGUF is actually on disk,
- * or undefined if none. "Best" = largest (more quality) the user chose to
- * install; a half-finished download (no model.gguf) is skipped so readiness and
- * the run gate don't green-light a model that can't load.
+ * or undefined if none. "Best" = the most capable one this machine can actually
+ * run (see {@link pickRankedModelPack}); a half-finished download (no
+ * model.gguf) is skipped so readiness and the run gate don't green-light a model
+ * that can't load.
  */
 export async function pickInstalledLocalLlmModel(
   store: EnginePackStore,
-): Promise<{ packId: string; modelPath: string } | undefined> {
-  for (const packId of LOCAL_LLM_MODEL_PACKS) {
-    const rec = await store.get(packId);
-    if (!rec) continue;
-    const modelPath = path.join(rec.path, LOCAL_LLM_MODEL_FILE);
-    const ok = await fsp
-      .stat(modelPath)
-      .then((s) => s.isFile())
-      .catch(() => false);
-    if (ok) return { packId, modelPath };
-  }
-  return undefined;
+  profile?: SystemProfile,
+): Promise<ModelPackSelection | undefined> {
+  return pickRankedModelPack(store, LOCAL_LLM_MODEL_PACKS, profile);
 }
 
 /** Resolve the GGUF path of the best installed model pack, or throw ENGINE_PACK_MISSING. */
@@ -176,9 +263,7 @@ const CHAT_MODEL_PROMPT_FORMATS: Record<(typeof LOCAL_LLM_CHAT_MODEL_PACKS)[numb
 };
 
 /** The selected chat model: which pack, where its GGUF is, how to prompt it. */
-export interface LocalLlmChatModelSelection {
-  packId: string;
-  modelPath: string;
+export interface LocalLlmChatModelSelection extends ModelPackSelection {
   promptFormat: ChatModelPromptFormat;
 }
 
@@ -186,26 +271,73 @@ export interface LocalLlmChatModelSelection {
  * The best INSTALLED Gemma instruct model pack whose GGUF is actually on
  * disk, or undefined if none — same semantics as
  * {@link pickInstalledLocalLlmModel}, for the `local-llm-chat-model` packs.
+ * With several installed (say Gemma 3 4B + 12B and Gemma 4 12B + 26B), the most
+ * capable one this machine can run wins, and its prompt grammar comes with it.
  */
 export async function pickInstalledLocalLlmChatModel(
   store: EnginePackStore,
+  profile?: SystemProfile,
 ): Promise<LocalLlmChatModelSelection | undefined> {
-  for (const packId of LOCAL_LLM_CHAT_MODEL_PACKS) {
-    const rec = await store.get(packId);
-    if (!rec) continue;
-    const modelPath = path.join(rec.path, LOCAL_LLM_MODEL_FILE);
-    const ok = await fsp
-      .stat(modelPath)
-      .then((s) => s.isFile())
-      .catch(() => false);
-    if (ok) return { packId, modelPath, promptFormat: CHAT_MODEL_PROMPT_FORMATS[packId] };
+  const picked = await pickRankedModelPack(store, LOCAL_LLM_CHAT_MODEL_PACKS, profile);
+  if (!picked) return undefined;
+  const promptFormat = CHAT_MODEL_PROMPT_FORMATS[picked.packId as (typeof LOCAL_LLM_CHAT_MODEL_PACKS)[number]];
+  return { ...picked, promptFormat };
+}
+
+/**
+ * Which installed pack the app actually USES for each function, for every
+ * family where more than one is installed.
+ *
+ * Installing Gemma 3 4B, Gemma 3 12B, Gemma 4 12B and Gemma 4 26B leaves three
+ * of them idle — without this the Settings screen shows four identical
+ * "Installed" rows and no way to tell which one runs. Only families with a real
+ * choice are reported (one installed pack needs no explanation).
+ */
+export async function resolveActivePackSelections(
+  store: EnginePackStore,
+  profile?: SystemProfile,
+): Promise<ActivePackSelection[]> {
+  const out: ActivePackSelection[] = [];
+
+  for (const [providerId, pick] of [
+    ['local-llm-model', pickInstalledLocalLlmModel],
+    ['local-llm-chat-model', pickInstalledLocalLlmChatModel],
+  ] as const) {
+    const installedInFamily = await installedIdsFor(store, providerId);
+    if (installedInFamily.length < 2) continue;
+    const chosen = await pick(store, profile);
+    if (!chosen) continue;
+    out.push({
+      providerId,
+      packId: chosen.packId,
+      ...(chosen.skipped ? { note: chosen.skipped.reason } : {}),
+    });
   }
-  return undefined;
+
+  // Runtime/binary families (llama.cpp, whisper.cpp): the best ACCELERATOR
+  // build installed wins, via the same resolution the providers use.
+  for (const providerId of ['local-llm', 'whisper-cpp']) {
+    const installedInFamily = await installedIdsFor(store, providerId);
+    if (installedInFamily.length < 2) continue;
+    const packId = await pickInstalledPack(store, providerId);
+    if (packId) out.push({ providerId, packId });
+  }
+
+  return out;
+}
+
+/** Installed pack ids belonging to one provider family. */
+async function installedIdsFor(store: EnginePackStore, providerId: string): Promise<string[]> {
+  const installed = await store.list();
+  return installed.filter((rec) => findPack(rec.id)?.providerId === providerId).map((rec) => rec.id);
 }
 
 /** Resolve the best installed chat model, or throw ENGINE_PACK_MISSING. */
-export async function resolveLocalLlmChatModel(store: EnginePackStore): Promise<LocalLlmChatModelSelection> {
-  const found = await pickInstalledLocalLlmChatModel(store);
+export async function resolveLocalLlmChatModel(
+  store: EnginePackStore,
+  profile?: SystemProfile,
+): Promise<LocalLlmChatModelSelection> {
+  const found = await pickInstalledLocalLlmChatModel(store, profile);
   if (!found) {
     throw new AppErrorException(
       'ENGINE_PACK_MISSING',

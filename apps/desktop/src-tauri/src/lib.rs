@@ -171,9 +171,9 @@ async fn maybe_auto_update(app: AppHandle) {
     //    bundle with plugins.updater configured; in dev it errors -> we skip.
     // Never auto-install an update this OS cannot launch — the background path
     // is the dangerous one, since the user isn't watching (see
-    // commands::host_too_old_for_update).
-    if commands::host_too_old_for_update() {
-        println!("[videodubber:update] host OS is below this build's minimum; skipping auto-update.");
+    // commands::unsupported_host_reason).
+    if let Some(reason) = commands::unsupported_host_reason() {
+        println!("[videodubber:update] skipping auto-update: {reason}");
         return;
     }
 

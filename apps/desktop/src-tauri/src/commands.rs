@@ -424,22 +424,33 @@ const MIN_MACOS: (u32, u32) = (13, 5);
 /// happily replace a working 0.2.0/0.3.0 install on macOS 12 with a bundle
 /// launchd then refuses to open, leaving the user with no app and no in-app way
 /// back. So we refuse the offer instead of destroying the install.
+/// Why this host cannot run the update, or `None` when it can.
+///
+/// Returning the REASON (not just a bool) keeps every platform-specific symbol
+/// inside the `cfg` block — callers are shared code and must not name
+/// `MIN_MACOS`, which only exists on macOS. (It did briefly, and broke the
+/// Windows build.)
 #[cfg(target_os = "macos")]
-pub fn host_too_old_for_update() -> bool {
+pub fn unsupported_host_reason() -> Option<String> {
     let out = std::process::Command::new("sw_vers").arg("-productVersion").output();
-    let Ok(out) = out else { return false }; // can't tell -> don't block the user
+    let Ok(out) = out else { return None }; // can't tell -> don't block the user
     let ver = String::from_utf8_lossy(&out.stdout);
     let mut parts = ver.trim().split('.').map(|p| p.parse::<u32>().unwrap_or(0));
     let (major, minor) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
-    if major == 0 {
-        return false;
+    if major == 0 || (major, minor) >= MIN_MACOS {
+        return None;
     }
-    (major, minor) < MIN_MACOS
+    Some(format!(
+        "it requires macOS {}.{} or later (this Mac runs {}.{})",
+        MIN_MACOS.0, MIN_MACOS.1, major, minor
+    ))
 }
 
+/// No OS floor applies off macOS: the Windows/Linux builds have no equivalent
+/// minimum declared, so an update is always installable here.
 #[cfg(not(target_os = "macos"))]
-pub fn host_too_old_for_update() -> bool {
-    false
+pub fn unsupported_host_reason() -> Option<String> {
+    None
 }
 
 /// `check_for_update` -> queries the updater endpoint and returns an
@@ -456,15 +467,14 @@ pub async fn check_for_update(app: AppHandle) -> Result<Value, String> {
     let current_version = app.package_info().version.to_string();
 
     // Refuse BEFORE offering: installing would replace a working app with one
-    // this macOS cannot launch.
-    if host_too_old_for_update() {
+    // this OS cannot launch.
+    if let Some(reason) = unsupported_host_reason() {
         return Ok(json!({
             "available": false,
             "currentVersion": current_version,
             "notes": format!(
-                "A newer version is available, but it requires macOS {}.{} or later. \
-                 Your current version keeps working; update macOS to receive it.",
-                MIN_MACOS.0, MIN_MACOS.1
+                "A newer version is available, but {reason}. \
+                 Your current version keeps working; update your OS to receive it."
             ),
         }));
     }
@@ -514,14 +524,11 @@ pub async fn check_for_update(app: AppHandle) -> Result<Value, String> {
 pub async fn download_and_install_update(app: AppHandle) -> Result<Value, String> {
     // Belt-and-braces: check_for_update already withholds the offer, but this
     // command is directly invokable, and installing here would be destructive.
-    if host_too_old_for_update() {
+    if let Some(reason) = unsupported_host_reason() {
         return Err(app_error_json(
             "UNKNOWN",
-            &format!(
-                "this update requires macOS {}.{} or later",
-                MIN_MACOS.0, MIN_MACOS.1
-            ),
-            Some("Update macOS first. Your installed version keeps working in the meantime."),
+            &format!("this update cannot be installed: {reason}"),
+            Some("Update your OS first. Your installed version keeps working in the meantime."),
         ));
     }
     let updater = updater_with_teardown(&app)?;

@@ -354,8 +354,36 @@ class ArgosBackend:
         # New package installed -> drop the cached language graph so the next
         # translate()/installed_pairs() observes it.
         self.refresh()
+        self._warm_sentence_boundary(from_lang, to_lang)
         logger.info("Argos: installed pair %s->%s.", from_lang, to_lang)
         return True
+
+    def _warm_sentence_boundary(self, from_lang: str, to_lang: str) -> None:
+        """Run one throwaway translation so first-use needs no network.
+
+        Argos splits sentences with a boundary model whose assets are fetched
+        from the network on the FIRST translate, not when the package installs.
+        A user who installs their pairs while online and later dubs offline
+        (or behind a blocked network) would hit that download mid-pipeline and
+        the translation step would fail — after the transcript was already
+        produced. Warming it here folds the fetch into the install the user is
+        already waiting on and watching.
+
+        Best-effort by design: if this fails, the pair is still installed and
+        behaviour is exactly what it was before (fetch on first translate), so
+        a warm-up problem must never fail the install.
+        """
+        try:
+            self.translate("Hello. World.", from_lang, to_lang)
+            logger.info("Argos: warmed sentence-boundary assets for %s->%s.", from_lang, to_lang)
+        except Exception as exc:  # noqa: BLE001 - best effort, never fatal
+            logger.warning(
+                "Argos: could not warm sentence-boundary assets for %s->%s (%s); "
+                "they will download on first translate instead.",
+                from_lang,
+                to_lang,
+                exc,
+            )
 
     # -- translation ------------------------------------------------------
 

@@ -114,6 +114,34 @@ xcrun stapler staple "$DMG"
 xcrun stapler validate "$DMG"
 spctl -a -t open -vv --context context:primary-signature "$DMG" || true
 
+# Staple the .app TOO, and rebuild the DMG around the stapled copy.
+#
+# WHY: the DMG was built from a copy of the .app taken BEFORE notarization, so
+# only the container carried a ticket. A stapled DMG is enough for the usual
+# download-and-open flow (Gatekeeper checks the container), but the .app the
+# user drags to /Applications has no ticket of its own — so it needs an ONLINE
+# check the first time it runs. On a machine that is offline, behind a captive
+# portal, or unable to reach Apple's OCSP/notary endpoints, first launch can be
+# blocked ("cannot be opened because Apple cannot check it for malicious
+# software"). Stapling the bundle makes that verification work offline.
+#
+# The ticket is already issued for this exact code, so no second notarization
+# submission is needed — just staple, then re-create + re-sign the image.
+echo "==> 5b/5 staple the .app itself, then rebuild the DMG around it"
+xcrun stapler staple "$APP"
+xcrun stapler validate "$APP"
+STAGE2="$(mktemp -d)"
+cp -R "$APP" "$STAGE2/"; ln -s /Applications "$STAGE2/Applications"
+rm -f "$DMG"
+hdiutil create -volname "VideoDubber" -srcfolder "$STAGE2" -fs HFS+ -format UDZO "$DMG" >/dev/null
+rm -rf "$STAGE2"
+codesign --force --timestamp --sign "$ID" "$DMG"
+# The rebuilt image is a NEW file, so it needs its own ticket stapled. Its
+# contents are already notarized, so this staple resolves from Apple's record.
+xcrun stapler staple "$DMG"
+xcrun stapler validate "$DMG"
+spctl -a -t open -vv --context context:primary-signature "$DMG" || true
+
 # Replace the release's .dmg asset with this notarized one (CI only).
 if [ -n "${GH_TOKEN:-}" ] && [ -n "${GH_REPO:-}" ] && [ -n "${RELEASE_ID:-}" ]; then
   base="$(basename "$DMG")"

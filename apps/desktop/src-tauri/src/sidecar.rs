@@ -389,10 +389,12 @@ fn spawn_one(app: &AppHandle, name: &str, env: &[(&str, String)]) {
     // behind a proxy / antivirus that does HTTPS inspection — whose CA is in the
     // Windows store but not in those bundled roots — downloads fail with "invalid
     // peer certificate" even though the browser works. Export the Windows store
-    // once and point Node (NODE_EXTRA_CA_CERTS, additive to its roots) and Python
-    // (SSL_CERT_FILE / REQUESTS_CA_BUNDLE) at it. Engine-pack workers + uv inherit
+    // once, MERGE it with the workers' certifi roots (SSL_CERT_FILE and
+    // REQUESTS_CA_BUNDLE replace the trust store rather than extend it — see
+    // merge_with_certifi), and point Node (NODE_EXTRA_CA_CERTS, additive) and
+    // Python at the result. Engine-pack workers + uv inherit
     // it via the orchestrator; uv additionally uses UV_NATIVE_TLS. No-op off Windows.
-    if let Some(ca) = system_ca_bundle() {
+    if let Some(ca) = system_ca_bundle(app) {
         sidecar = sidecar.env("NODE_EXTRA_CA_CERTS", ca);
         sidecar = sidecar.env("SSL_CERT_FILE", ca);
         sidecar = sidecar.env("REQUESTS_CA_BUNDLE", ca);
@@ -443,7 +445,7 @@ fn spawn_worker(app: &AppHandle, name: &str, env: &[(&str, String)]) {
     let mut cmd = Command::new(&exe);
     // UTF-8 stdio + OS trust store, same as spawn_one gives the shell sidecars.
     cmd.env("PYTHONUTF8", "1").env("PYTHONIOENCODING", "utf-8");
-    if let Some(ca) = system_ca_bundle() {
+    if let Some(ca) = system_ca_bundle(app) {
         cmd.env("SSL_CERT_FILE", ca).env("REQUESTS_CA_BUNDLE", ca);
     }
     for (key, value) in env {
@@ -816,9 +818,66 @@ fn sweep_service_ports() {
 /// (corporate proxy / antivirus) that lives in the OS store but not in their
 /// bundled roots. Returns `None` off Windows (the platform defaults already
 /// consult the system store there) or if the export fails.
-fn system_ca_bundle() -> Option<&'static str> {
+fn system_ca_bundle(app: &AppHandle) -> Option<&'static str> {
     static BUNDLE: OnceLock<Option<String>> = OnceLock::new();
-    BUNDLE.get_or_init(export_system_ca_bundle).as_deref()
+    if let Some(cached) = BUNDLE.get() {
+        return cached.as_deref();
+    }
+    let built = export_system_ca_bundle().map(|os_pem| merge_with_certifi(app, os_pem));
+    BUNDLE.set(built).ok();
+    BUNDLE.get().and_then(|b| b.as_deref())
+}
+
+/// Locate a bundled worker's `certifi/cacert.pem` (all three ship the same
+/// Mozilla root bundle, so the first one found will do).
+fn bundled_certifi(app: &AppHandle) -> Option<PathBuf> {
+    let res = app.path().resource_dir().ok()?;
+    for base in [res.join("workers"), res.join("resources").join("workers")] {
+        for worker in ["vd-stt-worker", "vd-translation-worker", "vd-tts-worker"] {
+            let p = base.join(worker).join("_internal").join("certifi").join("cacert.pem");
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// Produce the PEM the Python workers should trust: the public Mozilla roots
+/// FOLLOWED BY the OS store export.
+///
+/// WHY MERGE: `NODE_EXTRA_CA_CERTS` is additive, but `SSL_CERT_FILE` and
+/// `REQUESTS_CA_BUNDLE` REPLACE the trust store — httpx/requests use the named
+/// file *instead of* certifi. Pointing them at an OS-only dump therefore made
+/// the workers trust only what happens to be materialised in the Windows root
+/// store, which Windows seeds sparsely and fills in lazily via CryptoAPI —
+/// something Python never triggers. The result: on a freshly imaged or
+/// update-restricted machine, the mandatory first-run Whisper model download
+/// fails with CERTIFICATE_VERIFY_FAILED against huggingface.co (whose chain
+/// needs Amazon Root CA 1) while the browser on the same box works.
+///
+/// Merging keeps the proxy/antivirus CA fix that motivated the export while
+/// restoring the public roots. Falls back to the OS-only file if certifi isn't
+/// found — still better than nothing behind an inspecting proxy.
+fn merge_with_certifi(app: &AppHandle, os_pem: String) -> String {
+    let Some(certifi) = bundled_certifi(app) else {
+        log_info("bundled certifi not found; Python TLS will use the OS trust store only.");
+        return os_pem;
+    };
+    let (Ok(roots), Ok(os_certs)) = (std::fs::read_to_string(&certifi), std::fs::read_to_string(&os_pem)) else {
+        return os_pem;
+    };
+    let merged_path = std::env::temp_dir().join("videodubber-ca-merged.pem");
+    match std::fs::write(&merged_path, format!("{roots}\n{os_certs}")) {
+        Ok(()) => {
+            log_info(&format!("merged certifi + OS trust store for Python TLS -> {}", merged_path.display()));
+            merged_path.to_string_lossy().into_owned()
+        }
+        Err(e) => {
+            log_info(&format!("could not write the merged CA bundle ({e}); using the OS store only."));
+            os_pem
+        }
+    }
 }
 
 #[cfg(windows)]

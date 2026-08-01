@@ -185,6 +185,28 @@ if [[ "${ASSERT_BUNDLE:-1}" == "1" ]]; then
   [[ "${SKIP_UV:-0}" == "1" ]]     || need "uv binary"        "${BIN_DIR}/vd-uv-${TRIPLE}${EXE_SUFFIX}"
   [[ "${SKIP_PYTHON:-0}" == "1" ]] || need "bundled CPython"  "${PY_RES}/cpython-"*
 
+  # The declared macOS floor must not be BELOW what the bundled binaries need.
+  # Tauri's default LSMinimumSystemVersion is 10.13, but our Node SEA
+  # orchestrator is built for 13.5 — so the installer happily ran on a Mac where
+  # the backend could never start, with no diagnosable error. Compare the
+  # declared value against the highest `minos` we actually ship.
+  if command -v otool >/dev/null 2>&1 && [[ "${TRIPLE}" == *apple-darwin* ]]; then
+    declared="$(node -p "require('${REPO_ROOT}/apps/desktop/src-tauri/tauri.conf.json').bundle?.macOS?.minimumSystemVersion ?? '10.13'")"
+    highest="0"
+    for _f in "${BIN_DIR}"/*-"${TRIPLE}"; do
+      [[ -f "${_f}" ]] || continue
+      _m="$(otool -l "${_f}" 2>/dev/null | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')"
+      [[ -n "${_m}" ]] || continue
+      # Numeric compare on major.minor (sort -V handles the ordering).
+      highest="$(printf '%s\n%s\n' "${highest}" "${_m}" | sort -V | tail -1)"
+    done
+    if [[ "${highest}" != "0" ]] && [[ "$(printf '%s\n%s\n' "${declared}" "${highest}" | sort -V | tail -1)" != "${declared}" ]]; then
+      echo "::error:: tauri.conf.json declares macOS ${declared}, but a bundled binary requires macOS ${highest}."
+      echo "::error:: The app would install and then fail to start. Raise bundle.macOS.minimumSystemVersion to ${highest} (and update README.md)."
+      miss=1
+    fi
+  fi
+
   # ffmpeg/ffprobe must be PORTABLE. A dynamically-linked build (e.g. staged from
   # Homebrew because FFMPEG_PATH was exported for dev) signs, notarizes and
   # installs fine, then fails to launch on every machine but this one — taking

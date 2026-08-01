@@ -40,7 +40,8 @@
     "targets": ["app", "dmg", "nsis"],
     "createUpdaterArtifacts": true,
     "macOS": {
-      "entitlements": "./entitlements.plist"
+      "entitlements": "./entitlements.plist",
+      "minimumSystemVersion": "13.5"
     },
     "externalBin": [
       "binaries/videodubber-orchestrator",

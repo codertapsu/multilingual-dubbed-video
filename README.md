@@ -162,7 +162,7 @@ Full details, the 8-step flow, and the data model are in
 
 | Requirement | Version / notes |
 |---|---|
-| **OS** | macOS 12+, Windows 10/11, or a modern Linux. (Validated end-to-end on macOS arm64.) |
+| **OS** | macOS 13.5+ (Apple Silicon), Windows 10/11, or a modern Linux. (Validated end-to-end on macOS arm64.) |
 | **Node.js** | 20.11+ (LTS). Provides global `fetch` and ES2022. |
 | **pnpm** | 9.x. Enable via `corepack enable` or `npm i -g pnpm`. |
 | **Python** | **3.11–3.13** (3.13 verified working — faster-whisper/ctranslate2, argostranslate, Piper all have wheels). 3.10 works. ⚠️ **Avoid 3.14 for now** — some ML wheels aren't published yet, forcing slow/failing source builds. On macOS: `brew install python@3.13` (or `@3.12`). The project uses a **per-project** interpreter (a `.venv` or `PYTHON_PATH`), so your system `python3` version doesn't matter — see [switching Python](docs/LOCAL_SETUP.md#choosing-the-python-version). |

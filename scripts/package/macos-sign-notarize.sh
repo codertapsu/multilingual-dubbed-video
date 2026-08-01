@@ -125,8 +125,9 @@ spctl -a -t open -vv --context context:primary-signature "$DMG" || true
 # blocked ("cannot be opened because Apple cannot check it for malicious
 # software"). Stapling the bundle makes that verification work offline.
 #
-# The ticket is already issued for this exact code, so no second notarization
-# submission is needed — just staple, then re-create + re-sign the image.
+# The .app's own ticket comes from the submission above (the notary service
+# issues tickets for nested code too), so stapling the bundle needs no new
+# submission. The REBUILT image does — see the fallback below.
 echo "==> 5b/5 staple the .app itself, then rebuild the DMG around it"
 xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
@@ -136,9 +137,28 @@ rm -f "$DMG"
 hdiutil create -volname "VideoDubber" -srcfolder "$STAGE2" -fs HFS+ -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE2"
 codesign --force --timestamp --sign "$ID" "$DMG"
-# The rebuilt image is a NEW file, so it needs its own ticket stapled. Its
-# contents are already notarized, so this staple resolves from Apple's record.
-xcrun stapler staple "$DMG"
+# The rebuilt image is a NEW file with a new cdhash, so Apple has no ticket for
+# it yet — `stapler staple` would fail with "could not find the ticket" and take
+# the whole release down with it. The .app INSIDE is already notarized (that is
+# what the first submission covered, and why stapling the bundle above works),
+# so this second submission is a fast re-scan rather than a fresh review. Try
+# the cheap path first in case the ticket does resolve, then fall back.
+if ! xcrun stapler staple "$DMG" 2>/dev/null; then
+  echo "    rebuilt image has no ticket yet — submitting it for notarization"
+  resubmit_json="$(xcrun notarytool submit "$DMG" \
+    --apple-id "${APPLE_ID:?}" --password "${APPLE_PASSWORD:?}" --team-id "${APPLE_TEAM_ID:?}" \
+    --wait --output-format json)"
+  echo "$resubmit_json"
+  resubmit_id="$(printf '%s' "$resubmit_json" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)"
+  resubmit_status="$(printf '%s' "$resubmit_json" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("status",""))' 2>/dev/null || true)"
+  if [ "$resubmit_status" != "Accepted" ]; then
+    echo "::error::Notarization of the rebuilt DMG: ${resubmit_status:-unknown}. Notary log:"
+    [ -n "$resubmit_id" ] && xcrun notarytool log "$resubmit_id" \
+      --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" || true
+    exit 1
+  fi
+  xcrun stapler staple "$DMG"
+fi
 xcrun stapler validate "$DMG"
 spctl -a -t open -vv --context context:primary-signature "$DMG" || true
 

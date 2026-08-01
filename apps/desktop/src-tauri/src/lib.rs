@@ -22,7 +22,6 @@ mod sidecar;
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager}; // for app.manage / state in setup
-use tauri_plugin_updater::UpdaterExt;
 
 use sidecar::SidecarManager;
 
@@ -170,7 +169,17 @@ async fn maybe_auto_update(app: AppHandle) {
 
     // 2) Check the updater endpoint. `app.updater()` only succeeds in a release
     //    bundle with plugins.updater configured; in dev it errors -> we skip.
-    let updater = match app.updater() {
+    // Never auto-install an update this OS cannot launch — the background path
+    // is the dangerous one, since the user isn't watching (see
+    // commands::host_too_old_for_update).
+    if commands::host_too_old_for_update() {
+        println!("[videodubber:update] host OS is below this build's minimum; skipping auto-update.");
+        return;
+    }
+
+    // Same builder as the manual path: the pre-install teardown must run here
+    // too, or a background Windows update hits locked sidecar files.
+    let updater = match crate::commands::updater_with_teardown(&app) {
         Ok(u) => u,
         Err(e) => {
             println!("[videodubber:update] updater unavailable (likely dev build): {e}");

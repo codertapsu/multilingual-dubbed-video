@@ -128,7 +128,31 @@ impl SidecarManager {
 /// Returns `Ok(())` even on failure so a missing toolchain never blocks the
 /// window from opening — the UI reports backend availability via
 /// `GET /workers/health`.
+/// App handle captured at startup so teardown can run from callbacks that get
+/// no handle of their own — specifically the updater's `on_before_exit` hook,
+/// which must stop the backend before an installer overwrites its files.
+static APP_FOR_TEARDOWN: OnceLock<AppHandle> = OnceLock::new();
+
+/// Stop every backend process, callable without an `AppHandle`.
+///
+/// The Windows updater runs the NSIS installer over the install directory while
+/// our four sidecars are still alive and holding their `.exe`/`.dll` files open,
+/// which makes the installer fail with "Error opening file for writing" and can
+/// leave a half-updated install. This is the pre-install teardown.
+///
+/// Falls back to a port sweep if the handle was never captured (e.g. service
+/// management disabled), so the ports are freed either way.
+pub fn shutdown_all() {
+    match APP_FOR_TEARDOWN.get() {
+        Some(app) => app.state::<SidecarManager>().shutdown(),
+        None => sweep_service_ports(),
+    }
+}
+
 pub fn maybe_spawn_services(app: &AppHandle) -> Result<(), String> {
+    // Capture once; ignored if already set.
+    let _ = APP_FOR_TEARDOWN.set(app.clone());
+
     if !management_enabled() {
         log_info("service management disabled (VIDEODUBBER_MANAGE_SERVICES=0); assuming the backend is already running.");
         return Ok(());

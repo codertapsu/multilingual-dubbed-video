@@ -382,6 +382,66 @@ pub fn get_app_version(app: AppHandle) -> Result<Value, String> {
 // progress, never the network call.
 // ---------------------------------------------------------------------------
 
+/// Build the updater with our pre-install teardown attached.
+///
+/// `on_before_exit` runs immediately before the plugin launches the platform
+/// installer. On Windows that installer (NSIS) writes over the install
+/// directory while our four backend sidecars — the orchestrator and the three
+/// Python workers — are still alive holding their `.exe`/`.dll` files open,
+/// which makes it fail with "Error opening file for writing" and can leave a
+/// half-updated install. Stopping the backend first is what makes a Windows
+/// update reliable; on macOS the `.app` is replaced wholesale, so it is simply
+/// a clean shutdown.
+///
+/// Used by BOTH update paths (this command and the background auto-update in
+/// lib.rs) so they cannot drift apart.
+pub fn updater_with_teardown(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    app.updater_builder()
+        .on_before_exit(|| {
+            println!("[videodubber:update] stopping backend sidecars before the installer runs…");
+            crate::sidecar::shutdown_all();
+        })
+        .build()
+        .map_err(|e| {
+            app_error_json(
+                "UNKNOWN",
+                &format!("updater is not configured: {e}"),
+                Some("Ensure plugins.updater (endpoints + pubkey) is set in tauri.conf.json and the app is a release bundle."),
+            )
+        })
+}
+
+/// The macOS version this build requires (`bundle.macOS.minimumSystemVersion`).
+///
+/// Kept in sync with tauri.conf.json by a unit test — see `min_macos_matches_config`.
+#[cfg(target_os = "macos")]
+const MIN_MACOS: (u32, u32) = (13, 5);
+
+/// On macOS, is the host too old to RUN the update we would install?
+///
+/// 0.4.0 raised the deployment floor to 13.5 (the Node-based orchestrator
+/// sidecar needs it). The updater has no notion of OS requirements: it would
+/// happily replace a working 0.2.0/0.3.0 install on macOS 12 with a bundle
+/// launchd then refuses to open, leaving the user with no app and no in-app way
+/// back. So we refuse the offer instead of destroying the install.
+#[cfg(target_os = "macos")]
+pub fn host_too_old_for_update() -> bool {
+    let out = std::process::Command::new("sw_vers").arg("-productVersion").output();
+    let Ok(out) = out else { return false }; // can't tell -> don't block the user
+    let ver = String::from_utf8_lossy(&out.stdout);
+    let mut parts = ver.trim().split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+    let (major, minor) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    if major == 0 {
+        return false;
+    }
+    (major, minor) < MIN_MACOS
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn host_too_old_for_update() -> bool {
+    false
+}
+
 /// `check_for_update` -> queries the updater endpoint and returns an
 /// `UpdateInfo` (`{ available, version?, currentVersion, notes?, date? }`).
 ///
@@ -394,6 +454,20 @@ pub fn get_app_version(app: AppHandle) -> Result<Value, String> {
 pub async fn check_for_update(app: AppHandle) -> Result<Value, String> {
     // Current installed version is always knowable from the package config.
     let current_version = app.package_info().version.to_string();
+
+    // Refuse BEFORE offering: installing would replace a working app with one
+    // this macOS cannot launch.
+    if host_too_old_for_update() {
+        return Ok(json!({
+            "available": false,
+            "currentVersion": current_version,
+            "notes": format!(
+                "A newer version is available, but it requires macOS {}.{} or later. \
+                 Your current version keeps working; update macOS to receive it.",
+                MIN_MACOS.0, MIN_MACOS.1
+            ),
+        }));
+    }
 
     let updater = app.updater().map_err(|e| {
         app_error_json(
@@ -438,9 +512,19 @@ pub async fn check_for_update(app: AppHandle) -> Result<Value, String> {
 /// the bytes for logging); the UI shows an indeterminate "installing…" state.
 #[tauri::command]
 pub async fn download_and_install_update(app: AppHandle) -> Result<Value, String> {
-    let updater = app.updater().map_err(|e| {
-        app_error_json("UNKNOWN", &format!("updater is not configured: {e}"), None)
-    })?;
+    // Belt-and-braces: check_for_update already withholds the offer, but this
+    // command is directly invokable, and installing here would be destructive.
+    if host_too_old_for_update() {
+        return Err(app_error_json(
+            "UNKNOWN",
+            &format!(
+                "this update requires macOS {}.{} or later",
+                MIN_MACOS.0, MIN_MACOS.1
+            ),
+            Some("Update macOS first. Your installed version keeps working in the meantime."),
+        ));
+    }
+    let updater = updater_with_teardown(&app)?;
 
     let update = match updater.check().await {
         Ok(Some(u)) => u,
@@ -507,4 +591,30 @@ fn app_error_json(code: &str, message: &str, remediation: Option<&str>) -> Strin
     }
     serde_json::to_string(&err)
         .unwrap_or_else(|_| format!("{{\"code\":\"UNKNOWN\",\"message\":\"{message}\"}}"))
+}
+
+#[cfg(test)]
+mod update_gate_tests {
+    /// The OS gate must match what the bundle actually declares.
+    ///
+    /// If `bundle.macOS.minimumSystemVersion` is raised without updating
+    /// `MIN_MACOS`, the updater would resume offering the build to Macs that
+    /// cannot launch it — the exact regression this gate exists to prevent.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn min_macos_matches_config() {
+        let cfg: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json parses");
+        let declared = cfg["bundle"]["macOS"]["minimumSystemVersion"]
+            .as_str()
+            .expect("bundle.macOS.minimumSystemVersion must be declared");
+        let mut it = declared.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+        let got = (it.next().unwrap_or(0), it.next().unwrap_or(0));
+        assert_eq!(
+            got,
+            super::MIN_MACOS,
+            "MIN_MACOS ({:?}) is out of sync with tauri.conf.json ({declared})",
+            super::MIN_MACOS
+        );
+    }
 }

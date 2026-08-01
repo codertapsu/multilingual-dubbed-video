@@ -92,6 +92,16 @@ How packs run:
 - **Native-binary packs** (whisper.cpp, llama.cpp) are downloaded, checksum-verified,
   extracted, and spawned as OpenAI-compatible local servers — exactly like the
   bundled FFmpeg. No Python involved.
+- **`uv` is never a prerequisite.** The packaged app ships uv as a sidecar
+  (`binaries/vd-uv`, wired into `VIDEODUBBER_UV_PATH` by `sidecar.rs`), so an
+  end user who installs VideoDubber installs nothing else. When that sidecar is
+  absent — a dev/source build, or a corrupt install — the first `uv-env` pack
+  install **downloads uv itself**: a pinned release (`UV_VERSION` in
+  `engines/uvBootstrap.ts`), verified against a per-platform sha256 baked into
+  the source, cached at `<configDir>/tools/uv/<version>/`. Resolution order is
+  bundled sidecar → previously downloaded copy → `uv` on PATH (dev only) →
+  download. Dev scripts (`scripts/dev.*`) reuse a sidecar already staged by
+  `pnpm package:sidecars`, so a full dev checkout skips the download entirely.
 - **`uv-env` packs** materialize a self-contained Python environment via
   [uv](https://docs.astral.sh/uv/) (the ComfyUI-Desktop pattern), so torch/ONNX
   stacks that don't freeze well still install cleanly. The installed app **bundles

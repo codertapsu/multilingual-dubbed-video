@@ -132,16 +132,38 @@ export interface InstalledEnginePack {
 export interface EnginePrerequisites {
   /** uv (Python env manager for the neural-TTS/separation/alignment packs). */
   uv: {
-    /** Usable now (bundled with the app, or installed on PATH). */
+    /** Usable now (bundled with the app, previously downloaded, or on PATH). */
     available: boolean;
     /** True when it's the app-bundled copy (the user installed nothing). */
     bundled: boolean;
+    /**
+     * Usable now OR downloadable on demand: the install flow fetches our
+     * pinned, checksum-verified uv as its first step. Gate the Install button
+     * on THIS, not `available` — otherwise a dev/source build shows a dead end
+     * for something the app can fix itself. Optional for wire-compat with an
+     * older orchestrator (treat a missing value as `available`).
+     */
+    obtainable?: boolean;
   };
   /** Ollama daemon for the optional `ollama` local-LLM translation provider. */
   ollama: {
     /** The daemon answered at its local API. */
     available: boolean;
   };
+}
+
+/**
+ * Which installed pack the app USES for a function that several installed packs
+ * could serve (e.g. four Gemma chat models). Reported only for families with
+ * more than one installed pack — otherwise there is nothing to explain.
+ */
+export interface ActivePackSelection {
+  /** The function/family (catalog `providerId`), e.g. `local-llm-chat-model`. */
+  providerId: string;
+  /** The pack actually used — the most capable one this machine can run. */
+  packId: string;
+  /** Why a MORE capable installed pack was passed over (memory, usually). */
+  note?: string;
 }
 
 /** GET /engines response: catalog (runnable on this machine) + installed set. */
@@ -153,6 +175,8 @@ export interface EnginesResponse {
   /** Ids of installed packs whose catalog version is newer than what's installed
    * (an update is available — reinstall to get it). */
   updatable: string[];
+  /** Per-function winner when several installed packs compete (see above). */
+  activeSelections?: ActivePackSelection[];
 }
 
 /** Body for POST /engines/install. */

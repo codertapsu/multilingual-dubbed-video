@@ -14,12 +14,17 @@
   Override the auto-detected Rust host triple.
 
 .PARAMETER UvVersion
-  Pin a uv release (e.g. "0.9.2"); default "latest".
+  Pin a uv release (e.g. "0.9.2"); defaults to the version pinned in
+  packages/node-orchestrator/src/engines/uvBootstrap.ts.
 #>
 [CmdletBinding()]
 param(
   [string]$TargetTriple = $env:TARGET_TRIPLE,
-  [string]$UvVersion = $(if ($env:UV_VERSION) { $env:UV_VERSION } else { "latest" })
+  # PINNED (not "latest"): the orchestrator can self-install this same uv release
+  # when no sidecar is bundled, verifying a per-platform sha256 pinned in
+  # packages/node-orchestrator/src/engines/uvBootstrap.ts. Keep the two in
+  # lockstep — a unit test fails the build if they drift.
+  [string]$UvVersion = $(if ($env:UV_VERSION) { $env:UV_VERSION } else { "0.12.1" })
 )
 
 $ErrorActionPreference = "Stop"

@@ -100,6 +100,21 @@ function Test-BinWarn {
 Test-BinWarn -Bin 'ffmpeg'  -EnvVar 'FFMPEG_PATH'
 Test-BinWarn -Bin 'ffprobe' -EnvVar 'FFPROBE_PATH'
 
+# uv for the Python engine packs (neural TTS / separation / alignment). The
+# packaged app gets this from the Tauri sidecar; in dev, reuse a sidecar already
+# staged by `pnpm package:sidecars` (or scripts\package\fetch-uv.ps1) so the
+# orchestrator doesn't download its own copy. Without one it falls back to PATH,
+# then self-installs a pinned uv into <config>\tools\uv — so this is an
+# optimization, never a requirement.
+if (-not $env:VIDEODUBBER_UV_PATH) {
+    $stagedUv = Get-ChildItem (Join-Path $RootDir 'apps\desktop\src-tauri\binaries') -Filter 'vd-uv-*' -File -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($stagedUv) {
+        $env:VIDEODUBBER_UV_PATH = $stagedUv.FullName
+        Write-Ok ("Using the staged uv sidecar: {0}" -f $stagedUv.Name)
+    }
+}
+
 # Track spawned processes so we can clean them up on Ctrl-C / exit.
 $script:Procs = New-Object System.Collections.ArrayList
 

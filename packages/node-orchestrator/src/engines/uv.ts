@@ -5,23 +5,41 @@
  *   1. VIDEODUBBER_UV_PATH — the bundled `vd-uv` sidecar (set by the desktop
  *      shell). This is the zero-prerequisite path: a packaged app ships uv, and
  *      uv downloads its own standalone CPython, so the user installs nothing.
- *   2. `uv` on PATH — for dev / source checkouts.
+ *   2. A MANAGED uv previously downloaded by {@link ensureUvPath} into the app's
+ *      config dir — our own pinned, checksum-verified build (see uvBootstrap.ts).
+ *   3. `uv` on PATH — for dev / source checkouts.
  *
  * In a PACKAGED build (VIDEODUBBER_BUNDLED=1, set by sidecar.rs) the app owns its
  * whole toolchain, so a declared-but-broken bundled uv must NOT silently fall
- * through to a system `uv` of unknown version/Python — we return null and let the
- * UI show an actionable remediation. The PATH fallback is only for dev / source
- * checkouts (and a deliberately-degraded build that bundled no uv at all).
+ * through to a system `uv` of unknown version/Python — the PATH tier is skipped.
+ * The MANAGED tier is still allowed there: it is a version-pinned binary this
+ * app downloaded and hash-verified itself, not an unknown system install, and it
+ * is what lets a corrupt install repair itself instead of dead-ending.
  *
- * Returns the resolved path, or null when uv is unavailable (the caller then
- * surfaces an actionable "install uv" remediation instead of failing opaquely).
+ * Returns the resolved path, or null when uv is unavailable. Callers that are
+ * about to NEED uv should prefer {@link ensureUvPath}, which downloads it.
  */
 import { spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { AppErrorException } from '@videodubber/shared';
+import { bootstrapUv, managedUvInstalled, uvArtifactFor, type UvBootstrapProgress } from './uvBootstrap.js';
 
 let cached: string | null | undefined;
+
+/**
+ * App config dir, set once at server startup — the root under which a managed
+ * uv is downloaded/found. Null in unit tests that never configure it (the
+ * managed tier is then simply skipped).
+ */
+let configDir: string | null = null;
+
+/** Point the managed-uv tier at the app's config dir (called at startup). */
+export function configureUvHome(dir: string): void {
+  configDir = dir;
+  cached = undefined; // a different home may hold a different (or no) managed uv
+}
 
 /** The Python version uv installs for engine-pack venvs when none is present. */
 export const UV_PYTHON_VERSION = '3.12';
@@ -80,14 +98,50 @@ export async function resolveUvPath(): Promise<string | null> {
   return cached;
 }
 
-/** Whether uv is available (bundled or on PATH). */
+/**
+ * Resolve uv, DOWNLOADING our pinned build if none is present.
+ *
+ * This is what callers about to run uv should use: it turns "uv is missing"
+ * from a dead end (asking the user to go install a third-party tool) into a
+ * ~20 MB step inside a download the user already started. Only reached in a
+ * dev/source build or a broken install — the packaged app's bundled sidecar
+ * short-circuits at tier 1.
+ *
+ * Throws (rather than returning null) when uv can neither be found nor
+ * installed, so the caller can surface the actionable reason.
+ */
+export async function ensureUvPath(onProgress?: UvBootstrapProgress): Promise<string> {
+  const found = await resolveUvPath();
+  if (found) return found;
+  if (!configDir) {
+    throw new AppErrorException('ENGINE_PACK_FAILED', "'uv' was not found and no app config dir is available.", {
+      remediation:
+        'Install uv (https://docs.astral.sh/uv/getting-started/installation/) and retry — it manages the self-contained Python runtime for this engine.',
+    });
+  }
+  const installed = await bootstrapUv({ configDir, ...(onProgress ? { onProgress } : {}) });
+  cached = installed; // a later resolveUvPath() must see it without re-probing
+  return installed;
+}
+
+/** Whether uv is available RIGHT NOW (bundled, managed, or on PATH). */
 export async function uvAvailable(): Promise<boolean> {
   return (await resolveUvPath()) !== null;
+}
+
+/**
+ * Whether uv could be made available — already present, or installable on
+ * demand by {@link ensureUvPath}. The UI uses this to decide whether to offer
+ * an Install button rather than a "needs uv" dead end.
+ */
+export async function uvObtainable(): Promise<boolean> {
+  return (await uvAvailable()) || (configDir !== null && uvArtifactFor() !== undefined);
 }
 
 /** Reset the cache (tests). */
 export function _resetUvCache(): void {
   cached = undefined;
+  configDir = null;
 }
 
 /** True when running inside a packaged/bundled app (VIDEODUBBER_BUNDLED, set by
@@ -99,18 +153,24 @@ function isPackaged(): boolean {
 
 async function resolve(): Promise<string | null> {
   const bundled = process.env.VIDEODUBBER_UV_PATH?.trim();
+  let bundledBroken = false;
   if (bundled) {
     const ok = await fsp
       .stat(bundled)
       .then((s) => s.isFile())
       .catch(() => false);
     if (ok) return bundled;
-    // The bundled uv was DECLARED but is missing/unusable. In a packaged app,
-    // fail loud rather than silently using a system uv (a different version, a
-    // different Python) — the build-time bundle assertion should have caught
-    // this, so it means a corrupt install: surface it as unavailable.
-    if (isPackaged()) return null;
+    // The bundled uv was DECLARED but is missing/unusable — a corrupt install
+    // (the build-time bundle assertion should have caught a bad build). Don't
+    // silently use a system uv of unknown version/Python in a packaged app;
+    // our own managed copy below is fine, and repairs the install.
+    bundledBroken = true;
   }
+  if (configDir) {
+    const managed = await managedUvInstalled(configDir);
+    if (managed) return managed;
+  }
+  if (bundledBroken && isPackaged()) return null;
   return which('uv');
 }
 

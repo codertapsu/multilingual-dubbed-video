@@ -24,7 +24,7 @@ import { AppErrorException, type EnginePackArtifact, type EnginePackInfo, type I
 import type { EngineEventBus } from './engineBus.js';
 import type { EnginePackStore } from './enginePackStore.js';
 import { findPack, packRunsOn } from './enginePackCatalog.js';
-import { resolveBundledPythonDir, resolveUvPath, UV_PYTHON_VERSION } from './uv.js';
+import { ensureUvPath, resolveBundledPythonDir, UV_PYTHON_VERSION } from './uv.js';
 import { resolveUvRequirements } from './uvRequirements.js';
 
 /**
@@ -176,8 +176,8 @@ export class EngineInstaller {
 
   /**
    * Materialize a uv-managed Python env from the locked requirement set.
-   * Requires `uv` on PATH (we do not bundle it here; the installer reports a
-   * clear remediation if it's absent so the rest of the app keeps working).
+   * uv itself is resolved (bundled sidecar → managed copy → PATH) or downloaded
+   * on demand by {@link ensureUvPath}, so this never requires a preinstalled uv.
    */
   private async materializeUvEnv(pack: EnginePackInfo, artifact: EnginePackArtifact, packDir: string): Promise<void> {
     // Fail fast with a clear reason on an unsupported platform/arch (e.g. the
@@ -196,15 +196,14 @@ export class EngineInstaller {
     if (!resolved) {
       throw new AppErrorException('ENGINE_PACK_FAILED', `No requirement set defined for uv pack "${pack.id}".`);
     }
-    // Prefer the bundled uv (VIDEODUBBER_UV_PATH); fall back to PATH. With the
-    // bundled uv, nothing needs to be preinstalled — uv downloads its own Python.
-    const uv = await resolveUvPath();
-    if (!uv) {
-      throw new AppErrorException('ENGINE_PACK_FAILED', `'uv' is required to install ${pack.displayName} but was not found.`, {
-        remediation:
-          'The packaged app bundles uv automatically. In a dev/source build, install uv (https://docs.astral.sh/uv/) and retry — it manages the self-contained Python runtime for this engine.',
-      });
-    }
+    // Prefer the bundled uv (VIDEODUBBER_UV_PATH), then a previously downloaded
+    // managed copy, then PATH — and if none exists, DOWNLOAD our pinned build
+    // (~20 MB, checksum-verified) rather than dead-ending on "go install uv".
+    // The user already consented to a much larger download by clicking Install,
+    // so this stays inside the flow instead of bouncing them to a browser.
+    const uv = await ensureUvPath((percent, message) =>
+      this.deps.bus.emit({ type: 'progress', packId: pack.id, percent, message }),
+    );
     const venvDir = path.join(packDir, artifact.destPath);
 
     // Use the BUNDLED standalone CPython if present so uv does NOT download an

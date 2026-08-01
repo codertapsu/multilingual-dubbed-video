@@ -15,6 +15,7 @@ import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.com
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import { environment } from '../../core/environment';
 import type {
+  ActivePackSelection,
   AppError,
   EnginePackInfo,
   EnginePrerequisites,
@@ -110,6 +111,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected readonly installedEngines = signal<InstalledEnginePack[]>([]);
   /** Installed packs with a newer version in the catalog (reinstall to update). */
   protected readonly updatableEngineIds = signal<Set<string>>(new Set());
+  /** Per-function winner when several installed packs compete (GET /engines). */
+  protected readonly activeSelections = signal<ActivePackSelection[]>([]);
   protected readonly recommendedEngineIds = signal<Set<string>>(new Set());
   /** Packs this machine's hardware can run (local-first fit check). null = the
    * backend didn't report fit (older build) -> assume everything fits. */
@@ -121,6 +124,18 @@ export class SettingsComponent implements OnInit, OnDestroy {
   /** True for packs delivered as a uv-managed Python env (need uv). */
   protected needsUv(pack: EnginePackInfo): boolean {
     return pack.packKind === 'python-uv';
+  }
+
+  /**
+   * Can uv be used or fetched? The install flow downloads a pinned,
+   * checksum-verified uv when none is present, so a missing uv is not a dead
+   * end — only a platform with no published uv build is. Older orchestrators
+   * omit the flag; treat that as "only if already available".
+   */
+  protected uvObtainable(): boolean {
+    const uv = this.prerequisites()?.uv;
+    if (!uv) return false;
+    return uv.obtainable ?? uv.available;
   }
 
   // -------- storage (free up disk space) --------
@@ -286,6 +301,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
           this.enginePacks.set(e.available);
           this.installedEngines.set(e.installed);
           this.updatableEngineIds.set(new Set(e.updatable ?? []));
+          this.activeSelections.set(e.activeSelections ?? []);
         })
         .catch(() => undefined),
       this.ipc
@@ -304,6 +320,39 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   protected isEngineInstalled(packId: string): boolean {
     return this.installedEngines().some((i) => i.id === packId);
+  }
+
+  /**
+   * When several installed packs do the SAME job (e.g. Gemma 3 4B/12B and
+   * Gemma 4 12B/26B), the app runs the most capable one this machine can
+   * handle. These helpers label that in the list so the extra installs don't
+   * look like they're all doing something.
+   */
+  protected activeSelectionFor(pack: EnginePackInfo): ActivePackSelection | undefined {
+    return this.activeSelections().find((s) => s.providerId === pack.providerId);
+  }
+
+  /** This pack is the one actually used for its function. */
+  protected isEngineActive(pack: EnginePackInfo): boolean {
+    return this.activeSelectionFor(pack)?.packId === pack.id;
+  }
+
+  /** Installed, but another pack of the same function is the one being used. */
+  protected isEngineShadowed(pack: EnginePackInfo): boolean {
+    const active = this.activeSelectionFor(pack);
+    return Boolean(active && active.packId !== pack.id && this.isEngineInstalled(pack.id));
+  }
+
+  /** Display name of the pack actually used for this pack's function. */
+  protected activePackName(pack: EnginePackInfo): string {
+    const active = this.activeSelectionFor(pack);
+    if (!active) return '';
+    return this.enginePacks().find((p) => p.id === active.packId)?.displayName ?? active.packId;
+  }
+
+  /** Why a more capable installed pack was passed over (memory), if that happened. */
+  protected activeSelectionNote(pack: EnginePackInfo): string {
+    return this.activeSelectionFor(pack)?.note ?? '';
   }
 
   /** True if an installed pack has a newer version available (reinstall to update). */

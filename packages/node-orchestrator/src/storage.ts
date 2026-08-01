@@ -5,6 +5,9 @@
  * (`~/VideoDubber` by default), in three deletable, re-downloadable trees:
  *   - `engines/` — engine packs (llama.cpp + GGUF models, neural-TTS/separation/
  *     alignment uv venvs, LibreTranslate) — usually the biggest consumer.
+ *     Also counts `tools/` (a self-downloaded `uv`, ~50 MB): it exists only to
+ *     build those packs and is re-fetched automatically on the next install, so
+ *     it belongs to the same bucket rather than a category of its own.
  *   - `models/`  — the Whisper HF cache (`models/huggingface`) + Piper voices
  *     (`models/piper`); pinned here by the desktop shell so nothing leaks into
  *     the user's global `~/.cache/huggingface`.
@@ -84,16 +87,25 @@ async function freeBytes(dir: string): Promise<number | null> {
   }
 }
 
-/** The three managed locations (paths only). */
+/** Tools the app downloads to BUILD engine packs (currently just uv). */
+export function toolsDir(config: Pick<OrchestratorConfig, 'configDir'>): string {
+  return path.join(config.configDir, 'tools');
+}
+
+/** The three managed locations. `paths` may hold several trees per category. */
 function locationsOf(config: Pick<OrchestratorConfig, 'configDir' | 'modelsDir'>, enginesDir: string): {
   key: StorageCategory;
   label: string;
   path: string;
+  paths: string[];
 }[] {
   return [
-    { key: 'engines', label: 'Engine packs', path: enginesDir },
-    { key: 'models', label: 'Downloaded models (Whisper, Piper)', path: config.modelsDir },
-    { key: 'cache', label: 'Temporary cache', path: cacheDir(config) },
+    // `tools/` rides with engines: it is engine-build infrastructure, and
+    // folding it in keeps the reported total honest without inventing a wire
+    // category an older UI wouldn't render.
+    { key: 'engines', label: 'Engine packs', path: enginesDir, paths: [enginesDir, toolsDir(config)] },
+    { key: 'models', label: 'Downloaded models (Whisper, Piper)', path: config.modelsDir, paths: [config.modelsDir] },
+    { key: 'cache', label: 'Temporary cache', path: cacheDir(config), paths: [cacheDir(config)] },
   ];
 }
 
@@ -104,11 +116,13 @@ export async function describeStorage(
 ): Promise<StorageInfo> {
   const defs = locationsOf(config, enginePackStore.enginesDir);
   const [sizes, free, installed] = await Promise.all([
-    Promise.all(defs.map((d) => dirSize(d.path))),
+    Promise.all(
+      defs.map(async (d) => (await Promise.all(d.paths.map(dirSize))).reduce((a, b) => a + b, 0)),
+    ),
     freeBytes(config.configDir),
     enginePackStore.list(),
   ]);
-  const locations: StorageLocation[] = defs.map((d, i) => ({ ...d, bytes: sizes[i]! }));
+  const locations: StorageLocation[] = defs.map(({ paths: _paths, ...d }, i) => ({ ...d, bytes: sizes[i]! }));
   return {
     root: config.configDir,
     locations,
@@ -154,6 +168,9 @@ export async function clearStorage(req: StorageClearRequest, deps: ClearStorageD
     // under a live process (which would otherwise fail mid-pipeline).
     await engineManager?.stopAll().catch(() => undefined);
     freedBytes += await wipeDir(enginePackStore.enginesDir);
+    // The self-downloaded uv goes too — the next pack install re-fetches it
+    // automatically, so leaving it behind would just be an unreachable ~50 MB.
+    freedBytes += await wipeDir(toolsDir(config));
     await enginePackStore.clear();
     cleared.push('engines');
   }

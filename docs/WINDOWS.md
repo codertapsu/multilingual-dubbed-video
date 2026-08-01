@@ -301,6 +301,7 @@ previous version get the auto-update.
 | `pnpm` not found after installing Node | Reopen the terminal; run `corepack enable`. |
 | Rust/Tauri build fails with "link.exe not found" / MSVC errors | The **C++ Build Tools** workload isn't installed (Part A.5). |
 | A worker window says "no `.venv`" | Run `pwsh scripts\setup-local-models.ps1` (Part C). |
+| Installing a Python engine pack says **"`uv` is required … but was not found"** | Only possible on an old build. Current builds download a pinned uv themselves on first install. To skip that download, stage the sidecar once with `pwsh scripts\package\fetch-uv.ps1` (needs `rustc` for the target triple, or pass `-TargetTriple x86_64-pc-windows-msvc`) — `scripts\dev.ps1` then picks it up. A system-wide uv also works: `winget install --id=astral-sh.uv -e`, then reopen the terminal. |
 | Rendered video fails / "ffmpeg not found" in dev | Confirm `ffmpeg -version` works in a fresh `pwsh` (PATH from Part A.7). |
 | Release build fails on ffmpeg with a "SHARED build" error | You set `FFMPEG_PATH` to `D:\ffmpeg` (a shared build). Unset it — the build auto-downloads a static one. Only add `D:\ffmpeg\bin` to **PATH**, not to `FFMPEG_PATH`. |
 | Build has no `.sig` files / updater can't install | `TAURI_SIGNING_PRIVATE_KEY` isn't set and `%USERPROFILE%\.tauri\videodubber.key` is missing (release setup step 1). |

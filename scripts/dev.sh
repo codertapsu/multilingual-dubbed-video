@@ -78,6 +78,21 @@ export ARGOS_PACKAGES_DIR="${ARGOS_PACKAGES_DIR:-${VIDEODUBBER_MODELS_DIR}/argos
 mkdir -p "${VIDEODUBBER_PROJECTS_DIR}" "${VIDEODUBBER_MODELS_DIR}" "${VIDEODUBBER_CACHE_DIR}"
 info "Dev data home: ${VIDEODUBBER_DEV_HOME} (isolated from the installed app's ~/VideoDubber)"
 
+# uv for the Python engine packs (neural TTS / separation / alignment). The
+# packaged app gets this from the Tauri sidecar; in dev, reuse a sidecar already
+# staged by `pnpm package:sidecars` so the orchestrator doesn't have to download
+# its own copy. Without one it falls back to PATH, then self-installs a pinned
+# uv into <config>/tools/uv — so this is an optimization, never a requirement.
+if [[ -z "${VIDEODUBBER_UV_PATH:-}" ]]; then
+  for _uv in "${ROOT_DIR}/apps/desktop/src-tauri/binaries/vd-uv-"*; do
+    if [[ -f "${_uv}" && -x "${_uv}" ]]; then
+      export VIDEODUBBER_UV_PATH="${_uv}"
+      info "Using the staged uv sidecar: $(basename "${_uv}")"
+      break
+    fi
+  done
+fi
+
 # Track child PIDs so we can clean up on exit.
 PIDS=()
 

@@ -39,9 +39,9 @@ import { EngineInstaller } from './engines/engineInstaller.js';
 import { EngineManager } from './engines/engineManager.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
-import { isPackUsable } from './engines/packSelection.js';
+import { isPackUsable, resolveActivePackSelections } from './engines/packSelection.js';
 import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engines/engineRecommendation.js';
-import { resolveUvPath } from './engines/uv.js';
+import { configureUvHome, resolveUvPath, uvObtainable } from './engines/uv.js';
 import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 import { EventBusRegistry } from './events.js';
@@ -177,6 +177,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // accelerated/heavy engines (whisper.cpp, llama.cpp, neural TTS, separation,
   // alignment) that download on demand.
   const enginePackStore = options.enginePackStore ?? new EnginePackStore(config.configDir);
+  // Where a self-downloaded ("managed") uv lives when neither the bundled
+  // sidecar nor a PATH uv exists — dev/source builds and corrupt installs.
+  configureUvHome(config.configDir);
   const engineManager =
     options.engineManager ??
     new EngineManager({
@@ -724,7 +727,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           return cat?.version != null && i.version !== cat.version;
         })
         .map((i) => i.id);
-      return { available, installed, updatable };
+      // When several installed packs serve the SAME function (four Gemma chat
+      // models, say), tell the UI which one actually runs — otherwise every row
+      // reads "Installed" and the user can't tell what they're getting.
+      const activeSelections = await resolveActivePackSelections(enginePackStore).catch(() => []);
+      return { available, installed, updatable, activeSelections };
     } catch (err) {
       return sendError(reply, err);
     }
@@ -751,8 +758,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // user-run daemon (the llama.cpp engine pack is the no-daemon alternative).
   app.get('/engines/prerequisites', async (_req, reply) => {
     try {
-      const [uvPath, ollamaOk] = await Promise.all([
+      const [uvPath, obtainable, ollamaOk] = await Promise.all([
         resolveUvPath(),
+        uvObtainable(),
         fetch(`${OLLAMA_URL}/models`, { signal: AbortSignal.timeout(1500) })
           .then((r) => r.ok)
           .catch(() => false),
@@ -761,7 +769,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // path), so surrounding whitespace doesn't yield a false "not bundled".
       const bundledUv = process.env.VIDEODUBBER_UV_PATH?.trim();
       return {
-        uv: { available: uvPath !== null, bundled: Boolean(bundledUv && uvPath === bundledUv) },
+        // `obtainable` is what the UI should gate Install on: when uv is absent
+        // but downloadable, the install flow fetches it (pinned + checksummed)
+        // as its first step, so there is nothing for the user to do.
+        uv: { available: uvPath !== null, bundled: Boolean(bundledUv && uvPath === bundledUv), obtainable },
         ollama: { available: ollamaOk },
       };
     } catch (err) {

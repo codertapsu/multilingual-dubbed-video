@@ -257,10 +257,16 @@
         <p class="hint test-ok">
           ✓ Python engines are self-contained{{ pre.uv.bundled ? ' (uses the bundled runtime)' : '' }} — just click Install.
         </p>
+      } @else if (uvObtainable()) {
+        <p class="hint">
+          Python engines (neural voices, separation, alignment) need
+          <span class="mono">uv</span>. It isn’t bundled in this build, so the first install downloads it
+          automatically (~20 MB, verified) — just click Install.
+        </p>
       } @else {
         <p class="hint test-fail">
           ⚠ Python engines (neural voices, separation, alignment) need
-          <span class="mono">uv</span>. The installed desktop app bundles it; in a dev build, install it from
+          <span class="mono">uv</span>, and no build is published for this platform. Install it from
           <span class="mono">https://docs.astral.sh/uv/</span> and reopen.
         </p>
       }
@@ -280,6 +286,9 @@
           @if (isEngineInstalled(pack.id)) {
             <span class="badge badge-completed">installed</span>
           }
+          @if (isEngineActive(pack)) {
+            <span class="badge badge-running" title="This is the one used for this job">in use</span>
+          }
           @if (isEngineUpdatable(pack.id)) {
             <span class="badge badge-running">update available</span>
           }
@@ -290,6 +299,15 @@
           <span class="hint test-ok">✓ Your hardware can run this locally</span>
         } @else {
           <span class="hint test-fail">⚠ {{ engineRamHint(pack) }} — may run slowly on this machine</span>
+        }
+        @if (isEngineShadowed(pack)) {
+          <span class="hint">
+            Installed, but not in use — “{{ activePackName(pack) }}” is better and runs instead.
+            @if (activeSelectionNote(pack)) {
+              {{ activeSelectionNote(pack) }}
+            }
+            You can remove this one to free disk space.
+          </span>
         }
         @if (pack.licenseNote) {
           <span class="hint mono">{{ pack.licenseNote }}</span>
@@ -310,8 +328,8 @@
                 <button type="button" class="btn btn-ghost btn-sm" (click)="installEngine(pack.id)" title="Re-download the latest version">Reinstall</button>
               }
               <button type="button" class="btn btn-ghost btn-sm" (click)="uninstallEngine(pack.id)">Remove</button>
-            } @else if (needsUv(pack) && prerequisites() && !prerequisites()!.uv.available) {
-              <button type="button" class="btn btn-sm" disabled title="This engine needs uv (bundled in the installed app)">
+            } @else if (needsUv(pack) && prerequisites() && !prerequisites()!.uv.available && !uvObtainable()) {
+              <button type="button" class="btn btn-sm" disabled title="This engine needs uv, which has no build for this platform">
                 Install
               </button>
               <span class="hint test-fail">Needs uv — see the note above.</span>

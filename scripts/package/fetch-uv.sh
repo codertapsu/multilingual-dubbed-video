@@ -43,7 +43,12 @@ echo "    triple: ${TRIPLE}"
 mkdir -p "${BIN_DIR}" "${WORK}"
 rm -rf "${WORK:?}/"*
 
-UV_VERSION="${UV_VERSION:-latest}"
+# PINNED (not "latest"): the orchestrator can self-install this same uv release
+# when no sidecar is bundled, and it verifies a per-platform sha256 pinned in
+# packages/node-orchestrator/src/engines/uvBootstrap.ts. Keep the two in lockstep
+# — a unit test fails the build if they drift. Override with UV_VERSION=latest
+# for a one-off experiment.
+UV_VERSION="${UV_VERSION:-0.12.1}"
 # uv archives: .zip for windows, .tar.gz elsewhere; the archive root contains
 # `uv-<triple>/uv[.exe]`.
 ARCHIVE_EXT="tar.gz"

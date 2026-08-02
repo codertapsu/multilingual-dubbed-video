@@ -57,9 +57,13 @@ hiddenimports += ["ctranslate2"]
 binaries += collect_dynamic_libs("sentencepiece")
 hiddenimports += ["sentencepiece"]
 
-# stanza — sentence segmentation. Bundle its package data (resource manifests).
-datas += collect_data_files("stanza")
-hiddenimports += collect_submodules("stanza")
+# MiniSBD — sentence segmentation on onnxruntime. This REPLACES stanza, which
+# imports torch and so dragged ~580 MB (40% of the app) into the bundle for
+# sentence boundaries alone. rthook_translation.py stubs `stanza` and forces
+# ARGOS_CHUNK_TYPE=MINISBD; the models are seeded into each Argos package at
+# install time (ArgosBackend._seed_minisbd_model) so nothing downloads mid-dub.
+datas += collect_data_files("minisbd")
+hiddenimports += collect_submodules("minisbd")
 
 # --- uvicorn / fastapi dynamic imports -------------------------------------
 hiddenimports += collect_submodules("uvicorn")
@@ -85,9 +89,25 @@ a = Analysis(
     runtime_hooks=[RT_HOOK],
     # spacy is optional in argostranslate.sbd (try/except) and unused by the
     # default sentencizer — verified an en->vi translation works without it.
-    # torch/onnxruntime, by contrast, are hard-required (stanza/minisbd), so they
+    # onnxruntime is hard-required (MiniSBD runs on it); torch is NOT — it only
     # stay. Dropping spacy shaves ~24 MB.
-    excludes=["tkinter", "matplotlib", "pytest", "spacy"],
+    excludes=[
+        "tkinter",
+        "matplotlib",
+        "pytest",
+        "spacy",
+        # stanza -> torch is the single edge that made this worker 739 MB. The
+        # runtime hook stubs stanza, so nothing here imports either at run time;
+        # excluding them stops PyInstaller following the graph at BUILD time.
+        # sympy/networkx/mpmath are torch's own deps and go with it.
+        "stanza",
+        "torch",
+        "torchgen",
+        "functorch",
+        "sympy",
+        "networkx",
+        "mpmath",
+    ],
     cipher=block_cipher,
     noarchive=False,
 )

@@ -2,7 +2,12 @@
 # Local/offline-first: Argos Translate provides on-device neural translation.
 fastapi>=0.110
 uvicorn[standard]>=0.27
-argostranslate>=1.9
+# Pinned: the packaging swap to MiniSBD (see scripts/package/rthook_translation.py)
+# depends on argostranslate's current sbd module shape — a bare `import stanza`
+# plus MiniSBD selection from the package contents. Re-verify before bumping.
+argostranslate==1.11.0
+# Sentence splitting on onnxruntime; replaces stanza (which pulls ~580 MB of torch).
+minisbd>=0.9.5
 pydantic>=2.5
 
 # --- Dev / test extras (not required to run the service) ---

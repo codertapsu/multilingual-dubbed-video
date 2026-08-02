@@ -16,6 +16,7 @@ glossary protect/restore all happen one layer up in
 from __future__ import annotations
 
 import logging
+import shutil
 from typing import Protocol, runtime_checkable
 
 from .errors import AppErrorException
@@ -114,6 +115,11 @@ class ArgosBackend:
         self._languages = list(argos_translate.get_installed_languages())
         self._loaded = True
         logger.info("Argos: loaded %d installed language(s)", len(self._languages))
+        # Packages installed by an EARLIER version carry only a stanza model, and
+        # this build has no stanza (see rthook_translation.py). Seed them once so
+        # an upgraded install keeps splitting sentences offline; new installs are
+        # already seeded by ensure_pair. Best-effort and never fatal.
+        self._seed_missing_minisbd_models()
 
     def refresh(self) -> None:
         """Force a reload of installed languages (after installing packages)."""
@@ -354,9 +360,86 @@ class ArgosBackend:
         # New package installed -> drop the cached language graph so the next
         # translate()/installed_pairs() observes it.
         self.refresh()
+        self._seed_minisbd_model(from_lang)
         self._warm_sentence_boundary(from_lang, to_lang)
         logger.info("Argos: installed pair %s->%s.", from_lang, to_lang)
         return True
+
+    # MiniSBD language codes that differ from the Argos ones (mirrors
+    # argostranslate.sbd.MiniSBDSentencizer.LANGUAGE_CODE_MAPPING).
+    _MINISBD_LANG = {"zt": "zh-hant", "zh": "zh-hans", "pb": "pt"}
+
+    def _seed_missing_minisbd_models(self) -> None:
+        """Seed a MiniSBD model into any installed package that lacks one."""
+        try:
+            from argostranslate import package as argos_package  # noqa: PLC0415
+
+            installed = argos_package.get_installed_packages()
+        except Exception:  # noqa: BLE001
+            return
+        for pkg in installed:
+            from_code = getattr(pkg, "from_code", None)
+            if not from_code:
+                continue
+            sbd_dir = pkg.package_path / "minisbd"
+            if sbd_dir.exists() and any(sbd_dir.glob("*.onnx")):
+                continue
+            self._seed_minisbd_model(from_code)
+
+    def _seed_minisbd_model(self, from_lang: str) -> None:
+        """Put a MiniSBD sentence model inside the installed Argos package.
+
+        Sentence splitting decides how the transcript is chunked before
+        translation, and Argos picks its splitter from what the package
+        contains: ``<pkg>/minisbd`` wins over ``<pkg>/stanza``
+        (argostranslate.package). The published .argosmodel files ship a stanza
+        model, and stanza imports torch — ~580 MB of the app, for sentence
+        boundaries.
+
+        Seeding the ~0.2-0.6 MB MiniSBD ONNX here flips the choice to a splitter
+        that runs on onnxruntime, which the worker already bundles. Doing it at
+        INSTALL time matters: MiniSBD otherwise fetches the model on first use,
+        which would put a network call in the middle of a dub — and fail
+        outright on an offline machine.
+
+        Best-effort. A failure leaves the package working exactly as before.
+        """
+        pkg = self._installed_package_path(from_lang)
+        if pkg is None:
+            return
+        target_dir = pkg / "minisbd"
+        if any(target_dir.glob("*.onnx")) if target_dir.exists() else False:
+            return  # already seeded
+
+        try:
+            from minisbd import models as minisbd_models  # noqa: PLC0415 - optional at import time
+
+            lang = self._MINISBD_LANG.get(from_lang, from_lang)
+            if lang not in minisbd_models.list_models():
+                lang = "en"  # MiniSBD's own fallback
+            cached = minisbd_models.get_model_file(lang)  # downloads + caches
+            target_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(cached, target_dir / f"{lang}.onnx")
+            logger.info("Argos: seeded MiniSBD model '%s' into %s.", lang, pkg.name)
+        except Exception as exc:  # noqa: BLE001 - never fail an install over this
+            logger.warning(
+                "Argos: could not seed a MiniSBD model for '%s' (%s); sentence splitting "
+                "will fetch one on first use, which needs network.",
+                from_lang,
+                exc,
+            )
+
+    def _installed_package_path(self, from_lang: str):
+        """Path of an installed Argos package whose source language is `from_lang`."""
+        try:
+            from argostranslate import package as argos_package  # noqa: PLC0415
+
+            for pkg in argos_package.get_installed_packages():
+                if getattr(pkg, "from_code", None) == from_lang:
+                    return pkg.package_path
+        except Exception:  # noqa: BLE001
+            return None
+        return None
 
     def _warm_sentence_boundary(self, from_lang: str, to_lang: str) -> None:
         """Run one throwaway translation so first-use needs no network.

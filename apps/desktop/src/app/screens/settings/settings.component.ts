@@ -422,7 +422,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.error.set({
           code: 'WORKER_UNAVAILABLE',
           message: 'Lost connection to the engine install stream.',
-          remediation: 'Make sure the local services are running, then try the install again.',
+          remediation:
+            'The backend connection dropped. Try the install again; if it keeps failing, quit and reopen ' +
+            'VideoDubber (in a dev build, restart the local services).',
         });
         this.engineEvents = null;
       }

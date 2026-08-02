@@ -654,6 +654,47 @@ export class IpcService {
     }
   }
 
+  /**
+   * True once any request has reached the orchestrator in this session.
+   *
+   * Before first contact the backend is presumed to be STARTING; after it, a
+   * connection failure means it went away and should surface quickly.
+   */
+  private backendSeen = false;
+
+  /**
+   * `fetch`, but patient while the backend is still coming up.
+   *
+   * The desktop shell spawns the orchestrator sidecar and opens the window
+   * immediately — it does not wait for the port. The UI therefore races a
+   * process that has to start a ~100 MB Node SEA binary, which on Windows is
+   * also scanned by Defender the first time it runs (i.e. right after an
+   * install or an update). Every screen that fetched on load turned that race
+   * into a hard "Could not reach the orchestrator" error, most visibly on
+   * Settings.
+   *
+   * A connection-level failure means the request never reached a server, so
+   * retrying is safe for any method — nothing was applied. We are generous only
+   * until first contact; afterwards a dead backend fails fast instead of
+   * freezing the UI for half a minute.
+   */
+  private async fetchWaitingForBackend(url: string, init: RequestInit): Promise<Response> {
+    const deadline = Date.now() + (this.backendSeen ? 2_000 : 60_000);
+    let delay = 150;
+    for (;;) {
+      try {
+        const res = await fetch(url, init);
+        this.backendSeen = true;
+        return res;
+      } catch (cause) {
+        // An aborted request is the caller's own timeout, not a boot race.
+        if (init.signal?.aborted || Date.now() >= deadline) throw cause;
+        await new Promise((r) => setTimeout(r, delay));
+        delay = Math.min(delay * 2, 1_500);
+      }
+    }
+  }
+
   /** HTTP fallback. Parses the worker/orchestrator JSON error envelope. */
   private async http<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl}${path}`;
@@ -672,16 +713,22 @@ export class IpcService {
 
     let res: Response;
     try {
-      res = await fetch(url, init);
+      res = await this.fetchWaitingForBackend(url, init);
     } catch (cause) {
-      // Network-level failure: orchestrator likely not running.
+      // Network-level failure: the orchestrator isn't listening (and, after
+      // fetchWaitingForBackend, isn't going to be within the boot window).
       throw {
         code: 'WORKER_UNAVAILABLE',
         message: `Could not reach the orchestrator at ${this.baseUrl}.`,
         cause: String(cause),
-        remediation:
-          'Start the local services (run scripts/dev.sh or scripts/dev.ps1) and ensure port 5100 is free.',
-        docsRef: 'docs/LOCAL_SETUP.md',
+        // The dev advice is actively wrong inside the packaged app, where the
+        // shell owns the backend and the user has no scripts/ directory.
+        remediation: this.inTauri
+          ? 'The built-in backend did not start. Quit and reopen VideoDubber; if it keeps happening, ' +
+            'reinstall the app, and check that no other program is using port 5100 ' +
+            '(some antivirus and VPN tools block local ports).'
+          : 'Start the local services (run scripts/dev.sh or scripts/dev.ps1) and ensure port 5100 is free.',
+        docsRef: this.inTauri ? 'docs/TROUBLESHOOTING.md' : 'docs/LOCAL_SETUP.md',
       };
     }
 

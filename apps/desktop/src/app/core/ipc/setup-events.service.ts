@@ -124,7 +124,8 @@ export class SetupEventsService {
         code: 'WORKER_UNAVAILABLE',
         message,
         remediation:
-          'Make sure the local services are running, then retry — the download resumes where it left off.',
+          'The backend connection dropped. Retry — the download resumes where it left off. If it keeps ' +
+          'failing, quit and reopen VideoDubber (in a dev build, restart the local services).',
       });
     }
   }

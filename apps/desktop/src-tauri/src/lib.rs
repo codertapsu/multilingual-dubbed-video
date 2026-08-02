@@ -120,6 +120,8 @@ pub fn run() {
             commands::get_app_version,
             commands::check_for_update,
             commands::download_and_install_update,
+            // backend recovery (offered when the sidecar never came up)
+            commands::restart_app,
         ])
         // --- Run loop ---------------------------------------------------
         // Use `build` + `run` (rather than the shorthand `.run`) so we can hook

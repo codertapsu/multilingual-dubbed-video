@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, signal } from '@angular/core';
 
 import { environment } from '../environment';
 import type {
@@ -663,6 +663,25 @@ export class IpcService {
   private backendSeen = false;
 
   /**
+   * Set when the backend could not be reached even after waiting for it, and
+   * cleared as soon as any request succeeds. The app shell watches this to show
+   * one clear app-wide notice (with a Restart button) instead of leaving each
+   * screen to render its own failure.
+   */
+  private readonly _backendDown = signal(false);
+  readonly backendDown = this._backendDown.asReadonly();
+
+  /**
+   * Relaunch the desktop app (`restart_app`). Restarting is the reliable cure
+   * for a backend that lost the startup race: the sidecar binary is warm the
+   * second time, so it comes up quickly. No-op outside the desktop shell.
+   */
+  async restartApp(): Promise<void> {
+    if (!this.tauri) return;
+    await this.invoke('restart_app', {});
+  }
+
+  /**
    * `fetch`, but patient while the backend is still coming up.
    *
    * The desktop shell spawns the orchestrator sidecar and opens the window
@@ -685,10 +704,15 @@ export class IpcService {
       try {
         const res = await fetch(url, init);
         this.backendSeen = true;
+        this._backendDown.set(false);
         return res;
       } catch (cause) {
         // An aborted request is the caller's own timeout, not a boot race.
-        if (init.signal?.aborted || Date.now() >= deadline) throw cause;
+        if (init.signal?.aborted || Date.now() >= deadline) {
+          // Out of patience: surface it once, app-wide.
+          if (!init.signal?.aborted) this._backendDown.set(true);
+          throw cause;
+        }
         await new Promise((r) => setTimeout(r, delay));
         delay = Math.min(delay * 2, 1_500);
       }

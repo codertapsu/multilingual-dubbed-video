@@ -585,6 +585,24 @@ pub async fn download_and_install_update(app: AppHandle) -> Result<Value, String
     app.restart()
 }
 
+/// `restart_app` -> relaunch VideoDubber.
+///
+/// Offered when the bundled backend never came up. The orchestrator sidecar is
+/// spawned at startup and the window opens without waiting for it, so a slow
+/// first launch (a ~100 MB Node SEA being scanned by antivirus right after an
+/// install or update) can leave the UI with no backend. Restarting fixes it in
+/// practice — the binary is warm the second time — so give the user the button
+/// instead of instructions.
+///
+/// Diverges like the post-update relaunch: `AppHandle::restart()` never returns.
+#[tauri::command]
+pub async fn restart_app(app: AppHandle) -> Result<Value, String> {
+    // Stop the backend we are about to orphan; the restarted process spawns its
+    // own, and on Windows a live sidecar would keep its port and files locked.
+    crate::sidecar::shutdown_all();
+    app.restart()
+}
+
 // ---------------------------------------------------------------------------
 // Local error helper (duplicated tiny shape so commands.rs has no dep on the
 // private fn in orchestrator_client). Keep in sync with that module's format.

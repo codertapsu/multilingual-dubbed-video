@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
 import { IpcService } from './core/ipc/ipc.service';
@@ -39,6 +39,34 @@ import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.c
       </span>
     </header>
 
+    @if (ipc.backendDown()) {
+      <!--
+        The backend never came up. Requests already wait ~60s for it (the
+        sidecar has to start a ~100 MB binary, which antivirus scans on the
+        first run after an install or update), so reaching here means waiting
+        longer will not help — but restarting reliably does, because the binary
+        is warm the second time. Offer the button rather than instructions.
+      -->
+      <div class="backend-down" role="alert" aria-live="assertive">
+        <div>
+          <strong>VideoDubber's backend isn't running.</strong>
+          <span>
+            This can happen the first time you open the app after installing or updating.
+            @if (ipc.inTauri) {
+              Reopening usually fixes it.
+            } @else {
+              Start the local services (scripts/dev.sh or scripts/dev.ps1), then reload.
+            }
+          </span>
+        </div>
+        @if (ipc.inTauri) {
+          <button type="button" class="btn" (click)="restart()" [disabled]="restarting()">
+            {{ restarting() ? 'Restarting…' : 'Quit & reopen' }}
+          </button>
+        }
+      </div>
+    }
+
     <main class="app-main">
       <router-outlet />
     </main>
@@ -47,6 +75,21 @@ import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.c
   `,
   styles: [
     `
+      .backend-down {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--vd-sp-4);
+        padding: var(--vd-sp-3) var(--vd-sp-5);
+        background: var(--vd-danger-bg, #3a1d1d);
+        border-bottom: 1px solid var(--vd-danger, #a33);
+        font-size: 0.92rem;
+      }
+      .backend-down span {
+        opacity: 0.85;
+        margin-left: var(--vd-sp-2);
+      }
+
       .topnav {
         display: flex;
         align-items: center;
@@ -111,6 +154,20 @@ import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.c
   ],
 })
 export class AppComponent {
+  protected readonly restarting = signal(false);
+
+  /** Relaunch the app so the backend gets a second, warm start. */
+  protected async restart(): Promise<void> {
+    this.restarting.set(true);
+    try {
+      await this.ipc.restartApp();
+    } catch {
+      // restart_app diverges on success, so reaching here means it failed —
+      // leave the notice up and let the user quit manually.
+      this.restarting.set(false);
+    }
+  }
+
   protected readonly ipc = inject(IpcService);
 
   protected readonly modeTooltip = this.ipc.inTauri

@@ -141,11 +141,19 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     // partial on a small one — instead of failing. (Both llama.cpp builds this
     // catalog has ever pinned, b9581 and b9592, default to auto.)
     //
-    // `-fitc 8192` then stops the fitter from buying VRAM headroom by SHRINKING
-    // the context: its floor is 4096 by default, and a chat-JSON batch (~20
-    // segments + context header, n_predict 3072) does not fit in 4096. With the
-    // floor raised the fitter drops GPU layers instead, which costs speed rather
-    // than silently truncating translations.
+    // The context is protected by passing `-c 8192` EXPLICITLY: the fitter only
+    // reduces n_ctx when the user left it at 0 (fit.cpp — `if (cparams->n_ctx ==
+    // 0)`, else "context size set by user -> no change"). So its only remaining
+    // lever is GPU layers, which is exactly the trade we want — speed, never a
+    // silently truncated batch. (`-fitc` would be inert here for the same
+    // reason, so we don't pass it.)
+    //
+    // `-fitt 512` halves the fitter's per-device safety margin, which defaults
+    // to 1 GiB (common.h `fit_params_target`). At the default, a GPU that fits
+    // the model with less than 1 GiB to spare gets layers demoted to CPU even
+    // though `-ngl 999` used to offload it fully — a silent slowdown for
+    // existing users on e.g. a 10 GB card. Our heavy-engine policy unloads other
+    // engines first, so half a gigabyte of headroom is enough.
     // `--no-jinja`: TranslateGemma's embedded Jinja chat template is too complex
     // for llama.cpp's parser, which ABORTS the server at model-load ("chat
     // template parsing error … exiting due to model loading error") before it
@@ -160,8 +168,8 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
       String(port),
       '-c',
       '8192',
-      '-fitc',
-      '8192',
+      '-fitt',
+      '512',
       '--no-jinja',
       ...(model ? ['-m', model] : []),
     ],
@@ -425,12 +433,39 @@ export class EngineManager {
 
     const baseUrl = `http://127.0.0.1:${port}`;
     const stop = async (): Promise<void> => {
+      this.running.delete(packId);
       try {
         child.kill('SIGTERM');
       } catch {
         /* already dead */
       }
-      this.running.delete(packId);
+      // WAIT for the process to actually exit. This used to return immediately,
+      // which was harmless when offload was hard-coded — but llama.cpp now sizes
+      // GPU offload to FREE device memory at load, so starting the next engine
+      // while the previous one still holds its VRAM makes it under-offload for
+      // the whole session. Model swaps (unloadHeavyExcept -> ensureRunning) hit
+      // this every time.
+      if (typeof child.once !== 'function') return; // test double
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL'); // refused to go quietly
+          } catch {
+            /* already dead */
+          }
+          finish();
+        }, 10_000);
+        timer.unref?.();
+        child.once('exit', finish);
+        child.once('error', finish);
+      });
     };
 
     // Wait for health (the engine may take a moment to load its model).

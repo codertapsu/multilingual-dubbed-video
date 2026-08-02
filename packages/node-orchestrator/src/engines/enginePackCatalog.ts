@@ -203,7 +203,12 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     arch: ['x64'],
     accel: 'cuda',
     tier: 'performance',
-    minVramMb: 8192,
+    // 4 GB, matching whisper-cpp-cuda. This is the RUNTIME BINARY: it needs a
+    // CUDA-capable card, not a big one — how much VRAM a run needs comes from
+    // the MODEL pack. The old 8 GB gate badged the CUDA build "may run slowly"
+    // and kept it out of recommendations on 4-6 GB NVIDIA cards, steering those
+    // users to the Vulkan build instead, which is the slower option on NVIDIA.
+    minVramMb: 4096,
     approxSizeMb: 420,
     artifacts: [
       {

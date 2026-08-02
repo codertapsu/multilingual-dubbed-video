@@ -207,10 +207,16 @@ describe('TranslateGemma model packs', () => {
     // `-ngl 999` aborts the fitter and the server dies at load on any card too
     // small for the model (a 4 GB GTX 1650 + a 12B Q4 reported exactly that).
     expect(capturedArgs).not.toContain('-ngl');
-    // …but the fitter must not buy that headroom by shrinking the context below
-    // what a chat-JSON batch needs (its own default floor is only 4096).
-    expect(capturedArgs).toContain('-fitc');
-    expect(capturedArgs[capturedArgs.indexOf('-fitc') + 1]).toBe('8192');
+    // …and the context must be set EXPLICITLY, because that is what stops the
+    // fitter shrinking it: llama.cpp only reduces n_ctx when the user left it at
+    // 0. Drop `-c` and the fitter is free to pick any context it likes, silently
+    // truncating batches — so this assertion, not a `-fitc` flag (which is inert
+    // whenever `-c` is set), is the real guarantee.
+    expect(capturedArgs).toContain('-c');
+    expect(capturedArgs[capturedArgs.indexOf('-c') + 1]).toBe('8192');
+    // The fitter's 1 GiB default margin would demote layers on GPUs that fit the
+    // model with less to spare, so it is capped.
+    expect(capturedArgs).toContain('-fitt');
     // TranslateGemma's Jinja chat template aborts llama-server at load, so we
     // must disable Jinja (we drive /completion ourselves).
     expect(capturedArgs).toContain('--no-jinja');

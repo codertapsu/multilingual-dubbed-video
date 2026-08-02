@@ -39,6 +39,7 @@ import type { EngineManager } from '../engines/engineManager.js';
 import type { EnginePackStore } from '../engines/enginePackStore.js';
 import {
   requireInstalledPack,
+  installedPacksForProvider,
   resolveLocalLlmChatModel,
   resolveLocalLlmModelPath,
 } from '../engines/packSelection.js';
@@ -239,9 +240,13 @@ export function createDefaultRegistry(
           // Needs BOTH: a llama.cpp runtime binary pack AND a TranslateGemma model
           // pack. Resolve the GGUF first so a missing-model install fails fast with
           // a clear ENGINE_PACK_MISSING instead of starting a model-less server.
-          const packId = await requireInstalledPack(store, 'local-llm');
+          // Try every installed llama.cpp runtime, best accelerator first: a
+          // CUDA build that cannot start on this driver must not take the step
+          // down when a working Vulkan/CPU build is installed alongside it.
+          const packIds = await installedPacksForProvider(store, 'local-llm');
+          if (packIds.length === 0) await requireInstalledPack(store, 'local-llm'); // throws the actionable error
           const model = await resolveLocalLlmModelPath(store);
-          return engines.ensureRunning(packId, { exclusive: true, model });
+          return engines.ensureRunningFirstUsable(packIds, { exclusive: true, model });
         },
         timeoutMs: timeout,
       }),
@@ -262,9 +267,13 @@ export function createDefaultRegistry(
       mode: 'chat-json-batch',
       model: 'gemma-it',
       resolveBaseUrl: async () => {
-        const packId = await requireInstalledPack(store, 'local-llm');
+        const packIds = await installedPacksForProvider(store, 'local-llm');
+        if (packIds.length === 0) await requireInstalledPack(store, 'local-llm'); // throws the actionable error
         const chatModel = await resolveLocalLlmChatModel(store);
-        const baseUrl = await engines.ensureRunning(packId, { exclusive: true, model: chatModel.modelPath });
+        const baseUrl = await engines.ensureRunningFirstUsable(packIds, {
+          exclusive: true,
+          model: chatModel.modelPath,
+        });
         return { baseUrl, promptFormat: chatModel.promptFormat };
       },
       timeoutMs: timeout,

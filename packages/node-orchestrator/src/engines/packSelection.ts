@@ -90,6 +90,30 @@ export async function pickInstalledPack(
   return undefined;
 }
 
+/**
+ * EVERY installed pack for a provider, best-accelerator first.
+ *
+ * A provider can have several runnable backends installed at once (llama.cpp
+ * ships CUDA, Vulkan and Metal builds). {@link pickInstalledPack} returns only
+ * the best one, which is right until that build cannot actually run here — a
+ * CUDA binary needs a matching driver, and a card can be too small for a given
+ * model. Callers that can retry use this to fall back instead of failing the
+ * whole step: installing a second runtime should never make the app worse than
+ * not installing it.
+ */
+export async function installedPacksForProvider(
+  store: EnginePackStore,
+  providerId: string,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (const pack of packsForProvider(providerId, platform, arch)) {
+    if (await store.isInstalled(pack.id)) ids.push(pack.id);
+  }
+  return ids;
+}
+
 /** Resolve an installed pack id or throw a clear ENGINE_PACK_MISSING. */
 export async function requireInstalledPack(store: EnginePackStore, providerId: string): Promise<string> {
   const id = await pickInstalledPack(store, providerId);

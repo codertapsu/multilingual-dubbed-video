@@ -10,6 +10,7 @@ import {
   pickInstalledLocalLlmChatModel,
   pickInstalledLocalLlmModel,
   pickInstalledPack,
+  installedPacksForProvider,
   requireInstalledPack,
   resolveActivePackSelections,
   resolveLocalLlmChatModel,
@@ -843,5 +844,51 @@ describe('waitFor', () => {
   it('resolves false after the deadline', async () => {
     const ok = await waitFor(async () => false, 30, 5);
     expect(ok).toBe(false);
+  });
+});
+
+describe('runtime fallback when the preferred engine cannot start', () => {
+  it('falls back to the next installed runtime, and remembers the bad one', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-fallback-'));
+    const store = new EnginePackStore(dir);
+    for (const id of ['llama-cpp-cuda', 'llama-cpp-vulkan']) {
+      const p = store.packDir(id);
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, 'llama-server.exe'), '');
+      await writeFile(path.join(p, 'llama-server'), '');
+      await store.add({ id, path: p, installedAt: '2026-01-01T00:00:00Z' });
+    }
+
+    const attempts: string[] = [];
+    let port = 51000;
+    const mgr = new EngineManager({
+      store,
+      allocatePort: async () => port++,
+      // The CUDA build "starts" but never answers health — exactly how a wrong
+      // driver or an unusable GPU presents.
+      healthProbe: async (url: string) => !url.includes(`:51000`),
+      spawnImpl: (cmd) => {
+        attempts.push(cmd.includes('cuda') ? 'cuda' : 'vulkan');
+        return { on: () => undefined, stderr: { on: () => undefined }, kill: () => true } as never;
+      },
+      startTimeoutMs: 50,
+    });
+
+    const ids = await installedPacksForProvider(store, 'local-llm', 'win32', 'x64');
+    expect(ids[0]).toBe('llama-cpp-cuda'); // preferred by accel rank
+
+    // Installing CUDA must not break a machine where only Vulkan works.
+    const url = await mgr.ensureRunningFirstUsable(ids, { model: '/m.gguf' });
+    expect(url).toContain('51001');
+    expect(attempts).toEqual(['cuda', 'vulkan']);
+
+    // The failure is remembered: the next call skips CUDA entirely.
+    attempts.length = 0;
+    await mgr.stopAll();
+    await mgr.ensureRunningFirstUsable(ids, { model: '/m.gguf' });
+    expect(attempts).toEqual(['vulkan']);
+
+    await mgr.stopAll();
+    await rm(dir, { recursive: true, force: true });
   });
 });

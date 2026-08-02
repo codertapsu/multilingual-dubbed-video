@@ -262,6 +262,8 @@ export class EngineManager {
   private readonly running = new Map<string, RunningEngine>();
   /** Owner currently holding the exclusive heavy-engine lane (see engineOwner.ts). */
   private heavyOwner: string | undefined;
+  /** Packs that failed to start in this session (see ensureRunningFirstUsable). */
+  private readonly unusablePacks = new Set<string>();
   /** In-flight starts per pack, so concurrent calls share one spawn. */
   private readonly starting = new Map<string, Promise<string>>();
 
@@ -303,6 +305,50 @@ export class EngineManager {
    * silently unloading the holder's engine mid-request. Enforcing it here — at
    * the chokepoint — means a new call site added later is safe by default.
    */
+  /**
+   * Start the first pack in `packIds` that actually comes up.
+   *
+   * Preference order is best-accelerator-first, but "best" is a guess about the
+   * machine: a CUDA build fails on a mismatched driver, and a GPU can be too
+   * small for a given model. Without a fallback, INSTALLING a second runtime
+   * makes the app strictly worse — the higher-ranked build wins selection, fails
+   * to start, and takes the pipeline step with it, while a working build sits
+   * unused. (A user hit exactly that: dubbing worked, installing the CUDA
+   * runtime broke the Translate step, uninstalling it fixed things again.)
+   *
+   * A pack that fails is remembered for the session so later steps don't pay its
+   * start-up timeout again. The LAST failure is rethrown when nothing works, so
+   * the surfaced error still names a real cause.
+   */
+  async ensureRunningFirstUsable(
+    packIds: readonly string[],
+    opts: { exclusive?: boolean; model?: string; ownerId?: string } = {},
+  ): Promise<string> {
+    if (packIds.length === 0) {
+      throw new AppErrorException('ENGINE_PACK_MISSING', 'No engine pack installed for this provider.');
+    }
+    const fresh = packIds.filter((id) => !this.unusablePacks.has(id));
+    // All known-bad: try the preferred one anyway — a driver update or a freed
+    // GPU may have fixed it since — rather than refusing outright.
+    const order = fresh.length > 0 ? fresh : packIds;
+    let lastError: unknown;
+    for (const packId of order) {
+      try {
+        return await this.ensureRunning(packId, opts);
+      } catch (err) {
+        lastError = err;
+        this.unusablePacks.add(packId);
+        if (order.length > 1) {
+          this.deps.logger?.warn(
+            `Engine pack "${packId}" could not start; falling back to the next installed runtime. ` +
+              'Remove or reinstall it in Settings → Engines if this persists.',
+          );
+        }
+      }
+    }
+    throw lastError;
+  }
+
   async ensureRunning(
     packId: string,
     opts: { exclusive?: boolean; model?: string; ownerId?: string } = {},

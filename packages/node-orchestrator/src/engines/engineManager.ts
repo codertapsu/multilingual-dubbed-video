@@ -126,9 +126,26 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     // its path (resolveLocalLlmModelPath) and threads it in as `model`, so
     // llama-server loads it with `-m`. Without an installed model pack the
     // provider throws ENGINE_PACK_MISSING before we get here, so `model` is set
-    // in practice. `-ngl 999` offloads all layers to the GPU on the accelerated
-    // builds (Metal/CUDA/Vulkan) and is a harmless no-op on a CPU-only build.
-    // `-c 8192` is ample headroom — TranslateGemma's input context is ~2K tokens.
+    // in practice.
+    //
+    // GPU OFFLOAD IS DELIBERATELY NOT SET. llama.cpp defaults `n_gpu_layers` to
+    // -1 = "auto" (common/common.h) and fits it to *free device memory* at load
+    // (`common_fit_params`, on by default). We used to force `-ngl 999` ("put
+    // every layer on the GPU"), which DISABLES that fitting — on a 4 GB card
+    // loading a 12B Q4 the server aborted outright:
+    //   common_fit_params: failed to fit params to free device memory:
+    //     n_gpu_layers already set by user to 999, abort
+    //   ggml_vulkan: Device memory allocation of size 1058781184 failed
+    // and the engine never became healthy. Leaving it unset offloads as many
+    // layers as actually fit — full offload on a big GPU or Apple Silicon,
+    // partial on a small one — instead of failing. (Both llama.cpp builds this
+    // catalog has ever pinned, b9581 and b9592, default to auto.)
+    //
+    // `-fitc 8192` then stops the fitter from buying VRAM headroom by SHRINKING
+    // the context: its floor is 4096 by default, and a chat-JSON batch (~20
+    // segments + context header, n_predict 3072) does not fit in 4096. With the
+    // floor raised the fitter drops GPU layers instead, which costs speed rather
+    // than silently truncating translations.
     // `--no-jinja`: TranslateGemma's embedded Jinja chat template is too complex
     // for llama.cpp's parser, which ABORTS the server at model-load ("chat
     // template parsing error … exiting due to model loading error") before it
@@ -143,8 +160,8 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
       String(port),
       '-c',
       '8192',
-      '-ngl',
-      '999',
+      '-fitc',
+      '8192',
       '--no-jinja',
       ...(model ? ['-m', model] : []),
     ],

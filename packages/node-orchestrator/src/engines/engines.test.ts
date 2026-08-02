@@ -180,7 +180,7 @@ describe('TranslateGemma model packs', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('threads the resolved GGUF into llama-server as `-m` (with -ngl)', async () => {
+  it('threads the resolved GGUF into llama-server as `-m`, letting it auto-fit the GPU', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-tgm-run-'));
     const store = new EnginePackStore(dir);
     const p = store.packDir('llama-cpp-metal');
@@ -203,7 +203,14 @@ describe('TranslateGemma model packs', () => {
     await manager.ensureRunning('llama-cpp-metal', { exclusive: true, model: '/models/tg.gguf' });
     expect(capturedArgs).toContain('-m');
     expect(capturedArgs[capturedArgs.indexOf('-m') + 1]).toBe('/models/tg.gguf');
-    expect(capturedArgs).toContain('-ngl');
+    // GPU offload must be LEFT UNSET so llama.cpp fits it to free VRAM. Forcing
+    // `-ngl 999` aborts the fitter and the server dies at load on any card too
+    // small for the model (a 4 GB GTX 1650 + a 12B Q4 reported exactly that).
+    expect(capturedArgs).not.toContain('-ngl');
+    // …but the fitter must not buy that headroom by shrinking the context below
+    // what a chat-JSON batch needs (its own default floor is only 4096).
+    expect(capturedArgs).toContain('-fitc');
+    expect(capturedArgs[capturedArgs.indexOf('-fitc') + 1]).toBe('8192');
     // TranslateGemma's Jinja chat template aborts llama-server at load, so we
     // must disable Jinja (we drive /completion ourselves).
     expect(capturedArgs).toContain('--no-jinja');

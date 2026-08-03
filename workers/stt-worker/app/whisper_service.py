@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any, List, Optional
@@ -308,6 +309,50 @@ def list_installed_models() -> list[str]:
 # ---------------------------------------------------------------------------
 # Transcription
 # ---------------------------------------------------------------------------
+def _load_audio_samples(audio_path: str):
+    """Decode `audio_path` to the float32 mono 16 kHz array faster-whisper wants.
+
+    The pipeline always hands us a 16 kHz mono pcm_s16le WAV (the media worker
+    produces it with ffmpeg), which the stdlib `wave` module reads directly. That
+    avoids PyAV entirely — it embeds its own FFmpeg build, ~44 MB, purely to
+    re-decode audio we already normalised.
+
+    Anything else (a user pointing straight at an mp4/mp3, a non-PCM or
+    multi-channel WAV) is converted with the ffmpeg binary the app already
+    bundles, resolved from FFMPEG_PATH and falling back to PATH.
+    """
+    import wave  # noqa: PLC0415 - stdlib, cheap
+
+    import numpy as np  # noqa: PLC0415 - already a dependency
+
+    try:
+        with wave.open(audio_path, "rb") as wav:
+            if wav.getsampwidth() == 2 and wav.getnchannels() == 1 and wav.getframerate() == 16000:
+                raw = wav.readframes(wav.getnframes())
+                return np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    except (wave.Error, EOFError):
+        pass  # not a plain PCM WAV — fall through to ffmpeg
+
+    ffmpeg = os.environ.get("FFMPEG_PATH") or "ffmpeg"
+    proc = subprocess.run(  # noqa: S603 - fixed argv, path from our own config
+        [ffmpeg, "-nostdin", "-threads", "0", "-i", audio_path,
+         "-f", "s16le", "-ac", "1", "-acodec", "pcm_s16le", "-ar", "16000", "-"],
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        raise AppError(
+            ERROR_UNSUPPORTED_MEDIA,
+            f"Could not decode audio: {audio_path}",
+            remediation=(
+                "Provide a 16 kHz mono WAV, or make sure the bundled ffmpeg is available "
+                "(FFMPEG_PATH)."
+            ),
+            cause=RuntimeError(proc.stderr.decode("utf-8", "replace")[-400:]),
+        )
+    return np.frombuffer(proc.stdout, dtype="<i2").astype(np.float32) / 32768.0
+
+
 def _validate_audio_path(audio_path: str) -> None:
     """Ensure the audio file exists and is a non-empty regular file."""
     if not audio_path or not audio_path.strip():
@@ -411,7 +456,14 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
                 transcribe_kwargs.pop("batch_size", None)
                 runner = model
 
-        segments_iter, info = runner.transcribe(request.audioPath, **transcribe_kwargs)
+        # Hand faster-whisper SAMPLES, not a path. Given a path it decodes with
+        # PyAV, which bundles an entire second FFmpeg (~44 MB) into this worker —
+        # to decode a 16 kHz mono WAV that our own media worker just produced,
+        # while the app also ships ffmpeg/ffprobe as sidecars. Reading that WAV
+        # with the stdlib costs nothing and lets the build drop PyAV. Anything
+        # that is not a plain PCM WAV falls back to the bundled ffmpeg binary.
+        audio = _load_audio_samples(request.audioPath)
+        segments_iter, info = runner.transcribe(audio, **transcribe_kwargs)
     except Exception as exc:
         raise AppError(
             ERROR_UNSUPPORTED_MEDIA,

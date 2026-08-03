@@ -84,6 +84,16 @@ foreach ($cruft in @(".temp", ".lock")) {
   if (Test-Path $p) { Remove-Item -Recurse -Force $p }
 }
 
+# Trim Tcl/Tk from the staged runtime: a GUI toolkit inside an interpreter that
+# exists only to build headless engine-pack venvs (the PyInstaller specs already
+# exclude tkinter). Windows has no bin/python symlinks, so only this half applies.
+foreach ($root in (Get-ChildItem -Directory $Dest -Filter "cpython-*" -ErrorAction SilentlyContinue)) {
+  foreach ($rel in @("tcl", "Lib\tkinter", "Lib\idlelib", "DLLs\tcl86t.dll", "DLLs\tk86t.dll", "DLLs\_tkinter.pyd")) {
+    $p = Join-Path $root.FullName $rel
+    if (Test-Path $p) { Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue }
+  }
+}
+
 # Sanity: there must be a real cpython-* runtime left.
 $runtime = Get-ChildItem -Directory $Dest -Filter "cpython-*" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $runtime) { throw "No cpython-* runtime present in $Dest after install." }

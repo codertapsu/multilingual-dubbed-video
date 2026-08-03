@@ -76,6 +76,24 @@ find "${DEST}" -maxdepth 1 -type l -exec rm -f {} +
 # Remove uv's scratch/lock state (not needed in the bundle).
 rm -rf "${DEST}/.temp" "${DEST}/.lock" 2>/dev/null || true
 
+# Trim the staged runtime. Two independent wins, ~43 MB on macOS:
+#
+#  1. bin/python and bin/python3 are SYMLINKS to bin/python3.12, but Tauri's
+#     macOS bundler DEREFERENCES symlinks when it copies resources/ into the
+#     .app — so each became a full ~18 MB copy of the interpreter and we shipped
+#     the same binary three times. uv resolves its managed runtimes by the
+#     versioned name, so dropping the aliases changes nothing at run time.
+#  2. Tcl/Tk + tkinter + idlelib: a GUI toolkit inside a runtime that exists
+#     solely to build headless engine-pack venvs. `excludes=["tkinter"]` in the
+#     PyInstaller specs already says we never use it.
+for _root in "${DEST}"/cpython-*; do
+  [ -d "${_root}" ] || continue
+  rm -f "${_root}/bin/python" "${_root}/bin/python3" 2>/dev/null || true
+  rm -rf "${_root}"/lib/tcl* "${_root}"/lib/tk* "${_root}"/lib/itcl* \
+         "${_root}"/lib/libtcl*.dylib "${_root}"/lib/libtk*.dylib \
+         "${_root}"/lib/python3.*/tkinter "${_root}"/lib/python3.*/idlelib 2>/dev/null || true
+done
+
 # Sanity: there must be a real cpython-* runtime left.
 if ! find "${DEST}" -maxdepth 1 -type d -name 'cpython-*' | grep -q .; then
   echo "ERROR: no cpython-* runtime present in ${DEST} after install." >&2

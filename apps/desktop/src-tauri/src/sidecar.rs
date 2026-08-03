@@ -265,6 +265,13 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
             // global HF cache) so everything lives in ~/VideoDubber.
             ("STT_MODEL_CACHE_DIR", hf_cache.to_string_lossy().into_owned()),
             ("HF_HOME", hf_cache.to_string_lossy().into_owned()),
+            // The STT worker no longer bundles PyAV (which embedded a second
+            // FFmpeg to decode audio we had already normalised to 16 kHz mono
+            // WAV). It reads that WAV with the stdlib and shells out to the
+            // bundled ffmpeg for anything else, so it needs FFMPEG_PATH like the
+            // orchestrator and TTS worker. Empty when unresolved — the worker
+            // then falls back to `ffmpeg` on PATH.
+            ("FFMPEG_PATH", ffmpeg_path.clone().unwrap_or_default()),
         ],
     );
 

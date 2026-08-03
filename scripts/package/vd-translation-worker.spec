@@ -130,6 +130,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
+
+# onnxruntime ships its runtime TWICE: the pybind extension
+# (onnxruntime_pybind11_state.so) statically contains the runtime, and
+# pyinstaller_hooks_contrib's hook-onnxruntime.py additionally does a blanket
+# collect_dynamic_libs() that drags in the standalone libonnxruntime dylib —
+# ~29 MB per worker that nothing dlopens. Drop it just before COLLECT.
+a.binaries = [b for b in a.binaries if not os.path.basename(b[0]).startswith("libonnxruntime.")]
+
 coll = COLLECT(
     exe,
     a.binaries,

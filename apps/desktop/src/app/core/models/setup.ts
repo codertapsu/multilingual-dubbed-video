@@ -214,6 +214,8 @@ export interface RunPreflightResult {
 export interface GpuInfo {
   name: string;
   vramMb?: number;
+  /** Vendor driver version when detectable (NVIDIA, via nvidia-smi), e.g. "551.61". */
+  driverVersion?: string;
 }
 
 /** GET /system -> hardware/OS profile. */

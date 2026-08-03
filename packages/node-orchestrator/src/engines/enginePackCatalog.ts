@@ -39,6 +39,17 @@ const LLAMA_DL = `https://github.com/ggml-org/llama.cpp/releases/download/${LLAM
 const WHISPER_DL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP}`;
 
 /**
+ * The CUDA toolkit both Windows CUDA packs are built against, and the Windows
+ * driver that shipped it. Every CUDA artifact URL below carries "12.4", and
+ * ENGINE_PACKS asserts the two stay in step — bump the pack to a different
+ * toolkit and this must move with it, or the gate silently under-reports.
+ *
+ * Version table: developer.nvidia.com/cuda-toolkit-archive (CUDA 12.4 → 551.61).
+ */
+const CUDA_TOOLKIT = '12.4';
+const CUDA_MIN_DRIVER_WIN = '551.61';
+
+/**
  * TranslateGemma GGUF weights (the `local-llm-model` packs).
  *
  * Google ships TranslateGemma as safetensors ONLY — there is no official Google
@@ -146,11 +157,14 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     accel: 'cuda',
     tier: 'performance',
     minVramMb: 4096,
+    // Built against CUDA 12.4 (see the artifact URL): an older driver aborts at
+    // the first real kernel launch rather than failing to load.
+    minNvidiaDriver: CUDA_MIN_DRIVER_WIN,
     approxSizeMb: 90,
     artifacts: [
       {
         // Upstream prebuilt (contains whisper-cli.exe / whisper-server.exe).
-        url: `${WHISPER_DL}/whisper-cublas-12.4.0-bin-x64.zip`,
+        url: `${WHISPER_DL}/whisper-cublas-${CUDA_TOOLKIT}.0-bin-x64.zip`,
         sha256: '63b70c91fe2fd7449865c45f6422ab628439eacc6985d8309c77bfb65cc68a19',
         approxSizeMb: 90,
         destPath: '.',
@@ -209,10 +223,18 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     // and kept it out of recommendations on 4-6 GB NVIDIA cards, steering those
     // users to the Vulkan build instead, which is the slower option on NVIDIA.
     minVramMb: 4096,
+    // VRAM is not the only way this build fails to run. On a GTX 1650 with
+    // driver 546.29 (CUDA 12.3) it enumerated the GPU, loaded the model and
+    // allocated every buffer, then aborted inside CUDA_CHECK the first time a
+    // real graph executed — for a 26B MoE and a dense 12B alike, and at 4, 5 and
+    // 20 offloaded layers alike, with 1.8 GB of VRAM still free. Driver 610.88
+    // ran the byte-for-byte identical allocation. NVIDIA's minor-version
+    // compatibility did not hold, and the symptom carries no hint of a driver.
+    minNvidiaDriver: CUDA_MIN_DRIVER_WIN,
     approxSizeMb: 420,
     artifacts: [
       {
-        url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-win-cuda-12.4-x64.zip`,
+        url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-win-cuda-${CUDA_TOOLKIT}-x64.zip`,
         sha256: 'd00b3e988f0fbd03d055904eb361b1065cfa014e1860366d42eb599af4016260',
         approxSizeMb: 30,
         destPath: '.',
@@ -221,7 +243,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
       {
         // The CUDA build needs the CUDA 12 runtime DLLs (separate upstream zip),
         // extracted alongside llama-server.exe.
-        url: `${LLAMA_DL}/cudart-llama-bin-win-cuda-12.4-x64.zip`,
+        url: `${LLAMA_DL}/cudart-llama-bin-win-cuda-${CUDA_TOOLKIT}-x64.zip`,
         sha256: '8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6',
         approxSizeMb: 390,
         destPath: '.',

@@ -32,6 +32,29 @@ bump the version constant, or edit the artifact `url`/`sha256` directly.
 `SELF_HOSTED_BASE` can also be overridden at runtime with the
 `VIDEODUBBER_ENGINE_BASE` environment variable (handy for testing a mirror).
 
+### CUDA packs: bump the driver floor with the toolkit
+
+The two CUDA packs also declare `minNvidiaDriver`, driven by two more constants:
+
+```ts
+const CUDA_TOOLKIT      = '12.4';    // appears in every CUDA artifact URL
+const CUDA_MIN_DRIVER_WIN = '551.61'; // the Windows driver that ships it
+```
+
+**If you rebuild a CUDA pack against a different toolkit, move both.** A CUDA
+binary on a driver older than its toolkit does not fail to load — it enumerates
+the GPU, loads the model, allocates every buffer and only then aborts inside
+`CUDA_CHECK`, with nothing in the message naming a driver. (Measured: a GTX 1650
+aborted every run on 546.29 and served the byte-for-byte identical allocation on
+610.88.) NVIDIA's documented "minor version compatibility" does not save you
+here.
+
+`engines.test.ts` parses the toolkit back out of each pack's artifact URLs and
+asserts it maps to the declared floor, so a rebuild that forgets this fails the
+suite rather than shipping a silent crash. Extend the `TOOLKIT_TO_DRIVER` table
+there when you move to a new toolkit
+([version table](https://developer.nvidia.com/cuda-toolkit-archive)).
+
 ---
 
 ## 2. What's upstream vs. what you must host

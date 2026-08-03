@@ -17,7 +17,12 @@ import {
   resolveLocalLlmChatModel,
   resolveLocalLlmModelPath,
 } from './packSelection.js';
-import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engineRecommendation.js';
+import {
+  nvidiaDriverSupportsPack,
+  packFitsMachine,
+  packHardwareSupported,
+  recommendEnginePacks,
+} from './engineRecommendation.js';
 import { ENGINE_LAUNCH_SPECS, EngineManager, findFile, waitFor } from './engineManager.js';
 import { _resetUvCache, resolveUvPath, uvAvailable } from './uv.js';
 import { recommendSetup } from '../system/systemProfile.js';
@@ -659,6 +664,150 @@ describe('hardware-aware engine recommendations', () => {
     const p = profile({ totalRamMb: 4 * 1024, appleSilicon: false, gpus: [] });
     const recs = recommendEnginePacks(p, recommendSetup(p), 'linux', 'x64');
     expect(recs.find((r) => r.packId === 'local-llm-cuda')).toBeUndefined();
+  });
+});
+
+/**
+ * A CUDA build needs a driver at least as new as the toolkit it was compiled
+ * against. NVIDIA's "minor version compatibility" says otherwise; on a GTX 1650
+ * with driver 546.29 (CUDA 12.3) it did not hold, and the b9592 CUDA build
+ * enumerated the GPU, loaded the model, allocated every buffer and THEN aborted
+ * inside CUDA_CHECK on the first real graph — for a 26B MoE and a dense 12B
+ * alike, at 4/5/20 offloaded layers alike, with 1.8 GB of VRAM to spare. Driver
+ * 610.88 ran the identical allocation. Nothing about that symptom points at a
+ * driver, so the catalog has to.
+ */
+describe('NVIDIA driver gate on CUDA packs', () => {
+  const nvidia = (driverVersion?: string): SystemProfile =>
+    profile({
+      platform: 'win32',
+      arch: 'x64',
+      appleSilicon: false,
+      gpus: [{ name: 'NVIDIA GeForce GTX 1650', vramMb: 4096, ...(driverVersion ? { driverVersion } : {}) }],
+    });
+
+  const cudaPack = (id: string): EnginePackInfo => {
+    const p = findPack(id);
+    expect(p, `${id} missing from the catalog`).toBeDefined();
+    return p as EnginePackInfo;
+  };
+
+  it('declares a driver floor on every CUDA pack, pinned to the toolkit in its own artifact URLs', () => {
+    const cuda = ENGINE_PACKS.filter((p) => p.accel === 'cuda');
+    expect(cuda.length).toBeGreaterThan(0);
+    for (const pack of cuda) {
+      // The floor must exist...
+      expect(pack.minNvidiaDriver, `${pack.id} has no minNvidiaDriver`).toBeDefined();
+      // ...and must match the toolkit the artifacts actually ship. Rebuilding a
+      // pack against a newer CUDA without moving its floor would re-open this
+      // exact bug silently, so tie the two together here rather than trusting a
+      // comment. (CUDA 12.4 -> 551.61; extend the table when a pack moves.)
+      const TOOLKIT_TO_DRIVER: Record<string, string> = { '12.4': '551.61' };
+      // Upstream names the toolkit either way: llama.cpp ships "…-cuda-12.4-…",
+      // whisper.cpp "…-cublas-12.4.0-…".
+      const toolkit = pack.artifacts
+        .map((a) => /(?:cuda|cublas)[-.]?(\d+\.\d+)/i.exec(a.url)?.[1])
+        .find((v): v is string => typeof v === 'string');
+      expect(toolkit, `${pack.id}: no CUDA toolkit version in its artifact URLs`).toBeDefined();
+      expect(TOOLKIT_TO_DRIVER[toolkit as string], `unmapped CUDA toolkit ${toolkit}`).toBeDefined();
+      expect(pack.minNvidiaDriver).toBe(TOOLKIT_TO_DRIVER[toolkit as string]);
+    }
+  });
+
+  it('rejects a driver below the floor and accepts one at or above it', () => {
+    const pack = cudaPack('llama-cpp-cuda');
+    expect(nvidiaDriverSupportsPack(pack, nvidia('546.29'))).toBe(false); // the reported failure
+    expect(nvidiaDriverSupportsPack(pack, nvidia('551.60'))).toBe(false); // just under
+    expect(nvidiaDriverSupportsPack(pack, nvidia('551.61'))).toBe(true); // exactly the floor
+    expect(nvidiaDriverSupportsPack(pack, nvidia('610.88'))).toBe(true); // the reported fix
+    // Numeric, not lexicographic: "9.99" must not beat "551.61", and a 3-part
+    // Linux version must compare segment-wise.
+    expect(nvidiaDriverSupportsPack(pack, nvidia('9.99'))).toBe(false);
+    expect(nvidiaDriverSupportsPack(pack, nvidia('551.61.02'))).toBe(true);
+  });
+
+  it('FAILS OPEN when the driver cannot be established', () => {
+    // Detection is best-effort: nvidia-smi may be absent or report something we
+    // do not parse. Hiding a working CUDA build from the user who most wants it
+    // is a worse error than one failed start the fallback already survives.
+    const pack = cudaPack('llama-cpp-cuda');
+    expect(nvidiaDriverSupportsPack(pack, nvidia(undefined))).toBe(true);
+    expect(nvidiaDriverSupportsPack(pack, nvidia(''))).toBe(true);
+    expect(nvidiaDriverSupportsPack(pack, profile({ gpus: [] }))).toBe(true);
+    // Non-CUDA packs are never judged by it.
+    expect(nvidiaDriverSupportsPack(cudaPack('llama-cpp-vulkan'), nvidia('546.29'))).toBe(true);
+  });
+
+  it('stops recommending and badging the pack below the floor, but keeps it VISIBLE', () => {
+    const pack = cudaPack('llama-cpp-cuda');
+    const old = nvidia('546.29');
+    const current = nvidia('610.88');
+    // "✓ can run" / recommendation gate follows the driver...
+    expect(packFitsMachine(pack, current)).toBe(true);
+    expect(packFitsMachine(pack, old)).toBe(false);
+    // ...but the hard gate does NOT: the row must stay in Settings → Engines so
+    // the user can see the pack (and fix their driver) rather than have it
+    // silently vanish. That is what separates this from "no NVIDIA GPU".
+    expect(packHardwareSupported(pack, old)).toBe(true);
+  });
+
+  it('demotes an installed under-driver CUDA runtime behind Vulkan instead of dropping it', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-drvgate-'));
+    const store = new EnginePackStore(dir);
+    for (const id of ['llama-cpp-cuda', 'llama-cpp-vulkan']) {
+      const p = store.packDir(id);
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, 'llama-server.exe'), '');
+      await store.add({ id, path: p, installedAt: '2026-01-01T00:00:00Z' });
+    }
+
+    // No profile: unchanged behaviour — CUDA outranks Vulkan.
+    expect(await installedPacksForProvider(store, 'local-llm', 'win32', 'x64')).toEqual([
+      'llama-cpp-cuda',
+      'llama-cpp-vulkan',
+    ]);
+    // Current driver: still CUDA first.
+    expect(await installedPacksForProvider(store, 'local-llm', 'win32', 'x64', nvidia('610.88'))).toEqual([
+      'llama-cpp-cuda',
+      'llama-cpp-vulkan',
+    ]);
+    // Old driver: Vulkan first, so the step never pays CUDA's ~12-17s load-then-
+    // abort. CUDA is DEMOTED, not removed — the fallback still tries it if
+    // Vulkan is gone, and a wrong detection costs ordering, not capability.
+    expect(await installedPacksForProvider(store, 'local-llm', 'win32', 'x64', nvidia('546.29'))).toEqual([
+      'llama-cpp-vulkan',
+      'llama-cpp-cuda',
+    ]);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('recommends the Vulkan runtime instead of CUDA when the driver is too old', () => {
+    // The payoff of the gate: an under-driver machine is steered to a runtime
+    // that works, rather than to the one that will abort. Vulkan is slower on
+    // NVIDIA, which is exactly why it is second choice and not first.
+    const p = nvidia('546.29');
+    const recs = recommendEnginePacks(p, recommendSetup(p), 'win32', 'x64').map((r) => r.packId);
+    expect(recs).toContain('llama-cpp-vulkan');
+    expect(recs).not.toContain('llama-cpp-cuda');
+    // ...and the current driver gets the fast one back.
+    const q = nvidia('610.88');
+    expect(recommendEnginePacks(q, recommendSetup(q), 'win32', 'x64').map((r) => r.packId)).toContain(
+      'llama-cpp-cuda',
+    );
+  });
+
+  it('still returns the CUDA pack when it is the only runtime installed', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-drvgate-solo-'));
+    const store = new EnginePackStore(dir);
+    const p = store.packDir('llama-cpp-cuda');
+    await mkdir(p, { recursive: true });
+    await writeFile(path.join(p, 'llama-server.exe'), '');
+    await store.add({ id: 'llama-cpp-cuda', path: p, installedAt: '2026-01-01T00:00:00Z' });
+    // Trying a build that may fail beats refusing to try anything at all.
+    expect(await installedPacksForProvider(store, 'local-llm', 'win32', 'x64', nvidia('546.29'))).toEqual([
+      'llama-cpp-cuda',
+    ]);
+    await rm(dir, { recursive: true, force: true });
   });
 });
 

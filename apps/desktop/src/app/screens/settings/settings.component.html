@@ -298,7 +298,7 @@
         @if (isEngineFit(pack.id)) {
           <span class="hint test-ok">✓ Your hardware can run this locally</span>
         } @else {
-          <span class="hint test-fail">⚠ {{ engineRamHint(pack) }} — may run slowly on this machine</span>
+          <span class="hint test-fail">⚠ {{ engineFitHint(pack) }}</span>
         }
         @if (isEngineShadowed(pack)) {
           <span class="hint">

@@ -14,6 +14,10 @@ import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import { environment } from '../../core/environment';
+// Runtime helper (not a type), so it comes straight from the shared package per
+// the re-export note in core/models/index.ts. Shared with the orchestrator's
+// pack gate so the badge and the gate can never disagree about the same driver.
+import { outdatedNvidiaDriver } from '@videodubber/shared';
 import type {
   ActivePackSelection,
   AppError,
@@ -370,10 +374,26 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return fits === null || fits.has(packId);
   }
 
-  /** Short "needs ~N GB RAM" hint for a pack the machine can't comfortably run. */
-  protected engineRamHint(pack: EnginePackInfo): string {
+  /**
+   * Why this machine can't comfortably run a pack — the whole sentence, because
+   * the two cases don't end the same way.
+   *
+   * The driver case comes FIRST and deliberately does not say "may run slowly":
+   * a CUDA build on a driver older than its toolkit doesn't run slowly, it loads
+   * the model, allocates every buffer and then aborts. Falling through to the
+   * RAM wording would send that user to buy hardware for something a driver
+   * update fixes — and the crash itself carries no hint of a driver, so this
+   * badge is the only place they can learn it.
+   */
+  protected engineFitHint(pack: EnginePackInfo): string {
+    const driver = outdatedNvidiaDriver(pack, this.system()?.profile.gpus ?? []);
+    if (driver) {
+      return `Needs NVIDIA driver ${pack.minNvidiaDriver} or newer — this machine has ${driver}. Update the driver, or use the Vulkan build instead.`;
+    }
     const gb = pack.minRamMb ? Math.round(pack.minRamMb / 1024) : 0;
-    return gb > 0 ? `Needs ~${gb} GB RAM` : 'May be heavy for this machine';
+    return gb > 0
+      ? `Needs ~${gb} GB RAM — may run slowly on this machine`
+      : 'May be heavy for this machine — may run slowly';
   }
 
   protected engineProgressFor(packId: string): { percent: number | null; message: string } | undefined {

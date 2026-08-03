@@ -243,7 +243,7 @@ export function createDefaultRegistry(
           // Try every installed llama.cpp runtime, best accelerator first: a
           // CUDA build that cannot start on this driver must not take the step
           // down when a working Vulkan/CPU build is installed alongside it.
-          const packIds = await installedPacksForProvider(store, 'local-llm');
+          const packIds = await installedPacksForProvider(store, 'local-llm', process.platform, process.arch, profile);
           if (packIds.length === 0) await requireInstalledPack(store, 'local-llm'); // throws the actionable error
           const model = await resolveLocalLlmModelPath(store);
           return engines.ensureRunningFirstUsable(packIds, { exclusive: true, model });
@@ -267,7 +267,7 @@ export function createDefaultRegistry(
       mode: 'chat-json-batch',
       model: 'gemma-it',
       resolveBaseUrl: async () => {
-        const packIds = await installedPacksForProvider(store, 'local-llm');
+        const packIds = await installedPacksForProvider(store, 'local-llm', process.platform, process.arch, profile);
         if (packIds.length === 0) await requireInstalledPack(store, 'local-llm'); // throws the actionable error
         const chatModel = await resolveLocalLlmChatModel(store);
         const baseUrl = await engines.ensureRunningFirstUsable(packIds, {

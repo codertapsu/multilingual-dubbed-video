@@ -62,6 +62,7 @@ export type {
   StorageClearRequest,
   StorageClearResult,
 } from './models/engines.js';
+export { compareDriverVersions, outdatedNvidiaDriver, NVIDIA_GPU_RE } from './models/engines.js';
 
 // ---- Media types -----------------------------------------------------------
 export type {

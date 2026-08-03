@@ -52,9 +52,13 @@ async function detectGpus(platform: string): Promise<GpuInfo[]> {
     }
 
     // Linux/Windows: nvidia-smi if present (the common dedicated-GPU case).
+    // driver_version comes from the SAME query rather than parsing nvidia-smi's
+    // banner: the banner's "CUDA Version:" field moved between driver
+    // generations (it is absent entirely on 610.x), whereas --query-gpu is a
+    // stable machine-readable contract.
     const { stdout } = await execFileAsync(
       'nvidia-smi',
-      ['--query-gpu=name,memory.total', '--format=csv,noheader,nounits'],
+      ['--query-gpu=name,memory.total,driver_version', '--format=csv,noheader,nounits'],
       { timeout: DETECT_TIMEOUT_MS, windowsHide: true },
     );
     return stdout
@@ -62,9 +66,13 @@ async function detectGpus(platform: string): Promise<GpuInfo[]> {
       .split('\n')
       .filter(Boolean)
       .map((line) => {
-        const [name, mem] = line.split(',').map((s) => s.trim());
+        const [name, mem, driver] = line.split(',').map((s) => s.trim());
         const vramMb = Number.parseInt(mem ?? '', 10);
-        return { name: name ?? 'GPU', ...(Number.isFinite(vramMb) ? { vramMb } : {}) };
+        return {
+          name: name ?? 'GPU',
+          ...(Number.isFinite(vramMb) ? { vramMb } : {}),
+          ...(driver ? { driverVersion: driver } : {}),
+        };
       });
   } catch {
     return [];

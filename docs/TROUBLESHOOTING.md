@@ -259,6 +259,52 @@ compiler. The rest of the monorepo uses TS ~5.6.3. Don't bump the desktop app's
 TypeScript past what Angular 18 supports; if `ng` complains about an unsupported
 TypeScript version, reinstall to honor the pin (`pnpm install`).
 
+### The CUDA engine pack won't start (NVIDIA driver too old)
+
+Symptom: translation (or whisper.cpp) works until you install the **CUDA** engine
+pack, and then the step gets slower or fails. The engine log ends with
+
+```
+D:\a\llama.cpp\llama.cpp\ggml\src\ggml-cuda\ggml-cuda.cu:103: CUDA error
+```
+
+and the process exit code is `-1073740791` (`0xC0000409` — `abort()`).
+
+**Cause: the driver is older than the CUDA toolkit the pack was built against.**
+The packs ship CUDA 12.4 binaries, which need **driver 551.61 or newer** on
+Windows. NVIDIA documents "minor version compatibility" (12.x code on any r525+
+driver); in practice it does not hold for these builds, and when it breaks it
+breaks *late*: the GPU enumerates, the model loads, every buffer allocates, and
+only the first real graph execution aborts. Nothing in the message mentions a
+driver.
+
+Measured on a GTX 1650 with the 26B MoE chat model:
+
+| Driver | GPU allocation | Result |
+|---|---|---|
+| 546.29 (CUDA 12.3) | 1749.70 MiB model + 128 + 540 KV | abort |
+| 610.88 | *byte-for-byte identical* | serves normally |
+
+It is **not** a VRAM problem, and reducing the offload does not help: the same
+abort happens at 4, 5 and 20 offloaded layers, with 1.8 GB of VRAM still free,
+and for a dense 12B as well as the MoE.
+
+**Fix:** update the NVIDIA driver, then restart the app. The app also gates the
+CUDA packs on this (`minNvidiaDriver` in the engine catalog): below the floor
+they stop being recommended, Settings → Engines badges them
+"Needs NVIDIA driver 551.61 or newer", and an already-installed CUDA runtime is
+ranked *behind* the Vulkan one so a run never pays its load-then-abort. The
+Vulkan pack is a fine fallback on NVIDIA — slower, but unaffected by this.
+
+**To confirm before/after:**
+```powershell
+pwsh scripts\diagnose-llama-engine.ps1 -Runtime llama-cpp-cuda -Bisect
+```
+The report opens with an explicit `driver 551.61+` check. (Note that the actual
+CUDA error string can never be captured: `ggml_cuda_error()` logs it through
+llama.cpp's asynchronous logger, which `abort()` does not flush — which is why
+the script bisects the memory knobs instead of chasing the message.)
+
 ---
 
 If a problem isn't covered here, capture the failing `AppError` (its `code` +

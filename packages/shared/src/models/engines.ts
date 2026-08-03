@@ -93,6 +93,26 @@ export interface EnginePackInfo {
   minRamMb?: number;
   /** Minimum dedicated VRAM (MB) for GPU packs. */
   minVramMb?: number;
+  /**
+   * Minimum NVIDIA driver version for a CUDA build, as the driver that shipped
+   * the CUDA toolkit the artifacts are compiled against (12.4 → 551.61 on
+   * Windows). Keep it in step with the toolkit in the artifact URLs.
+   *
+   * NVIDIA documents "minor version compatibility" — 12.x code on any r525+
+   * driver — and that is exactly what makes this gate necessary rather than
+   * redundant: it does NOT hold in practice for these builds, and when it
+   * breaks it breaks silently. A GTX 1650 on driver 546.29 (CUDA 12.3) enumerates
+   * the device, loads the model and allocates every buffer, then aborts inside
+   * CUDA_CHECK the first time a real graph executes — identically for a 26B MoE
+   * and a dense 12B, and identically at 4, 5 and 20 offloaded layers. Driver
+   * 610.88 runs the byte-for-byte same allocation. So the failure looks like a
+   * crash, never like "your driver is old", and nothing downstream can infer it.
+   *
+   * Deliberately a SOFT gate (see packFitsMachine / installedPacksForProvider):
+   * unlike a missing GPU, the user can fix this, so the pack stays visible and
+   * merely stops being recommended and preferred.
+   */
+  minNvidiaDriver?: string;
   /** Hardware tier this pack targets (for the recommendation engine). */
   tier?: 'balanced' | 'performance' | 'workstation';
   /** Licensing note shown before install (transparency). */
@@ -245,4 +265,63 @@ export interface StorageClearResult {
   freedBytes: number;
   /** Categories that were actually cleared. */
   cleared: StorageCategory[];
+}
+
+// ---------------------------------------------------------------------------
+// NVIDIA driver gate
+//
+// Lives in shared because BOTH sides need the same answer: the orchestrator to
+// decide what to recommend and which installed runtime to prefer, and the
+// desktop UI to explain why a pack is badged. Two copies of a version compare
+// would drift, and this one decides whether a user is told to update a driver
+// or to buy RAM.
+// ---------------------------------------------------------------------------
+
+/**
+ * Compare dotted numeric versions ("546.29" vs "551.61", "550.54.14"), like a
+ * comparator. Segment-wise and numeric, so "9.99" correctly loses to "551.61"
+ * (a lexicographic compare gets that backwards). A non-numeric segment counts
+ * as 0, degrading a surprising vendor string to "equal" rather than "too old".
+ */
+export function compareDriverVersions(a: string, b: string): number {
+  const pa = a.split('.');
+  const pb = b.split('.');
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = Number.parseInt(pa[i] ?? '0', 10);
+    const nb = Number.parseInt(pb[i] ?? '0', 10);
+    const d = (Number.isFinite(na) ? na : 0) - (Number.isFinite(nb) ? nb : 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** GPU marketing names that indicate an NVIDIA (CUDA-capable) GPU. */
+export const NVIDIA_GPU_RE = /nvidia|geforce|quadro|tesla|\brtx\b|\bgtx\b/i;
+
+/**
+ * The machine's NVIDIA driver version when it is OLDER than `pack` requires,
+ * else undefined. Undefined therefore means "fine, or unknowable" — callers get
+ * the string precisely when they can say something true and specific about it.
+ *
+ * FAILS OPEN by design: GPU detection is best-effort, so an undetectable driver
+ * must read as "don't judge". Wrongly hiding a working CUDA build from the user
+ * who most wants it is worse than one failed start that the runtime fallback
+ * already survives.
+ */
+export function outdatedNvidiaDriver(
+  pack: Pick<EnginePackInfo, 'minNvidiaDriver'>,
+  gpus: readonly { name: string; driverVersion?: string }[],
+): string | undefined {
+  const required = pack.minNvidiaDriver;
+  if (!required) return undefined;
+  const detected = gpus
+    .filter((g) => NVIDIA_GPU_RE.test(g.name))
+    .map((g) => g.driverVersion)
+    .filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+  if (detected.length === 0) return undefined; // unknown — see above
+  // One new-enough GPU is enough: CUDA picks a single device, and llama.cpp
+  // takes the best one rather than every one.
+  if (detected.some((v) => compareDriverVersions(v, required) >= 0)) return undefined;
+  // Report the newest driver present — the one the runtime would actually use.
+  return [...detected].sort(compareDriverVersions).at(-1);
 }

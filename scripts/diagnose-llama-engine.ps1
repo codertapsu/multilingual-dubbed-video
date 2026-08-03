@@ -108,11 +108,28 @@ W "VideoDubber llama.cpp engine diagnosis - $stamp"
 W ("=" * 72)
 
 # --- 1. machine + driver ----------------------------------------------------
+# The driver version is the single most load-bearing number in this report: a
+# CUDA build on a driver older than its toolkit loads the model, allocates every
+# buffer and only THEN aborts, with nothing in the message pointing at a driver
+# (546.29 failed, 610.88 ran the identical allocation). So take it from
+# --query-gpu, which is a machine-readable contract, and treat the banner as a
+# bonus — its "CUDA Version:" field is absent entirely on 610.x, which is exactly
+# when we most needed it.
 W "`n## GPU / driver"
 if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
   W (nvidia-smi --query-gpu=name,driver_version,memory.total,memory.free,compute_cap --format=csv 2>&1 | Out-String)
-  W "nvidia-smi CUDA runtime line:"
-  W ((nvidia-smi 2>&1 | Select-String 'CUDA Version') -join "`n")
+  $drv = (nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>&1 | Select-Object -First 1 | Out-String).Trim()
+  W "driver version (authoritative, --query-gpu): $(if ($drv) { $drv } else { 'UNAVAILABLE' })"
+  # Windows driver -> bundled CUDA runtime, for the packs this app ships (12.4
+  # needs 551.61+). Keep in step with CUDA_MIN_DRIVER_WIN in enginePackCatalog.ts.
+  if ($drv -match '^(\d+)\.(\d+)') {
+    $major = [int]$Matches[1]; $minor = [int]$Matches[2]
+    $ok = ($major -gt 551) -or ($major -eq 551 -and $minor -ge 61)
+    W ("CUDA 12.4 packs (llama-cpp-cuda, whisper-cpp-cuda) need driver 551.61+: " +
+       $(if ($ok) { "OK ($drv)" } else { "TOO OLD ($drv) - this alone explains a CUDA-only abort" }))
+  }
+  $banner = (nvidia-smi 2>&1 | Select-String 'CUDA Version') -join "`n"
+  W "nvidia-smi banner CUDA line: $(if ($banner) { $banner.Trim() } else { '(not printed by this driver generation)' })"
 } else {
   W "nvidia-smi NOT FOUND — no NVIDIA driver on PATH (expected on AMD/Intel machines)."
 }
@@ -300,8 +317,12 @@ if ($Bisect) {
     -Why "the app's exact arguments - reproduces the failure"
   $results['headroom'] = Invoke-LlamaRun -Label 'headroom' -Port 5200 -Fitt 1536 -Ngl -1 `
     -Why 'same, but 3x the fitter free-memory target - survives iff the cause is unmodelled CUDA scratch'
+  # NB: with -fit off the MoE expert weights of the offloaded layers stay on the
+  # GPU, so a 4-layer offload can allocate MORE device memory than a fitted
+  # 20-layer one (2070 vs 1750 MiB, measured). It is still a useful third data
+  # point, but `headroom` is the run that actually settles a memory question.
   $results['starved']  = Invoke-LlamaRun -Label 'starved'  -Port 5201 -Fitt 512  -Ngl 4  `
-    -Why 'token 4-layer offload, fitter off, gigabytes of VRAM spare - dies only if the kernel, not memory, is at fault'
+    -Why 'token 4-layer offload, fitter off - dies only if the kernel, not the fit, is at fault'
 } else {
   $results['single'] = Invoke-LlamaRun -Label 'single' -Port 5199 -Fitt $Fitt -Ngl $Ngl -Why ''
 }
@@ -310,9 +331,32 @@ W "`n$('=' * 72)"
 if ($Bisect) {
   W "## SUMMARY"
   foreach ($k in $results.Keys) { W ("  {0,-10} {1}" -f $k, $(if ($results[$k]) { 'WORKS' } else { 'failed' })) }
-  if     (-not $results['baseline'] -and -not $results['starved']) { W "`n  => Not memory. A 4-layer offload leaves VRAM to spare and it still failed:`n     suspect the kernel/build for this GPU, not the fit." }
-  elseif (-not $results['baseline'] -and $results['headroom'])     { W "`n  => Headroom. The fitter's 512 MiB margin does not cover the CUDA-only`n     pool + cuBLAS workspace; raising -fitt on CUDA is the fix." }
-  elseif ($results['baseline'])                                    { W "`n  => The baseline started this time. The failure is not deterministic in`n     this configuration - note what else was using the GPU." }
+  if ($results['baseline']) {
+    # These three knobs only move MEMORY. A working baseline therefore says the
+    # cause was never in them, and something OUTSIDE this script changed since
+    # the failing report — so name the usual suspect rather than shrugging at
+    # "not deterministic". This is not hypothetical: an identical baseline that
+    # aborted on driver 546.29 served on 610.88, same binary, same model, same
+    # 1749.70/128.00/540.00 MiB allocation.
+    W "`n  => Baseline WORKS. These runs only vary memory, so if it failed before,"
+    W "     something outside them changed. In order of likelihood:"
+    W "       1. the NVIDIA driver (see the 551.61+ check at the top of this report)"
+    W "       2. another process had been holding VRAM during the failing run"
+    W "       3. a different engine-pack or model version"
+  }
+  elseif (-not $results['headroom'] -and -not $results['starved']) {
+    W "`n  => Not memory. `headroom` backs the fitter off to a fraction of the card"
+    W "     and it still failed, so suspect the CUDA build/driver for this GPU."
+    W "     Check the driver line at the top of this report FIRST."
+  }
+  elseif ($results['headroom']) {
+    W "`n  => Headroom. The fitter's 512 MiB margin does not cover the CUDA-only"
+    W "     pool + cuBLAS workspace; raising -fitt on CUDA is the fix."
+  }
+  else {
+    W "`n  => Mixed result - read the per-run allocations above rather than trusting"
+    W "     this summary; the knobs did not separate the cause cleanly."
+  }
 }
 W "Report written to: $report"
 Write-Host "`nAttach that file." -ForegroundColor Cyan

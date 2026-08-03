@@ -16,7 +16,7 @@ import {
   type SystemProfile,
 } from '@videodubber/shared';
 import { availablePacks, findPack } from './enginePackCatalog.js';
-import { packFitsForSelection } from './engineRecommendation.js';
+import { nvidiaDriverSupportsPack, packFitsForSelection } from './engineRecommendation.js';
 import { getSystemProfile } from '../system/systemProfile.js';
 import type { EnginePackStore } from './enginePackStore.js';
 
@@ -100,18 +100,33 @@ export async function pickInstalledPack(
  * model. Callers that can retry use this to fall back instead of failing the
  * whole step: installing a second runtime should never make the app worse than
  * not installing it.
+ *
+ * Given a hardware `profile`, a build whose driver requirement this machine
+ * misses is DEMOTED to the back rather than dropped. Falling back already works
+ * — but only after paying the failed build's whole model load (12-17s on a 4 GB
+ * card, every session, before the abort), so ordering is where the cost
+ * actually goes away. Demoting rather than removing keeps the fallback honest
+ * if the detection is wrong, and keeps a single-pack machine working: trying a
+ * build that might fail beats refusing to try anything.
  */
 export async function installedPacksForProvider(
   store: EnginePackStore,
   providerId: string,
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
+  profile?: SystemProfile,
 ): Promise<string[]> {
+  const packs = packsForProvider(providerId, platform, arch);
   const ids: string[] = [];
-  for (const pack of packsForProvider(providerId, platform, arch)) {
+  for (const pack of packs) {
     if (await store.isInstalled(pack.id)) ids.push(pack.id);
   }
-  return ids;
+  if (!profile) return ids;
+  const demoted = new Set(
+    packs.filter((p) => !nvidiaDriverSupportsPack(p, profile)).map((p) => p.id),
+  );
+  if (demoted.size === 0) return ids;
+  return [...ids.filter((id) => !demoted.has(id)), ...ids.filter((id) => demoted.has(id))];
 }
 
 /** Resolve an installed pack id or throw a clear ENGINE_PACK_MISSING. */

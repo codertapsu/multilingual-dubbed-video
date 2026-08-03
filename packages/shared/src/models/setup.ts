@@ -240,6 +240,14 @@ export interface GpuInfo {
   name: string;
   /** Dedicated VRAM in MB when known (unified-memory GPUs omit this). */
   vramMb?: number;
+  /**
+   * Vendor driver version when detectable — NVIDIA only today, via nvidia-smi,
+   * e.g. "551.61". A CUDA build is compiled against a CUDA TOOLKIT and needs a
+   * driver at least as new as the one that shipped that toolkit; see
+   * {@link EnginePackInfo.minNvidiaDriver}. Absent whenever detection could not
+   * establish it, which callers must treat as "unknown", never as "too old".
+   */
+  driverVersion?: string;
 }
 
 /** Best-effort hardware/OS profile of this machine (GET /system). */

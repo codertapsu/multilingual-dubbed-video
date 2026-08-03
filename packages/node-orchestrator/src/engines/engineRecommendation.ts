@@ -10,7 +10,14 @@
  * Pure: takes the profile + the available packs, returns ranked pack ids with a
  * reason. RAM/VRAM gates from the catalog are respected.
  */
-import type { EngineAccel, EnginePackInfo, HardwareRecommendation, SystemProfile } from '@videodubber/shared';
+import {
+  NVIDIA_GPU_RE,
+  outdatedNvidiaDriver,
+  type EngineAccel,
+  type EnginePackInfo,
+  type HardwareRecommendation,
+  type SystemProfile,
+} from '@videodubber/shared';
 import { availablePacks } from './enginePackCatalog.js';
 
 /** One recommended pack with a human reason. */
@@ -19,7 +26,20 @@ export interface EnginePackRecommendation {
   reason: string;
 }
 
-/** Whether a pack's RAM/VRAM gates are satisfied by the machine. */
+/**
+ * Is this machine's NVIDIA driver new enough for a pack's CUDA build?
+ *
+ * Thin wrapper over the shared {@link outdatedNvidiaDriver}, which the desktop
+ * UI uses too so the badge and the gate can never disagree. FAILS OPEN: an
+ * undetectable driver reads as "don't judge", because wrongly hiding a working
+ * CUDA build from the user who most wants it is worse than the one failed start
+ * the runtime fallback already survives.
+ */
+export function nvidiaDriverSupportsPack(pack: EnginePackInfo, profile: SystemProfile): boolean {
+  return outdatedNvidiaDriver(pack, profile.gpus) === undefined;
+}
+
+/** Whether a pack's RAM/VRAM/driver gates are satisfied by the machine. */
 export function packFitsMachine(pack: EnginePackInfo, profile: SystemProfile): boolean {
   if (pack.minRamMb && profile.totalRamMb < pack.minRamMb) return false;
   if (pack.minVramMb) {
@@ -28,6 +48,12 @@ export function packFitsMachine(pack: EnginePackInfo, profile: SystemProfile): b
     const effectiveVram = profile.appleSilicon ? profile.totalRamMb : vram;
     if (effectiveVram < pack.minVramMb) return false;
   }
+  // A CUDA build on too old a driver runs exactly as far as allocating its
+  // buffers and then aborts, so it must not be recommended or badged "✓ can
+  // run". It stays VISIBLE (packHardwareSupported is unchanged): unlike a
+  // missing GPU this is the user's to fix, and hiding the row would take the
+  // explanation away with it.
+  if (!nvidiaDriverSupportsPack(pack, profile)) return false;
   return true;
 }
 
@@ -61,11 +87,12 @@ export function packFitsForSelection(pack: EnginePackInfo, profile: SystemProfil
     const effectiveVram = profile.appleSilicon ? profile.totalRamMb : vram;
     if (effectiveVram < pack.minVramMb * SELECTION_RAM_SLACK) return false;
   }
+  // No slack for the driver gate: unlike the memory numbers, a version compare
+  // has no under-reporting to forgive — either the driver ships the toolkit or
+  // it does not.
+  if (!nvidiaDriverSupportsPack(pack, profile)) return false;
   return true;
 }
-
-/** GPU marketing names that indicate an NVIDIA (CUDA-capable) GPU. */
-const NVIDIA_RE = /nvidia|geforce|quadro|tesla|\brtx\b|\bgtx\b/i;
 
 /** Does the machine physically have the accelerator this pack build targets? */
 function accelSupported(accel: EngineAccel, profile: SystemProfile): boolean {
@@ -79,7 +106,7 @@ function accelSupported(accel: EngineAccel, profile: SystemProfile): boolean {
       return profile.appleSilicon;
     case 'cuda':
       // CUDA builds require an NVIDIA GPU; match the detected GPU name.
-      return profile.gpus.some((g) => NVIDIA_RE.test(g.name));
+      return profile.gpus.some((g) => NVIDIA_GPU_RE.test(g.name));
     case 'vulkan':
       // Intentionally NOT gated: GPU detection runs `nvidia-smi` only, so the
       // AMD/Intel GPUs a Vulkan build targets report as gpus:[]. Gating on GPU

@@ -15,11 +15,12 @@
 import { execFile } from 'node:child_process';
 import os from 'node:os';
 import { promisify } from 'node:util';
-import type {
-  GpuInfo,
-  HardwareRecommendation,
-  SystemProfile,
-  SystemProfileResponse,
+import {
+  NVIDIA_GPU_RE,
+  type GpuInfo,
+  type HardwareRecommendation,
+  type SystemProfile,
+  type SystemProfileResponse,
 } from '@videodubber/shared';
 import { recommendCapacity } from './capacity.js';
 
@@ -152,10 +153,15 @@ export function recommendSetup(profile: SystemProfile): HardwareRecommendation {
     );
   }
 
-  const nvidia = profile.gpus.find((g) => /nvidia/i.test(g.name));
+  // NVIDIA: say what the card actually buys, and name the one prerequisite that
+  // silently costs a user their GPU. This used to read "the bundled engines are
+  // CPU builds today, so the GPU is not used yet" — untrue since the CUDA packs
+  // shipped, and precisely backwards for the audience most able to act on it.
+  const nvidia = profile.gpus.find((g) => NVIDIA_GPU_RE.test(g.name));
   if (nvidia && (nvidia.vramMb ?? 0) >= 4096) {
+    const vramGb = Math.round((nvidia.vramMb ?? 0) / 1024);
     reasons.push(
-      `${nvidia.name} detected — the bundled engines are CPU builds today, so the GPU is not used yet.`,
+      `${nvidia.name} (${vramGb} GB) detected — install the CUDA engine packs in Settings → Engines for GPU-accelerated transcription and translation. They need NVIDIA driver 551.61 or newer; on an older driver the app falls back to the Vulkan build automatically.`,
     );
   }
 

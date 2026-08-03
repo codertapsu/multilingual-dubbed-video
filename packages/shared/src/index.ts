@@ -63,6 +63,12 @@ export type {
   StorageClearResult,
 } from './models/engines.js';
 export { compareDriverVersions, outdatedNvidiaDriver, NVIDIA_GPU_RE } from './models/engines.js';
+export type { GpuBudgetInput } from './models/engines.js';
+export {
+  gpuWeightBudgetMb,
+  gpuResidentFraction,
+  MIN_GPU_RESIDENT_FRACTION,
+} from './models/engines.js';
 
 // ---- Media types -----------------------------------------------------------
 export type {

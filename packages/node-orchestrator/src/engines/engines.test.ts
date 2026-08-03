@@ -3,7 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { EnginePackInfo, SystemProfile } from '@videodubber/shared';
+import {
+  MIN_GPU_RESIDENT_FRACTION,
+  gpuResidentFraction,
+  gpuWeightBudgetMb,
+  type EnginePackInfo,
+  type SystemProfile,
+} from '@videodubber/shared';
 import { EnginePackStore } from './enginePackStore.js';
 import { ENGINE_PACKS, availablePacks, findPack, packRunsOn } from './enginePackCatalog.js';
 import {
@@ -808,6 +814,94 @@ describe('NVIDIA driver gate on CUDA packs', () => {
       'llama-cpp-cuda',
     ]);
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+/**
+ * Choosing the MT model from "is there a GPU" (a boolean) recommended the SAME
+ * 16.5 GB model to a 4 GB GTX 1650, a 12 GB RTX 3060 and a 24 GB RTX 4090 — and
+ * made a machine worse off for having a weak card, since a GPU-less box with the
+ * same RAM was offered the 2.5 GB 4B instead. Measured consequence on the 1650:
+ * 13.9 GB of a 14.6 GB model sat in CPU_Mapped, so the GPU did 11% of the work.
+ */
+describe('VRAM-aware model recommendation', () => {
+  const nv = (vramMb: number, ramGb: number): SystemProfile =>
+    profile({
+      platform: 'win32',
+      arch: 'x64',
+      appleSilicon: false,
+      totalRamMb: ramGb * 1024,
+      gpus: [{ name: 'NVIDIA GeForce', vramMb, driverVersion: '610.88' }],
+    });
+  const mac = (ramGb: number): SystemProfile =>
+    profile({ appleSilicon: true, totalRamMb: ramGb * 1024, gpus: [{ name: 'Apple M3 Pro' }] });
+  const mtModel = (p: SystemProfile, plat: NodeJS.Platform, arch: string): string | undefined =>
+    recommendEnginePacks(p, recommendSetup(p), plat, arch)
+      .map((r) => r.packId)
+      .find((id) => id.startsWith('translategemma'));
+
+  it('scales the model with VRAM instead of treating any GPU as equal', () => {
+    expect(mtModel(nv(4096, 32), 'win32', 'x64')).toBe('translategemma-4b');
+    expect(mtModel(nv(12288, 32), 'win32', 'x64')).toBe('translategemma-12b');
+    expect(mtModel(nv(24576, 64), 'win32', 'x64')).toBe('translategemma-27b');
+  });
+
+  it('never makes a machine worse off for having a weak GPU', () => {
+    // The regression that motivated this: adding a 4 GB card to a 32 GB box used
+    // to jump the recommendation from the 2.5 GB 4B to the 16.5 GB 27B.
+    const noGpu = profile({ platform: 'win32', arch: 'x64', appleSilicon: false, totalRamMb: 32 * 1024, gpus: [] });
+    const weakGpu = nv(4096, 32);
+    const sizeOf = (id: string | undefined): number => (id ? (findPack(id)?.approxSizeMb ?? 0) : 0);
+    expect(sizeOf(mtModel(weakGpu, 'win32', 'x64'))).toBeLessThanOrEqual(
+      sizeOf(mtModel(noGpu, 'win32', 'x64')) * 1.05,
+    );
+  });
+
+  it('leaves Apple Silicon on its unified-memory tiers', () => {
+    expect(mtModel(mac(18), 'darwin', 'arm64')).toBe('translategemma-12b');
+    expect(mtModel(mac(64), 'darwin', 'arm64')).toBe('translategemma-27b');
+  });
+
+  it('falls back to the CPU tier when no GPU memory can be established', () => {
+    // Best-effort detection again: an unknown VRAM must not invent a budget.
+    const unknownVram = profile({
+      platform: 'win32', arch: 'x64', appleSilicon: false, totalRamMb: 32 * 1024,
+      gpus: [{ name: 'NVIDIA GeForce' }],
+    });
+    expect(gpuWeightBudgetMb(unknownVram)).toBe(0);
+    expect(mtModel(unknownVram, 'win32', 'x64')).toBe('translategemma-4b');
+  });
+
+  it('RECOMMENDS a smaller model without restricting the larger ones', () => {
+    // The point the whole design turns on: a 4 GB machine is steered to the 4B,
+    // but the 12B/27B stay visible and installable for anyone who wants quality
+    // over speed. Same philosophy as the CUDA driver gate.
+    const p = nv(4096, 32);
+    for (const id of ['translategemma-12b', 'translategemma-27b']) {
+      const pack = findPack(id) as EnginePackInfo;
+      expect(packHardwareSupported(pack, p), `${id} must stay visible`).toBe(true);
+    }
+    expect(mtModel(p, 'win32', 'x64')).toBe('translategemma-4b');
+  });
+
+  it('explains the choice in hardware terms, with a real percentage', () => {
+    const p = nv(4096, 32);
+    const rec = recommendEnginePacks(p, recommendSetup(p), 'win32', 'x64')
+      .find((r) => r.packId === 'translategemma-4b');
+    expect(rec?.reason).toMatch(/% on your GPU/);
+    // The old copy asserted a capability the app never checked.
+    expect(rec?.reason).not.toMatch(/Your GPU\/Apple-Silicon can drive/);
+  });
+
+  it('gpuResidentFraction reflects the measured split, not the raw VRAM', () => {
+    const p = nv(4096, 32);
+    // 14.6 GB MoE on a 4 GB card: a small minority resident, matching the
+    // 1.75 GB-on-device / 13.9 GB-in-CPU_Mapped split we measured.
+    const moe = findPack('chat-gemma4-26b-a4b') as EnginePackInfo;
+    expect(gpuResidentFraction(moe.approxSizeMb, p)).toBeLessThan(0.2);
+    // ...and the 4B is mostly resident, which is why it is the faster choice.
+    const small = findPack('translategemma-4b') as EnginePackInfo;
+    expect(gpuResidentFraction(small.approxSizeMb, p)).toBeGreaterThanOrEqual(MIN_GPU_RESIDENT_FRACTION);
   });
 });
 

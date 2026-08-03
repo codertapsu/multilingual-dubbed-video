@@ -11,7 +11,10 @@
  * reason. RAM/VRAM gates from the catalog are respected.
  */
 import {
+  MIN_GPU_RESIDENT_FRACTION,
   NVIDIA_GPU_RE,
+  gpuResidentFraction,
+  gpuWeightBudgetMb,
   outdatedNvidiaDriver,
   type EngineAccel,
   type EnginePackInfo,
@@ -165,16 +168,23 @@ export function recommendEnginePacks(
   // model the machine can comfortably run. 4B is the CPU-friendly floor (8 GB+,
   // no GPU needed); 12B/27B are only worth it with a GPU/Apple-Silicon to keep
   // them fast — on pure CPU a 12B is ~1–5 tok/s, too slow to recommend.
-  const accelerated = profile.appleSilicon || profile.gpus.length > 0;
+  //
+  // The GPU tiers are picked by VRAM, not by "is there a GPU". Treating that as
+  // a boolean recommended the SAME 16.5 GB model to a 4 GB GTX 1650, a 12 GB
+  // RTX 3060 and a 24 GB RTX 4090 — and made a machine WORSE OFF for having a
+  // weak card, since a GPU-less box with the same RAM was offered the 2.5 GB 4B
+  // instead. On the 1650 that mismatch is measured: 13.9 GB of a 14.6 GB model
+  // sat in CPU_Mapped, so the GPU carried 11% of the work and the backend we
+  // fought so hard to fix barely mattered.
   const ramGb = profile.totalRamMb / 1024;
-  const modelPackId =
-    ramGb >= 32 && accelerated
-      ? 'translategemma-27b'
-      : ramGb >= 16 && accelerated
-        ? 'translategemma-12b'
-        : ramGb >= 8
-          ? 'translategemma-4b'
-          : undefined;
+  const gpuTiers = ['translategemma-27b', 'translategemma-12b', 'translategemma-4b'] as const;
+  // Largest tier whose weights would be mostly GPU-resident. RAM gates still
+  // apply on top via `fitting`, so this can only ever choose DOWN from them.
+  const gpuPick = gpuTiers.find((id) => {
+    const pack = fitting.find((p) => p.id === id);
+    return pack && gpuResidentFraction(pack.approxSizeMb, profile) >= MIN_GPU_RESIDENT_FRACTION;
+  });
+  const modelPackId = gpuPick ?? (ramGb >= 8 ? 'translategemma-4b' : undefined);
   const runtimePack = fitting.find((p) => p.providerId === 'local-llm');
   const modelPack = modelPackId ? fitting.find((p) => p.id === modelPackId) : undefined;
   if (runtimePack && modelPack) {
@@ -182,12 +192,17 @@ export function recommendEnginePacks(
       packId: runtimePack.id,
       reason: 'Runs TranslateGemma locally — a big translation-quality jump over the offline Argos default.',
     });
+    // Say WHY in hardware terms. The old copy ("your GPU can drive the 12B")
+    // was a claim the app never checked, and on a 4 GB card it was false.
+    const budget = gpuWeightBudgetMb(profile);
+    const pct = Math.round(gpuResidentFraction(modelPack.approxSizeMb, profile) * 100);
+    const sizeGb = (modelPack.approxSizeMb / 1024).toFixed(1);
     const why =
-      modelPack.id === 'translategemma-4b'
-        ? 'The CPU-friendly 4B TranslateGemma — much better than Argos, light enough to run without a GPU.'
-        : modelPack.id === 'translategemma-12b'
-          ? 'Your GPU/Apple-Silicon can drive the 12B TranslateGemma — the translation-quality sweet spot.'
-          : 'Workstation-class: the 27B TranslateGemma for the best local translation quality.';
+      budget <= 0
+        ? `The CPU-friendly 4B TranslateGemma (~${sizeGb} GB) — much better than Argos, light enough to run without a GPU.`
+        : modelPack.id === 'translategemma-4b'
+          ? `The 4B TranslateGemma (~${sizeGb} GB) runs ~${pct}% on your GPU. A larger model would spill into system RAM and translate at CPU speed, so this is the faster choice here — the 12B/27B stay installable if you want the quality instead.`
+          : `The ${modelPack.id === 'translategemma-12b' ? '12B' : '27B'} TranslateGemma (~${sizeGb} GB) fits your GPU (~${pct}% resident) — the best quality this machine can run at GPU speed.`;
     out.push({ packId: modelPack.id, reason: why });
   }
 

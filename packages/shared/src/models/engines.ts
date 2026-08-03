@@ -325,3 +325,79 @@ export function outdatedNvidiaDriver(
   // Report the newest driver present — the one the runtime would actually use.
   return [...detected].sort(compareDriverVersions).at(-1);
 }
+
+// ---------------------------------------------------------------------------
+// GPU memory budget
+//
+// "Prefer the GPU" is only useful if what we put on it actually fits. A model
+// whose weights spill to system RAM runs at CPU speed no matter which backend
+// won selection — measured on a GTX 1650, a 14.6 GB MoE placed 13.9 GB in
+// CPU_Mapped and 1.75 GB on the device, and CUDA and Vulkan were within 7% of
+// each other because neither was doing much of the work.
+//
+// Shared with the desktop UI so the recommendation and the badge explaining it
+// can never disagree.
+// ---------------------------------------------------------------------------
+
+/** The hardware facts the budget depends on. `SystemProfile` satisfies this. */
+export interface GpuBudgetInput {
+  gpus: readonly { name: string; vramMb?: number }[];
+  appleSilicon: boolean;
+  totalRamMb: number;
+}
+
+/**
+ * Share of a DISCRETE card's VRAM that model weights can realistically claim.
+ *
+ * Not 1.0, and not a guess: on a 4096 MiB GTX 1650 the desktop already held
+ * ~790 MiB before we started, and of the ~3300 MiB llama.cpp could see it spent
+ * 1750 on weights, 668 on the KV cache, 325 on the compute buffer and kept 566
+ * in reserve. Weights got 43% of the card. Rounded up slightly because that run
+ * also carried an 8192-token context, which is our upper bound rather than
+ * typical.
+ */
+const DISCRETE_WEIGHT_SHARE = 0.45;
+
+/**
+ * Share of UNIFIED memory that model weights can claim on Apple Silicon.
+ *
+ * Higher than the discrete share — there is no separate VRAM pool to leave room
+ * in — but well under Metal's ~75% working-set limit, because on a unified
+ * machine the OS, the app and the same model's KV cache are all competing for
+ * the number we are dividing up.
+ */
+const UNIFIED_WEIGHT_SHARE = 0.5;
+
+/**
+ * How many MB of GPU-resident model weights this machine can carry, or 0 when
+ * there is no usable GPU (so callers fall back to a CPU-tier choice).
+ *
+ * A GPU whose VRAM we could not detect returns 0 rather than a guess: an
+ * invented budget would silently pick a model on evidence we do not have.
+ */
+export function gpuWeightBudgetMb(profile: GpuBudgetInput): number {
+  if (profile.appleSilicon) return Math.floor(profile.totalRamMb * UNIFIED_WEIGHT_SHARE);
+  const vram = Math.max(0, ...profile.gpus.map((g) => g.vramMb ?? 0));
+  return vram > 0 ? Math.floor(vram * DISCRETE_WEIGHT_SHARE) : 0;
+}
+
+/**
+ * Fraction (0..1) of a model's weights that would sit on the GPU. 0 means no
+ * usable GPU; 1 means it fits entirely.
+ */
+export function gpuResidentFraction(sizeMb: number, profile: GpuBudgetInput): number {
+  if (!(sizeMb > 0)) return 0;
+  const budget = gpuWeightBudgetMb(profile);
+  return budget <= 0 ? 0 : Math.min(1, budget / sizeMb);
+}
+
+/**
+ * The floor for recommending a model on a GPU machine: below this the GPU is a
+ * bystander and a smaller model is genuinely faster end to end, so we step down
+ * rather than recommend something the card cannot carry.
+ *
+ * Deliberately a RECOMMENDATION rule, never a restriction — an oversized model
+ * stays visible and installable, exactly like the CUDA pack below its driver
+ * floor. Users with a reason to prefer quality over speed keep that choice.
+ */
+export const MIN_GPU_RESIDENT_FRACTION = 0.6;

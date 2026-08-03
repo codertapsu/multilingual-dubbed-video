@@ -1,6 +1,7 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { EnginePackInfo, SystemProfile } from '@videodubber/shared';
 import { EnginePackStore } from './enginePackStore.js';
@@ -229,6 +230,37 @@ describe('TranslateGemma model packs', () => {
     expect(capturedArgs).toContain('--no-jinja');
     await manager.stopAll();
     await rm(dir, { recursive: true, force: true });
+  });
+
+  it('launches llama-server in diagnose-llama-engine.ps1 with the orchestrator\u2019s exact arguments', async () => {
+    // The whole value of that script is that a user's report reflects what the
+    // APP does, not what the script's author remembered it doing. It mirrors the
+    // argv by hand (PowerShell cannot import a TS module), so this is the seam
+    // that stops the two drifting: change the spec without changing the script
+    // and the next bug report quietly describes a launch that never happens.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const script = await readFile(path.join(here, '../../../../scripts/diagnose-llama-engine.ps1'), 'utf8');
+
+    const lines = script.split('\n');
+    const marker = lines.findIndex((l) => l.includes('ENGINE_LAUNCH_SPECS-MIRROR'));
+    expect(marker, 'mirror marker missing from diagnose-llama-engine.ps1').toBeGreaterThanOrEqual(0);
+
+    // Pull the quoted tokens out of the single `$appArgs = @(...)` line beneath it.
+    const mirrored = [...lines[marker + 1].matchAll(/'([^']*)'|"([^"]*)"/g)].map((m) => m[1] ?? m[2]);
+    const PORT = 5199;
+    const MODEL = 'C:\\gguf\\model.gguf';
+    const substituted = mirrored.map(
+      (t) => ({ $Port: String(PORT), $Fitt: '512', $Gguf: MODEL })[t] ?? t,
+    );
+
+    expect(substituted).toEqual(
+      ENGINE_LAUNCH_SPECS['local-llm'].args({
+        exe: 'llama-server.exe',
+        port: PORT,
+        packDir: 'C:\\packs\\llama-cpp-cuda',
+        model: MODEL,
+      }),
+    );
   });
 });
 

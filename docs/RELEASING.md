@@ -402,6 +402,7 @@ Each of these cost a release or a rebuild.
 | **`cfg`-gated symbols in shared code** | Builds on macOS, `E0425` on Windows | step 2 |
 | **Rebuilding the DMG invalidates its ticket** | New cdhash ⇒ `stapler` Error 65 | the script resubmits automatically; two `Accepted` lines are normal |
 | **Assets built before a mid-release fix** | Silent — the installer looks fine | step 6.4 compares upload time to commit time |
+| **A spec/config that PARSES but means something else** | `excludes=["pytest" "av"]` — a missing comma made Python concatenate them into `"pytestav"`, excluding neither, and PyAV shipped anyway. `compile()` proved nothing | read the value back (`ast.literal_eval`) and assert the entries you expect are present |
 | **Skipping `-Sidecars` for a non-shell change** | The orchestrator and the Python workers ARE sidecars; without that step the build re-bundles stale binaries and ships an installer missing the fix entirely | step 3's rule, plus grepping the bundled binary for a string the change introduced |
 
 ---

@@ -403,6 +403,8 @@ Each of these cost a release or a rebuild.
 | **Rebuilding the DMG invalidates its ticket** | New cdhash ⇒ `stapler` Error 65 | the script resubmits automatically; two `Accepted` lines are normal |
 | **Assets built before a mid-release fix** | Silent — the installer looks fine | step 6.4 compares upload time to commit time |
 | **A spec/config that PARSES but means something else** | `excludes=["pytest" "av"]` — a missing comma made Python concatenate them into `"pytestav"`, excluding neither, and PyAV shipped anyway. `compile()` proved nothing | read the value back (`ast.literal_eval`) and assert the entries you expect are present |
+| **`PATCH`ing a draft release without `tag_name`** | The API resets the tag to `untagged-<sha>` — the same state `--fix-tag` exists to repair. Setting the release *body* is the usual trigger, and it silently undoes a correct tag | always send `tag_name` alongside `body`/`name`; re-check the tag after any PATCH, or re-run `merge-latest-json.mjs --fix-tag` |
+| **`strings` on the main binary to verify a UI change** | Tauri **brotli-compresses** the embedded frontend, so a shipped Angular string is never greppable — zero hits looks identical to a stale build | decompress the staged asset instead: `zlib.brotliDecompressSync` over `target/release/build/videodubber-desktop-*/out/tauri-codegen-assets/*` |
 | **Skipping `-Sidecars` for a non-shell change** | The orchestrator and the Python workers ARE sidecars; without that step the build re-bundles stale binaries and ships an installer missing the fix entirely | step 3's rule, plus grepping the bundled binary for a string the change introduced |
 
 ---

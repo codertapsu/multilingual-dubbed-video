@@ -218,6 +218,12 @@ describe('TranslateGemma model packs', () => {
     // The fitter's 1 GiB default margin would demote layers on GPUs that fit the
     // model with less to spare, so it is capped.
     expect(capturedArgs).toContain('-fitt');
+    // --no-jinja alone leaves llama-server on a legacy template path that cannot
+    // parse Gemma 4's grammar, and it aborts at init. We never use the chat
+    // endpoint, so pin any template that parses.
+    expect(capturedArgs).toContain('--no-jinja');
+    expect(capturedArgs).toContain('--chat-template');
+    expect(capturedArgs[capturedArgs.indexOf('--chat-template') + 1]).toBe('chatml');
     // TranslateGemma's Jinja chat template aborts llama-server at load, so we
     // must disable Jinja (we drive /completion ourselves).
     expect(capturedArgs).toContain('--no-jinja');

@@ -171,6 +171,19 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
       '-fitt',
       '512',
       '--no-jinja',
+      // ...but --no-jinja alone is not enough. llama-server still initialises a
+      // chat template at startup, and with jinja off it falls back to a LEGACY
+      // path that only knows a fixed set of templates. Gemma 4's new
+      // <|turn>/<turn|> grammar is not one of them, so the server aborts before
+      // serving anything:
+      //   init: chat template parsing error: this custom template is not supported
+      //   init: please consider disabling jinja via --no-jinja, or use a custom
+      //         chat template via --chat-template
+      // We never call the chat endpoint — the provider drives /completion and
+      // renders turns itself (see localLlmTranslationProvider) — so any template
+      // that parses will do. chatml is the one the server's own error suggests.
+      '--chat-template',
+      'chatml',
       ...(model ? ['-m', model] : []),
     ],
     healthPath: '/health',

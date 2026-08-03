@@ -53,7 +53,7 @@ hiddenimports += [
     "tokenizers",
     "huggingface_hub",
     "onnxruntime",  # used by faster-whisper VAD (Silero); optional but safe.
-    "av",           # PyAV decoder backend faster-whisper uses for audio I/O.
+    # NOT "av": PyAV is deliberately excluded below — it embeds a second FFmpeg.
 ]
 datas += collect_data_files("onnxruntime", include_py_files=False)
 
@@ -79,8 +79,11 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[RT_HOOK],
-    excludes=["tkinter", "matplotlib", "pytest"
-        # PyAV embeds a whole FFmpeg (~44 MB) to decode audio the media worker
+    excludes=[
+        "tkinter",
+        "matplotlib",
+        "pytest",
+        # PyAV embeds a whole FFmpeg (~42 MB) to decode audio the media worker
         # already normalised to 16 kHz mono WAV. whisper_service reads that with
         # the stdlib and falls back to the bundled ffmpeg binary, so nothing
         # imports av at run time (rthook_stt.py stubs the module-scope import in

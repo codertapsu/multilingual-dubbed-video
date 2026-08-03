@@ -122,9 +122,34 @@ automatically; the key has an **empty password**, which the script also exports.
 sidecars, static ffmpeg/ffprobe, uv, bundled CPython and `resources/engine-src`
 (~25 min) — and it is the only thing that runs the release bundle assertion**
 (portable ffmpeg, `minimumSystemVersion` not below any bundled binary's `minos`,
-uv + CPython present). Omit it only when *nothing outside* `src-tauri/src`
-changed since the last successful build on this machine; you then also skip
-those checks. When in doubt, include it.
+uv + CPython present).
+
+**Omit it ONLY when the change is confined to `src-tauri/src` (the Rust shell)
+or `apps/desktop/src` (the Angular UI).** Everything else the app runs is a
+SIDECAR built by that step — the Node orchestrator included. Skipping it then
+re-bundles the STALE sidecar binaries and produces an installer that looks
+correct and does not contain your change. That has happened: a fix to the
+orchestrator's engine launch args was "released" twice before anyone noticed the
+shipped binary never had it.
+
+For an orchestrator-only change you can rebuild just that sidecar instead of
+paying the full ~25 minutes:
+
+```bash
+bash scripts/package/build-orchestrator.sh   # ~1 min
+UPLOAD=1 RELEASE_TAG=vX.Y.Z bash scripts/package/release-macos.sh
+```
+
+Either way, **verify the change reached the assembled app before notarizing** —
+grep the bundled binary for a string your change introduced:
+
+```bash
+APP=$(find apps/desktop/src-tauri/target -path '*/release/bundle/macos/VideoDubber.app' | head -1)
+strings "$APP/Contents/MacOS/videodubber-orchestrator" | grep -c "<a string from your change>"
+```
+
+Zero means the sidecar is stale — stop and rebuild it rather than spending a
+notarization cycle on an artifact that cannot work.
 
 The script then: runs `tauri build` with the notary creds withheld (so Tauri does
 not self-notarize), deep-signs every Mach-O, notarizes, staples, **regenerates**
@@ -341,6 +366,7 @@ Each of these cost a release or a rebuild.
 | **`cfg`-gated symbols in shared code** | Builds on macOS, `E0425` on Windows | step 2 |
 | **Rebuilding the DMG invalidates its ticket** | New cdhash ⇒ `stapler` Error 65 | the script resubmits automatically; two `Accepted` lines are normal |
 | **Assets built before a mid-release fix** | Silent — the installer looks fine | step 6.4 compares upload time to commit time |
+| **Skipping `-Sidecars` for a non-shell change** | The orchestrator and the Python workers ARE sidecars; without that step the build re-bundles stale binaries and ships an installer missing the fix entirely | step 3's rule, plus grepping the bundled binary for a string the change introduced |
 
 ---
 

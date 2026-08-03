@@ -332,7 +332,43 @@ machine** from the previous version via Settings → Check for updates. Prioriti
 > release. Always export `RELEASE_TAG=vX.Y.Z` first. (The release wrappers set it
 > for you; this only bites manual recovery.)
 
+### 8.5 Prune old releases — keep only the two newest
+
+Every release carries 0.6-1.9 GB of installers, and old ones serve no purpose:
+the updater always reads `releases/latest/download/latest.json`, so a client on
+ANY version updates straight to the newest — it never consults the release it is
+currently running. Leaving them up just accumulates gigabytes and offers users a
+download that is worse than the current one.
+
+Do this AFTER publishing (step 7) and AFTER confirming the endpoint serves the
+new version (step 8) — never before, or you delete the fallback while the new
+release is still unproven.
+
+```bash
+node scripts/package/prune-releases.mjs            # dry run: shows what goes
+node scripts/package/prune-releases.mjs --apply    # keeps the 2 newest
+```
+
+The script is deliberately conservative:
+
+- **Dry run by default** — deleting a release is irreversible.
+- **Never touches drafts** — a draft is usually the next release being
+  assembled.
+- **Never touches whatever GitHub resolves as `latest`**, even if the date
+  ordering disagrees; deleting that breaks auto-update for everyone.
+- **Keeps git tags.** The release holds the binaries; the tag is how you check
+  out or diff the source a shipped build came from, and it costs nothing. Pass
+  `--tags` only if you really want the history gone too.
+
+> A pruned version's installer URLs 404 afterwards. That affects anyone holding
+> a direct link to an old download — not existing installs, which keep working,
+> and not auto-update, which resolves `latest`.
+
 ### 9. Rollback — if the release turns out bad
+
+> **Prune AFTER the release is proven, not before** (step 8.5) — the previous
+> release is your only rollback target. If you have already pruned and the new
+> release turns out bad, there is nothing to fall back to.
 
 Do **not** delete the release first. Mark it a **pre-release**: the endpoint
 resolves to the newest *published, non-prerelease* release, so it falls back to

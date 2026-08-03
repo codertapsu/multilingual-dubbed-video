@@ -264,8 +264,21 @@ export interface SystemProfile {
   totalRamMb: number;
   /** Currently free memory in MB (snapshot). */
   freeRamMb: number;
-  /** Detected GPUs (may be empty when detection fails). */
+  /** Detected GPUs (may be empty when detection fails — see {@link gpuProbe}). */
   gpus: GpuInfo[];
+  /**
+   * Whether the GPU probe actually ran to completion.
+   *
+   * `'failed'` means "we could not tell", which is NOT the same as an empty
+   * `gpus` meaning "this machine has none" — and the difference decides whether
+   * a GPU engine pack is offered. A Windows box whose `nvidia-smi` is missing or
+   * slow used to report `gpus: []`, which hid both CUDA packs from a user who
+   * has an NVIDIA card. Callers must fail OPEN on `'failed'`.
+   *
+   * Optional for wire-compatibility with an older orchestrator; absent is
+   * treated as `'ok'`.
+   */
+  gpuProbe?: 'ok' | 'failed';
   /** True on Apple Silicon (unified memory; fast local inference). */
   appleSilicon: boolean;
 }

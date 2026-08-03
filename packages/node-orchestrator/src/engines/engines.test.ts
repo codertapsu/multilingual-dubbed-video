@@ -824,6 +824,54 @@ describe('NVIDIA driver gate on CUDA packs', () => {
  * same RAM was offered the 2.5 GB 4B instead. Measured consequence on the 1650:
  * 13.9 GB of a 14.6 GB model sat in CPU_Mapped, so the GPU did 11% of the work.
  */
+/**
+ * Every gate now depends on GPU detection succeeding on someone ELSE's machine.
+ * A failed probe used to report `gpus: []` — indistinguishable from "no GPU" —
+ * which HID both CUDA packs from users who own an NVIDIA card. nvidia-smi off
+ * PATH, a dGPU asleep under Optimus, or a cold card exceeding the 3s budget were
+ * each enough. Hiding a pack because a measurement failed is the one restriction
+ * we must never impose.
+ */
+describe('GPU detection failure must not restrict', () => {
+  const win = (o: Partial<SystemProfile>): SystemProfile =>
+    profile({ platform: 'win32', arch: 'x64', appleSilicon: false, totalRamMb: 32 * 1024, gpus: [], ...o });
+  const cuda = () => findPack('llama-cpp-cuda') as EnginePackInfo;
+
+  it('offers the CUDA packs when the probe could not tell', () => {
+    const unknown = win({ gpuProbe: 'failed', gpus: [] });
+    expect(packHardwareSupported(cuda(), unknown)).toBe(true);
+    expect(packHardwareSupported(findPack('whisper-cpp-cuda') as EnginePackInfo, unknown)).toBe(true);
+  });
+
+  it('still withholds them when the probe RAN and found no NVIDIA GPU', () => {
+    // Fail-open must not become fail-always: an AMD or GPU-less machine should
+    // not be offered a CUDA build it genuinely cannot use.
+    expect(packHardwareSupported(cuda(), win({ gpuProbe: 'ok', gpus: [] }))).toBe(false);
+    expect(
+      packHardwareSupported(cuda(), win({ gpuProbe: 'ok', gpus: [{ name: 'AMD Radeon RX 7900' }] })),
+    ).toBe(false);
+  });
+
+  it('treats an absent gpuProbe as a completed probe (wire-compat)', () => {
+    // An older orchestrator omits the field; that payload must keep its old
+    // meaning rather than silently switching every machine to fail-open.
+    expect(packHardwareSupported(cuda(), win({ gpus: [] }))).toBe(false);
+    expect(packHardwareSupported(cuda(), win({ gpus: [{ name: 'NVIDIA GeForce GTX 1650' }] }))).toBe(true);
+  });
+
+  it('a name-only GPU (WMI fallback, no VRAM) still offers CUDA but picks the CPU-tier model', () => {
+    // WMI cannot report usable VRAM (AdapterRAM is uint32 and pins at 4 GB), so
+    // the budget is unknown — offer the pack, but do not invent a model tier.
+    const wmi = win({ gpuProbe: 'ok', gpus: [{ name: 'NVIDIA GeForce RTX 4090' }] });
+    expect(packHardwareSupported(cuda(), wmi)).toBe(true);
+    expect(gpuWeightBudgetMb(wmi)).toBe(0);
+    const model = recommendEnginePacks(wmi, recommendSetup(wmi), 'win32', 'x64')
+      .map((r) => r.packId)
+      .find((id) => id.startsWith('translategemma'));
+    expect(model).toBe('translategemma-4b');
+  });
+});
+
 describe('VRAM-aware model recommendation', () => {
   const nv = (vramMb: number, ramGb: number): SystemProfile =>
     profile({

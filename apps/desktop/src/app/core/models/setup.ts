@@ -227,6 +227,8 @@ export interface SystemProfile {
   totalRamMb: number;
   freeRamMb: number;
   gpus: GpuInfo[];
+  /** Whether the GPU probe ran. 'failed' = "could not tell", not "has none". */
+  gpuProbe?: 'ok' | 'failed';
   appleSilicon: boolean;
 }
 

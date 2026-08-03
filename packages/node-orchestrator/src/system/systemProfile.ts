@@ -9,8 +9,15 @@
  * unit-tested and reused by the UI ("Apply recommended defaults").
  *
  * GPU detection is best-effort: `system_profiler` on macOS, `nvidia-smi` on
- * Linux/Windows when present. Failure to detect a GPU never fails the call —
- * the bundled workers are CPU builds, so the GPU only informs the notes.
+ * Linux/Windows, with a WMI fallback on Windows when that is missing or slow.
+ * Failure never fails the call.
+ *
+ * It is NO LONGER cosmetic, though — this comment used to say the GPU "only
+ * informs the notes", which was true when the bundled workers were all CPU
+ * builds. The profile now decides which engine packs are offered, which runtime
+ * wins selection, and which model size is recommended. So the probe reports
+ * whether it actually ran (`gpuProbe`), and every consumer must treat "could not
+ * tell" as "do not restrict" rather than as "no GPU".
  */
 import { execFile } from 'node:child_process';
 import os from 'node:os';
@@ -29,8 +36,54 @@ const execFileAsync = promisify(execFile);
 /** Detection subprocess budget — a hung tool must not stall the endpoint. */
 const DETECT_TIMEOUT_MS = 3000;
 
-/** Best-effort GPU list for the current platform. Never throws. */
-async function detectGpus(platform: string): Promise<GpuInfo[]> {
+/**
+ * Budget for the Windows WMI fallback. Longer than the primary probe because it
+ * only runs when that already failed, and a cold `powershell.exe` start alone
+ * can spend a second or two before our command begins.
+ */
+const WMI_TIMEOUT_MS = 8000;
+
+/**
+ * Windows fallback when `nvidia-smi` is absent or slow.
+ *
+ * WMI needs no vendor tool, so it still sees the card when the NVIDIA CLI is
+ * missing from PATH, the dGPU is asleep under Optimus, or antivirus delays the
+ * spawn. It also sees AMD/Intel adapters, which `nvidia-smi` never reports.
+ *
+ * VRAM is deliberately dropped: `Win32_VideoController.AdapterRAM` is a uint32,
+ * so anything at or above 4 GB pins at 4293918720 and a 24 GB card is
+ * indistinguishable from a 4 GB one. Reporting that would feed a wrong budget
+ * into the model recommender; leaving it undefined makes `gpuWeightBudgetMb`
+ * return 0, which falls back to the CPU tier rather than guessing.
+ */
+async function detectGpusWindowsWmi(): Promise<GpuInfo[]> {
+  // powershell.exe (5.1) ships with every Windows; pwsh 7 may not be installed.
+  const { stdout } = await execFileAsync(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      'Get-CimInstance Win32_VideoController | Select-Object Name | ConvertTo-Json -Compress',
+    ],
+    { timeout: WMI_TIMEOUT_MS, windowsHide: true },
+  );
+  const parsed: unknown = JSON.parse(stdout);
+  // One adapter serialises as an object, several as an array.
+  const rows = (Array.isArray(parsed) ? parsed : [parsed]) as { Name?: string }[];
+  return rows
+    .map((r) => r.Name?.trim())
+    .filter((n): n is string => Boolean(n))
+    .map((name) => ({ name }));
+}
+
+/**
+ * Best-effort GPU list for the current platform. Never throws.
+ *
+ * `probe: 'failed'` distinguishes "could not tell" from "has none" — callers
+ * must fail open on it. See {@link SystemProfile.gpuProbe}.
+ */
+async function detectGpus(platform: string): Promise<{ gpus: GpuInfo[]; probe: 'ok' | 'failed' }> {
   try {
     if (platform === 'darwin') {
       const { stdout } = await execFileAsync(
@@ -41,15 +94,18 @@ async function detectGpus(platform: string): Promise<GpuInfo[]> {
       const parsed = JSON.parse(stdout) as {
         SPDisplaysDataType?: { sppci_model?: string; spdisplays_vram?: string }[];
       };
-      return (parsed.SPDisplaysDataType ?? [])
-        .filter((d) => d.sppci_model)
-        .map((d) => {
-          const vram = d.spdisplays_vram ? Number.parseInt(d.spdisplays_vram, 10) : NaN;
-          return {
-            name: d.sppci_model as string,
-            ...(Number.isFinite(vram) ? { vramMb: vram * 1024 } : {}),
-          };
-        });
+      return {
+        probe: 'ok',
+        gpus: (parsed.SPDisplaysDataType ?? [])
+          .filter((d) => d.sppci_model)
+          .map((d) => {
+            const vram = d.spdisplays_vram ? Number.parseInt(d.spdisplays_vram, 10) : NaN;
+            return {
+              name: d.sppci_model as string,
+              ...(Number.isFinite(vram) ? { vramMb: vram * 1024 } : {}),
+            };
+          }),
+      };
     }
 
     // Linux/Windows: nvidia-smi if present (the common dedicated-GPU case).
@@ -62,7 +118,7 @@ async function detectGpus(platform: string): Promise<GpuInfo[]> {
       ['--query-gpu=name,memory.total,driver_version', '--format=csv,noheader,nounits'],
       { timeout: DETECT_TIMEOUT_MS, windowsHide: true },
     );
-    return stdout
+    const gpus = stdout
       .trim()
       .split('\n')
       .filter(Boolean)
@@ -75,8 +131,28 @@ async function detectGpus(platform: string): Promise<GpuInfo[]> {
           ...(driver ? { driverVersion: driver } : {}),
         };
       });
+    // nvidia-smi exists but reported nothing: on Windows that is still worth a
+    // WMI pass, since the machine may have an AMD/Intel adapter it cannot see.
+    if (gpus.length === 0 && platform === 'win32') return await detectGpusWindowsWmi2();
+    return { gpus, probe: 'ok' };
   } catch {
-    return [];
+    // nvidia-smi missing, timed out, or the GPU was asleep. On Windows, ask WMI
+    // before concluding anything — this is the path that used to hide both CUDA
+    // packs from a user who owns an NVIDIA card.
+    if (platform === 'win32') return await detectGpusWindowsWmi2();
+    return { gpus: [], probe: 'failed' };
+  }
+}
+
+/** {@link detectGpusWindowsWmi} with the probe verdict, and never throwing. */
+async function detectGpusWindowsWmi2(): Promise<{ gpus: GpuInfo[]; probe: 'ok' | 'failed' }> {
+  try {
+    const gpus = await detectGpusWindowsWmi();
+    // WMI answering with an empty list is a real answer ("no adapter"); WMI
+    // throwing is not, and must stay 'failed' so callers fail open.
+    return { gpus, probe: 'ok' };
+  } catch {
+    return { gpus: [], probe: 'failed' };
   }
 }
 
@@ -98,7 +174,7 @@ export async function getSystemProfile(): Promise<SystemProfile> {
     cpuCores: cpus.length,
     totalRamMb: Math.round(os.totalmem() / (1024 * 1024)),
     freeRamMb: Math.round(os.freemem() / (1024 * 1024)),
-    gpus: await detectGpus(platform),
+    ...(({ gpus, probe }) => ({ gpus, gpuProbe: probe }))(await detectGpus(platform)),
     appleSilicon: platform === 'darwin' && arch === 'arm64',
   };
   cached = profile;

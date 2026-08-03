@@ -108,7 +108,15 @@ function accelSupported(accel: EngineAccel, profile: SystemProfile): boolean {
       // Apple GPU frameworks — only on Apple Silicon.
       return profile.appleSilicon;
     case 'cuda':
-      // CUDA builds require an NVIDIA GPU; match the detected GPU name.
+      // CUDA builds require an NVIDIA GPU; match the detected GPU name — but
+      // only when we actually managed to look. A failed probe reported `gpus:
+      // []`, indistinguishable from "no GPU", which HID both CUDA packs from
+      // users who own an NVIDIA card: nvidia-smi off PATH, a dGPU asleep under
+      // Optimus, or a cold card exceeding the 3s budget were all enough. Hiding
+      // a pack on a measurement we failed to take is the one restriction we must
+      // never impose; offering one pack too many costs an install that falls
+      // back, and the runtime fallback already handles that.
+      if (profile.gpuProbe === 'failed') return true;
       return profile.gpus.some((g) => NVIDIA_GPU_RE.test(g.name));
     case 'vulkan':
       // Intentionally NOT gated: GPU detection runs `nvidia-smi` only, so the

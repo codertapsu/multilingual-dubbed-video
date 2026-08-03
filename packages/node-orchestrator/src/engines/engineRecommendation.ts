@@ -21,7 +21,7 @@ import {
   type HardwareRecommendation,
   type SystemProfile,
 } from '@videodubber/shared';
-import { availablePacks } from './enginePackCatalog.js';
+import { availablePacks, findPack } from './enginePackCatalog.js';
 
 /** One recommended pack with a human reason. */
 export interface EnginePackRecommendation {
@@ -186,15 +186,30 @@ export function recommendEnginePacks(
   // fought so hard to fix barely mattered.
   const ramGb = profile.totalRamMb / 1024;
   const gpuTiers = ['translategemma-27b', 'translategemma-12b', 'translategemma-4b'] as const;
-  // Largest tier whose weights would be mostly GPU-resident. RAM gates still
-  // apply on top via `fitting`, so this can only ever choose DOWN from them.
+  // Largest tier whose weights would be mostly GPU-resident, and whose RAM gate
+  // this machine meets.
+  //
+  // The RAM side uses packFitsForSelection, NOT the `fitting` list: `fitting`
+  // is packFitsMachine, which compares strictly, and os.totalmem() reports
+  // physical RAM minus firmware reservations — a genuine 32 GB Windows box
+  // reports ~31.8 GB. Every catalog gate is an exact power of two, so a strict
+  // compare made the top tier unreachable on exactly the machines built for it:
+  // a 24 GB RTX 4090 with "32 GB" of RAM was recommended the 12B because
+  // 32563 < 32768. packFitsForSelection exists for precisely this ("picking a
+  // smaller model than the user could run is a real cost") and is the right
+  // abstraction here — this is a CHOICE between tiers, not a badge.
   const gpuPick = gpuTiers.find((id) => {
-    const pack = fitting.find((p) => p.id === id);
-    return pack && gpuResidentFraction(pack.approxSizeMb, profile) >= MIN_GPU_RESIDENT_FRACTION;
+    const pack = findPack(id);
+    return (
+      pack &&
+      packHardwareSupported(pack, profile) &&
+      packFitsForSelection(pack, profile) &&
+      gpuResidentFraction(pack.approxSizeMb, profile) >= MIN_GPU_RESIDENT_FRACTION
+    );
   });
   const modelPackId = gpuPick ?? (ramGb >= 8 ? 'translategemma-4b' : undefined);
   const runtimePack = fitting.find((p) => p.providerId === 'local-llm');
-  const modelPack = modelPackId ? fitting.find((p) => p.id === modelPackId) : undefined;
+  const modelPack = modelPackId ? findPack(modelPackId) : undefined;
   if (runtimePack && modelPack) {
     out.push({
       packId: runtimePack.id,

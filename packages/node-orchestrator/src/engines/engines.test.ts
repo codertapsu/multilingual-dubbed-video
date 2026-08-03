@@ -905,6 +905,22 @@ describe('VRAM-aware model recommendation', () => {
     );
   });
 
+  it('is not defeated by os.totalmem() under-reporting at a tier boundary', () => {
+    // A genuine 32 GB Windows box reports ~31.8 GB (physical minus firmware
+    // reservations), and every catalog gate is an exact power of two. A strict
+    // compare made the top tier unreachable on exactly the machines built for
+    // it: a 24 GB RTX 4090 with "32 GB" of RAM was offered the 12B.
+    expect(mtModel(nv(24576, 32), 'win32', 'x64')).toBe('translategemma-27b');
+    const nominal32 = profile({
+      platform: 'win32', arch: 'x64', appleSilicon: false,
+      totalRamMb: Math.round(31.8 * 1024),
+      gpus: [{ name: 'NVIDIA GeForce RTX 4090', vramMb: 24576, driverVersion: '610.88' }],
+    });
+    expect(mtModel(nominal32, 'win32', 'x64')).toBe('translategemma-27b');
+    // ...but the slack must not promote a genuinely smaller machine.
+    expect(mtModel(nv(24576, 16), 'win32', 'x64')).toBe('translategemma-12b');
+  });
+
   it('leaves Apple Silicon on its unified-memory tiers', () => {
     expect(mtModel(mac(18), 'darwin', 'arm64')).toBe('translategemma-12b');
     expect(mtModel(mac(64), 'darwin', 'arm64')).toBe('translategemma-27b');

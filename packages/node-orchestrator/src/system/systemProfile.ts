@@ -44,38 +44,73 @@ const DETECT_TIMEOUT_MS = 3000;
 const WMI_TIMEOUT_MS = 8000;
 
 /**
- * Windows fallback when `nvidia-smi` is absent or slow.
+ * Parsers are separated from execution ON PURPOSE. The Windows fallback below
+ * is code that can never run on the maintainer's Mac, and on the one Windows
+ * machine we have `nvidia-smi` works — so the fallback would ship covered by
+ * nothing but "it compiles". Splitting parse from spawn lets the awkward shapes
+ * (a single adapter serialising as an object rather than an array, a blank
+ * Name, a driver that prints no VRAM) be tested anywhere.
+ */
+
+/** `nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits` */
+export function parseNvidiaSmi(stdout: string): GpuInfo[] {
+  return stdout
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [name, mem, driver] = line.split(',').map((s) => s.trim());
+      const vramMb = Number.parseInt(mem ?? '', 10);
+      return {
+        name: name || 'GPU',
+        ...(Number.isFinite(vramMb) ? { vramMb } : {}),
+        ...(driver ? { driverVersion: driver } : {}),
+      };
+    });
+}
+
+/** `system_profiler SPDisplaysDataType -json` */
+export function parseSystemProfiler(stdout: string): GpuInfo[] {
+  const parsed = JSON.parse(stdout) as {
+    SPDisplaysDataType?: { sppci_model?: string; spdisplays_vram?: string }[];
+  };
+  return (parsed.SPDisplaysDataType ?? [])
+    .filter((d) => d.sppci_model)
+    .map((d) => {
+      const vram = d.spdisplays_vram ? Number.parseInt(d.spdisplays_vram, 10) : NaN;
+      return {
+        name: d.sppci_model as string,
+        ...(Number.isFinite(vram) ? { vramMb: vram * 1024 } : {}),
+      };
+    });
+}
+
+/**
+ * `Get-CimInstance Win32_VideoController | Select-Object Name | ConvertTo-Json`
  *
- * WMI needs no vendor tool, so it still sees the card when the NVIDIA CLI is
- * missing from PATH, the dGPU is asleep under Optimus, or antivirus delays the
- * spawn. It also sees AMD/Intel adapters, which `nvidia-smi` never reports.
- *
- * VRAM is deliberately dropped: `Win32_VideoController.AdapterRAM` is a uint32,
+ * VRAM is deliberately NOT read. `Win32_VideoController.AdapterRAM` is a uint32,
  * so anything at or above 4 GB pins at 4293918720 and a 24 GB card is
- * indistinguishable from a 4 GB one. Reporting that would feed a wrong budget
- * into the model recommender; leaving it undefined makes `gpuWeightBudgetMb`
+ * indistinguishable from a 4 GB one. Reporting that would feed a confident wrong
+ * budget to the model recommender; leaving it undefined makes gpuWeightBudgetMb
  * return 0, which falls back to the CPU tier rather than guessing.
  */
-async function detectGpusWindowsWmi(): Promise<GpuInfo[]> {
-  // powershell.exe (5.1) ships with every Windows; pwsh 7 may not be installed.
-  const { stdout } = await execFileAsync(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      'Get-CimInstance Win32_VideoController | Select-Object Name | ConvertTo-Json -Compress',
-    ],
-    { timeout: WMI_TIMEOUT_MS, windowsHide: true },
-  );
+export function parseWindowsWmiGpus(stdout: string): GpuInfo[] {
   const parsed: unknown = JSON.parse(stdout);
   // One adapter serialises as an object, several as an array.
-  const rows = (Array.isArray(parsed) ? parsed : [parsed]) as { Name?: string }[];
+  const rows = (Array.isArray(parsed) ? parsed : [parsed]) as { Name?: unknown }[];
   return rows
-    .map((r) => r.Name?.trim())
-    .filter((n): n is string => Boolean(n))
+    .map((r) => (typeof r?.Name === 'string' ? r.Name.trim() : ''))
+    .filter((n): n is string => n.length > 0)
     .map((name) => ({ name }));
 }
+
+/** Spawn seam, so the probe ORDER can be tested without a Windows machine. */
+export type ExecProbe = (cmd: string, args: string[], timeoutMs: number) => Promise<string>;
+
+const defaultExec: ExecProbe = async (cmd, args, timeoutMs) => {
+  const { stdout } = await execFileAsync(cmd, args, { timeout: timeoutMs, windowsHide: true });
+  return stdout;
+};
 
 /**
  * Best-effort GPU list for the current platform. Never throws.
@@ -83,75 +118,52 @@ async function detectGpusWindowsWmi(): Promise<GpuInfo[]> {
  * `probe: 'failed'` distinguishes "could not tell" from "has none" — callers
  * must fail open on it. See {@link SystemProfile.gpuProbe}.
  */
-async function detectGpus(platform: string): Promise<{ gpus: GpuInfo[]; probe: 'ok' | 'failed' }> {
+export async function detectGpus(
+  platform: string,
+  exec: ExecProbe = defaultExec,
+): Promise<{ gpus: GpuInfo[]; probe: 'ok' | 'failed' }> {
+  // Windows: nvidia-smi first (it alone reports VRAM and the driver version),
+  // then WMI — which needs no vendor tool, so it still sees the card when
+  // nvidia-smi is off PATH, the dGPU is asleep, or a cold card blows the budget.
+  // WMI also sees the AMD/Intel adapters nvidia-smi never reports, which is why
+  // it runs on an EMPTY nvidia-smi result too, not only on a thrown one.
+  const wmi = async (): Promise<{ gpus: GpuInfo[]; probe: 'ok' | 'failed' }> => {
+    try {
+      const out = await exec(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          'Get-CimInstance Win32_VideoController | Select-Object Name | ConvertTo-Json -Compress',
+        ],
+        WMI_TIMEOUT_MS,
+      );
+      // WMI answering with an empty list is a real answer ("no adapter"); WMI
+      // throwing is not, and must stay 'failed' so callers fail open.
+      return { gpus: parseWindowsWmiGpus(out), probe: 'ok' };
+    } catch {
+      return { gpus: [], probe: 'failed' };
+    }
+  };
+
   try {
     if (platform === 'darwin') {
-      const { stdout } = await execFileAsync(
-        'system_profiler',
-        ['SPDisplaysDataType', '-json'],
-        { timeout: DETECT_TIMEOUT_MS, windowsHide: true },
-      );
-      const parsed = JSON.parse(stdout) as {
-        SPDisplaysDataType?: { sppci_model?: string; spdisplays_vram?: string }[];
-      };
-      return {
-        probe: 'ok',
-        gpus: (parsed.SPDisplaysDataType ?? [])
-          .filter((d) => d.sppci_model)
-          .map((d) => {
-            const vram = d.spdisplays_vram ? Number.parseInt(d.spdisplays_vram, 10) : NaN;
-            return {
-              name: d.sppci_model as string,
-              ...(Number.isFinite(vram) ? { vramMb: vram * 1024 } : {}),
-            };
-          }),
-      };
+      const out = await exec('system_profiler', ['SPDisplaysDataType', '-json'], DETECT_TIMEOUT_MS);
+      return { gpus: parseSystemProfiler(out), probe: 'ok' };
     }
-
-    // Linux/Windows: nvidia-smi if present (the common dedicated-GPU case).
-    // driver_version comes from the SAME query rather than parsing nvidia-smi's
-    // banner: the banner's "CUDA Version:" field moved between driver
-    // generations (it is absent entirely on 610.x), whereas --query-gpu is a
-    // stable machine-readable contract.
-    const { stdout } = await execFileAsync(
+    // nvidia-smi's --query-gpu is a stable machine-readable contract; its banner
+    // is not (the "CUDA Version:" line is absent entirely on driver 610.x).
+    const out = await exec(
       'nvidia-smi',
       ['--query-gpu=name,memory.total,driver_version', '--format=csv,noheader,nounits'],
-      { timeout: DETECT_TIMEOUT_MS, windowsHide: true },
+      DETECT_TIMEOUT_MS,
     );
-    const gpus = stdout
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        const [name, mem, driver] = line.split(',').map((s) => s.trim());
-        const vramMb = Number.parseInt(mem ?? '', 10);
-        return {
-          name: name ?? 'GPU',
-          ...(Number.isFinite(vramMb) ? { vramMb } : {}),
-          ...(driver ? { driverVersion: driver } : {}),
-        };
-      });
-    // nvidia-smi exists but reported nothing: on Windows that is still worth a
-    // WMI pass, since the machine may have an AMD/Intel adapter it cannot see.
-    if (gpus.length === 0 && platform === 'win32') return await detectGpusWindowsWmi2();
+    const gpus = parseNvidiaSmi(out);
+    if (gpus.length === 0 && platform === 'win32') return await wmi();
     return { gpus, probe: 'ok' };
   } catch {
-    // nvidia-smi missing, timed out, or the GPU was asleep. On Windows, ask WMI
-    // before concluding anything — this is the path that used to hide both CUDA
-    // packs from a user who owns an NVIDIA card.
-    if (platform === 'win32') return await detectGpusWindowsWmi2();
-    return { gpus: [], probe: 'failed' };
-  }
-}
-
-/** {@link detectGpusWindowsWmi} with the probe verdict, and never throwing. */
-async function detectGpusWindowsWmi2(): Promise<{ gpus: GpuInfo[]; probe: 'ok' | 'failed' }> {
-  try {
-    const gpus = await detectGpusWindowsWmi();
-    // WMI answering with an empty list is a real answer ("no adapter"); WMI
-    // throwing is not, and must stay 'failed' so callers fail open.
-    return { gpus, probe: 'ok' };
-  } catch {
+    if (platform === 'win32') return await wmi();
     return { gpus: [], probe: 'failed' };
   }
 }

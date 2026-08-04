@@ -3,6 +3,7 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
 import { IpcService } from './core/ipc/ipc.service';
 import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.component';
+import { UpdateNoticeComponent } from './shared/update-notice/update-notice.component';
 
 /**
  * Root shell: a slim top nav + a routed outlet. The whole app lives inside a
@@ -14,7 +15,7 @@ import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.c
   selector: 'vd-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, ConfirmDialogComponent],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ConfirmDialogComponent, UpdateNoticeComponent],
   template: `
     <header class="topnav">
       <a class="brand" routerLink="/" aria-label="VideoDubber home">
@@ -38,6 +39,8 @@ import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.c
         {{ ipc.inTauri ? 'Desktop' : 'Browser dev' }}
       </span>
     </header>
+
+    <vd-update-notice />
 
     @if (ipc.backendDown()) {
       <!--

@@ -429,3 +429,57 @@ export interface UpdateInfo {
   /** Release date (ISO-8601) of the available version. */
   date?: string;
 }
+
+// ---------------------------------------------------------------------------
+// What's-New notice
+//
+// The decision of WHAT to show the user about a pending update lives here, not
+// in the component, for one practical reason: the desktop app has no test
+// runner ("ui tests optional in MVP"), and this logic has genuine edge cases —
+// an update the OS cannot run, a version the user already dismissed, an
+// auto-install already under way. Shared code is tested code.
+// ---------------------------------------------------------------------------
+
+/** What the app should tell the user about a pending update, if anything. */
+export type UpdateNotice =
+  | { kind: 'none' }
+  /**
+   * `autoUpdate` is on, so the background task at launch is already downloading
+   * and will relaunch the app. The user gets a status, not a choice — offering
+   * an "Install" button here would race the install that is already running.
+   */
+  | { kind: 'auto-installing'; version: string; notes?: string }
+  /** `autoUpdate` is off: show the release notes and let the user decide. */
+  | { kind: 'available'; version: string; notes?: string; date?: string };
+
+/**
+ * Decide what to surface for an update check.
+ *
+ * `dismissedVersion` suppresses only the MANUAL notice, and only for the exact
+ * version dismissed — a new release re-opens it. The auto-installing status is
+ * never suppressed: the app is about to restart underneath the user, and that
+ * is worth saying every time it happens.
+ *
+ * A check that reports `available: false` produces nothing even when it carries
+ * `notes`. `check_for_update` uses exactly that shape to explain an update this
+ * OS is too old to run — the notes are a reason, not an offer, and rendering an
+ * Install button from them would hand the user a way to break their install.
+ */
+export function updateNoticeFor(
+  info: Pick<UpdateInfo, 'available' | 'version' | 'notes' | 'date'>,
+  opts: { autoUpdate: boolean; dismissedVersion?: string },
+): UpdateNotice {
+  if (!info.available) return { kind: 'none' };
+  // Defensive: every downstream branch needs a version to name and to remember.
+  if (!info.version) return { kind: 'none' };
+  if (opts.autoUpdate) {
+    return { kind: 'auto-installing', version: info.version, ...(info.notes ? { notes: info.notes } : {}) };
+  }
+  if (opts.dismissedVersion === info.version) return { kind: 'none' };
+  return {
+    kind: 'available',
+    version: info.version,
+    ...(info.notes ? { notes: info.notes } : {}),
+    ...(info.date ? { date: info.date } : {}),
+  };
+}

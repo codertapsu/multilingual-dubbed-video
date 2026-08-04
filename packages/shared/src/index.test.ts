@@ -115,3 +115,66 @@ describe('NVIDIA driver comparison', () => {
     expect(shared.outdatedNvidiaDriver(pack, bothOld)).toBe('546.29');
   });
 });
+
+/**
+ * The desktop app has no test runner ("ui tests optional in MVP"), so the
+ * What's-New decision lives here rather than in the component — its edge cases
+ * are exactly the ones that would ship unnoticed.
+ */
+describe('update notice', () => {
+  const info = (o: Record<string, unknown> = {}) => ({
+    available: true, version: '0.7.1', currentVersion: '0.7.0', notes: 'What changed', ...o,
+  });
+
+  it('says nothing when there is no update', () => {
+    expect(shared.updateNoticeFor(info({ available: false }), { autoUpdate: false })).toEqual({ kind: 'none' });
+    expect(shared.updateNoticeFor(info({ available: false }), { autoUpdate: true })).toEqual({ kind: 'none' });
+  });
+
+  it('shows STATUS, not a choice, when auto-update is on', () => {
+    // The background task at launch is already installing; an Install button
+    // here would race it.
+    expect(shared.updateNoticeFor(info(), { autoUpdate: true })).toEqual({
+      kind: 'auto-installing', version: '0.7.1', notes: 'What changed',
+    });
+  });
+
+  it('offers the choice when auto-update is off', () => {
+    expect(shared.updateNoticeFor(info({ date: '2026-08-04' }), { autoUpdate: false })).toEqual({
+      kind: 'available', version: '0.7.1', notes: 'What changed', date: '2026-08-04',
+    });
+  });
+
+  it('remembers a dismissal per VERSION, and a new release re-opens it', () => {
+    expect(shared.updateNoticeFor(info(), { autoUpdate: false, dismissedVersion: '0.7.1' })).toEqual({ kind: 'none' });
+    expect(shared.updateNoticeFor(info(), { autoUpdate: false, dismissedVersion: '0.7.0' }).kind).toBe('available');
+  });
+
+  it('never suppresses the auto-installing status', () => {
+    // The app is about to restart underneath the user — worth saying every time,
+    // dismissal or not.
+    expect(
+      shared.updateNoticeFor(info(), { autoUpdate: true, dismissedVersion: '0.7.1' }).kind,
+    ).toBe('auto-installing');
+  });
+
+  it('never offers an install for an update this OS cannot run', () => {
+    // check_for_update reports available:false WITH notes to explain why the
+    // host is too old. Rendering an Install button from those notes would hand
+    // the user a way to replace a working app with one that cannot launch.
+    const tooOld = { available: false, notes: 'A newer version is available, but macOS 13.5 is required.' };
+    expect(shared.updateNoticeFor(tooOld, { autoUpdate: false })).toEqual({ kind: 'none' });
+    expect(shared.updateNoticeFor(tooOld, { autoUpdate: true })).toEqual({ kind: 'none' });
+  });
+
+  it('says nothing when the check omits a version', () => {
+    expect(shared.updateNoticeFor({ available: true }, { autoUpdate: false })).toEqual({ kind: 'none' });
+  });
+
+  it('omits absent optional fields rather than emitting undefined keys', () => {
+    const n = shared.updateNoticeFor({ available: true, version: '1.0.0' }, { autoUpdate: false });
+    expect(n).toEqual({ kind: 'available', version: '1.0.0' });
+    expect('notes' in n).toBe(false);
+  });
+});
+

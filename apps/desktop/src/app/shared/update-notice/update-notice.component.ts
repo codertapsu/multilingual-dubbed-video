@@ -4,6 +4,7 @@ import { updateNoticeFor, type UpdateNotice } from '@videodubber/shared';
 
 import { IpcService } from '../../core/ipc/ipc.service';
 import { BusyIndicatorComponent } from '../busy-indicator/busy-indicator.component';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 
 /** Resolve after `ms`. */
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -34,7 +35,7 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
   selector: 'vd-update-notice',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [BusyIndicatorComponent],
+  imports: [BusyIndicatorComponent, TranslatePipe],
   template: `
     @if (notice(); as n) {
       @switch (n.kind) {
@@ -42,11 +43,11 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
           <div class="update-strip" role="status" aria-live="polite">
             <span class="update-dot" aria-hidden="true"></span>
             <span>
-              <strong>Updating to {{ n.version }}…</strong>
-              VideoDubber is downloading this in the background and will restart when it's ready.
+              <strong>{{ 'update.installing-title' | translate: { version: n.version } }}</strong>
+              {{ 'update.installing-body' | translate }}
             </span>
-            <button type="button" class="btn btn-ghost btn-sm" (click)="dismiss()" aria-label="Hide">
-              Hide
+            <button type="button" class="btn btn-ghost btn-sm" (click)="dismiss()" [attr.aria-label]="'common.hide' | translate">
+              {{ 'common.hide' | translate }}
             </button>
           </div>
         }
@@ -59,25 +60,25 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
               aria-labelledby="vd-update-title"
               (click)="$event.stopPropagation()"
             >
-              <h3 class="update-title" id="vd-update-title">What's new in {{ n.version }}</h3>
+              <h3 class="update-title" id="vd-update-title">{{ 'update.whats-new' | translate: { version: n.version } }}</h3>
               @if (n.date) {
-                <p class="update-date">Released {{ n.date }}</p>
+                <p class="update-date">{{ 'update.released' | translate: { date: n.date } }}</p>
               }
               @if (n.notes) {
                 <pre class="update-notes">{{ n.notes }}</pre>
               } @else {
-                <p class="update-notes-empty">No release notes were published for this version.</p>
+                <p class="update-notes-empty">{{ 'update.no-notes' | translate }}</p>
               }
               @if (error(); as e) {
                 <p class="update-error" role="alert">{{ e }}</p>
               }
-              <vd-busy-indicator [active]="installing()" label="Downloading and installing…" />
+              <vd-busy-indicator [active]="installing()" [label]="'update.installing-label' | translate" />
               <div class="update-actions">
                 <button type="button" class="btn btn-ghost" (click)="dismiss()" [disabled]="installing()">
-                  Later
+                  {{ 'common.later' | translate }}
                 </button>
                 <button type="button" class="btn btn-primary" (click)="install()" [disabled]="installing()">
-                  {{ installing() ? 'Installing…' : 'Install now' }}
+                  {{ (installing() ? 'update.installing' : 'update.install-now') | translate }}
                 </button>
               </div>
             </div>
@@ -176,6 +177,7 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
 })
 export class UpdateNoticeComponent implements OnInit {
   protected readonly ipc = inject(IpcService);
+  private readonly translate = inject(TranslateService);
   protected readonly notice = signal<UpdateNotice | null>(null);
   protected readonly installing = signal(false);
   protected readonly error = signal<string | null>(null);
@@ -251,7 +253,7 @@ export class UpdateNoticeComponent implements OnInit {
       this.error.set(
         err instanceof Error
           ? err.message
-          : 'The update could not be installed. You can retry from Settings → Updates.',
+          : this.translate.instant('update.install-failed'),
       );
     }
   }

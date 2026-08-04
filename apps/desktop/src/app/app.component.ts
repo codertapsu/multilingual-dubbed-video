@@ -4,6 +4,7 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { IpcService } from './core/ipc/ipc.service';
 import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.component';
 import { UpdateNoticeComponent } from './shared/update-notice/update-notice.component';
+import { TranslatePipe } from './core/i18n';
 
 /**
  * Root shell: a slim top nav + a routed outlet. The whole app lives inside a
@@ -15,28 +16,28 @@ import { UpdateNoticeComponent } from './shared/update-notice/update-notice.comp
   selector: 'vd-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, ConfirmDialogComponent, UpdateNoticeComponent],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ConfirmDialogComponent, UpdateNoticeComponent, TranslatePipe],
   template: `
     <header class="topnav">
-      <a class="brand" routerLink="/" aria-label="VideoDubber home">
+      <a class="brand" routerLink="/" [attr.aria-label]="'nav.home-aria' | translate">
         <img class="brand-mark" src="assets/brand-icon.png" alt="" aria-hidden="true" />
         <span class="brand-name">VideoDubber</span>
       </a>
 
-      <nav class="nav-links" aria-label="Primary">
+      <nav class="nav-links" [attr.aria-label]="'nav.primary' | translate">
         <a
           routerLink="/"
           routerLinkActive="active"
           [routerLinkActiveOptions]="{ exact: true }"
-          >Projects</a
+          >{{ 'nav.projects' | translate }}</a
         >
-        <a routerLink="/new" routerLinkActive="active">New project</a>
-        <a routerLink="/settings" routerLinkActive="active">Settings</a>
-        <a routerLink="/support" routerLinkActive="active">♥ Support</a>
+        <a routerLink="/new" routerLinkActive="active">{{ 'nav.new-project' | translate }}</a>
+        <a routerLink="/settings" routerLinkActive="active">{{ 'nav.settings' | translate }}</a>
+        <a routerLink="/support" routerLinkActive="active">{{ 'nav.support' | translate }}</a>
       </nav>
 
       <span class="mode-tag" [class.local]="!ipc.inTauri" [title]="modeTooltip">
-        {{ ipc.inTauri ? 'Desktop' : 'Browser dev' }}
+        {{ (ipc.inTauri ? 'shell.mode-desktop' : 'shell.mode-browser') | translate }}
       </span>
     </header>
 
@@ -52,19 +53,19 @@ import { UpdateNoticeComponent } from './shared/update-notice/update-notice.comp
       -->
       <div class="backend-down" role="alert" aria-live="assertive">
         <div>
-          <strong>VideoDubber's backend isn't running.</strong>
+          <strong>{{ 'shell.backend-down-title' | translate }}</strong>
           <span>
-            This can happen the first time you open the app after installing or updating.
+            {{ 'shell.backend-down-body' | translate }}
             @if (ipc.inTauri) {
-              Reopening usually fixes it.
+              {{ 'shell.backend-down-tauri' | translate }}
             } @else {
-              Start the local services (scripts/dev.sh or scripts/dev.ps1), then reload.
+              {{ 'shell.backend-down-dev' | translate }}
             }
           </span>
         </div>
         @if (ipc.inTauri) {
           <button type="button" class="btn" (click)="restart()" [disabled]="restarting()">
-            {{ restarting() ? 'Restarting…' : 'Quit & reopen' }}
+            {{ (restarting() ? 'shell.restarting' : 'shell.restart') | translate }}
           </button>
         }
       </div>

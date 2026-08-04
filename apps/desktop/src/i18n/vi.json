@@ -1,0 +1,77 @@
+{
+  "common": {
+    "cancel": "Huỷ",
+    "confirm": "Xác nhận",
+    "close": "Đóng",
+    "dismiss": "Bỏ qua",
+    "done": "Xong",
+    "working": "Đang xử lý…",
+    "refresh": "Tải lại",
+    "later": "Để sau",
+    "hide": "Ẩn",
+    "install": "Cài đặt",
+    "loading": "Đang tải…"
+  },
+  "nav": {
+    "projects": "Dự án",
+    "new-project": "Dự án mới",
+    "settings": "Cài đặt",
+    "support": "♥ Ủng hộ",
+    "primary": "Điều hướng chính",
+    "home-aria": "Trang chủ VideoDubber"
+  },
+  "shell": {
+    "mode-desktop": "Ứng dụng",
+    "mode-browser": "Trình duyệt (dev)",
+    "backend-down-title": "Dịch vụ nền của VideoDubber chưa chạy.",
+    "backend-down-body": "Điều này có thể xảy ra trong lần mở đầu tiên sau khi cài đặt hoặc cập nhật.",
+    "backend-down-tauri": "Mở lại ứng dụng thường sẽ khắc phục được.",
+    "backend-down-dev": "Hãy khởi động các dịch vụ cục bộ (scripts/dev.sh hoặc scripts/dev.ps1), rồi tải lại.",
+    "restart": "Thoát và mở lại",
+    "restarting": "Đang khởi động lại…"
+  },
+  "update": {
+    "installing-title": "Đang cập nhật lên {{ version }}…",
+    "installing-body": "VideoDubber đang tải bản cập nhật này ở chế độ nền và sẽ khởi động lại khi sẵn sàng.",
+    "whats-new": "Có gì mới trong {{ version }}",
+    "released": "Phát hành ngày {{ date }}",
+    "no-notes": "Phiên bản này không có ghi chú phát hành.",
+    "install-now": "Cài đặt ngay",
+    "installing": "Đang cài đặt…",
+    "installing-label": "Đang tải xuống và cài đặt…",
+    "install-failed": "Không thể cài đặt bản cập nhật. Bạn có thể thử lại trong Cài đặt → Cập nhật."
+  },
+  "error": {
+    "dismiss-aria": "Bỏ qua lỗi",
+    "why": "Nguyên nhân:",
+    "how-to-fix": "Cách khắc phục:",
+    "docs": "Tài liệu:"
+  },
+  "download": {
+    "done": "Xong",
+    "working": "Đang xử lý…"
+  },
+  "home": {
+    "title": "Dự án",
+    "subtitle": "Lồng tiếng video sang ngôn ngữ khác, hoàn toàn ngoại tuyến.",
+    "new-project": "+ Dự án mới",
+    "now-dubbing": "Đang lồng tiếng",
+    "queue-link": "{{ running }} đang chạy · tối đa {{ max }} cùng lúc — thay đổi",
+    "heavy-suffix": " — đang dùng engine cục bộ (chạy riêng)",
+    "up-next": "Tiếp theo",
+    "queue-entry": "#{{ position }} {{ name }} — {{ message }}",
+    "queue-paused": "⏸ Hàng đợi đang tạm dừng — hãy tiếp tục trong Cài đặt.",
+    "loading": "Đang tải dự án…",
+    "empty-title": "Chưa có dự án nào",
+    "empty-body": "Hãy tạo dự án lồng tiếng đầu tiên. Chọn video, chọn ngôn ngữ nguồn và đích, phần còn lại để pipeline cục bộ lo.",
+    "create-first": "+ Tạo dự án đầu tiên",
+    "open-aria": "Mở dự án {{ name }}"
+  },
+  "settings": {
+    "language": {
+      "heading": "Ngôn ngữ",
+      "label": "Ngôn ngữ hiển thị",
+      "hint": "Áp dụng ngay cho toàn bộ ứng dụng và được ghi nhớ cho lần mở sau."
+    }
+  }
+}

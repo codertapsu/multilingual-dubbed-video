@@ -1,8 +1,8 @@
 <section class="page stack">
   <div class="row row-between">
     <div>
-      <h1>Projects</h1>
-      <p class="muted">Dub a video into another language, fully offline.</p>
+      <h1>{{ 'home.title' | translate }}</h1>
+      <p class="muted">{{ 'home.subtitle' | translate }}</p>
     </div>
     <div class="row">
       <button
@@ -11,10 +11,10 @@
         (click)="refresh()"
         [disabled]="store.loading()"
       >
-        Refresh
+        {{ 'common.refresh' | translate }}
       </button>
       <button type="button" class="btn btn-primary" (click)="newProject()">
-        + New project
+        {{ 'home.new-project' | translate }}
       </button>
     </div>
   </div>
@@ -30,39 +30,38 @@
     @if (q.running.length > 0 || q.entries.length > 0) {
       <div class="card stack-sm queue-summary">
         <div class="row row-between">
-          <strong>Now dubbing</strong>
+          <strong>{{ 'home.now-dubbing' | translate }}</strong>
           <a routerLink="/settings" class="hint"
-            >{{ q.running.length }} dubbing · limit {{ q.maxProjects }} at a time — change</a
+            >{{ 'home.queue-link' | translate: { running: q.running.length, max: q.maxProjects } }}</a
           >
         </div>
         @for (r of q.running; track r.projectId) {
-          <p class="hint">▶ {{ r.name }}{{ r.heavy ? ' — using a local engine (runs alone)' : '' }}</p>
+          <p class="hint">▶ {{ r.name }}{{ r.heavy ? ('home.heavy-suffix' | translate) : '' }}</p>
         }
         @if (q.entries.length > 0) {
-          <strong class="up-next">Up next</strong>
+          <strong class="up-next">{{ 'home.up-next' | translate }}</strong>
           @for (e of q.entries; track e.projectId) {
-            <p class="hint">#{{ e.position }} {{ e.name }} — {{ e.message }}</p>
+            <p class="hint">{{ 'home.queue-entry' | translate: { position: e.position, name: e.name, message: e.message } }}</p>
           }
         }
         @if (q.paused) {
-          <p class="hint">⏸ The queue is paused — resume it in Settings.</p>
+          <p class="hint">{{ 'home.queue-paused' | translate }}</p>
         }
       </div>
     }
   }
 
   @if (store.loading() && store.recentProjects().length === 0) {
-    <div class="card muted">Loading projects…</div>
+    <div class="card muted">{{ 'home.loading' | translate }}</div>
   } @else if (store.recentProjects().length === 0) {
     <div class="card empty-state stack">
-      <h2>No projects yet</h2>
+      <h2>{{ 'home.empty-title' | translate }}</h2>
       <p class="muted">
-        Create your first dubbing project. Pick a video, choose source and
-        target languages, and let the local pipeline do the rest.
+        {{ 'home.empty-body' | translate }}
       </p>
       <div>
         <button type="button" class="btn btn-primary" (click)="newProject()">
-          + Create your first project
+          {{ 'home.create-first' | translate }}
         </button>
       </div>
     </div>
@@ -74,7 +73,7 @@
             type="button"
             class="project-open"
             (click)="open(project)"
-            [attr.aria-label]="'Open project ' + project.name"
+            [attr.aria-label]="'home.open-aria' | translate: { name: project.name }"
           >
             <div class="project-main">
               <span class="project-name">{{ project.name }}</span>

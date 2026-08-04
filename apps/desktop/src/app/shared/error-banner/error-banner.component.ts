@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
 
 import type { AppError } from '../../core/models';
+import { TranslatePipe } from '../../core/i18n';
 
 /**
  * Renders an {@link AppError} in a consistent, accessible banner:
@@ -11,6 +12,7 @@ import type { AppError } from '../../core/models';
 @Component({
   selector: 'vd-error-banner',
   standalone: true,
+  imports: [TranslatePipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (error(); as err) {
@@ -21,7 +23,7 @@ import type { AppError } from '../../core/models';
           <button
             type="button"
             class="btn btn-ghost btn-sm dismiss"
-            aria-label="Dismiss error"
+            [attr.aria-label]="'error.dismiss-aria' | translate"
             (click)="dismiss.emit()"
           >
             ✕
@@ -30,20 +32,20 @@ import type { AppError } from '../../core/models';
 
         @if (err.cause) {
           <p class="error-cause">
-            <span class="label">Why:</span>
+            <span class="label">{{ 'error.why' | translate }}</span>
             <span class="mono">{{ err.cause }}</span>
           </p>
         }
 
         @if (err.remediation) {
           <p class="error-remediation">
-            <span class="label">How to fix:</span> {{ err.remediation }}
+            <span class="label">{{ 'error.how-to-fix' | translate }}</span> {{ err.remediation }}
           </p>
         }
 
         @if (err.docsRef) {
           <p class="error-docs">
-            <span class="label">Docs:</span>
+            <span class="label">{{ 'error.docs' | translate }}</span>
             <span class="mono">{{ err.docsRef }}</span>
           </p>
         }

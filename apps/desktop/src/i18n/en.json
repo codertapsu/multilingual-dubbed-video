@@ -1,0 +1,77 @@
+{
+  "common": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "close": "Close",
+    "dismiss": "Dismiss",
+    "done": "Done",
+    "working": "Working…",
+    "refresh": "Refresh",
+    "later": "Later",
+    "hide": "Hide",
+    "install": "Install",
+    "loading": "Loading…"
+  },
+  "nav": {
+    "projects": "Projects",
+    "new-project": "New project",
+    "settings": "Settings",
+    "support": "♥ Support",
+    "primary": "Primary",
+    "home-aria": "VideoDubber home"
+  },
+  "shell": {
+    "mode-desktop": "Desktop",
+    "mode-browser": "Browser dev",
+    "backend-down-title": "VideoDubber's backend isn't running.",
+    "backend-down-body": "This can happen the first time you open the app after installing or updating.",
+    "backend-down-tauri": "Reopening usually fixes it.",
+    "backend-down-dev": "Start the local services (scripts/dev.sh or scripts/dev.ps1), then reload.",
+    "restart": "Quit & reopen",
+    "restarting": "Restarting…"
+  },
+  "update": {
+    "installing-title": "Updating to {{ version }}…",
+    "installing-body": "VideoDubber is downloading this in the background and will restart when it's ready.",
+    "whats-new": "What's new in {{ version }}",
+    "released": "Released {{ date }}",
+    "no-notes": "No release notes were published for this version.",
+    "install-now": "Install now",
+    "installing": "Installing…",
+    "installing-label": "Downloading and installing…",
+    "install-failed": "The update could not be installed. You can retry from Settings → Updates."
+  },
+  "error": {
+    "dismiss-aria": "Dismiss error",
+    "why": "Why:",
+    "how-to-fix": "How to fix:",
+    "docs": "Docs:"
+  },
+  "download": {
+    "done": "Done",
+    "working": "Working…"
+  },
+  "home": {
+    "title": "Projects",
+    "subtitle": "Dub a video into another language, fully offline.",
+    "new-project": "+ New project",
+    "now-dubbing": "Now dubbing",
+    "queue-link": "{{ running }} dubbing · limit {{ max }} at a time — change",
+    "heavy-suffix": " — using a local engine (runs alone)",
+    "up-next": "Up next",
+    "queue-entry": "#{{ position }} {{ name }} — {{ message }}",
+    "queue-paused": "⏸ The queue is paused — resume it in Settings.",
+    "loading": "Loading projects…",
+    "empty-title": "No projects yet",
+    "empty-body": "Create your first dubbing project. Pick a video, choose source and target languages, and let the local pipeline do the rest.",
+    "create-first": "+ Create your first project",
+    "open-aria": "Open project {{ name }}"
+  },
+  "settings": {
+    "language": {
+      "heading": "Language",
+      "label": "Display language",
+      "hint": "Applies to the whole app immediately, and is remembered next time you open it."
+    }
+  }
+}

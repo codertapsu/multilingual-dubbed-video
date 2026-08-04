@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
 import type { SetupItemProgress } from '../../core/ipc/setup-events.service';
+import { TranslatePipe } from '../../core/i18n';
 
 /**
  * DownloadProgressListComponent — renders a list of in-flight downloads (from
@@ -16,6 +17,7 @@ import type { SetupItemProgress } from '../../core/ipc/setup-events.service';
 @Component({
   selector: 'vd-download-progress-list',
   standalone: true,
+  imports: [TranslatePipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <ul class="dl-list" role="list">
@@ -25,11 +27,11 @@ import type { SetupItemProgress } from '../../core/ipc/setup-events.service';
             <span class="dl-name">{{ friendlyItem(item.item) }}</span>
             <span class="dl-pct mono">
               @if (item.done) {
-                Done
+                {{ 'download.done' | translate }}
               } @else if (item.percent !== null) {
                 {{ item.percent }}%
               } @else {
-                Working…
+                {{ 'download.working' | translate }}
               }
             </span>
           </div>

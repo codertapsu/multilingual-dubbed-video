@@ -37,6 +37,13 @@ import type {
   SystemProfileResponse,
   UpdateInfo,
 } from '../../core/models/setup';
+import {
+  LOCALE_LABELS,
+  SUPPORTED_LOCALES,
+  TranslatePipe,
+  TranslateService,
+  type SupportedLocale,
+} from '../../core/i18n';
 
 /** One row in the Translation-packs manager (a pair + resolved names + state). */
 interface ArgosPackRow extends ArgosPair {
@@ -70,12 +77,18 @@ const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> =
   selector: 'vd-settings',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent],
+  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent, TranslatePipe],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
 })
 export class SettingsComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
+  private readonly translate = inject(TranslateService);
+  /** Language picker. Vietnamese is the default — see DEFAULT_LOCALE. */
+  protected readonly supportedLocales = SUPPORTED_LOCALES;
+  protected readonly localeLabels = LOCALE_LABELS;
+  protected readonly locale = this.translate.locale;
+
   private readonly confirmSvc = inject(ConfirmService);
 
   protected readonly inTauri = this.ipc.inTauri;
@@ -778,6 +791,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   // ----------------------------- update check -----------------------------
+
+  /** Switch the app language. Applies immediately; no reload needed. */
+  protected setLocale(next: SupportedLocale): void {
+    this.translate.use(next);
+  }
 
   protected async check(): Promise<void> {
     if (this.checkOutcome() === 'checking') return;

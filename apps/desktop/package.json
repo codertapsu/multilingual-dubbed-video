@@ -9,7 +9,7 @@
     "start": "ng serve --port 1420",
     "build": "ng build",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "test": "echo \"(ui tests optional in MVP)\"",
+    "test": "node ../../scripts/check-i18n.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

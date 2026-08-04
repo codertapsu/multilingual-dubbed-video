@@ -19,6 +19,7 @@ import {
 import { formatDurationCoarse } from '../../core/util/format';
 import type { Project } from '../../core/models';
 import type { QueueState } from '../../core/models/setup';
+import { TranslatePipe } from '../../core/i18n';
 
 /** How often the capacity summary refreshes while dubs are active. */
 const QUEUE_POLL_MS = 4000;
@@ -32,7 +33,7 @@ const QUEUE_POLL_MS = 4000;
   selector: 'vd-home',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ErrorBannerComponent, StatusBadgeComponent, RouterLink],
+  imports: [ErrorBannerComponent, StatusBadgeComponent, RouterLink, TranslatePipe],
   templateUrl: './home.component.html',
   styleUrl: './home.component.scss',
 })

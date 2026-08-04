@@ -419,6 +419,29 @@
     }
   </div>
 
+  <!-- ============================ Language ============================ -->
+  <div class="card stack">
+    <h2>{{ 'settings.language.heading' | translate }}</h2>
+    <div class="setting-row">
+      <label class="switch-label" for="appLanguage">
+        <span class="switch-body">
+          <span class="switch-title">{{ 'settings.language.label' | translate }}</span>
+          <span class="hint">{{ 'settings.language.hint' | translate }}</span>
+        </span>
+      </label>
+      <select
+        id="appLanguage"
+        name="appLanguage"
+        [ngModel]="locale()"
+        (ngModelChange)="setLocale($event)"
+      >
+        @for (loc of supportedLocales; track loc) {
+          <option [value]="loc">{{ localeLabels[loc] }}</option>
+        }
+      </select>
+    </div>
+  </div>
+
   <!-- ============================ Updates ============================ -->
   <!-- ===================== Storage (free up disk space) ===================== -->
   <div class="card stack">

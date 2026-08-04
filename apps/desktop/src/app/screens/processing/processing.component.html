@@ -114,7 +114,7 @@
     @for (step of steps(); track step.id) {
       <li class="step-item" [attr.data-status]="step.status">
         <div class="step-head">
-          <span class="step-label">{{ stepLabels[step.id] }}</span>
+          <span class="step-label">{{ stepLabels[step.id] | translate }}</span>
           <vd-status-badge [status]="step.status" />
         </div>
 
@@ -122,7 +122,7 @@
           <div
             class="progress step-progress"
             role="progressbar"
-            [attr.aria-label]="'processing.step-progress-aria' | translate: { step: stepLabels[step.id] }"
+            [attr.aria-label]="'processing.step-progress-aria' | translate: { step: stepLabels[step.id] | translate }"
             [attr.aria-valuenow]="stepPercent(step)"
             aria-valuemin="0"
             aria-valuemax="100"

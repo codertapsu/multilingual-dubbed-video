@@ -108,7 +108,7 @@ function keysFeedingPipes(text) {
  * `status.completed`), so the static scan cannot see the individual keys.
  * Exempt from the "unused" report; still required in every locale.
  */
-const DYNAMIC_KEY_PREFIXES = ['status.', 'download.', 'common.'];
+const DYNAMIC_KEY_PREFIXES = ['status.', 'download.', 'common.', 'opt.'];
 
 /** `instant('a.b')` in TypeScript. */
 const CALL_RE = /\binstant\(\s*['"`]([^'"`]+)['"`]/g;
@@ -159,6 +159,25 @@ for (const locale of locales) {
     failed = true;
     console.error(`\n✗ ${locale}.json is missing ${gaps.length} key(s) that other locales define:`);
     for (const k of gaps) console.error(`    ${k}`);
+  }
+}
+
+// 2b. Placeholders must match across locales. `{{ version }}` in en and
+//     `{{ v }}` in vi compiles fine and renders a literal "{{ v }}" to whoever
+//     picked that language — invisible until a user in that locale hits it.
+const placeholders = (s) =>
+  [...String(s).matchAll(/\{\{\s*([^{}\s]+)\s*\}\}/g)].map((m) => m[1]).sort().join(',');
+const leafOf = (tree, key) => key.split('.').reduce((c, k) => (c == null ? undefined : c[k]), tree);
+const base = locales[0];
+for (const locale of locales.slice(1)) {
+  for (const key of defined[base]) {
+    if (!defined[locale].has(key)) continue;
+    const a = placeholders(leafOf(trees[base], key));
+    const b = placeholders(leafOf(trees[locale], key));
+    if (a !== b) {
+      failed = true;
+      console.error(`\n✗ ${key}: placeholders differ — ${base}[${a}] vs ${locale}[${b}]`);
+    }
   }
 }
 

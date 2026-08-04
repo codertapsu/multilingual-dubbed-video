@@ -80,7 +80,7 @@
         (ngModelChange)="setMode($event)"
       >
         @for (mode of subtitleModes; track mode) {
-          <option [value]="mode">{{ subtitleLabels[mode] }}</option>
+          <option [value]="mode">{{ subtitleLabels[mode] | translate }}</option>
         }
       </select>
     </div>

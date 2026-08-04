@@ -52,20 +52,20 @@ export function formatBytes(bytes?: number): string {
 
 /** Friendly label for each subtitle export mode (used in radios/selects). */
 export const SUBTITLE_EXPORT_MODE_LABELS: Record<SubtitleExportMode, string> = {
-  none: 'No subtitles',
-  'srt-file': 'Sidecar .srt file',
-  'vtt-file': 'Sidecar .vtt file',
-  'embedded-soft': 'Embedded soft subtitles (toggleable)',
-  'burned-in': 'Burned-in (always visible)',
+  none: 'opt.subtitle.none',
+  'srt-file': 'opt.subtitle.srt-file',
+  'vtt-file': 'opt.subtitle.vtt-file',
+  'embedded-soft': 'opt.subtitle.embedded-soft',
+  'burned-in': 'opt.subtitle.burned-in',
 };
 
 /** Short helper text shown under each subtitle mode option. */
 export const SUBTITLE_EXPORT_MODE_HINTS: Record<SubtitleExportMode, string> = {
-  none: 'Audio dub only, no caption file.',
-  'srt-file': 'A separate translated.srt next to the video.',
-  'vtt-file': 'A separate translated.vtt (web) next to the video.',
-  'embedded-soft': 'Soft subtitle track muxed into the container.',
-  'burned-in': 'Rendered permanently into the video pixels.',
+  none: 'opt.subtitle-hint.none',
+  'srt-file': 'opt.subtitle-hint.srt-file',
+  'vtt-file': 'opt.subtitle-hint.vtt-file',
+  'embedded-soft': 'opt.subtitle-hint.embedded-soft',
+  'burned-in': 'opt.subtitle-hint.burned-in',
 };
 
 export const ALL_SUBTITLE_EXPORT_MODES: readonly SubtitleExportMode[] = [
@@ -78,19 +78,25 @@ export const ALL_SUBTITLE_EXPORT_MODES: readonly SubtitleExportMode[] = [
 
 /** Friendly label for processing modes. */
 export const PROCESSING_MODE_LABELS: Record<ProcessingMode, string> = {
-  local: 'Local (offline)',
-  'cloud-enhanced': 'Cloud-enhanced',
+  local: 'opt.processing.local',
+  'cloud-enhanced': 'opt.processing.cloud-enhanced',
 };
 
-/** Human labels for the 9 pipeline steps (mirrors PIPELINE_STEP_DEFS). */
+/**
+ * TRANSLATION KEYS, not display text — every consumer must pipe them through
+ * `| translate`. They used to be English literals, which meant the pipeline
+ * step names, subtitle modes and processing modes stayed English no matter what
+ * language the user picked, and check-i18n could not see the problem because
+ * nothing here looks like a translate call.
+ */
 export const PIPELINE_STEP_LABELS: Record<PipelineStepId, string> = {
-  'probe-video': 'Probe video',
-  'extract-audio': 'Extract audio',
-  stt: 'Transcribe (STT)',
-  translation: 'Translate',
-  refine: 'Review & refine',
-  tts: 'Synthesize speech (TTS)',
-  alignment: 'Align timing',
-  'audio-mix': 'Mix audio',
-  render: 'Render final video',
+  'probe-video': 'opt.step.probe-video',
+  'extract-audio': 'opt.step.extract-audio',
+  stt: 'opt.step.stt',
+  translation: 'opt.step.translation',
+  refine: 'opt.step.refine',
+  tts: 'opt.step.tts',
+  alignment: 'opt.step.alignment',
+  'audio-mix': 'opt.step.audio-mix',
+  render: 'opt.step.render',
 };

@@ -113,8 +113,8 @@
                 (change)="setSubtitleMode(mode)"
               />
               <span class="radio-body">
-                <span class="radio-title">{{ subtitleLabels[mode] }}</span>
-                <span class="hint">{{ subtitleHints[mode] }}</span>
+                <span class="radio-title">{{ subtitleLabels[mode] | translate }}</span>
+                <span class="hint">{{ subtitleHints[mode] | translate }}</span>
               </span>
             </label>
           }
@@ -188,7 +188,7 @@
               (ngModelChange)="setDuckingLevel($event)"
             >
               @for (opt of duckingOptions; track opt.value) {
-                <option [value]="opt.value">{{ opt.label }}</option>
+                <option [value]="opt.value">{{ opt.label | translate }}</option>
               }
             </select>
           </div>
@@ -297,7 +297,7 @@
             (ngModelChange)="setMaxSpeed($event)"
           >
             @for (opt of speedOptions; track opt.value) {
-              <option [value]="opt.value">{{ opt.label }}</option>
+              <option [value]="opt.value">{{ opt.label | translate }}</option>
             }
           </select>
           <span class="hint">

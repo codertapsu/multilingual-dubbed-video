@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, input } from '@angular/core';
+import { TranslatePipe } from '../../core/i18n';
 
 /** Union of all status-like strings we render as a pill. */
 export type BadgeStatus =
@@ -29,8 +30,9 @@ const STATUS_META: Record<BadgeStatus, { cls: string; label: string }> = {
 @Component({
   selector: 'vd-status-badge',
   standalone: true,
+  imports: [TranslatePipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  template: `<span class="badge {{ meta().cls }}">{{ meta().label }}</span>`,
+  template: `<span class="badge {{ meta().cls }}">{{ meta().label | translate }}</span>`,
 })
 export class StatusBadgeComponent {
   readonly status = input.required<BadgeStatus>();

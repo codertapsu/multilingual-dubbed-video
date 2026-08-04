@@ -4,6 +4,8 @@
  * wizard uses (kept in sync by hand), plus the mapping from a changed setting to
  * the earliest pipeline stage that must re-run — so the editor can recommend the
  * right "Re-dub from …" stage.
+ *
+ * The `label` fields are TRANSLATION KEYS, not display text — pipe them.
  */
 import type {
   OriginalAudioMode,
@@ -14,36 +16,36 @@ import type {
 } from '../models';
 
 export const ORIGINAL_AUDIO_MODE_LABELS: Record<OriginalAudioMode, string> = {
-  keep: 'Keep in background (ducked under the dub)',
-  'replace-vocals': 'Replace voices, keep music & effects',
-  remove: 'Remove original audio completely',
+  keep: 'opt.original-audio.keep',
+  'replace-vocals': 'opt.original-audio.replace-vocals',
+  remove: 'opt.original-audio.remove',
 };
 
 export const RENDER_QUALITY_LABELS: Record<RenderQuality, string> = {
-  quality: 'Best quality (software H.264)',
-  fast: 'Fast (hardware encode)',
+  quality: 'opt.render-quality.quality',
+  fast: 'opt.render-quality.fast',
 };
 
 export const TIME_STRETCH_ENGINE_LABELS: Record<TimeStretchEngine, string> = {
-  'ffmpeg-atempo': 'ffmpeg atempo (default)',
-  rubberband: 'Rubber Band (higher quality)',
-  auto: 'Auto (best available)',
+  'ffmpeg-atempo': 'opt.time-stretch.ffmpeg-atempo',
+  rubberband: 'opt.time-stretch.rubberband',
+  auto: 'opt.time-stretch.auto',
 };
 
 /** Ducking presets (mirrors the wizard's `duckingOptions`). */
 export const DUCKING_OPTIONS: ReadonlyArray<{ value: number; label: string }> = [
-  { value: -6, label: 'Subtle (−6 dB)' },
-  { value: -12, label: 'Standard (−12 dB)' },
-  { value: -18, label: 'Strong (−18 dB)' },
-  { value: -24, label: 'Very strong (−24 dB)' },
+  { value: -6, label: 'opt.ducking.subtle' },
+  { value: -12, label: 'opt.ducking.standard' },
+  { value: -18, label: 'opt.ducking.strong' },
+  { value: -24, label: 'opt.ducking.very-strong' },
 ];
 
 /** Max speech-speed presets (mirrors the wizard's `speedOptions`). */
 export const SPEED_OPTIONS: ReadonlyArray<{ value: number; label: string }> = [
-  { value: 1.3, label: '1.3× — most natural' },
-  { value: 1.6, label: '1.6× — balanced' },
-  { value: 1.8, label: '1.8× — tighter fit' },
-  { value: 2.0, label: '2.0× — fit everything' },
+  { value: 1.3, label: 'opt.speed.1-3' },
+  { value: 1.6, label: 'opt.speed.1-6' },
+  { value: 1.8, label: 'opt.speed.1-8' },
+  { value: 2.0, label: 'opt.speed.2-0' },
 ];
 
 /**

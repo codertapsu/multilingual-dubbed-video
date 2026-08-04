@@ -88,7 +88,7 @@
           </div>
           <div class="setting-row">
             <span class="label">{{ 'editor.processing' | translate }}</span>
-            <span class="value">{{ processingLabels[s.processingMode] }}</span>
+            <span class="value">{{ processingLabels[s.processingMode] | translate }}</span>
           </div>
         </div>
 
@@ -219,7 +219,7 @@
               [disabled]="redubbing()"
             >
               @for (m of originalAudioModes(); track m) {
-                <option [value]="m">{{ originalAudioModeLabels[m] }}</option>
+                <option [value]="m">{{ originalAudioModeLabels[m] | translate }}</option>
               }
             </select>
           </label>
@@ -231,7 +231,7 @@
               [disabled]="redubbing()"
             >
               @for (d of duckingOptions; track d.value) {
-                <option [ngValue]="d.value">{{ d.label }}</option>
+                <option [ngValue]="d.value">{{ d.label | translate }}</option>
               }
             </select>
           </label>
@@ -243,13 +243,13 @@
               [disabled]="redubbing()"
             >
               @for (sp of speedOptions; track sp.value) {
-                <option [ngValue]="sp.value">{{ sp.label }}</option>
+                <option [ngValue]="sp.value">{{ sp.label | translate }}</option>
               }
             </select>
           </label>
           <div class="setting-row">
             <span class="label">{{ 'editor.time-stretch' | translate }}</span>
-            <span class="value">{{ timeStretchLabels[s.timeStretchEngine ?? 'auto'] }}</span>
+            <span class="value">{{ timeStretchLabels[s.timeStretchEngine ?? 'auto'] | translate }}</span>
           </div>
           <div class="setting-row">
             <span class="label">{{ 'editor.tts-gain' | translate }}</span>
@@ -268,7 +268,7 @@
               [disabled]="redubbing()"
             >
               @for (mode of subtitleModes; track mode) {
-                <option [value]="mode">{{ subtitleLabels[mode] }}</option>
+                <option [value]="mode">{{ subtitleLabels[mode] | translate }}</option>
               }
             </select>
           </label>
@@ -280,7 +280,7 @@
               [disabled]="redubbing()"
             >
               @for (q of renderQualities; track q) {
-                <option [value]="q">{{ renderQualityLabels[q] }}</option>
+                <option [value]="q">{{ renderQualityLabels[q] | translate }}</option>
               }
             </select>
           </label>
@@ -297,16 +297,16 @@
               [class.btn-primary]="isRecommendedStep(step)"
               (click)="redubFrom(step)"
               [disabled]="redubbing()"
-              [title]="'editor.redub-title' | translate: { step: stepLabels[step] }"
+              [title]="'editor.redub-title' | translate: { step: stepLabels[step] | translate }"
             >
-              {{ stepLabels[step] }}
+              {{ stepLabels[step] | translate }}
             </button>
           }
         </div>
       </div>
       @if (recommendedStep(); as rec) {
         <p class="hint">
-          {{ 'editor.redub-recommended' | translate: { step: stepLabels[rec] } }}
+          {{ 'editor.redub-recommended' | translate: { step: stepLabels[rec] | translate } }}
         </p>
       } @else {
         <p class="hint">

@@ -512,5 +512,73 @@
     "pull-title": "Download the local translation model on demand, then start",
     "pulling": "Pulling… {{ percent }}%",
     "pull-start": "Pull “{{ model }}” & start ▶"
+  },
+  "status": {
+    "created": "Created",
+    "idle": "Idle",
+    "pending": "Pending",
+    "queued": "Queued",
+    "running": "Running",
+    "paused": "Paused",
+    "failed": "Failed",
+    "completed": "Completed",
+    "skipped": "Skipped"
+  },
+  "opt": {
+    "step": {
+      "probe-video": "Probe video",
+      "extract-audio": "Extract audio",
+      "stt": "Transcribe (STT)",
+      "translation": "Translate",
+      "refine": "Review & refine",
+      "tts": "Synthesize speech (TTS)",
+      "alignment": "Align timing",
+      "audio-mix": "Mix audio",
+      "render": "Render final video"
+    },
+    "processing": {
+      "local": "Local (offline)",
+      "cloud-enhanced": "Cloud-enhanced"
+    },
+    "subtitle": {
+      "none": "No subtitles",
+      "srt-file": "Sidecar .srt file",
+      "vtt-file": "Sidecar .vtt file",
+      "embedded-soft": "Embedded soft subtitles (toggleable)",
+      "burned-in": "Burned-in (always visible)"
+    },
+    "subtitle-hint": {
+      "none": "Audio dub only, no caption file.",
+      "srt-file": "A separate translated.srt next to the video.",
+      "vtt-file": "A separate translated.vtt (web) next to the video.",
+      "embedded-soft": "Soft subtitle track muxed into the container.",
+      "burned-in": "Rendered permanently into the video pixels."
+    },
+    "original-audio": {
+      "keep": "Keep in background (ducked under the dub)",
+      "replace-vocals": "Replace voices, keep music & effects",
+      "remove": "Remove original audio completely"
+    },
+    "render-quality": {
+      "quality": "Best quality (software H.264)",
+      "fast": "Fast (hardware encode)"
+    },
+    "time-stretch": {
+      "ffmpeg-atempo": "ffmpeg atempo (default)",
+      "rubberband": "Rubber Band (higher quality)",
+      "auto": "Auto (best available)"
+    },
+    "ducking": {
+      "subtle": "Subtle (−6 dB)",
+      "standard": "Standard (−12 dB)",
+      "strong": "Strong (−18 dB)",
+      "very-strong": "Very strong (−24 dB)"
+    },
+    "speed": {
+      "1-3": "1.3× — most natural",
+      "1-6": "1.6× — balanced",
+      "1-8": "1.8× — tighter fit",
+      "2-0": "2.0× — fit everything"
+    }
   }
 }

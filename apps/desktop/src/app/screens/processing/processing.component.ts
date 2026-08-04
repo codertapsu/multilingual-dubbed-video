@@ -27,6 +27,7 @@ import type {
   PipelineStepId,
   PipelineStepState,
 } from '../../core/models';
+import { TranslatePipe } from '../../core/i18n';
 
 /** How often to re-probe the bundled services' health while on this screen. */
 const WORKERS_HEALTH_POLL_MS = 5000;
@@ -45,7 +46,7 @@ const QUEUE_POLL_MS = 3000;
   selector: 'vd-processing',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ErrorBannerComponent, StatusBadgeComponent, BusyIndicatorComponent],
+  imports: [ErrorBannerComponent, StatusBadgeComponent, BusyIndicatorComponent, TranslatePipe],
   templateUrl: './processing.component.html',
   styleUrl: './processing.component.scss',
 })

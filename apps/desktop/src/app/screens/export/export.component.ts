@@ -25,6 +25,7 @@ import type {
   RenderFinalVideoResult,
   SubtitleExportMode,
 } from '../../core/models';
+import { TranslatePipe } from '../../core/i18n';
 
 /**
  * ExportComponent (route "project/:id/export").
@@ -36,7 +37,7 @@ import type {
   selector: 'vd-export',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent],
+  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent, TranslatePipe],
   templateUrl: './export.component.html',
   styleUrl: './export.component.scss',
 })

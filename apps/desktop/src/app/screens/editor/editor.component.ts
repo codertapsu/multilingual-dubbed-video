@@ -46,6 +46,7 @@ import type {
 } from '../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, WhisperModelInfo } from '../../core/models/setup';
 import type { EditorSegmentVm, SegmentWithAlignment } from '../../core/models/view-models';
+import { TranslatePipe } from '../../core/i18n';
 
 /** Soft cap for "long subtitle" warning (≈ 2 lines × 42 chars). */
 const LONG_SUBTITLE_CHAR_LIMIT = 84;
@@ -106,7 +107,7 @@ function looksUntranslatedText(sourceText: string, text: string): boolean {
   selector: 'vd-editor',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, ErrorBannerComponent],
+  imports: [FormsModule, RouterLink, ErrorBannerComponent, TranslatePipe],
   templateUrl: './editor.component.html',
   styleUrl: './editor.component.scss',
 })

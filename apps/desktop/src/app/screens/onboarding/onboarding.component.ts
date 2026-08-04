@@ -29,6 +29,7 @@ import type {
   SetupInstallRequest,
   WhisperModelInfo,
 } from '../../core/models/setup';
+import { TranslatePipe } from '../../core/i18n';
 
 /** Wizard step index (1..4). */
 type OnboardingStep = 1 | 2 | 3 | 4;
@@ -52,7 +53,7 @@ type OnboardingStep = 1 | 2 | 3 | 4;
   selector: 'vd-onboarding',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, DownloadProgressListComponent, BusyIndicatorComponent],
+  imports: [FormsModule, ErrorBannerComponent, DownloadProgressListComponent, BusyIndicatorComponent, TranslatePipe],
   templateUrl: './onboarding.component.html',
   styleUrl: './onboarding.component.scss',
 })

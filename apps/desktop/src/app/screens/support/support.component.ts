@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 
 import { IpcService } from '../../core/ipc/ipc.service';
+import { TranslatePipe } from '../../core/i18n';
 
 /**
  * SupportComponent (route "support") — ways to fund VideoDubber.
@@ -12,6 +13,7 @@ import { IpcService } from '../../core/ipc/ipc.service';
 @Component({
   selector: 'vd-support',
   standalone: true,
+  imports: [TranslatePipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './support.component.html',
   styleUrl: './support.component.scss',

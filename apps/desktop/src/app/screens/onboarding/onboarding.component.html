@@ -1,11 +1,11 @@
 <section class="page stack">
   <header>
-    <h1>Welcome to VideoDubber</h1>
-    <ol class="steps" aria-label="Setup progress">
-      <li [class.active]="step() === 1" [class.done]="step() > 1">1. Welcome</li>
-      <li [class.active]="step() === 2" [class.done]="step() > 2">2. Self-check</li>
-      <li [class.active]="step() === 3" [class.done]="step() > 3">3. Choose</li>
-      <li [class.active]="step() === 4">4. Download</li>
+    <h1>{{ 'onboarding.title' | translate }}</h1>
+    <ol class="steps" [attr.aria-label]="'onboarding.progress-aria' | translate">
+      <li [class.active]="step() === 1" [class.done]="step() > 1">{{ 'onboarding.step1' | translate }}</li>
+      <li [class.active]="step() === 2" [class.done]="step() > 2">{{ 'onboarding.step2' | translate }}</li>
+      <li [class.active]="step() === 3" [class.done]="step() > 3">{{ 'onboarding.step3' | translate }}</li>
+      <li [class.active]="step() === 4">{{ 'onboarding.step4' | translate }}</li>
     </ol>
   </header>
 
@@ -14,30 +14,26 @@
   <!-- ============================ STEP 1 ============================ -->
   @if (step() === 1) {
     <div class="card stack">
-      <h2>Let's get you set up</h2>
+      <h2>{{ 'onboarding.s1-heading' | translate }}</h2>
       <p>
-        VideoDubber turns a video's spoken audio into another language —
-        transcribe, translate, synthesize a new voice, and remux — all on this
-        machine, fully offline once set up.
+        {{ 'onboarding.s1-body' | translate }}
       </p>
-      <p class="muted">Before your first project we'll quickly:</p>
+      <p class="muted">{{ 'onboarding.s1-before' | translate }}</p>
       <ul class="checklist">
-        <li>Check this machine has everything it needs to run.</li>
-        <li>Let you pick your source &amp; target languages and a transcription model.</li>
+        <li>{{ 'onboarding.s1-li1' | translate }}</li>
+        <li>{{ 'onboarding.s1-li2' | translate }}</li>
         <li>
-          Download the AI models for those languages. This needs an internet
-          connection and can take several minutes depending on the model size.
+          {{ 'onboarding.s1-li3' | translate }}
         </li>
       </ul>
       <p class="hint">
-        The app, media tools and workers are already bundled — only the
-        language models are fetched on first run.
+        {{ 'onboarding.s1-hint' | translate }}
       </p>
 
       <div class="row row-between">
-        <span class="hint">This is a one-time setup.</span>
+        <span class="hint">{{ 'onboarding.s1-once' | translate }}</span>
         <button type="button" class="btn btn-primary" (click)="goToStep(2)">
-          Get started →
+          {{ 'onboarding.s1-start' | translate }}
         </button>
       </div>
     </div>
@@ -47,26 +43,25 @@
   @if (step() === 2) {
     <div class="card stack">
       <div class="row row-between">
-        <h2>System self-check</h2>
+        <h2>{{ 'onboarding.s2-heading' | translate }}</h2>
         <button
           type="button"
           class="btn btn-sm"
           (click)="runPreflight()"
           [disabled]="preflightLoading()"
         >
-          {{ preflightLoading() ? 'Checking…' : 'Re-check' }}
+          {{ (preflightLoading() ? 'onboarding.s2-checking' : 'onboarding.s2-recheck') | translate }}
         </button>
       </div>
 
       @if (preflight(); as pf) {
         @if (pf.ok) {
           <div class="badge badge-completed summary-badge">
-            ✓ Everything looks good
+            {{ 'onboarding.s2-ok' | translate }}
           </div>
         } @else {
           <div class="badge badge-warning summary-badge" role="status">
-            Some checks need attention — you can still continue, but downloads or
-            dubbing may fail until they're resolved.
+            {{ 'onboarding.s2-warn' | translate }}
           </div>
         }
 
@@ -93,7 +88,7 @@
                 }
                 @if (check.remediation) {
                   <span class="check-remedy">
-                    <span class="label">How to fix:</span> {{ check.remediation }}
+                    <span class="label">{{ 'onboarding.s2-how-to-fix' | translate }}</span> {{ check.remediation }}
                   </span>
                 }
               </span>
@@ -109,18 +104,17 @@
           }
         </ul>
       } @else if (preflightLoading()) {
-        <p class="muted">Running checks…</p>
+        <p class="muted">{{ 'onboarding.s2-running' | translate }}</p>
       } @else {
         <p class="muted">
-          Couldn't run the checks yet. Make sure the local services have started,
-          then re-check.
+          {{ 'onboarding.s2-unavailable' | translate }}
         </p>
       }
 
       <div class="row row-between">
-        <button type="button" class="btn" (click)="back()">← Back</button>
+        <button type="button" class="btn" (click)="back()">{{ 'onboarding.back' | translate }}</button>
         <button type="button" class="btn btn-primary" (click)="goToStep(3)">
-          Continue →
+          {{ 'onboarding.continue' | translate }}
         </button>
       </div>
     </div>
@@ -129,17 +123,17 @@
   <!-- ============================ STEP 3 ============================ -->
   @if (step() === 3) {
     <div class="card stack">
-      <h2>Choose your languages &amp; model</h2>
+      <h2>{{ 'onboarding.s3-heading' | translate }}</h2>
 
       @if (catalogLoading() && !catalog()) {
-        <p class="muted">Loading available models…</p>
+        <p class="muted">{{ 'onboarding.s3-loading' | translate }}</p>
       }
 
       <fieldset>
-        <legend>Languages</legend>
+        <legend>{{ 'onboarding.s3-languages' | translate }}</legend>
         <div class="lang-grid">
           <div class="field">
-            <label for="srcLang">Source language</label>
+            <label for="srcLang">{{ 'onboarding.s3-source' | translate }}</label>
             <select
               id="srcLang"
               name="srcLang"
@@ -152,7 +146,7 @@
             </select>
           </div>
           <div class="field">
-            <label for="tgtLang">Target language</label>
+            <label for="tgtLang">{{ 'onboarding.s3-target' | translate }}</label>
             <select
               id="tgtLang"
               name="tgtLang"
@@ -168,22 +162,19 @@
 
         @if (!languagesDiffer()) {
           <p class="hint warn-text" role="alert">
-            Source and target language must be different.
+            {{ 'onboarding.s3-same-lang' | translate }}
           </p>
         } @else if (!argosPairAvailable()) {
           <p class="hint warn-text" role="status">
-            No prebuilt translation package is listed for
-            {{ languageLabel(sourceLanguage()) }} →
-            {{ languageLabel(targetLanguage()) }}. The app will try to fetch one,
-            but it may not be available offline.
+            {{ 'onboarding.s3-no-pair' | translate: { from: languageLabel(sourceLanguage()), to: languageLabel(targetLanguage()) } }}
           </p>
         }
       </fieldset>
 
       <fieldset>
-        <legend>Transcription model (Whisper)</legend>
+        <legend>{{ 'onboarding.s3-whisper' | translate }}</legend>
         @if (whisperModels().length > 0) {
-          <div class="radio-list" role="radiogroup" aria-label="Whisper model">
+          <div class="radio-list" role="radiogroup" [attr.aria-label]="'onboarding.s3-whisper-aria' | translate">
             @for (model of whisperModels(); track model.id) {
               <label class="radio-row">
                 <input
@@ -197,26 +188,25 @@
                   <span class="radio-title">
                     {{ model.label }}
                     @if (model.recommended) {
-                      <span class="badge badge-completed">Recommended</span>
+                      <span class="badge badge-completed">{{ 'onboarding.s3-recommended' | translate }}</span>
                     }
                   </span>
-                  <span class="hint">≈ {{ model.approxSizeMb }} MB download</span>
+                  <span class="hint">{{ 'onboarding.s3-size' | translate: { size: model.approxSizeMb } }}</span>
                 </span>
               </label>
             }
           </div>
         } @else {
           <p class="muted">
-            Model catalog unavailable. The default model will be used once
-            services are reachable.
+            {{ 'onboarding.s3-no-catalog' | translate }}
           </p>
         }
       </fieldset>
 
       <fieldset>
-        <legend>Target voice (text-to-speech)</legend>
+        <legend>{{ 'onboarding.s3-voice' | translate }}</legend>
         @if (voicesLoading()) {
-          <p class="muted">Loading voices for {{ languageLabel(targetLanguage()) }}…</p>
+          <p class="muted">{{ 'onboarding.s3-voice-loading' | translate: { lang: languageLabel(targetLanguage()) } }}</p>
         } @else if (voices().length > 0) {
           <label class="radio-row check-toggle">
             <input
@@ -226,16 +216,15 @@
               (ngModelChange)="toggleFetchPiperVoice($event)"
             />
             <span class="radio-body">
-              <span class="radio-title">Download a Piper voice for {{ languageLabel(targetLanguage()) }}</span>
+              <span class="radio-title">{{ 'onboarding.s3-voice-download' | translate: { lang: languageLabel(targetLanguage()) } }}</span>
               <span class="hint"
-                >A natural offline voice. You can pick a different voice (or add more)
-                later from Settings.</span
+                >{{ 'onboarding.s3-voice-hint' | translate }}</span
               >
             </span>
           </label>
           @if (fetchPiperVoice()) {
             <div class="field">
-              <label for="onbVoice">Voice</label>
+              <label for="onbVoice">{{ 'onboarding.s3-voice-label' | translate }}</label>
               <select
                 id="onbVoice"
                 name="onbVoice"
@@ -244,33 +233,31 @@
               >
                 @for (v of voices(); track v.id) {
                   <option [value]="v.id">
-                    {{ v.label }}{{ v.recommended ? ' — recommended' : '' }} — ≈ {{ v.approxSizeMb }} MB
+                    {{ v.label }}{{ v.recommended ? ('onboarding.s3-voice-recommended' | translate) : '' }} — ≈ {{ v.approxSizeMb }} MB
                   </option>
                 }
               </select>
               @if (selectedVoice(); as sv) {
-                <span class="hint">≈ {{ sv.approxSizeMb }} MB download.</span>
+                <span class="hint">{{ 'onboarding.s3-voice-size' | translate: { size: sv.approxSizeMb } }}</span>
               }
             </div>
           }
         } @else {
           <p class="muted">
-            No bundled Piper voice is listed for
-            {{ languageLabel(targetLanguage()) }} yet. You can add one later from
-            Settings; dubbing will fall back to an available voice.
+            {{ 'onboarding.s3-no-voice' | translate: { lang: languageLabel(targetLanguage()) } }}
           </p>
         }
       </fieldset>
 
       <div class="row row-between">
-        <button type="button" class="btn" (click)="back()">← Back</button>
+        <button type="button" class="btn" (click)="back()">{{ 'onboarding.back' | translate }}</button>
         <button
           type="button"
           class="btn btn-primary"
           (click)="startInstall()"
           [disabled]="!step3Valid() || installing()"
         >
-          {{ installing() ? 'Starting…' : 'Download models →' }}
+          {{ (installing() ? 'onboarding.s3-starting' : 'onboarding.s3-download') | translate }}
         </button>
       </div>
     </div>
@@ -279,18 +266,15 @@
   <!-- ============================ STEP 4 ============================ -->
   @if (step() === 4) {
     <div class="card stack">
-      <h2>Downloading models</h2>
+      <h2>{{ 'onboarding.s4-heading' | translate }}</h2>
 
       @if (installDone()) {
         <div class="badge badge-completed summary-badge">
-          ✓ All set — your language models are installed.
+          {{ 'onboarding.s4-done' | translate }}
         </div>
       } @else {
         <p class="muted">
-          Fetching the AI models for
-          {{ languageLabel(sourceLanguage()) }} →
-          {{ languageLabel(targetLanguage()) }} — this one-time download needs an
-          internet connection. Keep this window open.
+          {{ 'onboarding.s4-fetching' | translate: { from: languageLabel(sourceLanguage()), to: languageLabel(targetLanguage()) } }}
         </p>
       }
 
@@ -302,10 +286,10 @@
             (click)="retryInstall()"
             [disabled]="installing()"
           >
-            {{ installing() ? 'Retrying…' : 'Retry download' }}
+            {{ (installing() ? 'onboarding.s4-retrying' : 'onboarding.s4-retry') | translate }}
           </button>
           <span class="hint">
-            Check your internet connection, then retry — it picks up the remaining models.
+            {{ 'onboarding.s4-retry-hint' | translate }}
           </span>
         </div>
       }
@@ -316,22 +300,22 @@
         <vd-busy-indicator
           [active]="true"
           [label]="
-            setupEvents.status() === 'connecting'
-              ? 'Connecting to the installer…'
-              : 'Preparing the download…'
+            (setupEvents.status() === 'connecting'
+              ? 'onboarding.s4-connecting'
+              : 'onboarding.s4-preparing') | translate
           "
         />
       }
 
       <details class="log-details" [open]="!installDone()">
-        <summary>Activity log</summary>
+        <summary>{{ 'onboarding.s4-log' | translate }}</summary>
         <div class="log-panel" aria-live="polite">
           @for (line of setupEvents.logs(); track $index) {
             <div class="log-line" [attr.data-level]="line.level">
               {{ line.message }}
             </div>
           } @empty {
-            <div class="log-line muted">No activity yet.</div>
+            <div class="log-line muted">{{ 'onboarding.s4-no-activity' | translate }}</div>
           }
         </div>
       </details>
@@ -339,9 +323,9 @@
       <div class="row row-between">
         <span class="hint">
           @if (installDone()) {
-            You're ready to create your first project.
+            {{ 'onboarding.s4-ready' | translate }}
           } @else {
-            Downloads continue in the background.
+            {{ 'onboarding.s4-background' | translate }}
           }
         </span>
         <button
@@ -350,7 +334,7 @@
           (click)="finish()"
           [disabled]="!installDone() || completing()"
         >
-          {{ completing() ? 'Finishing…' : 'Finish & start dubbing ▶' }}
+          {{ (completing() ? 'onboarding.s4-finishing' : 'onboarding.s4-finish') | translate }}
         </button>
       </div>
     </div>

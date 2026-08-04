@@ -1,20 +1,19 @@
 <section class="page stack">
   <div class="row row-between">
     <div>
-      <h1>Editor</h1>
+      <h1>{{ 'editor.title' | translate }}</h1>
       <p class="muted">
-        Review and refine the translation. Long lines and timing conflicts are
-        flagged below.
+        {{ 'editor.subtitle' | translate }}
       </p>
     </div>
     <div class="row">
       @if (rendered()) {
         <button type="button" class="btn" (click)="openFolder()" [disabled]="opening()">
-          {{ opening() ? 'Opening…' : 'Open output folder' }}
+          {{ (opening() ? 'export.opening' : 'export.open-folder') | translate }}
         </button>
       }
       <button type="button" class="btn" (click)="reload()" [disabled]="loading()">
-        Reload
+        {{ 'editor.reload' | translate }}
       </button>
       <button
         type="button"
@@ -22,7 +21,7 @@
         (click)="save()"
         [disabled]="saving() || !dirty()"
       >
-        {{ saving() ? 'Saving…' : dirty() ? 'Save changes' : 'Saved' }}
+        {{ (saving() ? 'editor.saving' : dirty() ? 'editor.save' : 'editor.saved') | translate }}
       </button>
     </div>
   </div>
@@ -34,13 +33,13 @@
   @if (rendered()) {
     <div class="card stack result-card">
       <div class="row row-between">
-        <h2>Final video</h2>
+        <h2>{{ 'editor.final-video' | translate }}</h2>
         <a class="btn btn-sm" [routerLink]="['/project', id(), 'export']">
-          Subtitle &amp; export options →
+          {{ 'editor.export-options' | translate }}
         </a>
       </div>
       @if (outputPath(); as path) {
-        <p><span class="label">Output:</span> <span class="mono">{{ path }}</span></p>
+        <p><span class="label">{{ 'editor.output-label' | translate }}</span> <span class="mono">{{ path }}</span></p>
       }
       @if (resultPreviewUrl(); as url) {
         @if (!resultPreviewFailed()) {
@@ -53,8 +52,7 @@
           ></video>
         } @else {
           <div class="badge badge-pending preview-note">
-            In-app preview is unavailable here (the browser cannot load local
-            files directly). Use "Open output folder" to play the video.
+            {{ 'editor.preview-unavailable' | translate }}
           </div>
         }
       }
@@ -67,41 +65,38 @@
   @if (draft(); as s) {
     <div class="card stack settings-card">
       <div class="row row-between">
-        <h2>Project settings</h2>
+        <h2>{{ 'editor.settings' | translate }}</h2>
         @if (settingsDirty()) {
-          <span class="badge badge-warning">Unsaved changes</span>
+          <span class="badge badge-warning">{{ 'editor.unsaved' | translate }}</span>
         }
       </div>
       <p class="muted">
-        Review every option applied to this dub. Change an engine, model or voice
-        below, then <strong>re-dub from</strong> the affected stage — the earlier
-        stages are reused (e.g. a new voice re-renders without redoing transcription
-        or translation).
+        {{ 'editor.settings-intro' | translate }}
       </p>
 
       <div class="settings-grid">
         <!-- Languages & mode (fixed for the life of the project) -->
         <div class="settings-group">
-          <h3>Languages &amp; mode</h3>
+          <h3>{{ 'editor.languages-mode' | translate }}</h3>
           <div class="setting-row">
-            <span class="label">Source language</span>
+            <span class="label">{{ 'editor.source-language' | translate }}</span>
             <span class="value">{{ languageLabel(s.sourceLanguage) }}</span>
           </div>
           <div class="setting-row">
-            <span class="label">Target language</span>
+            <span class="label">{{ 'editor.target-language' | translate }}</span>
             <span class="value">{{ languageLabel(s.targetLanguage) }}</span>
           </div>
           <div class="setting-row">
-            <span class="label">Processing</span>
+            <span class="label">{{ 'editor.processing' | translate }}</span>
             <span class="value">{{ processingLabels[s.processingMode] }}</span>
           </div>
         </div>
 
         <!-- Speech-to-Text -->
         <div class="settings-group">
-          <h3>Speech to Text</h3>
+          <h3>{{ 'editor.stt' | translate }}</h3>
           <label class="setting-row">
-            <span class="label">Engine</span>
+            <span class="label">{{ 'editor.engine' | translate }}</span>
             <select
               [ngModel]="s.sttProviderId"
               (ngModelChange)="onSettingChange('sttProviderId', $event)"
@@ -116,7 +111,7 @@
             </select>
           </label>
           <label class="setting-row">
-            <span class="label">Local STT Model</span>
+            <span class="label">{{ 'editor.local-stt-model' | translate }}</span>
             @if (whisperModels().length > 0) {
               <select
                 [ngModel]="s.sttModel ?? ''"
@@ -138,9 +133,9 @@
 
         <!-- Translation -->
         <div class="settings-group">
-          <h3>Translation</h3>
+          <h3>{{ 'editor.translation' | translate }}</h3>
           <label class="setting-row">
-            <span class="label">Engine</span>
+            <span class="label">{{ 'editor.engine' | translate }}</span>
             <select
               [ngModel]="s.translationProviderId"
               (ngModelChange)="onSettingChange('translationProviderId', $event)"
@@ -155,34 +150,32 @@
             </select>
           </label>
           <label class="setting-row">
-            <span class="label">Review &amp; refine</span>
+            <span class="label">{{ 'editor.review-refine' | translate }}</span>
             <select
               [ngModel]="s.refineProviderId ?? 'none'"
               (ngModelChange)="onSettingChange('refineProviderId', $event === 'none' ? undefined : $event)"
               [disabled]="redubbing()"
             >
-              <option value="none">Off</option>
+              <option value="none">{{ 'editor.off' | translate }}</option>
               @for (p of refinerOptions(); track p.id) {
                 <option [value]="p.id">{{ providerLabel(p) }}</option>
               }
             </select>
           </label>
           <div class="setting-row">
-            <span class="label">Auto-fit overflow</span>
-            <span class="value">{{ s.autoFitOverflow ? 'On' : 'Off' }}</span>
+            <span class="label">{{ 'editor.auto-fit' | translate }}</span>
+            <span class="value">{{ (s.autoFitOverflow ? 'editor.on' : 'editor.off') | translate }}</span>
           </div>
           <p class="hint">
-            Review &amp; refine re-reads the whole transcript with a context-capable AI and polishes
-            pronouns/terminology (re-dub from “Review &amp; refine” to apply). Model size (e.g.
-            TranslateGemma 4B → 12B) is managed in Settings → Engines.
+            {{ 'editor.refine-hint' | translate }}
           </p>
         </div>
 
         <!-- Text-to-Speech -->
         <div class="settings-group">
-          <h3>Text to Speech</h3>
+          <h3>{{ 'editor.tts' | translate }}</h3>
           <label class="setting-row">
-            <span class="label">Engine</span>
+            <span class="label">{{ 'editor.engine' | translate }}</span>
             <select
               [ngModel]="s.ttsProviderId"
               (ngModelChange)="onSettingChange('ttsProviderId', $event)"
@@ -197,29 +190,29 @@
             </select>
           </label>
           <label class="setting-row">
-            <span class="label">Voice</span>
+            <span class="label">{{ 'editor.voice' | translate }}</span>
             @if (draftHasVoices()) {
               <select
                 [ngModel]="s.ttsVoiceId ?? ''"
                 (ngModelChange)="onSettingChange('ttsVoiceId', $event || undefined)"
                 [disabled]="redubbing()"
               >
-                <option value="">Provider default</option>
+                <option value="">{{ 'editor.provider-default' | translate }}</option>
                 @for (v of draftVoices(); track v.id) {
                   <option [value]="v.id">{{ v.label }}</option>
                 }
               </select>
             } @else {
-              <span class="value">{{ s.ttsVoiceId ?? 'Provider default' }}</span>
+              <span class="value">{{ s.ttsVoiceId ?? ('editor.provider-default' | translate) }}</span>
             }
           </label>
         </div>
 
         <!-- Audio mix -->
         <div class="settings-group">
-          <h3>Audio &amp; mixing</h3>
+          <h3>{{ 'editor.audio-mixing' | translate }}</h3>
           <label class="setting-row">
-            <span class="label">Original audio</span>
+            <span class="label">{{ 'editor.original-audio' | translate }}</span>
             <select
               [ngModel]="s.originalAudioMode ?? 'keep'"
               (ngModelChange)="onSettingChange('originalAudioMode', $event)"
@@ -231,7 +224,7 @@
             </select>
           </label>
           <label class="setting-row">
-            <span class="label">Ducking</span>
+            <span class="label">{{ 'editor.ducking' | translate }}</span>
             <select
               [ngModel]="s.duckingLevelDb"
               (ngModelChange)="onNumberSettingChange('duckingLevelDb', $event)"
@@ -243,7 +236,7 @@
             </select>
           </label>
           <label class="setting-row">
-            <span class="label">Max speech speed</span>
+            <span class="label">{{ 'editor.max-speed' | translate }}</span>
             <select
               [ngModel]="s.maxSpeedRatio"
               (ngModelChange)="onNumberSettingChange('maxSpeedRatio', $event)"
@@ -255,20 +248,20 @@
             </select>
           </label>
           <div class="setting-row">
-            <span class="label">Time-stretch</span>
+            <span class="label">{{ 'editor.time-stretch' | translate }}</span>
             <span class="value">{{ timeStretchLabels[s.timeStretchEngine ?? 'auto'] }}</span>
           </div>
           <div class="setting-row">
-            <span class="label">TTS gain</span>
+            <span class="label">{{ 'editor.tts-gain' | translate }}</span>
             <span class="value">{{ s.ttsGainDb }} dB</span>
           </div>
         </div>
 
         <!-- Output -->
         <div class="settings-group">
-          <h3>Subtitles &amp; render</h3>
+          <h3>{{ 'editor.subtitles-render' | translate }}</h3>
           <label class="setting-row">
-            <span class="label">Subtitles</span>
+            <span class="label">{{ 'editor.subtitles' | translate }}</span>
             <select
               [ngModel]="s.subtitleExportMode"
               (ngModelChange)="onSettingChange('subtitleExportMode', $event)"
@@ -280,7 +273,7 @@
             </select>
           </label>
           <label class="setting-row">
-            <span class="label">Render quality</span>
+            <span class="label">{{ 'editor.render-quality' | translate }}</span>
             <select
               [ngModel]="s.renderQuality ?? 'quality'"
               (ngModelChange)="onSettingChange('renderQuality', $event)"
@@ -295,7 +288,7 @@
       </div>
 
       <div class="redub-bar">
-        <span class="label">Re-dub from:</span>
+        <span class="label">{{ 'editor.redub-from' | translate }}</span>
         <div class="redub-buttons">
           @for (step of redubStages; track step) {
             <button
@@ -304,7 +297,7 @@
               [class.btn-primary]="isRecommendedStep(step)"
               (click)="redubFrom(step)"
               [disabled]="redubbing()"
-              [title]="'Re-run the pipeline from “' + stepLabels[step] + '”, reusing the earlier stages'"
+              [title]="'editor.redub-title' | translate: { step: stepLabels[step] }"
             >
               {{ stepLabels[step] }}
             </button>
@@ -313,13 +306,11 @@
       </div>
       @if (recommendedStep(); as rec) {
         <p class="hint">
-          Your changes take effect from <strong>{{ stepLabels[rec] }}</strong> —
-          click that stage to re-dub.
+          {{ 'editor.redub-recommended' | translate: { step: stepLabels[rec] } }}
         </p>
       } @else {
         <p class="hint">
-          No changes yet. You can still re-dub from any stage (e.g. after installing
-          a different model in Settings → Engines).
+          {{ 'editor.redub-none' | translate }}
         </p>
       }
     </div>
@@ -331,84 +322,80 @@
   @if (ctxDraft(); as ctx) {
     <div class="card stack ctx-card">
       <div class="ctx-head">
-        <h2>Cast &amp; translation context</h2>
+        <h2>{{ 'editor.ctx-title' | translate }}</h2>
         @if (ctxDirty()) {
-          <span class="badge badge-warning">unsaved</span>
+          <span class="badge badge-warning">{{ 'editor.ctx-unsaved' | translate }}</span>
         }
       </div>
       <p class="hint">
-        Used by context-aware translation (cloud LLMs, Gemma 3 chat, Argos + Gemma repair) to keep
-        pronouns, terms of address, and terminology consistent. Fix something once — e.g. “student →
-        teacher: gọi ‘thầy’, xưng ‘em’” — then <strong>Save &amp; re-translate</strong> to apply it everywhere.
+        {{ 'editor.ctx-intro' | translate }}
       </p>
 
       <label class="ctx-field">
-        <span class="label">Synopsis</span>
+        <span class="label">{{ 'editor.synopsis' | translate }}</span>
         <textarea
           rows="2"
           [ngModel]="ctx.synopsis"
           (ngModelChange)="ctx.synopsis = $event; ctxChanged()"
-          placeholder="What is this video about, and who is talking to whom?"
+          [placeholder]="'editor.synopsis-ph' | translate"
         ></textarea>
       </label>
 
       <label class="ctx-field">
-        <span class="label">Pronouns &amp; terms of address</span>
+        <span class="label">{{ 'editor.pronouns' | translate }}</span>
         <textarea
           rows="3"
           [ngModel]="ctx.pronounGuide"
           (ngModelChange)="ctx.pronounGuide = $event; ctxChanged()"
-          placeholder="Per speaker pair, the address terms to use (e.g. học sinh → giáo viên: gọi 'thầy', xưng 'em')."
+          [placeholder]="'editor.pronouns-ph' | translate"
         ></textarea>
       </label>
 
       <div class="ctx-field">
-        <span class="label">Cast</span>
+        <span class="label">{{ 'editor.cast' | translate }}</span>
         @for (c of ctx.cast; track $index) {
           <div class="ctx-row">
-            <input [ngModel]="c.name" (ngModelChange)="c.name = $event; ctxChanged()" placeholder="Name / label" />
-            <input [ngModel]="c.role" (ngModelChange)="c.role = $event; ctxChanged()" placeholder="Role (e.g. teacher, narrator)" />
+            <input [ngModel]="c.name" (ngModelChange)="c.name = $event; ctxChanged()" [placeholder]="'editor.cast-name-ph' | translate" />
+            <input [ngModel]="c.role" (ngModelChange)="c.role = $event; ctxChanged()" [placeholder]="'editor.cast-role-ph' | translate" />
             <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveCast($index)" title="Remove">✕</button>
           </div>
         }
-        <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddCast()">+ Add speaker</button>
+        <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddCast()">{{ 'editor.add-speaker' | translate }}</button>
       </div>
 
       <div class="ctx-field">
-        <span class="label">Glossary (always translate as)</span>
+        <span class="label">{{ 'editor.glossary' | translate }}</span>
         @for (g of ctx.glossary; track $index) {
           <div class="ctx-row">
-            <input [ngModel]="g.source" (ngModelChange)="g.source = $event; ctxChanged()" placeholder="Source term" />
-            <input [ngModel]="g.target" (ngModelChange)="g.target = $event; ctxChanged()" placeholder="Target rendering" />
+            <input [ngModel]="g.source" (ngModelChange)="g.source = $event; ctxChanged()" [placeholder]="'editor.glossary-source-ph' | translate" />
+            <input [ngModel]="g.target" (ngModelChange)="g.target = $event; ctxChanged()" [placeholder]="'editor.glossary-target-ph' | translate" />
             <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveGlossary($index)" title="Remove">✕</button>
           </div>
         }
-        <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddGlossary()">+ Add term</button>
+        <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddGlossary()">{{ 'editor.add-term' | translate }}</button>
       </div>
 
       <div class="ctx-actions">
         <button type="button" class="btn btn-sm" (click)="saveCtx(false)" [disabled]="!ctxDirty() || ctxSaving()">
-          Save sheet
+          {{ 'editor.save-sheet' | translate }}
         </button>
         <button
           type="button"
           class="btn btn-primary btn-sm"
           (click)="saveCtx(true)"
           [disabled]="ctxSaving() || redubbing()"
-          title="Save, then re-run the pipeline from the translation step so the sheet is applied"
+          [title]="'editor.save-retranslate-title' | translate"
         >
-          Save &amp; re-translate
+          {{ 'editor.save-retranslate' | translate }}
         </button>
       </div>
     </div>
   } @else if (project()) {
     <div class="card muted ctx-card">
       <span>
-        No translation character sheet yet — one is generated automatically on the first
-        context-aware translation run (cloud LLM, Gemma 3 chat, or Argos + Gemma repair), or create
-        one now to steer pronouns and terminology.
+        {{ 'editor.no-sheet' | translate }}
       </span>
-      <button type="button" class="btn btn-ghost btn-sm" (click)="createCtxSheet()">Create sheet</button>
+      <button type="button" class="btn btn-ghost btn-sm" (click)="createCtxSheet()">{{ 'editor.create-sheet' | translate }}</button>
     </div>
   }
 
@@ -417,39 +404,37 @@
   @if (awaitingReview()) {
     <div class="card review-banner" role="status">
       <div>
-        <strong>📝 Reviewing before synthesis</strong>
+        <strong>{{ 'editor.review-title' | translate }}</strong>
         <p class="hint">
-          No voice has been synthesized yet. Adjust the translations below (and the cast &amp; pronoun
-          sheet), save, then continue — dubbing resumes at speech synthesis.
+          {{ 'editor.review-hint' | translate }}
         </p>
       </div>
       <button type="button" class="btn btn-primary" (click)="continueDubbing()" [disabled]="continuing()">
-        {{ continuing() ? 'Continuing…' : 'Continue dubbing' }}
+        {{ (continuing() ? 'editor.continuing' : 'editor.continue-dubbing') | translate }}
       </button>
     </div>
   }
 
   @if (anyWarnings()) {
     <div class="badge badge-warning warnings-hint">
-      ⚠ Some segments have warnings — untranslated lines, over-long subtitles, or timing conflicts.
+      {{ 'editor.warnings' | translate }}
     </div>
   }
 
   @if (loading() && rows().length === 0) {
-    <div class="card muted">Loading segments…</div>
+    <div class="card muted">{{ 'editor.loading-segments' | translate }}</div>
   } @else if (rows().length === 0) {
     <div class="card muted">
-      No segments yet. Run the pipeline through the transcription and translation
-      steps first.
+      {{ 'editor.no-segments' | translate }}
     </div>
   } @else {
-    <div class="seg-table" role="table" aria-label="Transcript segments">
+    <div class="seg-table" role="table" [attr.aria-label]="'editor.table-aria' | translate">
       <div class="seg-row seg-header" role="row">
         <span role="columnheader">#</span>
-        <span role="columnheader">Timing</span>
-        <span role="columnheader">Source</span>
-        <span role="columnheader">Translation</span>
-        <span role="columnheader">Actions</span>
+        <span role="columnheader">{{ 'editor.col-timing' | translate }}</span>
+        <span role="columnheader">{{ 'editor.col-source' | translate }}</span>
+        <span role="columnheader">{{ 'editor.col-translation' | translate }}</span>
+        <span role="columnheader">{{ 'editor.col-actions' | translate }}</span>
       </div>
 
       @for (row of rows(); track row.segment.id) {
@@ -465,7 +450,7 @@
 
           <span class="seg-translation" role="cell">
             <label class="visually-hidden" [attr.for]="'tr-' + row.segment.id">
-              Translation for segment {{ row.segment.index + 1 }}
+              {{ 'editor.translation-for' | translate: { n: row.segment.index + 1 } }}
             </label>
             <textarea
               [id]="'tr-' + row.segment.id"
@@ -479,20 +464,20 @@
               @if (row.untranslated) {
                 <span
                   class="badge badge-failed"
-                  title="The translation is identical to the source — the translator likely skipped this line. Edit it or re-run translation."
-                  >Untranslated?</span
+                  [title]="'editor.untranslated-title' | translate"
+                  >{{ 'editor.untranslated' | translate }}</span
                 >
               }
               @if (row.longSubtitle) {
-                <span class="badge badge-warning" title="Exceeds 2 lines / ~84 chars"
-                  >Long subtitle</span
+                <span class="badge badge-warning" [title]="'editor.long-subtitle-title' | translate"
+                  >{{ 'editor.long-subtitle' | translate }}</span
                 >
               }
               @if (row.needsReview) {
-                <span class="badge badge-warning">Needs review</span>
+                <span class="badge badge-warning">{{ 'editor.needs-review' | translate }}</span>
               }
               @if (row.timingConflict) {
-                <span class="badge badge-failed">Timing conflict</span>
+                <span class="badge badge-failed">{{ 'editor.timing-conflict' | translate }}</span>
               }
               @if (row.alignmentNote) {
                 <span class="hint">{{ row.alignmentNote }}</span>
@@ -507,14 +492,14 @@
                 controls
                 preload="none"
                 [src]="url"
-                [attr.aria-label]="'Preview audio for segment ' + (row.segment.index + 1)"
+                [attr.aria-label]="'editor.preview-audio' | translate: { n: row.segment.index + 1 }"
               ></audio>
             } @else {
-              <span class="hint">No audio yet</span>
+              <span class="hint">{{ 'editor.no-audio' | translate }}</span>
             }
             @if (showVoicePicker()) {
               <label class="visually-hidden" [attr.for]="'voice-' + row.segment.id">
-                Voice for segment {{ row.segment.index + 1 }}
+                {{ 'editor.voice-for' | translate: { n: row.segment.index + 1 } }}
               </label>
               <select
                 class="seg-voice"
@@ -522,9 +507,9 @@
                 [ngModel]="segmentVoice(row.segment.id)"
                 (ngModelChange)="onSegmentVoiceChange(row.segment.id, $event)"
                 [disabled]="isSynthesizing(row.segment.id)"
-                title="Voice used when you regenerate this segment"
+                [title]="'editor.seg-voice-title' | translate"
               >
-                <option value="">Default voice ({{ defaultVoiceLabel() }})</option>
+                <option value="">{{ 'editor.default-voice' | translate: { label: defaultVoiceLabel() } }}</option>
                 @for (v of availableVoices(); track v.id) {
                   <option [value]="v.id">{{ v.label }}</option>
                 }
@@ -536,7 +521,7 @@
               (click)="regenerate(row.segment)"
               [disabled]="isSynthesizing(row.segment.id)"
             >
-              {{ isSynthesizing(row.segment.id) ? 'Synthesizing…' : 'Regenerate TTS' }}
+              {{ (isSynthesizing(row.segment.id) ? 'editor.synthesizing' : 'editor.regenerate') | translate }}
             </button>
             @if (row.timingConflict || row.needsReview) {
               <button
@@ -544,9 +529,9 @@
                 class="btn btn-sm"
                 (click)="tightenToFit(row.segment)"
                 [disabled]="isSynthesizing(row.segment.id)"
-                title="Re-translate this line shorter so it fits its timing window, then re-synthesize"
+                [title]="'editor.tighten-title' | translate"
               >
-                {{ isSynthesizing(row.segment.id) ? 'Fitting…' : 'Tighten to fit' }}
+                {{ (isSynthesizing(row.segment.id) ? 'editor.fitting' : 'editor.tighten') | translate }}
               </button>
             }
           </span>

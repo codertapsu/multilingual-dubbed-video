@@ -1,7 +1,7 @@
 <section class="page stack">
   <div class="row row-between">
     <div>
-      <h1>Processing</h1>
+      <h1>{{ 'processing.title' | translate }}</h1>
       <p class="muted">
         @if (store.current(); as proj) {
           {{ proj.name }} ·
@@ -15,8 +15,8 @@
     <div class="row">
       <vd-status-badge [status]="overallStatus()" />
       @if (events.status() === 'error') {
-        <span class="badge badge-warning" title="The live event stream is disconnected"
-          >Stream offline</span
+        <span class="badge badge-warning" [title]="'processing.stream-offline-title' | translate"
+          >{{ 'processing.stream-offline' | translate }}</span
         >
       }
     </div>
@@ -27,20 +27,20 @@
   <!-- Waiting for a free dubbing slot: this project is queued behind others. -->
   @if (queueEntry(); as entry) {
     <div class="card banner-info stack" role="status">
-      <strong>⏳ Waiting to start — #{{ entry.position }} in the queue</strong>
+      <strong>{{ 'processing.queued-title' | translate: { position: entry.position } }}</strong>
       <p class="muted">{{ entry.message }}</p>
       @if (queue(); as q) {
         <p class="hint">
-          This computer dubs {{ q.maxProjects }} project{{ q.maxProjects === 1 ? '' : 's' }} at a time.
+          {{ 'processing.queue-capacity' | translate: { max: q.maxProjects } }}
           @if (q.running.length > 0) {
-            Now dubbing: {{ runningNames() }}.
+            {{ 'processing.queue-now' | translate: { names: runningNames() } }}
           }
         </p>
       }
       <div class="row">
-        <button type="button" class="btn" (click)="runNext()">Start this one next</button>
+        <button type="button" class="btn" (click)="runNext()">{{ 'processing.run-next' | translate }}</button>
         <button type="button" class="btn btn-danger" (click)="cancel()" [disabled]="cancelling()">
-          {{ cancelling() ? 'Removing…' : 'Remove from queue' }}
+          {{ (cancelling() ? 'processing.removing' : 'processing.remove-from-queue') | translate }}
         </button>
       </div>
     </div>
@@ -50,17 +50,16 @@
        user can adjust the segments before any voice is synthesized. -->
   @if (awaitingReview()) {
     <div class="card banner-info stack" role="status">
-      <strong>📝 Transcript ready for review</strong>
+      <strong>{{ 'processing.review-title' | translate }}</strong>
       <p class="muted">
-        The transcript is transcribed and translated — no voice has been synthesized yet. Review and
-        adjust the segments (text, per-line fixes, the cast &amp; pronoun sheet), then continue dubbing.
+        {{ 'processing.review-body' | translate }}
       </p>
       <div class="row">
         <button type="button" class="btn btn-primary" (click)="goToEditor()">
-          Review &amp; edit transcript
+          {{ 'processing.review-edit' | translate }}
         </button>
         <button type="button" class="btn" (click)="continueDubbing()" [disabled]="continuing()">
-          {{ continuing() ? 'Continuing…' : 'Continue dubbing' }}
+          {{ (continuing() ? 'processing.continuing' : 'processing.continue-dubbing') | translate }}
         </button>
       </div>
     </div>
@@ -69,23 +68,20 @@
   <!-- Live service-health: warn if a required bundled service drops mid-run. -->
   @if (degradedServices().length > 0) {
     <div class="card banner-warning" role="alert">
-      ⚠ {{ degradedServices().join(', ') }}
-      {{ degradedServices().length === 1 ? 'service is' : 'services are' }}
-      currently unavailable. The run may stall on the affected step until the
-      service is back — services start a few seconds after launch.
+      {{ 'processing.degraded' | translate: { services: degradedServices().join(', ') } }}
     </div>
   }
 
   <!-- Overall progress -->
   <div class="card stack">
     <div class="row row-between">
-      <strong>Overall progress</strong>
+      <strong>{{ 'processing.overall' | translate }}</strong>
       <span class="mono">{{ overallPercent() }}%</span>
     </div>
     <div
       class="progress"
       role="progressbar"
-      aria-label="Overall pipeline progress"
+      [attr.aria-label]="'processing.overall-aria' | translate"
       [attr.aria-valuenow]="overallPercent()"
       aria-valuemin="0"
       aria-valuemax="100"
@@ -101,20 +97,20 @@
           (click)="cancel()"
           [disabled]="cancelling()"
         >
-          {{ cancelling() ? 'Cancelling…' : 'Cancel' }}
+          {{ (cancelling() ? 'processing.cancelling' : 'processing.cancel') | translate }}
         </button>
       }
       @if (isComplete()) {
         <button type="button" class="btn btn-primary" (click)="goToEditor()">
-          Open editor
+          {{ 'processing.open-editor' | translate }}
         </button>
-        <button type="button" class="btn" (click)="goToExport()">Go to export</button>
+        <button type="button" class="btn" (click)="goToExport()">{{ 'processing.go-export' | translate }}</button>
       }
     </div>
   </div>
 
   <!-- Step list -->
-  <ol class="step-list" aria-label="Pipeline steps">
+  <ol class="step-list" [attr.aria-label]="'processing.steps-aria' | translate">
     @for (step of steps(); track step.id) {
       <li class="step-item" [attr.data-status]="step.status">
         <div class="step-head">
@@ -126,7 +122,7 @@
           <div
             class="progress step-progress"
             role="progressbar"
-            [attr.aria-label]="stepLabels[step.id] + ' progress'"
+            [attr.aria-label]="'processing.step-progress-aria' | translate: { step: stepLabels[step.id] }"
             [attr.aria-valuenow]="stepPercent(step)"
             aria-valuemin="0"
             aria-valuemax="100"
@@ -142,14 +138,14 @@
         @if (step.status === 'failed') {
           <div>
             <button type="button" class="btn btn-sm" (click)="retry(step.id)">
-              Retry from this step
+              {{ 'processing.retry-step' | translate }}
             </button>
           </div>
         }
       </li>
     } @empty {
       <li class="muted">
-        <vd-busy-indicator [active]="true" label="Waiting for the pipeline to start…" />
+        <vd-busy-indicator [active]="true" [label]="'processing.waiting-start' | translate" />
       </li>
     }
   </ol>
@@ -157,10 +153,10 @@
   <!-- Live log panel -->
   <div class="card stack">
     <div class="row row-between">
-      <strong>Logs</strong>
-      <span class="muted">{{ events.logs().length }} lines</span>
+      <strong>{{ 'processing.logs' | translate }}</strong>
+      <span class="muted">{{ 'processing.log-lines' | translate: { count: events.logs().length } }}</span>
     </div>
-    <div class="log-panel" role="log" aria-live="polite" aria-label="Pipeline logs">
+    <div class="log-panel" role="log" aria-live="polite" [attr.aria-label]="'processing.logs-aria' | translate">
       @for (line of events.logs(); track $index) {
         <div class="log-line" [attr.data-level]="line.level">
           <span class="log-ts mono">{{ line.ts }}</span>
@@ -168,7 +164,7 @@
           <span class="log-msg">{{ line.message }}</span>
         </div>
       } @empty {
-        <div class="muted log-empty">No log output yet.</div>
+        <div class="muted log-empty">{{ 'processing.no-logs' | translate }}</div>
       }
     </div>
   </div>

@@ -1,7 +1,7 @@
 <section class="page stack">
   <header>
-    <h1>Settings</h1>
-    <p class="muted">Application preferences and updates.</p>
+    <h1>{{ 'settings.title' | translate }}</h1>
+    <p class="muted">{{ 'settings.subtitle' | translate }}</p>
   </header>
 
   <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
@@ -9,10 +9,10 @@
   <!-- ============================ This computer ============================ -->
   @if (system(); as sys) {
     <div class="card stack">
-      <h2>This computer</h2>
+      <h2>{{ 'settings.computer.heading' | translate }}</h2>
       <div class="chips">
         <span class="chip mono">{{ sys.profile.cpuModel }}</span>
-        <span class="chip">{{ sys.profile.cpuCores }} cores</span>
+        <span class="chip">{{ 'settings.computer.cores' | translate: { n: sys.profile.cpuCores } }}</span>
         <span class="chip">{{ ramLabel() }}</span>
         @for (gpu of sys.profile.gpus; track gpu.name) {
           <span class="chip">{{ gpu.name }}</span>
@@ -21,7 +21,7 @@
       </div>
       <div class="stack-sm">
         <p class="rec-line">
-          Recommended local speech-recognition model:
+          {{ 'settings.computer.rec-model' | translate }}
           <strong class="mono">{{ sys.recommendation.whisperModel }}</strong>
         </p>
         @for (reason of sys.recommendation.reasons; track reason) {
@@ -29,31 +29,27 @@
         }
         @if (sys.recommendation.suggestCloud.stt || sys.recommendation.suggestCloud.translation) {
           <p class="hint">
-            For this machine, cloud processing is suggested for:
-            {{ sys.recommendation.suggestCloud.stt ? 'speech-to-text' : '' }}
-            {{ sys.recommendation.suggestCloud.stt && sys.recommendation.suggestCloud.translation ? '+' : '' }}
-            {{ sys.recommendation.suggestCloud.translation ? 'translation' : '' }}
-            — add an API key below, then pick the cloud provider per phase.
+            {{ 'settings.computer.cloud-suggest' | translate: { phases: cloudSuggestPhases() } }}
           </p>
         }
       </div>
       <!-- Simultaneous dubs: the machine-derived limit + a manual override. -->
       <div class="stack-sm concurrency-row">
         <label class="setting-row">
-          <span class="label">Dubbing at the same time</span>
+          <span class="label">{{ 'settings.computer.concurrent' | translate }}</span>
           <select
             [ngModel]="concurrencyValue()"
             (ngModelChange)="setConcurrency($event)"
             [disabled]="prefSaving()"
           >
-            <option value="auto">Recommended for this computer ({{ sys.capacity.maxProjects }})</option>
+            <option value="auto">{{ 'settings.computer.auto' | translate: { n: sys.capacity.maxProjects } }}</option>
             @for (n of concurrencyChoices; track n) {
-              <option [value]="n">{{ n }} at a time</option>
+              <option [value]="n">{{ 'settings.computer.n-at-a-time' | translate: { n: n } }}</option>
             }
           </select>
         </label>
         <label class="setting-row">
-          <span class="label">Pause the queue</span>
+          <span class="label">{{ 'settings.computer.pause-queue' | translate }}</span>
           <input
             type="checkbox"
             [ngModel]="queuePaused()"
@@ -62,7 +58,7 @@
           />
         </label>
         <details>
-          <summary class="hint">Why this limit?</summary>
+          <summary class="hint">{{ 'settings.computer.why-limit' | translate }}</summary>
           @for (reason of sys.capacity.reasons; track reason) {
             <p class="hint">{{ reason }}</p>
           }
@@ -71,7 +67,7 @@
 
       <div class="actions">
         <button type="button" class="btn" (click)="applyRecommended()" [disabled]="defaultsSaving()">
-          Use recommended model as default
+          {{ 'settings.computer.use-recommended' | translate }}
         </button>
       </div>
     </div>
@@ -79,18 +75,15 @@
 
   <!-- ============================ Processing defaults ============================ -->
   <div class="card stack">
-    <h2>Processing defaults</h2>
+    <h2>{{ 'settings.defaults.heading' | translate }}</h2>
     <p class="muted">
-      The engine used for each phase of new projects. Local engines are private
-      and free; cloud engines can give better quality on weaker hardware but
-      send that phase's data to the service. You can still change providers per
-      project in the wizard, and re-visit this screen anytime.
+      {{ 'settings.defaults.intro' | translate }}
     </p>
 
     @if (providers(); as provs) {
       <div class="defaults-grid">
         <div class="field">
-          <label for="defStt">1 · Speech to text</label>
+          <label for="defStt">{{ 'settings.defaults.stt' | translate }}</label>
           <select
             id="defStt"
             name="defStt"
@@ -99,14 +92,14 @@
           >
             @for (p of provs.stt; track p.id) {
               <option [value]="p.id" [disabled]="!p.available">
-                {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+                {{ p.displayName }}{{ p.available ? '' : ('settings.defaults.needs-key' | translate) }}
               </option>
             }
           </select>
         </div>
 
         <div class="field">
-          <label for="defSttModel">Local STT model</label>
+          <label for="defSttModel">{{ 'settings.defaults.stt-model' | translate }}</label>
           <select
             id="defSttModel"
             name="defSttModel"
@@ -120,7 +113,7 @@
         </div>
 
         <div class="field">
-          <label for="defTranslation">2 · Translation</label>
+          <label for="defTranslation">{{ 'settings.defaults.translation' | translate }}</label>
           <select
             id="defTranslation"
             name="defTranslation"
@@ -129,14 +122,14 @@
           >
             @for (p of provs.translation; track p.id) {
               <option [value]="p.id" [disabled]="!p.available">
-                {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+                {{ p.displayName }}{{ p.available ? '' : ('settings.defaults.needs-key' | translate) }}
               </option>
             }
           </select>
         </div>
 
         <div class="field">
-          <label for="defTts">3 · Text to speech</label>
+          <label for="defTts">{{ 'settings.defaults.tts' | translate }}</label>
           <select
             id="defTts"
             name="defTts"
@@ -145,39 +138,36 @@
           >
             @for (p of provs.tts; track p.id) {
               <option [value]="p.id" [disabled]="!p.available">
-                {{ p.displayName }}{{ p.available ? '' : ' — needs API key' }}
+                {{ p.displayName }}{{ p.available ? '' : ('settings.defaults.needs-key' | translate) }}
               </option>
             }
           </select>
         </div>
 
         <div class="field">
-          <label>4 · Rendering</label>
-          <p class="static-value">Local FFmpeg — always on this machine (your video never leaves it).</p>
+          <label>{{ 'settings.defaults.render' | translate }}</label>
+          <p class="static-value">{{ 'settings.defaults.render-value' | translate }}</p>
         </div>
       </div>
 
       <div class="actions">
         <button type="button" class="btn btn-primary" (click)="saveDefaults()" [disabled]="defaultsSaving()">
-          {{ defaultsSaving() ? 'Saving…' : 'Save defaults' }}
+          {{ (defaultsSaving() ? 'settings.defaults.saving' : 'settings.defaults.save') | translate }}
         </button>
         @if (defaultsSaved()) {
-          <span class="badge badge-completed note">✓ Saved — applies to new projects</span>
+          <span class="badge badge-completed note">{{ 'settings.defaults.saved' | translate }}</span>
         }
       </div>
     } @else {
-      <p class="hint">Provider list unavailable — is the local backend running?</p>
+      <p class="hint">{{ 'settings.defaults.unavailable' | translate }}</p>
     }
   </div>
 
   <!-- ============================ Cloud API keys ============================ -->
   <div class="card stack">
-    <h2>Cloud API keys</h2>
+    <h2>{{ 'settings.keys.heading' | translate }}</h2>
     <p class="muted">
-      Optional. Keys are stored only on this machine
-      (<span class="mono">~/VideoDubber/credentials.json</span>, owner-only
-      permissions) and are sent only to the service they belong to. Nothing is
-      uploaded anywhere unless you select a cloud provider for a phase.
+      {{ 'settings.keys.intro' | translate }}
     </p>
 
     @for (svc of services; track svc) {
@@ -187,10 +177,10 @@
           @if (credentialFor(svc); as cred) {
             @if (cred.configured) {
               <span class="badge badge-completed">
-                {{ cred.fromEnv ? 'from environment' : ('key ' + (cred.maskedKey ?? 'set')) }}
+                {{ cred.fromEnv ? ('settings.keys.from-env' | translate) : ('settings.keys.key-set' | translate: { masked: cred.maskedKey ?? '' }) }}
               </span>
             } @else {
-              <span class="badge">not configured</span>
+              <span class="badge">{{ 'settings.keys.not-configured' | translate }}</span>
             }
           }
         </div>
@@ -198,7 +188,7 @@
           <input
             type="password"
             class="grow"
-            [attr.aria-label]="serviceMeta[svc].label + ' API key'"
+            [attr.aria-label]="'settings.keys.api-key-aria' | translate: { service: serviceMeta[svc].label }"
             [placeholder]="serviceMeta[svc].keyHint"
             [ngModel]="keyInputFor(svc)"
             (ngModelChange)="setKeyInput(svc, $event)"
@@ -211,7 +201,7 @@
             (click)="saveKey(svc)"
             [disabled]="credBusy() !== null || keyInputFor(svc).trim().length === 0"
           >
-            Save
+            {{ 'settings.keys.save' | translate }}
           </button>
           <button
             type="button"
@@ -219,7 +209,7 @@
             (click)="testKey(svc)"
             [disabled]="credBusy() !== null || !(credentialFor(svc)?.configured ?? false)"
           >
-            {{ credBusy() === svc ? '…' : 'Test' }}
+            {{ credBusy() === svc ? '…' : ('settings.keys.test' | translate) }}
           </button>
           @if (credentialFor(svc)?.configured && !credentialFor(svc)?.fromEnv) {
             <button
@@ -228,7 +218,7 @@
               (click)="clearKey(svc)"
               [disabled]="credBusy() !== null"
             >
-              Remove
+              {{ 'settings.keys.remove' | translate }}
             </button>
           }
         </div>
@@ -243,37 +233,29 @@
 
   <!-- ============================ Engines ============================ -->
   <div class="card stack">
-    <h2>Engines</h2>
+    <h2>{{ 'settings.engines.heading' | translate }}</h2>
     <p class="muted">
-      Optional high-quality engines for capable machines — accelerated
-      transcription, local LLM translation, neural voices, vocal separation, and
-      forced alignment. They download on demand and run only when a project uses
-      them, so the base app stays small. Packs marked “recommended” suit this
-      computer. Nothing else needs to be installed first.
+      {{ 'settings.engines.intro' | translate }}
     </p>
 
     @if (prerequisites(); as pre) {
       @if (pre.uv.available) {
         <p class="hint test-ok">
-          ✓ Python engines are self-contained{{ pre.uv.bundled ? ' (uses the bundled runtime)' : '' }} — just click Install.
+          {{ 'settings.engines.uv-ok' | translate: { bundled: pre.uv.bundled ? ('settings.engines.uv-bundled' | translate) : '' } }}
         </p>
       } @else if (uvObtainable()) {
         <p class="hint">
-          Python engines (neural voices, separation, alignment) need
-          <span class="mono">uv</span>. It isn’t bundled in this build, so the first install downloads it
-          automatically (~20 MB, verified) — just click Install.
+          {{ 'settings.engines.uv-download' | translate }}
         </p>
       } @else {
         <p class="hint test-fail">
-          ⚠ Python engines (neural voices, separation, alignment) need
-          <span class="mono">uv</span>, and no build is published for this platform. Install it from
-          <span class="mono">https://docs.astral.sh/uv/</span> and reopen.
+          {{ 'settings.engines.uv-missing' | translate }}
         </p>
       }
     }
 
     @if (enginePacks().length === 0) {
-      <p class="hint">No engine packs are available for this platform, or the backend is offline.</p>
+      <p class="hint">{{ 'settings.engines.none' | translate }}</p>
     }
 
     @for (pack of enginePacks(); track pack.id) {
@@ -281,32 +263,32 @@
         <div class="cred-head">
           <span class="cred-name">{{ pack.displayName }}</span>
           @if (isEngineRecommended(pack.id)) {
-            <span class="badge badge-running">recommended</span>
+            <span class="badge badge-running">{{ 'settings.engines.recommended' | translate }}</span>
           }
           @if (isEngineInstalled(pack.id)) {
-            <span class="badge badge-completed">installed</span>
+            <span class="badge badge-completed">{{ 'settings.engines.installed' | translate }}</span>
           }
           @if (isEngineActive(pack)) {
-            <span class="badge badge-running" title="This is the one used for this job">in use</span>
+            <span class="badge badge-running" [title]="'settings.engines.in-use-title' | translate">{{ 'settings.engines.in-use' | translate }}</span>
           }
           @if (isEngineUpdatable(pack.id)) {
-            <span class="badge badge-running">update available</span>
+            <span class="badge badge-running">{{ 'settings.engines.update-available' | translate }}</span>
           }
           <span class="chip">{{ pack.approxSizeMb >= 1000 ? (pack.approxSizeMb / 1000).toFixed(1) + ' GB' : pack.approxSizeMb + ' MB' }}</span>
         </div>
         <span class="hint">{{ pack.description }}</span>
         @if (isEngineFit(pack.id)) {
-          <span class="hint test-ok">✓ Your hardware can run this locally</span>
+          <span class="hint test-ok">{{ 'settings.engines.fit-ok' | translate }}</span>
         } @else {
           <span class="hint test-fail">⚠ {{ engineFitHint(pack) }}</span>
         }
         @if (isEngineShadowed(pack)) {
           <span class="hint">
-            Installed, but not in use — “{{ activePackName(pack) }}” is better and runs instead.
+            {{ 'settings.engines.shadowed' | translate: { name: activePackName(pack) } }}
             @if (activeSelectionNote(pack)) {
               {{ activeSelectionNote(pack) }}
             }
-            You can remove this one to free disk space.
+            {{ 'settings.engines.shadowed-free' | translate }}
           </span>
         }
         @if (pack.licenseNote) {
@@ -323,18 +305,18 @@
           <div class="cred-controls">
             @if (isEngineInstalled(pack.id)) {
               @if (isEngineUpdatable(pack.id)) {
-                <button type="button" class="btn btn-sm" (click)="installEngine(pack.id)" title="A newer version is available — reinstall to update">Update</button>
+                <button type="button" class="btn btn-sm" (click)="installEngine(pack.id)" [title]="'settings.engines.update-title' | translate">{{ 'settings.engines.update' | translate }}</button>
               } @else {
-                <button type="button" class="btn btn-ghost btn-sm" (click)="installEngine(pack.id)" title="Re-download the latest version">Reinstall</button>
+                <button type="button" class="btn btn-ghost btn-sm" (click)="installEngine(pack.id)" [title]="'settings.engines.reinstall-title' | translate">{{ 'settings.engines.reinstall' | translate }}</button>
               }
-              <button type="button" class="btn btn-ghost btn-sm" (click)="uninstallEngine(pack.id)">Remove</button>
+              <button type="button" class="btn btn-ghost btn-sm" (click)="uninstallEngine(pack.id)">{{ 'settings.engines.remove' | translate }}</button>
             } @else if (needsUv(pack) && prerequisites() && !prerequisites()!.uv.available && !uvObtainable()) {
-              <button type="button" class="btn btn-sm" disabled title="This engine needs uv, which has no build for this platform">
-                Install
+              <button type="button" class="btn btn-sm" disabled [title]="'settings.engines.needs-uv-title' | translate">
+                {{ 'settings.engines.install' | translate }}
               </button>
-              <span class="hint test-fail">Needs uv — see the note above.</span>
+              <span class="hint test-fail">{{ 'settings.engines.needs-uv' | translate }}</span>
             } @else {
-              <button type="button" class="btn btn-sm" (click)="installEngine(pack.id)">Install</button>
+              <button type="button" class="btn btn-sm" (click)="installEngine(pack.id)">{{ 'settings.engines.install' | translate }}</button>
             }
           </div>
         }
@@ -344,12 +326,9 @@
 
   <!-- ===================== Translation packs (Argos) ===================== -->
   <div class="card stack">
-    <h2>Translation packs</h2>
+    <h2>{{ 'settings.argos.heading' | translate }}</h2>
     <p class="muted">
-      Offline Argos Translate language packs, downloaded from the Argos index on
-      demand. Non-English pairs translate via English (e.g. Chinese → Vietnamese
-      uses Chinese → English + English → Vietnamese), so install both legs for
-      such a pair. Ollama / cloud translation are not limited to these.
+      {{ 'settings.argos.intro' | translate }}
     </p>
 
     <div class="row argos-toolbar">
@@ -359,27 +338,26 @@
         (click)="loadArgosPackages(true)"
         [disabled]="argosRefreshing()"
       >
-        {{ argosRefreshing() ? 'Loading index…' : 'Browse available packs' }}
+        {{ (argosRefreshing() ? 'settings.argos.loading-index' : 'settings.argos.browse') | translate }}
       </button>
       @if (argosRows().length > 8) {
         <input
           type="search"
           class="argos-filter"
-          placeholder="Filter languages…"
+          [placeholder]="'settings.argos.filter' | translate"
           [ngModel]="argosFilter()"
           (ngModelChange)="argosFilter.set($event)"
-          aria-label="Filter translation packs"
+          [attr.aria-label]="'settings.argos.filter-aria' | translate"
         />
       }
     </div>
 
     @if (argosRows().length === 0) {
       @if (argosRefreshing()) {
-        <p class="hint">Loading the Argos package index…</p>
+        <p class="hint">{{ 'settings.argos.loading' | translate }}</p>
       } @else {
         <p class="hint">
-          Installed packs appear here. Click “Browse available packs” to see
-          everything you can install.
+          {{ 'settings.argos.empty' | translate }}
         </p>
       }
     }
@@ -390,7 +368,7 @@
           <span class="cred-name">{{ row.fromName }} → {{ row.toName }}</span>
           <span class="chip mono">{{ row.from }}→{{ row.to }}</span>
           @if (row.installed) {
-            <span class="badge badge-completed">installed</span>
+            <span class="badge badge-completed">{{ 'settings.argos.installed' | translate }}</span>
           }
         </div>
         <div class="cred-controls">
@@ -401,7 +379,7 @@
               (click)="removeArgosPair(row)"
               [disabled]="argosBusy() !== null"
             >
-              {{ argosBusy() === row.key ? 'Removing…' : 'Remove' }}
+              {{ (argosBusy() === row.key ? 'settings.argos.removing' : 'settings.argos.remove') | translate }}
             </button>
           } @else {
             <button
@@ -410,9 +388,9 @@
               (click)="installArgosPair(row)"
               [disabled]="argosBusy() !== null"
             >
-              {{ argosBusy() === row.key ? 'Installing…' : 'Install' }}
+              {{ (argosBusy() === row.key ? 'settings.argos.installing' : 'settings.argos.install') | translate }}
             </button>
-            <vd-busy-indicator [active]="argosBusy() === row.key" label="Downloading…" />
+            <vd-busy-indicator [active]="argosBusy() === row.key" [label]="'settings.argos.downloading' | translate" />
           }
         </div>
       </div>
@@ -445,11 +423,9 @@
   <!-- ============================ Updates ============================ -->
   <!-- ===================== Storage (free up disk space) ===================== -->
   <div class="card stack">
-    <h2>Storage</h2>
+    <h2>{{ 'settings.storage.heading' | translate }}</h2>
     <p class="muted">
-      Downloaded engine packs, AI models, and caches all live in one app folder.
-      Delete them anytime to free up disk space — VideoDubber re-downloads whatever
-      a project needs on demand. Your projects (the dubbed videos) are never touched.
+      {{ 'settings.storage.intro' | translate }}
     </p>
 
     @if (storage(); as s) {
@@ -461,11 +437,11 @@
           </div>
         }
         <div class="setting-row">
-          <span class="cred-name"><strong>Total downloaded</strong></span>
+          <span class="cred-name"><strong>{{ 'settings.storage.total' | translate }}</strong></span>
           <span class="chip">{{ formatBytes(s.totalBytes) }}</span>
         </div>
         @if (s.freeBytes !== null) {
-          <span class="hint">{{ formatBytes(s.freeBytes) }} free on this disk.</span>
+          <span class="hint">{{ 'settings.storage.free' | translate: { size: formatBytes(s.freeBytes) } }}</span>
         }
       </div>
 
@@ -483,22 +459,22 @@
           (click)="clearStorage()"
           [disabled]="storageClearing() || s.totalBytes === 0"
         >
-          {{ storageClearing() ? 'Deleting…' : 'Delete all downloaded data' }}
+          {{ (storageClearing() ? 'settings.storage.deleting' : 'settings.storage.delete') | translate }}
         </button>
-        <vd-busy-indicator [active]="storageClearing()" label="Deleting downloaded data…" />
+        <vd-busy-indicator [active]="storageClearing()" [label]="'settings.storage.deleting-label' | translate" />
       </div>
     } @else if (storageLoading()) {
-      <p class="hint">Calculating disk usage…</p>
+      <p class="hint">{{ 'settings.storage.calculating' | translate }}</p>
     } @else {
-      <p class="hint">Storage info is unavailable (the backend may be offline).</p>
+      <p class="hint">{{ 'settings.storage.unavailable' | translate }}</p>
     }
   </div>
 
   <div class="card stack">
-    <h2>Updates</h2>
+    <h2>{{ 'settings.updates.heading' | translate }}</h2>
 
     <div class="version-row">
-      <span class="label">Current version</span>
+      <span class="label">{{ 'settings.updates.current-version' | translate }}</span>
       <span class="mono version-value">
         @if (appVersion(); as v) {
           {{ v }}
@@ -510,8 +486,7 @@
 
     @if (!inTauri) {
       <div class="badge badge-warning note" role="status">
-        Update controls are available in the desktop app. You're running in a
-        browser dev session, so checking and installing updates is disabled here.
+        {{ 'settings.updates.browser-note' | translate }}
       </div>
     }
 
@@ -526,15 +501,14 @@
           (ngModelChange)="toggleAutoUpdate($event)"
         />
         <span class="switch-body">
-          <span class="switch-title">Automatically install updates</span>
+          <span class="switch-title">{{ 'settings.updates.auto-title' | translate }}</span>
           <span class="hint">
-            When on, the app checks for updates on launch and installs them in
-            the background. When off, you update manually below.
+            {{ 'settings.updates.auto-hint' | translate }}
           </span>
         </span>
       </label>
       @if (prefSaving()) {
-        <span class="hint">Saving…</span>
+        <span class="hint">{{ 'settings.updates.saving' | translate }}</span>
       }
     </div>
 
@@ -545,7 +519,7 @@
         (click)="check()"
         [disabled]="!inTauri || checkOutcome() === 'checking'"
       >
-        {{ checkOutcome() === 'checking' ? 'Checking…' : 'Check for updates' }}
+        {{ (checkOutcome() === 'checking' ? 'settings.updates.checking' : 'settings.updates.check') | translate }}
       </button>
 
       @if (updateAvailable()) {
@@ -555,11 +529,11 @@
           (click)="installUpdate()"
           [disabled]="installing()"
         >
-          {{ installing() ? 'Installing…' : 'Download & install' }}
+          {{ (installing() ? 'settings.updates.installing' : 'settings.updates.install') | translate }}
         </button>
         <vd-busy-indicator
           [active]="installing()"
-          label="Downloading and installing the update…"
+          [label]="'settings.updates.installing-label' | translate"
         />
       }
     </div>
@@ -568,21 +542,21 @@
     @switch (checkOutcome()) {
       @case ('up-to-date') {
         <div class="badge badge-completed note" role="status">
-          ✓ You're up to date.
+          {{ 'settings.updates.up-to-date' | translate }}
         </div>
       }
       @case ('available') {
         @if (updateInfo(); as info) {
           <div class="update-detail stack">
             <div class="badge badge-running note">
-              Update available: version {{ info.version }}
+              {{ 'settings.updates.available' | translate: { version: info.version } }}
             </div>
             @if (info.date) {
-              <p class="hint">Released {{ info.date }}</p>
+              <p class="hint">{{ 'settings.updates.released' | translate: { date: info.date } }}</p>
             }
             @if (info.notes) {
               <div class="release-notes">
-                <h3>Release notes</h3>
+                <h3>{{ 'settings.updates.notes' | translate }}</h3>
                 <pre class="notes-body">{{ info.notes }}</pre>
               </div>
             }
@@ -592,7 +566,7 @@
                 class="btn btn-ghost btn-sm"
                 (click)="openReleaseNotes()"
               >
-                View on GitHub ↗
+                {{ 'settings.updates.view-github' | translate }}
               </button>
             </div>
           </div>
@@ -603,11 +577,9 @@
 
   <!-- ============================ About ============================ -->
   <div class="card stack">
-    <h2>About VideoDubber</h2>
+    <h2>{{ 'settings.about.heading' | translate }}</h2>
     <p class="muted">
-      A local, offline-first video dubbing app. Transcription, translation, and
-      voice synthesis all run on your machine. Only the language models are
-      downloaded on first run.
+      {{ 'settings.about.body' | translate }}
     </p>
   </div>
 </section>

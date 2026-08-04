@@ -357,7 +357,7 @@
           <div class="ctx-row">
             <input [ngModel]="c.name" (ngModelChange)="c.name = $event; ctxChanged()" [placeholder]="'editor.cast-name-ph' | translate" />
             <input [ngModel]="c.role" (ngModelChange)="c.role = $event; ctxChanged()" [placeholder]="'editor.cast-role-ph' | translate" />
-            <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveCast($index)" title="Remove">✕</button>
+            <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveCast($index)" [title]="'editor.remove' | translate">✕</button>
           </div>
         }
         <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddCast()">{{ 'editor.add-speaker' | translate }}</button>
@@ -369,7 +369,7 @@
           <div class="ctx-row">
             <input [ngModel]="g.source" (ngModelChange)="g.source = $event; ctxChanged()" [placeholder]="'editor.glossary-source-ph' | translate" />
             <input [ngModel]="g.target" (ngModelChange)="g.target = $event; ctxChanged()" [placeholder]="'editor.glossary-target-ph' | translate" />
-            <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveGlossary($index)" title="Remove">✕</button>
+            <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveGlossary($index)" [title]="'editor.remove' | translate">✕</button>
           </div>
         }
         <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddGlossary()">{{ 'editor.add-term' | translate }}</button>

@@ -38,6 +38,7 @@ import type {
   SubtitleExportMode,
 } from '../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
+import { TranslatePipe } from '../../core/i18n';
 
 /** Wizard step index. */
 type WizardStep = 1 | 2;
@@ -93,7 +94,7 @@ function defaultSettings(): ProjectSettings {
   selector: 'vd-new-project-wizard',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, DownloadProgressListComponent, BusyIndicatorComponent],
+  imports: [FormsModule, ErrorBannerComponent, DownloadProgressListComponent, BusyIndicatorComponent, TranslatePipe],
   templateUrl: './new-project-wizard.component.html',
   styleUrl: './new-project-wizard.component.scss',
 })

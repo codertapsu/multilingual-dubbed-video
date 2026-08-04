@@ -792,6 +792,23 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   // ----------------------------- update check -----------------------------
 
+  /**
+   * The phases cloud processing is suggested for, as one localized list.
+   *
+   * Built here rather than concatenated in the template: the old markup glued
+   * "speech-to-text" + "+" + "translation" together with ternaries, which is
+   * exactly the kind of sentence assembly that cannot be translated — word
+   * order and separators differ per language.
+   */
+  protected cloudSuggestPhases(): string {
+    const rec = this.system()?.recommendation;
+    if (!rec) return '';
+    const parts: string[] = [];
+    if (rec.suggestCloud.stt) parts.push(this.translate.instant('settings.computer.stt'));
+    if (rec.suggestCloud.translation) parts.push(this.translate.instant('settings.computer.translation'));
+    return parts.join(' + ');
+  }
+
   /** Switch the app language. Applies immediately; no reload needed. */
   protected setLocale(next: SupportedLocale): void {
     this.translate.use(next);

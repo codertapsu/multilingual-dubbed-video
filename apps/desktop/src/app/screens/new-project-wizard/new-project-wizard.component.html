@@ -1,11 +1,11 @@
 <section class="page stack">
   <header>
-    <h1>New project</h1>
-    <ol class="steps" aria-label="Wizard progress">
+    <h1>{{ 'wizard.title' | translate }}</h1>
+    <ol class="steps" [attr.aria-label]="'wizard.progress-aria' | translate">
       <li [class.active]="step() === 1" [class.done]="step() === 2">
-        1. Source &amp; options
+        {{ 'wizard.step1' | translate }}
       </li>
-      <li [class.active]="step() === 2">2. Review media &amp; start</li>
+      <li [class.active]="step() === 2">{{ 'wizard.step2' | translate }}</li>
     </ol>
   </header>
 
@@ -15,30 +15,30 @@
   @if (step() === 1) {
     <form class="card stack" (ngSubmit)="goToStep2()">
       <div class="field">
-        <label for="projName">Project name</label>
+        <label for="projName">{{ 'wizard.project-name' | translate }}</label>
         <input
           id="projName"
           type="text"
           [ngModel]="name()"
           (ngModelChange)="name.set($event)"
           name="projName"
-          placeholder="My dubbing project"
+          [placeholder]="'wizard.project-name-ph' | translate"
           autocomplete="off"
         />
       </div>
 
       <fieldset>
-        <legend>Source video</legend>
+        <legend>{{ 'wizard.source-video' | translate }}</legend>
         <div class="row">
           <div class="grow">
-            <label for="videoPath">Video file path</label>
+            <label for="videoPath">{{ 'wizard.video-path' | translate }}</label>
             <input
               id="videoPath"
               type="text"
               [ngModel]="inputVideoPath()"
               (ngModelChange)="onPathInput($event)"
               name="videoPath"
-              placeholder="/path/to/video.mp4"
+              [placeholder]="'wizard.video-path-ph' | translate"
               aria-describedby="videoPathHint"
             />
           </div>
@@ -69,10 +69,10 @@
       </fieldset>
 
       <fieldset>
-        <legend>Languages</legend>
+        <legend>{{ 'wizard.languages' | translate }}</legend>
         <div class="lang-grid">
           <div class="field">
-            <label for="srcLang">Source language</label>
+            <label for="srcLang">{{ 'wizard.source-language' | translate }}</label>
             <select
               id="srcLang"
               name="srcLang"
@@ -85,7 +85,7 @@
             </select>
           </div>
           <div class="field">
-            <label for="tgtLang">Target language</label>
+            <label for="tgtLang">{{ 'wizard.target-language' | translate }}</label>
             <select
               id="tgtLang"
               name="tgtLang"
@@ -101,8 +101,8 @@
       </fieldset>
 
       <fieldset>
-        <legend>Subtitles</legend>
-        <div class="radio-list" role="radiogroup" aria-label="Subtitle export mode">
+        <legend>{{ 'wizard.subtitles' | translate }}</legend>
+        <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.subtitles-aria' | translate">
           @for (mode of subtitleModes; track mode) {
             <label class="radio-row">
               <input
@@ -122,8 +122,8 @@
       </fieldset>
 
       <fieldset>
-        <legend>Original audio</legend>
-        <div class="radio-list" role="radiogroup" aria-label="Original audio handling">
+        <legend>{{ 'wizard.original-audio' | translate }}</legend>
+        <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.original-audio-aria' | translate">
           <label class="radio-row">
             <input
               type="radio"
@@ -133,10 +133,9 @@
               (change)="setOriginalAudioMode('keep')"
             />
             <span class="radio-body">
-              <span class="radio-title">Keep it in the background (recommended)</span>
+              <span class="radio-title">{{ 'wizard.keep' | translate }}</span>
               <span class="hint"
-                >Music and effects stay; the original audio is automatically
-                turned down whenever the dubbed voice speaks.</span
+                >{{ 'wizard.keep-hint' | translate }}</span
               >
             </span>
           </label>
@@ -153,12 +152,11 @@
                 [disabled]="!vocalSeparationReady()"
               />
               <span class="radio-body">
-                <span class="radio-title">Replace voices, keep music &amp; effects</span>
+                <span class="radio-title">{{ 'wizard.replace-vocals' | translate }}</span>
                 <span class="hint"
-                  >Studio-style: the original voices are separated out and replaced
-                  by the dub, while the music &amp; effects play at full volume.
+                  >{{ 'wizard.replace-vocals-hint' | translate }}
                   @if (!vocalSeparationReady()) {
-                    <strong>Install the “Vocal separation” engine in Settings → Engines to enable this.</strong>
+                    <strong>{{ 'wizard.replace-vocals-needs' | translate }}</strong>
                   }</span
                 >
               </span>
@@ -173,17 +171,16 @@
               (change)="setOriginalAudioMode('remove')"
             />
             <span class="radio-body">
-              <span class="radio-title">Remove it completely</span>
+              <span class="radio-title">{{ 'wizard.remove' | translate }}</span>
               <span class="hint"
-                >Only the dubbed voice is heard. Original speech, music and
-                effects are all muted.</span
+                >{{ 'wizard.remove-hint' | translate }}</span
               >
             </span>
           </label>
         </div>
         @if ((settings().originalAudioMode ?? 'keep') === 'keep') {
           <div class="field">
-            <label for="duckLevel">Background volume while the dub speaks</label>
+            <label for="duckLevel">{{ 'wizard.duck-level' | translate }}</label>
             <select
               id="duckLevel"
               name="duckLevel"
@@ -199,7 +196,7 @@
       </fieldset>
 
       <fieldset>
-        <legend>Timing accuracy</legend>
+        <legend>{{ 'wizard.timing' | translate }}</legend>
         <!-- Forced alignment + diarization both need the WhisperX engine; shown
              only where that engine is offered on this machine. -->
         @if (whisperxOffered()) {
@@ -211,15 +208,13 @@
               (ngModelChange)="toggleForcedAlignment($event)"
             />
             <span class="radio-body">
-              <span class="radio-title">Word-accurate timing (forced alignment)</span>
+              <span class="radio-title">{{ 'wizard.forced-alignment' | translate }}</span>
               <span class="hint"
-                >Tightens subtitle/dub sync to ~50 ms using the “Forced alignment +
-                diarization” engine.
+                >{{ 'wizard.forced-alignment-hint' | translate }}
                 @if (whisperxReady()) {
-                  Active.
+                  {{ 'wizard.active' | translate }}
                 } @else {
-                  Not installed — falls back to the default timestamps (install the
-                  engine in Settings → Engines for word-accurate timing).
+                  {{ 'wizard.fa-not-installed' | translate }}
                 }</span
               >
             </span>
@@ -233,12 +228,11 @@
               [disabled]="!whisperxReady()"
             />
             <span class="radio-body">
-              <span class="radio-title">Detect speakers (diarization)</span>
+              <span class="radio-title">{{ 'wizard.diarize' | translate }}</span>
               <span class="hint"
-                >Splits the transcript per speaker so multi-speaker videos can use a
-                distinct voice per person. Uses the same engine pack.
+                >{{ 'wizard.diarize-hint' | translate }}
                 @if (!whisperxReady()) {
-                  <strong>Install the “Forced alignment + diarization” engine in Settings → Engines to enable this.</strong>
+                  <strong>{{ 'wizard.diarize-needs' | translate }}</strong>
                 }</span
               >
             </span>
@@ -252,19 +246,17 @@
             (ngModelChange)="patchSettings('autoFitOverflow', $event)"
           />
           <span class="radio-body">
-            <span class="radio-title">Auto-fit lines that overflow their timing</span>
+            <span class="radio-title">{{ 'wizard.auto-fit' | translate }}</span>
             <span class="hint"
-              >When a translated line is too long to fit even at max speed, re-translate it
-              shorter and re-synthesize so it fits — fewer timing conflicts. Works with LLM
-              translators (Ollama / llama.cpp / cloud); ignored for Argos.</span
+              >{{ 'wizard.auto-fit-hint' | translate }}</span
             >
           </span>
         </label>
       </fieldset>
 
       <fieldset>
-        <legend>Render quality</legend>
-        <div class="radio-list" role="radiogroup" aria-label="Render quality">
+        <legend>{{ 'wizard.render-quality' | translate }}</legend>
+        <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.render-quality-aria' | translate">
           <label class="radio-row">
             <input
               type="radio"
@@ -274,8 +266,8 @@
               (change)="setRenderQuality('quality')"
             />
             <span class="radio-body">
-              <span class="radio-title">Best quality (recommended)</span>
-              <span class="hint">Software H.264 encoding — best size/quality. Only matters when subtitles are burned in.</span>
+              <span class="radio-title">{{ 'wizard.quality' | translate }}</span>
+              <span class="hint">{{ 'wizard.quality-hint' | translate }}</span>
             </span>
           </label>
           <label class="radio-row">
@@ -287,17 +279,17 @@
               (change)="setRenderQuality('fast')"
             />
             <span class="radio-body">
-              <span class="radio-title">Fast (hardware encode)</span>
-              <span class="hint">Uses the GPU video encoder (VideoToolbox / NVENC) when available — much faster, slightly larger files.</span>
+              <span class="radio-title">{{ 'wizard.fast' | translate }}</span>
+              <span class="hint">{{ 'wizard.fast-hint' | translate }}</span>
             </span>
           </label>
         </div>
       </fieldset>
 
       <fieldset>
-        <legend>Voice timing</legend>
+        <legend>{{ 'wizard.voice-timing' | translate }}</legend>
         <div class="field">
-          <label for="maxSpeed">Max speech speed</label>
+          <label for="maxSpeed">{{ 'wizard.max-speed' | translate }}</label>
           <select
             id="maxSpeed"
             name="maxSpeed"
@@ -309,25 +301,20 @@
             }
           </select>
           <span class="hint">
-            Translated speech is often longer than the original line. The app may
-            speed segments up to this limit to keep them in sync; lines that still
-            don't fit are flagged for review in the editor.
+            {{ 'wizard.max-speed-hint' | translate }}
           </span>
         </div>
       </fieldset>
 
       <fieldset>
-        <legend>Processing engines</legend>
+        <legend>{{ 'wizard.engines' | translate }}</legend>
         <p class="hint">
-          Each phase can run locally (private, free, works offline) or in the
-          cloud (often better quality on weaker hardware; needs an API key from
-          Settings and sends that phase's data to the service). Defaults come
-          from Settings → Processing defaults.
+          {{ 'wizard.engines-hint' | translate }}
         </p>
         @if (providers(); as provs) {
           <div class="lang-grid">
             <div class="field">
-              <label for="provStt">Speech to text</label>
+              <label for="provStt">{{ 'wizard.stt' | translate }}</label>
               <select
                 id="provStt"
                 name="provStt"
@@ -342,7 +329,7 @@
               </select>
             </div>
             <div class="field">
-              <label for="provTranslation">Translation</label>
+              <label for="provTranslation">{{ 'wizard.translation' | translate }}</label>
               <select
                 id="provTranslation"
                 name="provTranslation"
@@ -359,14 +346,14 @@
             @if (refinerOptions(provs); as refiners) {
               @if (refiners.length > 0) {
                 <div class="field">
-                  <label for="provRefine">Review &amp; refine (optional)</label>
+                  <label for="provRefine">{{ 'wizard.refine' | translate }}</label>
                   <select
                     id="provRefine"
                     name="provRefine"
                     [ngModel]="settings().refineProviderId ?? 'none'"
                     (ngModelChange)="setRefineProvider($event)"
                   >
-                    <option value="none">Off — keep the translation as-is</option>
+                    <option value="none">{{ 'wizard.refine-off' | translate }}</option>
                     @for (p of refiners; track p.id) {
                       <option [value]="p.id" [disabled]="!p.available">
                         {{ p.displayName }}{{ providerHint(p) }}
@@ -374,8 +361,7 @@
                     }
                   </select>
                   <span class="hint">
-                    A second AI pass re-reads the whole transcript and polishes pronouns, terminology, and
-                    flow for consistency. Most useful when Translation runs on Argos or TranslateGemma.
+                    {{ 'wizard.refine-hint' | translate }}
                   </span>
                 </div>
               }
@@ -388,15 +374,14 @@
                   [ngModel]="settings().reviewBeforeSynthesis ?? false"
                   (ngModelChange)="patchSettings('reviewBeforeSynthesis', $event)"
                 />
-                <span>Pause for transcript review before voice synthesis</span>
+                <span>{{ 'wizard.review-pause' | translate }}</span>
               </label>
               <span class="hint">
-                The pipeline stops once the transcript is translated (and refined) so you can review and
-                hand-adjust the segments in the editor, then continue dubbing when it reads right.
+                {{ 'wizard.review-pause-hint' | translate }}
               </span>
             </div>
             <div class="field">
-              <label for="provTts">Text to speech</label>
+              <label for="provTts">{{ 'wizard.tts' | translate }}</label>
               <select
                 id="provTts"
                 name="provTts"
@@ -411,53 +396,45 @@
               </select>
             </div>
             <div class="field">
-              <label>Rendering</label>
+              <label>{{ 'wizard.rendering' | translate }}</label>
               <p class="hint">
-                Local FFmpeg — always on this machine; your video never leaves it.
+                {{ 'wizard.rendering-hint' | translate }}
               </p>
             </div>
           </div>
           @if (cloudPhases().length > 0) {
             <div class="badge badge-warning audio-warn" role="note">
-              ☁ Cloud processing enabled for: {{ cloudPhases().join('; ') }}.
-              Only that data is uploaded — the video file itself stays local.
+              {{ 'wizard.cloud-warn' | translate: { phases: cloudPhases().join('; ') } }}
             </div>
           }
         } @else {
           <p class="hint">
-            Engine list unavailable (backend offline?) — the project will use
-            the local engines.
+            {{ 'wizard.engines-unavailable' | translate }}
           </p>
         }
       </fieldset>
 
       @if (showVoicePicker()) {
         <fieldset>
-          <legend>Voice (text to speech)</legend>
+          <legend>{{ 'wizard.voice' | translate }}</legend>
           @if (voiceEngine() === 'omnivoice') {
             <p class="hint">
-              Choose a designed voice for OmniVoice. OmniVoice is multilingual, so these
-              work for {{ targetLanguageLabel() }} (and any language); they ship with the
-              engine pack — if it isn't installed yet, you'll be prompted to install it
-              when the dub starts.
+              {{ 'wizard.voice-omni' | translate: { lang: targetLanguageLabel() } }}
             </p>
           } @else if (voiceEngine() !== 'piper') {
             <p class="hint">
-              Choose a VieNeu voice for {{ targetLanguageLabel() }}. These ship with the
-              VieNeu engine pack — if it isn't installed yet, you'll be prompted to
-              install it when the dub starts.
+              {{ 'wizard.voice-vieneu' | translate: { lang: targetLanguageLabel() } }}
             </p>
           } @else {
             <p class="hint">
-              Choose the Piper voice for {{ targetLanguageLabel() }}. Any voice not yet
-              on this machine is downloaded automatically when you select it.
+              {{ 'wizard.voice-piper' | translate: { lang: targetLanguageLabel() } }}
             </p>
           }
           @if (voicesLoading()) {
-            <p class="muted">Loading voices for {{ targetLanguageLabel() }}…</p>
+            <p class="muted">{{ 'wizard.voice-loading' | translate: { lang: targetLanguageLabel() } }}</p>
           } @else if (availableVoices().length > 0) {
             <div class="field">
-              <label for="ttsVoice">Voice</label>
+              <label for="ttsVoice">{{ 'wizard.voice-label' | translate }}</label>
               <select
                 id="ttsVoice"
                 name="ttsVoice"
@@ -467,10 +444,10 @@
               >
                 @for (v of availableVoices(); track v.id) {
                   <option [value]="v.id">
-                    {{ v.label }}{{ v.recommended ? ' — recommended' : '' }}{{
+                    {{ v.label }}{{ v.recommended ? ('wizard.voice-recommended' | translate) : '' }}{{
                       voiceEngine() !== 'piper'
                         ? ''
-                        : ' — ' + (installedVoiceIds().has(v.id) ? 'installed' : '≈ ' + v.approxSizeMb + ' MB download')
+                        : ' — ' + (installedVoiceIds().has(v.id) ? ('wizard.voice-installed' | translate) : ('wizard.voice-size' | translate: { size: v.approxSizeMb }))
                     }}
                   </option>
                 }
@@ -478,30 +455,24 @@
             </div>
             @if (voiceDownloading()) {
               <div class="badge" role="status" aria-live="polite">
-                ⬇ Downloading voice… {{ voiceDownloadPercent() === null ? '' : voiceDownloadPercent() + '%' }}
+                {{ 'wizard.voice-downloading' | translate: { percent: voiceDownloadPercent() === null ? '' : voiceDownloadPercent() + '%' } }}
               </div>
             } @else if (selectedVoiceNeedsDownload()) {
               <p class="hint">
-                This voice isn't installed yet — it downloads automatically when the
-                dub starts (or pick it again to fetch it now).
+                {{ 'wizard.voice-needs-download' | translate }}
               </p>
             }
           } @else if (voiceEngine() === 'omnivoice') {
             <p class="muted">
-              Couldn’t load the OmniVoice voices — the local services may still be
-              starting. They’ll be available once the engine is ready.
+              {{ 'wizard.voice-omni-fail' | translate }}
             </p>
           } @else if (voiceEngine() !== 'piper') {
             <p class="muted">
-              VieNeu currently provides Vietnamese voices only. For
-              {{ targetLanguageLabel() }}, pick Piper or a cloud provider in
-              “Processing engines” above.
+              {{ 'wizard.voice-vieneu-vi-only' | translate: { lang: targetLanguageLabel() } }}
             </p>
           } @else {
             <p class="muted">
-              Piper has no prebuilt voice for {{ targetLanguageLabel() }} yet — dubbing
-              will fall back to an available voice. To get a natural voice, switch
-              Text to speech to a cloud provider in “Processing engines” above.
+              {{ 'wizard.voice-piper-none' | translate: { lang: targetLanguageLabel() } }}
             </p>
           }
         </fieldset>
@@ -509,16 +480,16 @@
 
       <div class="row row-between">
         @if (busy()) {
-          <vd-busy-indicator [active]="true" label="Creating project (copying the video)…" />
+          <vd-busy-indicator [active]="true" [label]="'wizard.creating-label' | translate" />
         } @else {
-          <span class="hint">A workspace is created when you continue.</span>
+          <span class="hint">{{ 'wizard.workspace-note' | translate }}</span>
         }
         <button
           type="submit"
           class="btn btn-primary"
           [disabled]="!step1Valid() || busy() || voiceDownloading()"
         >
-          {{ busy() ? 'Creating…' : voiceDownloading() ? 'Downloading voice…' : 'Continue →' }}
+          {{ (busy() ? 'wizard.creating' : voiceDownloading() ? 'wizard.downloading-voice' : 'wizard.continue') | translate }}
         </button>
       </div>
     </form>
@@ -527,73 +498,70 @@
   <!-- ============================ STEP 2 ============================ -->
   @if (step() === 2) {
     <div class="card stack">
-      <h2>Review media</h2>
+      <h2>{{ 'wizard.review-media' | translate }}</h2>
 
       @if (mediaInfo(); as info) {
         @if (noAudioWarning()) {
           <div class="badge badge-warning audio-warn" role="alert">
-            ⚠ This file has no audio stream — there is nothing to transcribe or
-            dub. Pick a different source.
+            {{ 'wizard.no-audio-warn' | translate }}
           </div>
         }
         <dl class="media-grid">
-          <dt>Duration</dt>
+          <dt>{{ 'wizard.duration' | translate }}</dt>
           <dd>{{ formatDuration(info.durationMs) }}</dd>
 
-          <dt>Container</dt>
+          <dt>{{ 'wizard.container' | translate }}</dt>
           <dd>{{ info.container }}</dd>
 
-          <dt>Size</dt>
+          <dt>{{ 'wizard.size' | translate }}</dt>
           <dd>{{ formatBytes(info.sizeBytes) }}</dd>
 
-          <dt>Resolution</dt>
+          <dt>{{ 'wizard.resolution' | translate }}</dt>
           <dd>{{ resolutionLabel(info) }}</dd>
 
-          <dt>Video codec</dt>
+          <dt>{{ 'wizard.video-codec' | translate }}</dt>
           <dd class="mono">{{ videoCodecLabel(info) }}</dd>
 
-          <dt>Audio</dt>
+          <dt>{{ 'wizard.audio' | translate }}</dt>
           <dd class="mono">{{ audioCodecLabel(info) }}</dd>
         </dl>
       } @else {
         <p class="muted">
-          Media could not be probed automatically. You can still start — the
-          pipeline probes the file as its first step.
+          {{ 'wizard.probe-failed' | translate }}
         </p>
       }
 
       <fieldset>
-        <legend>Output folder</legend>
+        <legend>{{ 'wizard.output-folder' | translate }}</legend>
         <input
           type="text"
           [ngModel]="outputDir()"
           (ngModelChange)="outputDir.set($event)"
           name="outputDir"
-          aria-label="Output folder"
-          placeholder="(defaults to the project workspace render/ folder)"
+          [attr.aria-label]="'wizard.output-folder' | translate"
+          [placeholder]="'wizard.output-folder-ph' | translate"
         />
         <p class="hint">
-          Final video and any sidecar subtitles are written here.
+          {{ 'wizard.output-folder-hint' | translate }}
         </p>
       </fieldset>
 
       @if (preparingModels()) {
         <div class="stack">
           <p class="hint">
-            Downloading the AI models for your selected languages — <strong>Start</strong>
-            unlocks once they're ready (this continues in the background).
+            {{ 'wizard.preparing-hint' | translate }}
           </p>
           @if (setupEvents.items().length > 0) {
             <vd-download-progress-list [items]="setupEvents.items()" />
           } @else {
-            <vd-busy-indicator [active]="true" label="Preparing models…" />
+            <vd-busy-indicator [active]="true" [label]="'wizard.preparing-label' | translate" />
           }
         </div>
       }
 
       <div class="row row-between">
         <button type="button" class="btn" (click)="backToStep1()" [disabled]="busy()">
-          ← Back
+          {{ 'wizard.back' | translate }}
         </button>
         <button
           type="button"
@@ -601,7 +569,7 @@
           (click)="start()"
           [disabled]="busy() || ollamaPulling() || preparingModels()"
         >
-          {{ busy() ? 'Starting…' : preparingModels() ? 'Preparing models…' : 'Start dubbing ▶' }}
+          {{ (busy() ? 'wizard.starting' : preparingModels() ? 'wizard.preparing-models' : 'wizard.start') | translate }}
         </button>
         @if (ollamaPullAction(); as pullModel) {
           <button
@@ -609,9 +577,9 @@
             class="btn"
             (click)="pullOllamaAndRetry(pullModel)"
             [disabled]="ollamaPulling()"
-            title="Download the local translation model on demand, then start"
+            [title]="'wizard.pull-title' | translate"
           >
-            {{ ollamaPulling() ? 'Pulling… ' + ollamaPullPercent() + '%' : 'Pull “' + pullModel + '” & start ▶' }}
+            {{ ollamaPulling() ? ('wizard.pulling' | translate: { percent: ollamaPullPercent() }) : ('wizard.pull-start' | translate: { model: pullModel }) }}
           </button>
         }
       </div>

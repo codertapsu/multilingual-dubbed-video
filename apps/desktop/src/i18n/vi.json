@@ -76,7 +76,7 @@
     "reveal": "Mở thư mục",
     "another": "Tải video khác",
     "respect-notice": "Chỉ tải những video mà bạn có quyền sử dụng, và nhớ tôn trọng công sức của người đăng.",
-    "quality-note": "Bilibili chỉ cho phép tải ở chất lượng tiêu chuẩn (khoảng 480p) khi không đăng nhập. Video vẫn dùng lồng tiếng tốt, nhưng nếu bạn cần bản nét hơn thì nên tải thủ công.",
+    "quality-note": "Khi chưa đăng nhập, Bilibili cho tải tối đa khoảng 720p. Nếu bạn thêm cookie tài khoản ở mục bên dưới thì có thể tải bản nét hơn.",
     "quality-label": "Chất lượng",
     "session": {
       "heading": "Tài khoản nguồn (không bắt buộc)",

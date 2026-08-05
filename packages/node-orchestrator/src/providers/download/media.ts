@@ -107,6 +107,68 @@ async function merge(ffmpeg: string, videoPath: string, audioPath: string, outPa
   });
 }
 
+/**
+ * Confirm the finished file is actually usable, not merely present.
+ *
+ * ffmpeg exiting 0 is NOT proof the output is sound: a stream copy into a
+ * container that cannot carry the source codec can yield a file with a broken
+ * or absent audio track and still report success. For a general downloader
+ * that is a nuisance; here the file is the INPUT to a dubbing pipeline, so a
+ * missing audio track surfaces much later as "no audio to transcribe" — an
+ * error that points at the wrong step and looks like a bug in the dub.
+ *
+ * Checking here costs one cheap ffprobe and reports the problem where it was
+ * caused.
+ */
+async function verifyPlayable(
+  ffprobePath: string,
+  filePath: string,
+  expectAudio: boolean,
+): Promise<void> {
+  const probe = await new Promise<{ code: number | null; out: string }>((resolve) => {
+    const proc = spawn(
+      ffprobePath,
+      ['-v', 'error', '-show_entries', 'stream=codec_type', '-show_entries', 'format=duration',
+       '-of', 'default=noprint_wrappers=1', filePath],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    let out = '';
+    proc.stdout?.on('data', (d: Buffer) => {
+      out += d.toString();
+    });
+    // A missing ffprobe must not fail a download that is probably fine — this
+    // is a safety net, not a gate. Report it as unverified rather than broken.
+    proc.on('error', () => resolve({ code: null, out: '' }));
+    proc.on('exit', (code) => resolve({ code, out }));
+  });
+
+  if (probe.code === null) return; // ffprobe unavailable; nothing to conclude
+  if (probe.code !== 0) {
+    throw new AppErrorException('UNSUPPORTED_MEDIA', 'The downloaded file could not be read back.', {
+      remediation: 'Try the download again, or pick a different quality.',
+    });
+  }
+
+  const hasVideo = /codec_type=video/.test(probe.out);
+  const hasAudio = /codec_type=audio/.test(probe.out);
+  const duration = Number(/duration=([\d.]+)/.exec(probe.out)?.[1] ?? '0');
+
+  if (!hasVideo || duration <= 0) {
+    throw new AppErrorException('UNSUPPORTED_MEDIA', 'The downloaded file has no usable video.', {
+      cause: probe.out.trim().slice(0, 200),
+      remediation: 'Try the download again, or pick a different quality.',
+    });
+  }
+  if (expectAudio && !hasAudio) {
+    throw new AppErrorException('NO_AUDIO_STREAM', 'The downloaded file ended up with no audio.', {
+      cause: probe.out.trim().slice(0, 200),
+      remediation:
+        'The video and audio streams did not combine correctly. Try again, or pick a different ' +
+        'quality — dubbing needs an audio track to transcribe.',
+    });
+  }
+}
+
 export interface DownloadRequest {
   videoUrl: string;
   /**
@@ -123,6 +185,8 @@ export interface DownloadRequest {
   baseName: string;
   /** ffmpeg binary path (the app bundles one). */
   ffmpegPath: string;
+  /** ffprobe binary path, for the post-download sanity check. */
+  ffprobePath?: string;
   /** Headers the fetch must carry (Referer, Cookie, …), from the provider. */
   headers: Record<string, string>;
 }
@@ -156,7 +220,13 @@ export async function downloadMedia(req: DownloadRequest, onProgress: ProgressFn
 
     if (muxed) {
       await fsp.rename(videoTmp, outPath);
-      onProgress({ phase: 'merging', percent: 100 });
+      // A single served file is expected to carry its own audio; if it does
+      // not, that is worth knowing now rather than at transcription.
+      await verifyPlayable(req.ffprobePath ?? 'ffprobe', outPath, true);
+      // Stay on the 'video' phase: nothing is being combined, and reporting a
+      // merge that is not happening is a small lie the UI would faithfully
+      // render as "Combining video and audio…".
+      onProgress({ phase: 'video', percent: 100 });
       return outPath;
     }
 
@@ -167,6 +237,7 @@ export async function downloadMedia(req: DownloadRequest, onProgress: ProgressFn
 
     onProgress({ phase: 'merging', percent: 95 });
     await merge(req.ffmpegPath, videoTmp, audioTmp, outPath);
+    await verifyPlayable(req.ffprobePath ?? 'ffprobe', outPath, true);
     onProgress({ phase: 'merging', percent: 100 });
     return outPath;
   } finally {

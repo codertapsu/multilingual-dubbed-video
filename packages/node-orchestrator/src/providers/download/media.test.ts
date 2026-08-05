@@ -44,6 +44,9 @@ describe('downloadMedia', () => {
         destDir: dir,
         baseName: 'muxed source',
         ffmpegPath: '/nonexistent/ffmpeg-must-not-run',
+        // Stub bytes are not real media; this test is about the download
+        // mechanics, so opt out of the playability check explicitly.
+        ffprobePath: '/nonexistent/ffprobe',
         headers: {},
       },
       (p) => progress.push(p),
@@ -55,6 +58,9 @@ describe('downloadMedia', () => {
     // the 85% reserved for the video half of an adaptive pair.
     expect(progress.at(-1)?.percent).toBe(100);
     expect(progress.some((p) => p.phase === 'audio')).toBe(false);
+    // And never claims to be merging: the UI renders that phase as
+    // "Combining video and audio…", which would be untrue here.
+    expect(progress.some((p) => p.phase === 'merging')).toBe(false);
   });
 
   it('leaves no .part files behind on the muxed path', async () => {
@@ -65,6 +71,7 @@ describe('downloadMedia', () => {
         destDir: dir,
         baseName: 'clean',
         ffmpegPath: '/nonexistent/ffmpeg',
+        ffprobePath: '/nonexistent/ffprobe',
         headers: {},
       },
       () => undefined,
@@ -84,6 +91,7 @@ describe('downloadMedia', () => {
         destDir: dir,
         baseName: 'hdrs',
         ffmpegPath: '/nonexistent/ffmpeg',
+        ffprobePath: '/nonexistent/ffprobe',
         headers: { Referer: 'https://example.invalid/', Cookie: 'SESSDATA=x' },
       },
       () => undefined,
@@ -111,6 +119,45 @@ describe('downloadMedia', () => {
     // An interrupted download otherwise leaves multi-hundred-megabyte .part
     // files in the user's folder with no indication of what they are.
     expect(await fsp.readdir(dir)).toEqual([]);
+  });
+});
+
+describe('post-download verification', () => {
+  it('rejects a file that is not readable media, even though the bytes arrived', async () => {
+    // The download "succeeded" — bytes were written — but the result is not a
+    // video. Catching it here beats discovering it at the transcribe step,
+    // where the error points at the wrong part of the app.
+    stubFetch('this is definitely not an mp4');
+    await expect(
+      downloadMedia(
+        {
+          videoUrl: 'https://example.invalid/whole.mp4',
+          destDir: dir,
+          baseName: 'not-a-video',
+          ffmpegPath: 'ffmpeg',
+          headers: {},
+        },
+        () => undefined,
+      ),
+    ).rejects.toThrow(/could not be read back|no usable video/);
+  });
+
+  it('stays silent when ffprobe is unavailable rather than failing the download', async () => {
+    // The check is a safety net, not a gate: a machine without ffprobe should
+    // still get its file.
+    stubFetch('bytes');
+    const out = await downloadMedia(
+      {
+        videoUrl: 'https://example.invalid/whole.mp4',
+        destDir: dir,
+        baseName: 'unverified',
+        ffmpegPath: 'ffmpeg',
+        ffprobePath: '/nonexistent/ffprobe',
+        headers: {},
+      },
+      () => undefined,
+    );
+    expect(await fsp.readFile(out, 'utf8')).toBe('bytes');
   });
 });
 

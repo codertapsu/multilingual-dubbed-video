@@ -74,6 +74,32 @@ describe('Bilibili input parsing', () => {
     expect(withTrailer).toMatchObject({ bvid: 'BV1GJ411x7h7' });
   });
 
+  it('accepts pages that carry the video in the query, not the path', () => {
+    // Campaign/festival pages and list pages are ordinary free videos wearing a
+    // different URL shape. Rejecting them looks like "this video is
+    // unsupported" when it is merely a link we did not recognise.
+    expect(parseBilibiliInput('https://www.bilibili.com/festival/2024ncdyj?bvid=BV1GJ411x7h7')).toEqual(
+      { kind: 'ref', bvid: 'BV1GJ411x7h7', page: 1 },
+    );
+    expect(parseBilibiliInput('https://www.bilibili.com/list/watchlater?bvid=BV1GJ411x7h7&p=3')).toEqual(
+      { kind: 'ref', bvid: 'BV1GJ411x7h7', page: 3 },
+    );
+    expect(parseBilibiliInput('https://www.bilibili.com/festival/x?aid=170001')).toEqual({
+      kind: 'ref',
+      aid: 170001,
+      page: 1,
+    });
+  });
+
+  it('does not accept a malformed bvid from the query', () => {
+    // The query is attacker-adjacent free text; it gets the same length anchor
+    // the path does, or a junk id travels to the API as though it were real.
+    expect(parseBilibiliInput('https://www.bilibili.com/festival/x?bvid=NOTAVIDEO')).toBeNull();
+    expect(parseBilibiliInput('https://www.bilibili.com/festival/x?bvid=BV1GJ411x7h7EXTRA')).toBeNull();
+    // …and the host check still applies to query-carried ids.
+    expect(parseBilibiliInput('https://evil.example.com/x?bvid=BV1GJ411x7h7')).toBeNull();
+  });
+
   it('looksLikeBilibili mirrors the parser', () => {
     expect(looksLikeBilibili('BV1GJ411x7h7')).toBe(true);
     expect(looksLikeBilibili('https://example.com')).toBe(false);

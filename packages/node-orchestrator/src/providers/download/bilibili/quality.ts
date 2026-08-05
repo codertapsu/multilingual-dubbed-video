@@ -87,6 +87,34 @@ export function qualityLabel(qn: number): string {
 }
 
 /**
+ * Approximate pixel height for a `qn`.
+ *
+ * Needed because the legacy single-file response reports only a `qn` and no
+ * dimensions, while DASH reports real heights — and the two have to be ranked
+ * against each other to decide which path actually offers more. Approximate is
+ * fine for ordering; the exact height of the chosen stream is reported
+ * separately when the response carries one.
+ */
+const QUALITY_HEIGHTS: Record<number, number> = {
+  127: 4320,
+  126: 2160,
+  125: 2160,
+  120: 2160,
+  116: 1080,
+  112: 1080,
+  80: 1080,
+  74: 720,
+  64: 720,
+  32: 480,
+  16: 360,
+  6: 240,
+};
+
+export function qualityHeight(qn: number): number {
+  return QUALITY_HEIGHTS[qn] ?? 0;
+}
+
+/**
  * The qualities actually on offer, best first.
  *
  * Derived from the DASH streams themselves, NOT from the response's

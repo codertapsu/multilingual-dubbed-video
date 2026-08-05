@@ -2,6 +2,7 @@ import { AppErrorException } from '@videodubber/shared';
 
 import {
   checkSession,
+  fetchProgressiveStream,
   fetchStreams,
   fetchVideoInfo,
   mediaHeaders,
@@ -9,13 +10,15 @@ import {
   setSessionCookie,
   type FetchLike,
 } from './client.js';
-import { qualityLabel } from './quality.js';
+import type { BilibiliRef } from './url.js';
+import { qualityHeight, qualityLabel } from './quality.js';
 import { BilibiliSessionStore } from './session.js';
 import { looksLikeBilibili } from './url.js';
 import type {
   PreparedDownload,
   ResolvedSourceVideo,
   SourceProvider,
+  SourceQuality,
   SourceVideoPart,
 } from '../types.js';
 
@@ -32,6 +35,34 @@ import type {
 export const BILIBILI_PROVIDER_ID = 'bilibili';
 
 /**
+ * Bilibili serves the same video through two different pipes, gated
+ * differently, so both are offered and the better one wins per quality.
+ *
+ *   dash — adaptive: separate video+audio, needs a signed request and an
+ *          ffmpeg merge. Richest at the top end (1080p+, 4K) but, measured on
+ *          current videos, capped at 480p for a logged-out viewer.
+ *   prog — legacy single file: unsigned, already muxed, no merge. Serves 720p
+ *          to that same logged-out viewer.
+ *
+ * The quality id carries which pipe it came from, which is exactly what the
+ * contract's opaque ids are for — nothing above the provider has to know that
+ * Bilibili has two.
+ */
+type StreamPath = 'dash' | 'prog';
+
+function encodeQualityId(pathKind: StreamPath, qn: number): string {
+  return `${pathKind}:${qn}`;
+}
+
+function decodeQualityId(id: string | undefined): { pathKind?: StreamPath; qn?: number } {
+  if (!id) return {};
+  const [kind, raw] = id.split(':');
+  const qn = Number(raw);
+  if ((kind !== 'dash' && kind !== 'prog') || !Number.isFinite(qn)) return {};
+  return { pathKind: kind, qn };
+}
+
+/**
  * Build the output filename stem for one part.
  *
  * Single-part videos are just the title. Multi-part ones need a distinguishing
@@ -46,6 +77,51 @@ export function partBaseName(
   if (info.parts.length <= 1) return info.title;
   const suffix = part.title && part.title !== info.title ? ` ${part.title}` : '';
   return `${info.title} - P${part.page}${suffix}`;
+}
+
+/**
+ * Everything both pipes can deliver for one part, best first.
+ *
+ * Deduplicated by height with the progressive path winning ties: at equal
+ * resolution it is strictly cheaper (one request, no merge) and avoids a remux
+ * of an already-correct container.
+ */
+async function probeQualities(
+  fetchImpl: FetchLike,
+  ref: BilibiliRef,
+  cid: number,
+): Promise<SourceQuality[]> {
+  // Independent probes: one path failing must not hide the other, which is the
+  // whole point of offering both.
+  const [dash, prog] = await Promise.allSettled([
+    fetchStreams(fetchImpl, ref, cid),
+    fetchProgressiveStream(fetchImpl, ref, cid),
+  ]);
+
+  const byHeight = new Map<number, SourceQuality>();
+
+  if (prog.status === 'fulfilled' && prog.value) {
+    const h = qualityHeight(prog.value.qn);
+    byHeight.set(h, {
+      id: encodeQualityId('prog', prog.value.qn),
+      label: qualityLabel(prog.value.qn),
+      ...(h ? { heightPx: h } : {}),
+    });
+  }
+
+  if (dash.status === 'fulfilled') {
+    for (const q of dash.value.qualities) {
+      const h = q.heightPx ?? qualityHeight(q.qn);
+      if (byHeight.has(h)) continue;
+      byHeight.set(h, {
+        id: encodeQualityId('dash', q.qn),
+        label: q.label,
+        ...(h ? { heightPx: h } : {}),
+      });
+    }
+  }
+
+  return [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([, q]) => q);
 }
 
 export interface BilibiliProviderDeps {
@@ -88,20 +164,8 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
       // Probe the requested part for what is actually on offer. A failure here
       // must not sink the whole preview: the title and part list are still
       // useful, and the download falls back to the best available anyway.
-      let qualities: ResolvedSourceVideo['qualities'] = [];
       const probe = parts.find((p) => p.page === ref.page) ?? parts[0];
-      if (probe) {
-        try {
-          const streams = await fetchStreams(fetchImpl, ref, Number(probe.id));
-          qualities = streams.qualities.map((q) => ({
-            id: String(q.qn),
-            label: q.label,
-            ...(q.heightPx ? { heightPx: q.heightPx } : {}),
-          }));
-        } catch {
-          /* leave empty; the UI hides the picker rather than lying */
-        }
-      }
+      const qualities = probe ? await probeQualities(fetchImpl, ref, Number(probe.id)) : [];
 
       return {
         providerId: BILIBILI_PROVIDER_ID,
@@ -123,21 +187,43 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
           remediation: 'Check the link opens a normal video page in a browser.',
         });
       }
+      const cid = Number(part.id);
+      const baseName = partBaseName({ title: info.title, parts }, part);
 
-      // An unparseable id would become NaN and silently request the wrong
-      // quality, so treat it as "no preference" instead.
-      const wantQn = qualityId !== undefined ? Number(qualityId) : undefined;
-      const streams = await fetchStreams(
-        fetchImpl,
-        ref,
-        Number(part.id),
-        Number.isFinite(wantQn) ? wantQn : undefined,
-      );
+      // No explicit choice means "best available", which requires knowing what
+      // both pipes offer — the adaptive one is not always the richer.
+      let { pathKind, qn } = decodeQualityId(qualityId);
+      if (!pathKind) {
+        const best = (await probeQualities(fetchImpl, ref, cid))[0];
+        ({ pathKind, qn } = decodeQualityId(best?.id));
+      }
 
+      if (pathKind === 'prog') {
+        // Catch as well as null-check: this endpoint REJECTS (non-zero envelope
+        // code) for some videos rather than returning an empty result, and
+        // either way the right answer is to try the other pipe, not to fail.
+        const prog = await fetchProgressiveStream(fetchImpl, ref, cid, qn ?? 80).catch(
+          () => undefined,
+        );
+        if (prog) {
+          // No audioUrl: the file is already muxed, so the download skips the
+          // ffmpeg step entirely rather than remuxing a complete file.
+          return {
+            videoUrl: prog.url,
+            baseName,
+            title: info.title,
+            headers: mediaHeaders(),
+          };
+        }
+        // Fall through to DASH rather than failing: the legacy path can vanish
+        // for an individual video, and a working lower quality beats an error.
+      }
+
+      const streams = await fetchStreams(fetchImpl, ref, cid, qn);
       return {
         videoUrl: streams.videoUrl,
         audioUrl: streams.audioUrl,
-        baseName: partBaseName({ title: info.title, parts }, part),
+        baseName,
         title: info.title,
         headers: mediaHeaders(),
       };

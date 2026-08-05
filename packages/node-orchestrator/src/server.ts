@@ -526,6 +526,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
             bus: downloadBus,
             destDir: defaultDownloadDir(config.configDir),
             ffmpegPath: config.ffmpegPath ?? 'ffmpeg',
+            ffprobePath: config.ffprobePath ?? 'ffprobe',
             providers: downloadProviders,
           },
           randomUUID(),

@@ -89,6 +89,8 @@ export interface DownloadDeps {
   /** Where finished files land. */
   destDir: string;
   ffmpegPath: string;
+  /** ffprobe binary path, for the post-download sanity check. */
+  ffprobePath?: string;
   /** The providers this build carries. */
   providers: readonly SourceProvider[];
 }
@@ -128,6 +130,7 @@ export function startDownload(
           destDir: deps.destDir,
           baseName: prepared.baseName,
           ffmpegPath: deps.ffmpegPath,
+          ...(deps.ffprobePath ? { ffprobePath: deps.ffprobePath } : {}),
           headers: prepared.headers,
         },
         (p) => deps.bus.emit({ type: 'progress', jobId, phase: p.phase, percent: p.percent }),

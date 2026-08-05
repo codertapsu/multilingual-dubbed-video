@@ -281,6 +281,62 @@ export function _resetWbiKeyCache(): void {
   cachedKey = null;
 }
 
+/** A single already-muxed file from the legacy player endpoint. */
+export interface BilibiliProgressiveStream {
+  url: string;
+  /** The `qn` the server actually served. */
+  qn: number;
+  /** Total bytes, when the response reported them. */
+  sizeBytes?: number;
+}
+
+/**
+ * Fetch the legacy single-file ("durl") stream for one part.
+ *
+ * Worth having ALONGSIDE the DASH path rather than instead of it, because the
+ * two are gated differently. Measured on five current videos, a logged-out
+ * client is served 480p on DASH but **720p** here — the adaptive path is the
+ * more restricted one for anonymous viewers, which is the opposite of what you
+ * would guess. The file also arrives already muxed, so it needs no ffmpeg step
+ * at all.
+ *
+ * Deliberately unsigned: this endpoint is not a `wbi` one and takes no
+ * signature. `fnval=0` is what selects the legacy response shape.
+ */
+export async function fetchProgressiveStream(
+  fetchImpl: FetchLike,
+  ref: BilibiliRef,
+  cid: number,
+  wantQn = 80,
+): Promise<BilibiliProgressiveStream | undefined> {
+  const params = new URLSearchParams({
+    otype: 'json',
+    fnver: '0',
+    fnval: '0',
+    qn: String(wantQn),
+    cid: String(cid),
+    ...(ref.bvid ? { bvid: ref.bvid } : { avid: String(ref.aid ?? 0) }),
+  });
+
+  const data = await callApi<{
+    quality?: number;
+    durl?: { url?: string; size?: number }[];
+  }>(fetchImpl, `${API}/x/player/playurl?${params.toString()}`);
+
+  // Multi-segment durl responses exist for very old uploads; joining them would
+  // need a concat step, so treat anything but a single segment as unavailable
+  // and let the DASH path handle it rather than silently downloading a fragment.
+  const parts = data.durl ?? [];
+  const only = parts.length === 1 ? parts[0] : undefined;
+  if (!only?.url || data.quality === undefined) return undefined;
+
+  return {
+    url: only.url,
+    qn: data.quality,
+    ...(only.size ? { sizeBytes: only.size } : {}),
+  };
+}
+
 /**
  * Pick the media streams for one part.
  *

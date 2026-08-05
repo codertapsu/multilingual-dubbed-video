@@ -195,9 +195,16 @@ The **Download source video** screen could not recognise what you pasted
 a full `bilibili.com/video/BV…` link, a `b23.tv` short link, and a bare `BV` id
 all work, but a search-results or user-profile page is not a video.
 
-**Downloads come back at ~480p.** That is the ceiling Bilibili serves to a
-logged-out client. VideoDubber never signs in on its own, so this is the
-default and it is a perfectly good dubbing source.
+**Downloads come back at ~720p.** That is the ceiling Bilibili serves a
+logged-out client, and VideoDubber never signs in on its own.
+
+Bilibili serves the same video through two pipes, gated differently, and the
+downloader offers both. The adaptive (DASH) pipe reaches 1080p+ and 4K but is
+capped at **480p** for anonymous viewers; the legacy single-file pipe serves
+**720p** to that same viewer and arrives already muxed, so it needs no ffmpeg
+step. The quality picker lists whatever each pipe can actually deliver and
+defaults to the best of the two — which, logged out, is the legacy one. If you
+add a session cookie the adaptive pipe overtakes it and is chosen instead.
 
 To raise it, paste your own `SESSDATA` cookie under **Download source video →
 Source account**. It lives on that screen rather than in Settings because it
@@ -212,6 +219,13 @@ overrides the stored file.
 An **expired** cookie does not produce an error; it silently drops you back to
 the anonymous ceiling while the settings screen still shows a saved value. Use
 the **Check** button there to see whether it is still live.
+
+**A download reports "no audio" or "could not be read back".** The finished
+file is checked with `ffprobe` before it is handed over, because `ffmpeg`
+exiting 0 is not proof a stream copy produced a sound file — a broken or absent
+audio track would otherwise surface much later as "no audio to transcribe",
+pointing at the wrong step. Retry, or pick a different quality. If `ffprobe` is
+missing the check is skipped rather than failing the download.
 
 **Adding another source (Douyin, …).** Downloads go through a provider
 registry: implement `SourceProvider`

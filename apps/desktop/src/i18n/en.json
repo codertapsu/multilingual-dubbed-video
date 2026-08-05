@@ -76,7 +76,7 @@
     "reveal": "Open folder",
     "another": "Download another",
     "respect-notice": "Only download videos you have the right to use, and please respect the people who made them.",
-    "quality-note": "Without an account Bilibili only serves standard quality (around 480p). That is fine for dubbing, but grab the file yourself if you need a sharper source.",
+    "quality-note": "Without an account Bilibili serves up to about 720p. Add a session cookie below to download sharper sources.",
     "quality-label": "Quality",
     "session": {
       "heading": "Source account (optional)",

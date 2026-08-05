@@ -81,6 +81,20 @@ export function parseBilibiliInput(input: string): BilibiliParse | null {
   const av = AV_RE.exec(url.pathname);
   if (av?.[1]) return { kind: 'ref', aid: Number(av[1]), page: pageFrom(url.searchParams) };
 
+  // Some Bilibili pages carry the video in the QUERY rather than the path:
+  // campaign/festival pages (`/festival/<name>?bvid=…`) and list pages
+  // (`/list/watchlater?bvid=…`) are ordinary free videos wearing a different
+  // URL. Reading `bvid` from the query covers those, and any future page shape
+  // that follows the same convention, without enumerating each one.
+  const queryBvid = url.searchParams.get('bvid');
+  if (queryBvid && new RegExp(`^${BV_RE.source}$`).test(queryBvid)) {
+    return { kind: 'ref', bvid: queryBvid, page: pageFrom(url.searchParams) };
+  }
+  const queryAid = url.searchParams.get('aid');
+  if (queryAid && /^\d{1,12}$/.test(queryAid)) {
+    return { kind: 'ref', aid: Number(queryAid), page: pageFrom(url.searchParams) };
+  }
+
   return null;
 }
 

@@ -189,6 +189,24 @@ The source video has no audio — see [`NO_AUDIO_STREAM`](#no_audio_stream).
 ### output not writable
 Fix permissions / disk space — see [`OUTPUT_NOT_WRITABLE`](#output_not_writable).
 
+### invalid video link
+The **Download source video** screen could not recognise what you pasted
+(`INVALID_VIDEO_LINK`). Copy the full address out of the browser address bar —
+a full `bilibili.com/video/BV…` link, a `b23.tv` short link, and a bare `BV` id
+all work, but a search-results or user-profile page is not a video.
+
+**Downloads come back at ~480p.** That is the ceiling Bilibili serves to a
+logged-out client, and VideoDubber never signs in. It is a perfectly good
+dubbing source; if you need a sharper master, fetch it yourself and pick it in
+the New project wizard.
+
+If the link *is* a video page and it still fails, the video itself may be
+private, removed, region-locked, or require an account: open it in a browser
+while logged out to check. The downloader only reaches what an anonymous
+visitor can already play, so anything paid or members-only is out of scope by
+design.
+
+
 ### worker timeout
 Heavy model or large file — see [`WORKER_TIMEOUT`](#worker_timeout). Prefer a smaller
 whisper model on CPU-only machines.

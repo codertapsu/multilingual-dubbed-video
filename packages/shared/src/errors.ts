@@ -25,6 +25,7 @@ export type ErrorCode =
   | 'UNSUPPORTED_MEDIA'
   | 'NO_AUDIO_STREAM'
   | 'INVALID_LANGUAGE'
+  | 'INVALID_VIDEO_LINK'
   | 'OUTPUT_NOT_WRITABLE'
   | 'WORKER_UNAVAILABLE'
   | 'WORKER_TIMEOUT'
@@ -115,6 +116,11 @@ export const REMEDIATIONS: Record<ErrorCode, { remediation: string; docsRef: str
     remediation:
       'The provided language code is invalid. Use a BCP-47 code such as "en", "en-US", or "vi-VN".',
     docsRef: 'docs/TROUBLESHOOTING.md#invalid-language',
+  },
+  INVALID_VIDEO_LINK: {
+    remediation:
+      'That link could not be recognised as a downloadable video. Paste the full address from the browser address bar.',
+    docsRef: 'docs/TROUBLESHOOTING.md#invalid-video-link',
   },
   OUTPUT_NOT_WRITABLE: {
     remediation:

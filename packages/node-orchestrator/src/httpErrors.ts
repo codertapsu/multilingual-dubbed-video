@@ -17,6 +17,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   UNSUPPORTED_MEDIA: 415, // Unsupported Media Type
   NO_AUDIO_STREAM: 422, // Unprocessable Entity
   INVALID_LANGUAGE: 400,
+  INVALID_VIDEO_LINK: 400, // the pasted link is not a recognisable video
   OUTPUT_NOT_WRITABLE: 500,
   WORKER_UNAVAILABLE: 503,
   WORKER_TIMEOUT: 504,

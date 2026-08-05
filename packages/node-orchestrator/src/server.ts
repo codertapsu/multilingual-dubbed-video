@@ -8,6 +8,7 @@
  * `createServer()` is exported for tests/embedding; a main guard starts the
  * server when this file is run directly.
  */
+import { randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { extname, resolve as resolvePath, sep } from 'node:path';
@@ -68,6 +69,13 @@ import { SetupEventBus } from './setup/setupBus.js';
 import { SetupInstaller } from './setup/installer.js';
 import { SetupStore } from './setup/setupStore.js';
 import { detectInstalledModels } from './setup/detectInstalledModels.js';
+import {
+  DownloadBus,
+  defaultDownloadDir,
+  resolveVideo,
+  startDownload,
+} from './providers/download/downloadService.js';
+import { createProviders, describeProviders } from './providers/download/registry.js';
 
 /** Ollama's OpenAI-compatible base URL (for the prerequisites probe). */
 const OLLAMA_URL = process.env.OLLAMA_URL?.trim() || 'http://127.0.0.1:11434/v1';
@@ -208,6 +216,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // deps) so the run gate can read the installed-model inventory from setupStore.
   const setupStore = options.setupStore ?? new SetupStore(config.configDir);
   const setupBus = options.setupBus ?? new SetupEventBus();
+  // Source-video downloader (experimental): its own bus, so a long download
+  // never interleaves with first-run setup progress on the same stream.
+  const downloadBus = new DownloadBus();
+  // The source providers this build carries.
+  const downloadProviders = createProviders(config.configDir);
   const installer =
     options.installer ?? new SetupInstaller({ config, store: setupStore, bus: setupBus });
 
@@ -456,6 +469,90 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     const unsubscribe = setupBus.subscribe((event) => write(event));
 
     // Heartbeat comment keeps proxies/connections alive.
+    const heartbeat = setInterval(() => {
+      reply.raw.write(': ping\n\n');
+    }, 15000);
+
+    const cleanup = (): void => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
+
+    req.raw.on('close', cleanup);
+    req.raw.on('error', cleanup);
+  });
+
+  // --- Source-video downloader (experimental) --------------------------------
+  // Fetch a video the user intends to dub. Resolve is separate from download so
+  // the UI can show a preview card and a part picker before committing to
+  // hundreds of megabytes.
+
+  app.post(
+    '/download/resolve',
+    async (req: FastifyRequest<{ Body: { input?: string } }>, reply) => {
+      try {
+        return await resolveVideo(req.body?.input ?? '', {
+          bus: downloadBus,
+          destDir: defaultDownloadDir(config.configDir),
+          ffmpegPath: config.ffmpegPath ?? 'ffmpeg',
+          providers: downloadProviders,
+        });
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  app.post(
+    '/download/start',
+    async (
+      req: FastifyRequest<{ Body: { input?: string; page?: number; qualityId?: string } }>,
+      reply,
+    ) => {
+      try {
+        // 202 + a job id, not a held-open request: a download runs for minutes,
+        // and progress is observed on GET /download/events.
+        const jobId = startDownload(
+          req.body?.input ?? '',
+          req.body?.page ?? 1,
+          {
+            bus: downloadBus,
+            destDir: defaultDownloadDir(config.configDir),
+            ffmpegPath: config.ffmpegPath ?? 'ffmpeg',
+            providers: downloadProviders,
+          },
+          randomUUID(),
+          req.body?.qualityId,
+        );
+        return reply.status(202).send({ jobId });
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  app.get('/download/providers', async (_req, reply) => {
+    try {
+      return describeProviders(downloadProviders);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/download/events', (req, reply) => {
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+    reply.hijack();
+
+    const write = (payload: unknown): void => {
+      reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+
+    const unsubscribe = downloadBus.subscribe((event) => write(event));
     const heartbeat = setInterval(() => {
       reply.raw.write(': ping\n\n');
     }, 15000);

@@ -27,7 +27,7 @@ import type {
   PipelineStepId,
   PipelineStepState,
 } from '../../core/models';
-import { TranslatePipe } from '../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 
 /** How often to re-probe the bundled services' health while on this screen. */
 const WORKERS_HEALTH_POLL_MS = 5000;
@@ -55,6 +55,7 @@ export class ProcessingComponent implements OnInit, OnDestroy {
   readonly id = input.required<string>();
 
   private readonly ipc = inject(IpcService);
+  private readonly translate = inject(TranslateService);
   private readonly router = inject(Router);
   protected readonly store = inject(ProjectStore);
   protected readonly events = inject(PipelineEventsService);
@@ -73,9 +74,9 @@ export class ProcessingComponent implements OnInit, OnDestroy {
     const h = this.workersHealth();
     if (!h) return [];
     const entries: [string, boolean][] = [
-      ['Speech-to-text', h.stt.available],
-      ['Translation', h.translation.available],
-      ['Text-to-speech', h.tts.available],
+      [this.translate.instant('misc.phase-stt'), h.stt.available],
+      [this.translate.instant('misc.phase-translation'), h.translation.available],
+      [this.translate.instant('misc.phase-tts'), h.tts.available],
       ['FFmpeg', h.ffmpeg.available],
     ];
     return entries.filter(([, ok]) => !ok).map(([name]) => name);

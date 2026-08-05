@@ -33,6 +33,7 @@ import type {
   CloudServiceId,
   CredentialTestResult,
   ProviderDefaults,
+  ProviderInfo,
   ProvidersResponse,
   SystemProfileResponse,
   UpdateInfo,
@@ -58,9 +59,10 @@ type CheckOutcome = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error';
 
 /** Display metadata per cloud service. */
 const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> = {
-  openai: { label: 'OpenAI (ChatGPT)', keyHint: 'sk-…  — used by cloud STT, translation and TTS' },
-  anthropic: { label: 'Anthropic (Claude)', keyHint: 'sk-ant-…  — used by cloud translation' },
-  gemini: { label: 'Google Gemini', keyHint: 'AIza…  — used by cloud translation' },
+  // Product names stay as they are; only the hint is translated (it is a key).
+  openai: { label: 'OpenAI (ChatGPT)', keyHint: 'svc.openai-hint' },
+  anthropic: { label: 'Anthropic (Claude)', keyHint: 'svc.anthropic-hint' },
+  gemini: { label: 'Google Gemini', keyHint: 'svc.gemini-hint' },
 };
 
 /**
@@ -106,16 +108,17 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected readonly defaultsSaved = signal(false);
 
   /** Whisper model choices for the default-model picker. */
+  /** `label` is a TRANSLATION KEY — the template pipes it. */
   protected readonly whisperModels: ReadonlyArray<{ id: string; label: string }> = [
-    { id: 'tiny', label: 'Tiny — fastest, lowest accuracy (~75 MB)' },
-    { id: 'base', label: 'Base — balanced; good on 8 GB (~145 MB)' },
-    { id: 'small', label: 'Small — better accuracy (~480 MB)' },
-    { id: 'large-v3-turbo', label: 'Large v3 Turbo — recommended: near-best, 6-8x faster (~1.6 GB)' },
-    { id: 'distil-large-v3.5', label: 'Distil Large v3.5 — English only, fastest large (~760 MB)' },
-    { id: 'medium', label: 'Medium — high accuracy (~1.5 GB)' },
-    { id: 'large-v3', label: 'Large v3 — best accuracy, slow on CPU (~3 GB)' },
-    { id: 'phowhisper-medium', label: 'PhoWhisper Medium — best for Vietnamese-source audio' },
-    { id: 'phowhisper-large', label: 'PhoWhisper Large — Vietnamese-source, highest accuracy' },
+    { id: 'tiny', label: 'whisper.tiny' },
+    { id: 'base', label: 'whisper.base' },
+    { id: 'small', label: 'whisper.small' },
+    { id: 'large-v3-turbo', label: 'whisper.large-v3-turbo' },
+    { id: 'distil-large-v3.5', label: 'whisper.distil-large-v3.5' },
+    { id: 'medium', label: 'whisper.medium' },
+    { id: 'large-v3', label: 'whisper.large-v3' },
+    { id: 'phowhisper-medium', label: 'whisper.phowhisper-medium' },
+    { id: 'phowhisper-large', label: 'whisper.phowhisper-large' },
   ];
 
   // Per-service key editing state.
@@ -255,9 +258,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
     const key = this.pairKey(pair);
     if (this.argosBusy()) return;
     const ok = await this.confirmSvc.confirm({
-      title: 'Remove translation pack?',
-      message: `Remove the ${this.langName(pair.from)} → ${this.langName(pair.to)} Argos pack? You can re-install it anytime.`,
-      confirmLabel: 'Remove',
+      title: this.translate.instant('confirm.remove-argos-title'),
+      message: this.translate.instant('confirm.remove-argos-body', {
+        from: this.langName(pair.from),
+        to: this.langName(pair.to),
+      }),
+      confirmLabel: this.translate.instant('confirm.remove'),
     });
     if (!ok) return;
     this.argosBusy.set(key);
@@ -406,7 +412,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     const gb = pack.minRamMb ? Math.round(pack.minRamMb / 1024) : 0;
     return gb > 0
       ? `Needs ~${gb} GB RAM — may run slowly on this machine`
-      : 'May be heavy for this machine — may run slowly';
+      : this.translate.instant('misc.heavy-for-machine');
   }
 
   protected engineProgressFor(packId: string): { percent: number | null; message: string } | undefined {
@@ -454,10 +460,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.engineProgress.set({});
         this.error.set({
           code: 'WORKER_UNAVAILABLE',
-          message: 'Lost connection to the engine install stream.',
+          message: this.translate.instant('misc.engine-stream-lost'),
           remediation:
-            'The backend connection dropped. Try the install again; if it keeps failing, quit and reopen ' +
-            'VideoDubber (in a dev build, restart the local services).',
+            this.translate.instant('misc.engine-stream-lost-fix'),
         });
         this.engineEvents = null;
       }
@@ -484,9 +489,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected async uninstallEngine(packId: string): Promise<void> {
     const pack = this.enginePacks().find((p) => p.id === packId);
     const ok = await this.confirmSvc.confirm({
-      title: 'Remove engine pack?',
-      message: `Remove “${pack?.displayName ?? 'this engine pack'}” and its downloaded files? You can re-install it anytime.`,
-      confirmLabel: 'Remove',
+      title: this.translate.instant('confirm.remove-engine-title'),
+      message: this.translate.instant('confirm.remove-engine-body', {
+        name: pack?.displayName ?? this.translate.instant('confirm.remove-engine-fallback'),
+      }),
+      confirmLabel: this.translate.instant('confirm.remove'),
     });
     if (!ok) return;
     this.error.set(null);
@@ -526,9 +533,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
   /** OS-specific label for the reveal-folder button. */
   protected openFolderLabel(): string {
     const platform = this.system()?.profile.platform;
-    if (platform === 'darwin') return 'Show in Finder';
-    if (platform === 'win32') return 'Show in File Explorer';
-    return 'Open folder';
+    if (platform === 'darwin') return this.translate.instant('misc.show-in-finder');
+    if (platform === 'win32') return this.translate.instant('misc.show-in-explorer');
+    return this.translate.instant('misc.open-folder');
   }
 
   protected async openStorageFolder(): Promise<void> {
@@ -547,12 +554,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (this.storageClearing()) return;
     const s = this.storage();
     const ok = await this.confirmSvc.confirm({
-      title: 'Delete all downloaded data?',
-      message:
-        `This removes ${s?.installedEnginePacks ?? 0} engine pack(s) and all downloaded models and caches` +
-        `${s ? ` (${this.formatBytes(s.totalBytes)})` : ''}. Your projects are kept. ` +
-        `VideoDubber re-downloads what it needs on demand.`,
-      confirmLabel: 'Delete everything',
+      title: this.translate.instant('confirm.clear-storage-title'),
+      message: this.translate.instant('confirm.clear-storage-body', {
+        packs: s?.installedEnginePacks ?? 0,
+        size: s ? ` (${this.formatBytes(s.totalBytes)})` : '',
+      }),
+      confirmLabel: this.translate.instant('confirm.delete-everything'),
     });
     if (!ok) return;
     this.storageClearing.set(true);
@@ -662,9 +669,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected async clearKey(service: CloudServiceId): Promise<void> {
     if (this.credBusy()) return;
     const ok = await this.confirmSvc.confirm({
-      title: 'Remove API key?',
-      message: `Remove the saved ${this.serviceMeta[service].label} API key? Cloud features for this provider stop working until you add a key again.`,
-      confirmLabel: 'Remove',
+      title: this.translate.instant('confirm.remove-key-title'),
+      message: this.translate.instant('confirm.remove-key-body', {
+        service: this.serviceMeta[service].label,
+      }),
+      confirmLabel: this.translate.instant('confirm.remove'),
     });
     if (!ok) return;
     this.credBusy.set(service);
@@ -807,6 +816,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (rec.suggestCloud.stt) parts.push(this.translate.instant('settings.computer.stt'));
     if (rec.suggestCloud.translation) parts.push(this.translate.instant('settings.computer.translation'));
     return parts.join(' + ');
+  }
+
+  /**
+   * Providers offerable in a `<select>`: the available ones, PLUS whatever is
+   * currently selected even if it is not.
+   *
+   * Hiding an unusable option is right — a disabled row you cannot pick is
+   * noise. But hiding the SELECTED one is not: the control would render some
+   * other provider while the stored setting still said the old one, silently
+   * misreporting the user's own configuration. So the current value always
+   * survives the filter, carrying its "needs API key" suffix as the explanation.
+   */
+  protected selectable(list: readonly ProviderInfo[] | undefined, current: string | undefined): ProviderInfo[] {
+    return (list ?? []).filter((p) => p.available || p.id === current);
   }
 
   /** Switch the app language. Applies immediately; no reload needed. */

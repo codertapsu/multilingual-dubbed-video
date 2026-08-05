@@ -48,7 +48,7 @@ describe('recommendSetup', () => {
     expect(apple.whisperModel).toBe('large-v3-turbo');
     expect(apple.tier).toBe('performance');
     // Apple Silicon should be nudged toward the Metal engine pack.
-    expect(apple.reasons.join(' ')).toMatch(/whisper\.cpp|Metal/);
+    expect(apple.reasons.map((r) => r.key)).toContain('reason.apple-metal');
   });
 
   it('32+ GB machines get the performance turbo model', () => {
@@ -60,14 +60,18 @@ describe('recommendSetup', () => {
   it('few CPU cores push STT toward cloud even with plenty of RAM', () => {
     const rec = recommendSetup(profile({ totalRamMb: 32 * 1024, cpuCores: 2 }));
     expect(rec.suggestCloud.stt).toBe(true);
-    expect(rec.reasons.join(' ')).toMatch(/CPU cores/);
+    expect(rec.reasons.map((r) => r.key)).toContain('reason.slow-cpu');
   });
 
   it('mentions an NVIDIA GPU in the reasons when detected', () => {
     const rec = recommendSetup(
       profile({ gpus: [{ name: 'NVIDIA GeForce RTX 4070', vramMb: 12288 }] }),
     );
-    expect(rec.reasons.join(' ')).toMatch(/NVIDIA/);
+    // Assert the KEY and its params, not the prose: the sentence is now
+    // translated, so matching on English would break the moment it is reworded.
+    const nvidiaReason = rec.reasons.find((r) => r.key === 'reason.nvidia');
+    expect(nvidiaReason).toBeDefined();
+    expect(String(nvidiaReason?.params?.['name'])).toMatch(/NVIDIA/);
   });
 });
 

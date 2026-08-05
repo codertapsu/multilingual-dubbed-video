@@ -24,7 +24,9 @@
  * (ENGINE_BUSY / evicted mid-request), not merely slow. No machine, however
  * fast, changes that — which is why no user setting may raise it.
  */
-import type { CapacityRecommendation, SystemProfile } from '@videodubber/shared';
+import type { CapacityRecommendation, SystemProfile,
+  LocalizedText,
+} from '@videodubber/shared';
 
 /** Cores left to the OS, the Tauri webview, and this orchestrator. */
 const CORES_RESERVED = 2;
@@ -72,31 +74,18 @@ export function recommendCapacity(profile: SystemProfile): CapacityRecommendatio
   const maxProjects = clamp(uncapped, 1, HARD_CAP);
   const hardCapped = uncapped > HARD_CAP;
 
-  const reasons: string[] = [];
+  const reasons: LocalizedText[] = [];
   if (maxProjects === 1) {
-    reasons.push(
-      `With ${cores} CPU cores and ${Math.round(ramGb)} GB of RAM, one dub at a time keeps this ` +
-        'computer responsive — a second would mostly make both slower.',
-    );
+    reasons.push({ key: 'capacity.one-at-a-time', params: { cores, ram: Math.round(ramGb) } });
   } else {
-    reasons.push(
-      `${cores} CPU cores and ${Math.round(ramGb)} GB of RAM comfortably cover ${maxProjects} ` +
-        'dubs at once (each one wants about 3 cores and a few GB at its peak).',
-    );
+    reasons.push({ key: 'capacity.multiple', params: { cores, ram: Math.round(ramGb), n: maxProjects } });
   }
-  if (cpuSlots < ramSlots) reasons.push('The CPU core count is the limiting factor on this machine.');
-  else if (ramSlots < cpuSlots) reasons.push('Installed memory is the limiting factor on this machine.');
+  if (cpuSlots < ramSlots) reasons.push({ key: 'capacity.cpu-bound' });
+  else if (ramSlots < cpuSlots) reasons.push({ key: 'capacity.ram-bound' });
   if (hardCapped) {
-    reasons.push(
-      `Capped at ${HARD_CAP}: past that, the shared transcription/translation/speech services process work ` +
-        'one request at a time anyway.',
-    );
+    reasons.push({ key: 'capacity.hard-cap', params: { cap: HARD_CAP } });
   }
-  reasons.push(
-    'Projects that use a downloadable engine (whisper.cpp, TranslateGemma/Gemma, LibreTranslate, vocal ' +
-      'separation, forced alignment) always run one at a time, on any computer — those engines take over the ' +
-      'machine and stop each other when they overlap.',
-  );
+  reasons.push({ key: 'capacity.heavy-engines' });
 
   return {
     maxProjects,
@@ -125,8 +114,9 @@ export function effectiveCapacity(
     maxProjects,
     budgetPoints: maxProjects * POINTS_PER_LOCAL_RUN,
     reasons: [
-      `Set manually to ${maxProjects} simultaneous ${maxProjects === 1 ? 'dub' : 'dubs'} ` +
-        `(this computer's recommendation is ${recommended.maxProjects}).`,
+      // No English pluralization here: `dub`/`dubs` cannot survive translation
+      // (Vietnamese has no plural -s), so the count is a parameter instead.
+      { key: 'capacity.manual', params: { n: maxProjects, recommended: recommended.maxProjects } },
       ...recommended.reasons.slice(-1),
     ],
   };

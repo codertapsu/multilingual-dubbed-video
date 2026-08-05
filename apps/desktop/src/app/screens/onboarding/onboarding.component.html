@@ -186,7 +186,7 @@
                 />
                 <span class="radio-body">
                   <span class="radio-title">
-                    {{ model.label }}
+                    {{ 'whisper.' + model.id | translate }}
                     @if (model.recommended) {
                       <span class="badge badge-completed">{{ 'onboarding.s3-recommended' | translate }}</span>
                     }

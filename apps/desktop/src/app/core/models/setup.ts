@@ -240,7 +240,7 @@ export interface HardwareRecommendation {
   tier: HardwareTier;
   whisperModel: string;
   suggestCloud: { stt: boolean; translation: boolean; tts: boolean };
-  reasons: string[];
+  reasons: { key: string; params?: Record<string, string | number> }[];
 }
 
 /** How many dubs this machine should run at once (mirrors the shared type). */
@@ -251,7 +251,7 @@ export interface CapacityRecommendation {
   cpuSlots: number;
   ramSlots: number;
   hardCapped: boolean;
-  reasons: string[];
+  reasons: { key: string; params?: Record<string, string | number> }[];
 }
 
 /** GET /system response envelope. */

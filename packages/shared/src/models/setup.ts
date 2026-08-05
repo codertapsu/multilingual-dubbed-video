@@ -294,8 +294,8 @@ export interface HardwareRecommendation {
   whisperModel: string;
   /** Per-phase suggestion: true = cloud likely serves this user better. */
   suggestCloud: { stt: boolean; translation: boolean; tts: boolean };
-  /** Human-readable reasons behind the recommendation. */
-  reasons: string[];
+  /** Reasons behind the recommendation, localized by the UI. */
+  reasons: LocalizedText[];
 }
 
 /** GET /system response envelope. */
@@ -324,8 +324,8 @@ export interface CapacityRecommendation {
   ramSlots: number;
   /** True when the hard cap (shared workers serialize past it) bound the result. */
   hardCapped: boolean;
-  /** Plain-language reasons for this limit, for the Settings "Why?" expander. */
-  reasons: string[];
+  /** Reasons for this limit (Settings → "Why this limit?"), localized by the UI. */
+  reasons: LocalizedText[];
 }
 
 export interface SystemProfileResponse {
@@ -482,4 +482,21 @@ export function updateNoticeFor(
     ...(info.notes ? { notes: info.notes } : {}),
     ...(info.date ? { date: info.date } : {}),
   };
+}
+
+/**
+ * A user-facing string the ORCHESTRATOR produces but the UI must render in the
+ * user's language.
+ *
+ * The orchestrator cannot translate: it has no idea which language the window is
+ * showing, and the language can change without it restarting. So it emits the
+ * key and the numbers, and the UI resolves both. This is why hardware
+ * recommendation and capacity reasons are not plain strings — they used to be,
+ * and they stayed English in a fully Vietnamese app.
+ */
+export interface LocalizedText {
+  /** Translation key, e.g. `capacity.cpu-bound`. */
+  key: string;
+  /** Interpolation values for the key's `{{ placeholders }}`. */
+  params?: Record<string, string | number>;
 }

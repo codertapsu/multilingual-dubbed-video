@@ -24,8 +24,8 @@
           {{ 'settings.computer.rec-model' | translate }}
           <strong class="mono">{{ sys.recommendation.whisperModel }}</strong>
         </p>
-        @for (reason of sys.recommendation.reasons; track reason) {
-          <p class="hint">{{ reason }}</p>
+        @for (reason of sys.recommendation.reasons; track reason.key) {
+          <p class="hint">{{ reason.key | translate: reason.params }}</p>
         }
         @if (sys.recommendation.suggestCloud.stt || sys.recommendation.suggestCloud.translation) {
           <p class="hint">
@@ -59,8 +59,8 @@
         </label>
         <details>
           <summary class="hint">{{ 'settings.computer.why-limit' | translate }}</summary>
-          @for (reason of sys.capacity.reasons; track reason) {
-            <p class="hint">{{ reason }}</p>
+          @for (reason of sys.capacity.reasons; track reason.key) {
+            <p class="hint">{{ reason.key | translate: reason.params }}</p>
           }
         </details>
       </div>
@@ -90,8 +90,8 @@
             [ngModel]="defaults().sttProviderId ?? 'faster-whisper'"
             (ngModelChange)="patchDefault('sttProviderId', $event)"
           >
-            @for (p of provs.stt; track p.id) {
-              <option [value]="p.id" [disabled]="!p.available">
+            @for (p of selectable(provs.stt, defaults().sttProviderId ?? 'faster-whisper'); track p.id) {
+              <option [value]="p.id">
                 {{ p.displayName }}{{ p.available ? '' : ('settings.defaults.needs-key' | translate) }}
               </option>
             }
@@ -107,7 +107,7 @@
             (ngModelChange)="patchDefault('sttModel', $event)"
           >
             @for (m of whisperModels; track m.id) {
-              <option [value]="m.id">{{ m.label }}</option>
+              <option [value]="m.id">{{ m.label | translate }}</option>
             }
           </select>
         </div>
@@ -120,8 +120,8 @@
             [ngModel]="defaults().translationProviderId ?? 'argos'"
             (ngModelChange)="patchDefault('translationProviderId', $event)"
           >
-            @for (p of provs.translation; track p.id) {
-              <option [value]="p.id" [disabled]="!p.available">
+            @for (p of selectable(provs.translation, defaults().translationProviderId ?? 'argos'); track p.id) {
+              <option [value]="p.id">
                 {{ p.displayName }}{{ p.available ? '' : ('settings.defaults.needs-key' | translate) }}
               </option>
             }
@@ -136,8 +136,8 @@
             [ngModel]="defaults().ttsProviderId ?? 'piper-local'"
             (ngModelChange)="patchDefault('ttsProviderId', $event)"
           >
-            @for (p of provs.tts; track p.id) {
-              <option [value]="p.id" [disabled]="!p.available">
+            @for (p of selectable(provs.tts, defaults().ttsProviderId ?? 'piper-local'); track p.id) {
+              <option [value]="p.id">
                 {{ p.displayName }}{{ p.available ? '' : ('settings.defaults.needs-key' | translate) }}
               </option>
             }
@@ -189,7 +189,7 @@
             type="password"
             class="grow"
             [attr.aria-label]="'settings.keys.api-key-aria' | translate: { service: serviceMeta[svc].label }"
-            [placeholder]="serviceMeta[svc].keyHint"
+            [placeholder]="serviceMeta[svc].keyHint | translate"
             [ngModel]="keyInputFor(svc)"
             (ngModelChange)="setKeyInput(svc, $event)"
             [name]="'key-' + svc"
@@ -432,7 +432,7 @@
       <div class="cred-row stack-sm">
         @for (loc of s.locations; track loc.key) {
           <div class="setting-row">
-            <span class="cred-name">{{ loc.label }}</span>
+            <span class="cred-name">{{ 'storage-loc.' + loc.key | translate }}</span>
             <span class="chip">{{ formatBytes(loc.bytes) }}</span>
           </div>
         }

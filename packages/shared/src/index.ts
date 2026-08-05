@@ -119,6 +119,7 @@ export type {
   QueueState,
   HardwareTier,
   HardwareRecommendation,
+  LocalizedText,
   SystemProfileResponse,
 } from './models/setup.js';
 export { ALL_CLOUD_SERVICES } from './models/setup.js';

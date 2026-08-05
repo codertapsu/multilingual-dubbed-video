@@ -108,7 +108,20 @@ function keysFeedingPipes(text) {
  * `status.completed`), so the static scan cannot see the individual keys.
  * Exempt from the "unused" report; still required in every locale.
  */
-const DYNAMIC_KEY_PREFIXES = ['status.', 'download.', 'common.', 'opt.'];
+const DYNAMIC_KEY_PREFIXES = [
+  'status.',
+  'download.',
+  'common.',
+  'opt.',
+  'whisper.',
+  'svc.',
+  'ducking-hint.',
+  'speed-hint.',
+  'misc.phase-',
+  'storage-loc.',
+  'reason.',
+  'capacity.',
+];
 
 /** `instant('a.b')` in TypeScript. */
 const CALL_RE = /\binstant\(\s*['"`]([^'"`]+)['"`]/g;

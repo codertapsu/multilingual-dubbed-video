@@ -38,7 +38,7 @@ import type {
   SubtitleExportMode,
 } from '../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
-import { TranslatePipe } from '../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 
 /** Wizard step index. */
 type WizardStep = 1 | 2;
@@ -100,8 +100,21 @@ function defaultSettings(): ProjectSettings {
 })
 export class NewProjectWizardComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
+  private readonly translate = inject(TranslateService);
   private readonly router = inject(Router);
   private readonly store = inject(ProjectStore);
+  /**
+   * Providers offerable in a `<select>`: available ones, PLUS whatever is
+   * currently selected even if it is not available.
+   *
+   * A disabled row you cannot choose is noise, so unusable providers are hidden.
+   * The SELECTED one is kept regardless: dropping it would make the control
+   * display a different provider from the one the project is actually set to.
+   */
+  protected selectable(list: readonly ProviderInfo[] | undefined, current: string | undefined): ProviderInfo[] {
+    return (list ?? []).filter((p) => p.available || p.id === current);
+  }
+
   protected readonly setupEvents = inject(SetupEventsService);
 
   // Static label maps for the template.
@@ -344,7 +357,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     if (picked) {
       this.inputVideoPath.set(picked);
       if (!this.name().trim()) {
-        this.name.set(deriveProjectName(picked));
+        this.name.set(deriveProjectName(picked) || this.translate.instant('misc.untitled-project'));
       }
     }
   }
@@ -352,7 +365,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   protected onPathInput(value: string): void {
     this.inputVideoPath.set(value);
     if (!this.name().trim() && value.trim()) {
-      this.name.set(deriveProjectName(value));
+      this.name.set(deriveProjectName(value) || this.translate.instant('misc.untitled-project'));
     }
   }
 
@@ -399,10 +412,10 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
 
   /** Background attenuation choices while the dubbed voice speaks. */
   protected readonly duckingOptions: ReadonlyArray<{ value: number; label: string }> = [
-    { value: -6, label: 'Subtle (−6 dB) — background stays prominent' },
-    { value: -12, label: 'Standard (−12 dB) — recommended' },
-    { value: -18, label: 'Strong (−18 dB) — background well behind the voice' },
-    { value: -24, label: 'Very strong (−24 dB) — background barely audible' },
+    { value: -6, label: 'ducking-hint.subtle' },
+    { value: -12, label: 'ducking-hint.standard' },
+    { value: -18, label: 'ducking-hint.strong' },
+    { value: -24, label: 'ducking-hint.very-strong' },
   ];
 
   /** <select> values arrive as strings; coerce + guard before patching. */
@@ -419,10 +432,10 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
    * Higher = fewer timing conflicts but faster-sounding speech.
    */
   protected readonly speedOptions: ReadonlyArray<{ value: number; label: string; hint: string }> = [
-    { value: 1.3, label: '1.3× — most natural', hint: 'Gentle speed-up; expect more timing warnings on dense dialogue.' },
-    { value: 1.6, label: '1.6× — balanced (recommended)', hint: 'Good fit for most content; speech stays clearly intelligible.' },
-    { value: 1.8, label: '1.8× — tighter fit', hint: 'Noticeably brisk speech; few timing warnings.' },
-    { value: 2.0, label: '2.0× — fit everything', hint: 'Minimizes conflicts; speech can sound rushed.' },
+    { value: 1.3, label: 'opt.speed.1-3', hint: 'speed-hint.1-3' },
+    { value: 1.6, label: 'opt.speed.1-6', hint: 'speed-hint.1-6' },
+    { value: 1.8, label: 'opt.speed.1-8', hint: 'speed-hint.1-8' },
+    { value: 2.0, label: 'opt.speed.2-0', hint: 'speed-hint.2-0' },
   ];
 
   /** <select> values arrive as strings; coerce + guard before patching. */
@@ -588,7 +601,10 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     this.error.set(null);
     try {
       const input: CreateProjectInput = {
-        name: this.name().trim() || deriveProjectName(this.inputVideoPath()),
+        name:
+          this.name().trim() ||
+          deriveProjectName(this.inputVideoPath()) ||
+          this.translate.instant('misc.untitled-project'),
         inputVideoPath: this.inputVideoPath().trim(),
         settings: this.settings(),
         outputDir: this.outputDir().trim() || undefined,
@@ -719,7 +735,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
 
   protected resolutionLabel(info: MediaInfo): string {
     const v = info.videoStreams[0];
-    return v ? `${v.width}×${v.height} @ ${v.fps.toFixed(2)} fps` : 'No video stream';
+    return v ? `${v.width}×${v.height} @ ${v.fps.toFixed(2)} fps` : this.translate.instant('misc.no-video-stream');
   }
 
   protected videoCodecLabel(info: MediaInfo): string {
@@ -739,5 +755,5 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
 function deriveProjectName(path: string): string {
   const base = path.split(/[\\/]/).pop() ?? path;
   const noExt = base.replace(/\.[^.]+$/, '');
-  return noExt || 'Untitled project';
+  return noExt || '';
 }

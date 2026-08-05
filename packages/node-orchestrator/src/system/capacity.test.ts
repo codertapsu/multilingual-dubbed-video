@@ -55,9 +55,9 @@ describe('recommendCapacity', () => {
 
   it('explains the limit, naming the binding resource', () => {
     const cpuBound = recommendCapacity(profile({ cpuCores: 4, totalRamMb: 65536 }));
-    expect(cpuBound.reasons.join(' ')).toMatch(/CPU core count is the limiting factor/);
+    expect(cpuBound.reasons.map((r) => r.key)).toContain('capacity.cpu-bound');
     const ramBound = recommendCapacity(profile({ cpuCores: 32, totalRamMb: 8192 }));
-    expect(ramBound.reasons.join(' ')).toMatch(/memory is the limiting factor/);
+    expect(ramBound.reasons.map((r) => r.key)).toContain('capacity.ram-bound');
   });
 
   it('ignores free RAM entirely (it fluctuates between reads)', () => {

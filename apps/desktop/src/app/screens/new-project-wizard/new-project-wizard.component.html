@@ -321,8 +321,8 @@
                 [ngModel]="settings().sttProviderId"
                 (ngModelChange)="setProvider('sttProviderId', $event)"
               >
-                @for (p of provs.stt; track p.id) {
-                  <option [value]="p.id" [disabled]="!p.available">
+                @for (p of selectable(provs.stt, settings().sttProviderId); track p.id) {
+                  <option [value]="p.id">
                     {{ p.displayName }}{{ providerHint(p) }}
                   </option>
                 }
@@ -336,8 +336,8 @@
                 [ngModel]="settings().translationProviderId"
                 (ngModelChange)="setProvider('translationProviderId', $event)"
               >
-                @for (p of provs.translation; track p.id) {
-                  <option [value]="p.id" [disabled]="!p.available">
+                @for (p of selectable(provs.translation, settings().translationProviderId); track p.id) {
+                  <option [value]="p.id">
                     {{ p.displayName }}{{ providerHint(p) }}
                   </option>
                 }
@@ -354,8 +354,8 @@
                     (ngModelChange)="setRefineProvider($event)"
                   >
                     <option value="none">{{ 'wizard.refine-off' | translate }}</option>
-                    @for (p of refiners; track p.id) {
-                      <option [value]="p.id" [disabled]="!p.available">
+                    @for (p of selectable(refiners, settings().refineProviderId); track p.id) {
+                      <option [value]="p.id">
                         {{ p.displayName }}{{ providerHint(p) }}
                       </option>
                     }
@@ -388,8 +388,8 @@
                 [ngModel]="settings().ttsProviderId"
                 (ngModelChange)="setProvider('ttsProviderId', $event)"
               >
-                @for (p of provs.tts; track p.id) {
-                  <option [value]="p.id" [disabled]="!p.available">
+                @for (p of selectable(provs.tts, settings().ttsProviderId); track p.id) {
+                  <option [value]="p.id">
                     {{ p.displayName }}{{ providerHint(p) }}
                   </option>
                 }

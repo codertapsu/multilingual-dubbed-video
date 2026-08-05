@@ -580,5 +580,81 @@
       "1-8": "1.8× — tighter fit",
       "2-0": "2.0× — fit everything"
     }
+  },
+  "svc": {
+    "openai-hint": "sk-…  — used by cloud STT, translation and TTS",
+    "anthropic-hint": "sk-ant-…  — used by cloud translation",
+    "gemini-hint": "AIza…  — used by cloud translation"
+  },
+  "whisper": {
+    "tiny": "Tiny — fastest, lowest accuracy (~75 MB)",
+    "base": "Base — balanced; good on 8 GB (~145 MB)",
+    "small": "Small — better accuracy (~480 MB)",
+    "large-v3-turbo": "Large v3 Turbo — recommended: near-best, 6-8x faster (~1.6 GB)",
+    "distil-large-v3.5": "Distil Large v3.5 — English only, fastest large (~760 MB)",
+    "medium": "Medium — high accuracy (~1.5 GB)",
+    "large-v3": "Large v3 — best accuracy, slow on CPU (~3 GB)",
+    "phowhisper-medium": "PhoWhisper Medium — best for Vietnamese-source audio",
+    "phowhisper-large": "PhoWhisper Large — Vietnamese-source, highest accuracy"
+  },
+  "confirm": {
+    "remove-argos-title": "Remove translation pack?",
+    "remove-engine-title": "Remove engine pack?",
+    "remove-key-title": "Remove API key?",
+    "clear-storage-title": "Delete all downloaded data?",
+    "delete-everything": "Delete everything",
+    "remove-argos-body": "Remove the {{ from }} → {{ to }} Argos pack? You can re-install it anytime.",
+    "remove-engine-body": "Remove “{{ name }}” and its downloaded files? You can re-install it anytime.",
+    "remove-engine-fallback": "this engine pack",
+    "remove-key-body": "Remove the saved {{ service }} API key? Cloud features for this provider stop working until you add a key again.",
+    "remove": "Remove",
+    "clear-storage-body": "This removes {{ packs }} engine pack(s) and all downloaded models and caches{{ size }}. Your projects are kept. VideoDubber re-downloads what it needs on demand."
+  },
+  "misc": {
+    "show-in-finder": "Show in Finder",
+    "show-in-explorer": "Show in File Explorer",
+    "open-folder": "Open folder",
+    "engine-stream-lost": "Lost connection to the engine install stream.",
+    "engine-stream-lost-fix": "The backend connection dropped. Try the install again; if it keeps failing, quit and reopen VideoDubber (in a dev build, restart the local services).",
+    "heavy-for-machine": "May be heavy for this machine — may run slowly",
+    "no-video-stream": "No video stream",
+    "untitled-project": "Untitled project",
+    "phase-stt": "Speech-to-text",
+    "phase-translation": "Translation",
+    "phase-tts": "Text-to-speech"
+  },
+  "ducking-hint": {
+    "subtle": "Subtle (−6 dB) — background stays prominent",
+    "standard": "Standard (−12 dB) — recommended",
+    "strong": "Strong (−18 dB) — background well behind the voice",
+    "very-strong": "Very strong (−24 dB) — background barely audible"
+  },
+  "speed-hint": {
+    "1-3": "Gentle speed-up; expect more timing warnings on dense dialogue.",
+    "1-6": "Good fit for most content; speech stays clearly intelligible.",
+    "1-8": "Noticeably brisk speech; few timing warnings.",
+    "2-0": "Minimizes conflicts; speech can sound rushed."
+  },
+  "storage-loc": {
+    "engines": "Engine packs",
+    "models": "Downloaded models (Whisper, Piper)",
+    "cache": "Temporary cache"
+  },
+  "reason": {
+    "ram-constrained": "With {{ ram }} GB RAM, only the smallest local speech-recognition model fits comfortably; cloud STT will be noticeably more accurate.",
+    "ram-balanced": "{{ ram }} GB RAM runs “large-v3-turbo” — near-best accuracy at 6-8x the speed of large-v3, a great offline balance.",
+    "ram-performance": "{{ ram }} GB RAM easily runs “large-v3-turbo”; “large-v3” also fits for maximum accuracy if you accept the extra time.",
+    "apple-metal": "On Apple Silicon, install the whisper.cpp (Metal) engine pack for a large speed-up over the CPU build.",
+    "slow-cpu": "{{ cores }} CPU cores will make local transcription slow on long videos — consider cloud STT for anything over a few minutes.",
+    "nvidia": "{{ name }} ({{ vram }} GB) detected — install the CUDA engine packs in Settings → Engines for GPU-accelerated transcription and translation. They need NVIDIA driver 551.61 or newer; on an older driver the app falls back to the Vulkan build automatically."
+  },
+  "capacity": {
+    "one-at-a-time": "With {{ cores }} CPU cores and {{ ram }} GB of RAM, one dub at a time keeps this computer responsive — a second would mostly make both slower.",
+    "multiple": "{{ cores }} CPU cores and {{ ram }} GB of RAM comfortably cover {{ n }} dubs at once (each one wants about 3 cores and a few GB at its peak).",
+    "cpu-bound": "The CPU core count is the limiting factor on this machine.",
+    "ram-bound": "Installed memory is the limiting factor on this machine.",
+    "hard-cap": "Capped at {{ cap }}: past that, the shared transcription/translation/speech services process work one request at a time anyway.",
+    "heavy-engines": "Projects that use a downloadable engine (whisper.cpp, TranslateGemma/Gemma, LibreTranslate, vocal separation, forced alignment) always run one at a time, on any computer — those engines take over the machine and stop each other when they overlap.",
+    "manual": "Set manually to {{ n }} simultaneous dub(s) (this computer's recommendation is {{ recommended }})."
   }
 }

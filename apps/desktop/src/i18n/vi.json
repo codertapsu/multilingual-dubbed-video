@@ -580,5 +580,81 @@
       "1-8": "1.8× — bám sát thời lượng",
       "2-0": "2.0× — ưu tiên vừa khung"
     }
+  },
+  "svc": {
+    "openai-hint": "sk-…  — dùng cho STT, dịch và TTS trên đám mây",
+    "anthropic-hint": "sk-ant-…  — dùng cho dịch trên đám mây",
+    "gemini-hint": "AIza…  — dùng cho dịch trên đám mây"
+  },
+  "whisper": {
+    "tiny": "Tiny — nhanh nhất, độ chính xác thấp nhất (~75 MB)",
+    "base": "Base — cân bằng; chạy tốt trên máy 8 GB (~145 MB)",
+    "small": "Small — chính xác hơn (~480 MB)",
+    "large-v3-turbo": "Large v3 Turbo — khuyến nghị: gần như tốt nhất, nhanh hơn 6-8 lần (~1.6 GB)",
+    "distil-large-v3.5": "Distil Large v3.5 — chỉ tiếng Anh, nhanh nhất trong nhóm large (~760 MB)",
+    "medium": "Medium — chính xác cao (~1.5 GB)",
+    "large-v3": "Large v3 — chính xác nhất, chậm khi chạy CPU (~3 GB)",
+    "phowhisper-medium": "PhoWhisper Medium — tốt nhất cho audio tiếng Việt",
+    "phowhisper-large": "PhoWhisper Large — audio tiếng Việt, chính xác nhất"
+  },
+  "confirm": {
+    "remove-argos-title": "Xoá gói dịch này?",
+    "remove-engine-title": "Xoá gói engine này?",
+    "remove-key-title": "Xoá khoá API?",
+    "clear-storage-title": "Xoá toàn bộ dữ liệu đã tải?",
+    "delete-everything": "Xoá tất cả",
+    "remove-argos-body": "Xoá gói Argos {{ from }} → {{ to }}? Bạn có thể cài lại bất cứ lúc nào.",
+    "remove-engine-body": "Xoá “{{ name }}” cùng các tệp đã tải? Bạn có thể cài lại bất cứ lúc nào.",
+    "remove-engine-fallback": "gói engine này",
+    "remove-key-body": "Xoá khoá API {{ service }} đã lưu? Các tính năng đám mây của nhà cung cấp này sẽ ngừng hoạt động cho tới khi bạn thêm khoá mới.",
+    "remove": "Xoá",
+    "clear-storage-body": "Thao tác này sẽ xoá {{ packs }} gói engine cùng toàn bộ mô hình đã tải và bộ nhớ đệm{{ size }}. Các dự án của bạn được giữ nguyên. VideoDubber sẽ tải lại những gì cần khi dùng đến."
+  },
+  "misc": {
+    "show-in-finder": "Hiện trong Finder",
+    "show-in-explorer": "Hiện trong File Explorer",
+    "open-folder": "Mở thư mục",
+    "engine-stream-lost": "Mất kết nối tới luồng cài đặt engine.",
+    "engine-stream-lost-fix": "Kết nối tới dịch vụ nền đã đứt. Hãy thử cài lại; nếu vẫn lỗi, hãy thoát và mở lại VideoDubber (với bản dev thì khởi động lại các dịch vụ cục bộ).",
+    "heavy-for-machine": "Có thể hơi nặng với máy này — chạy sẽ chậm",
+    "no-video-stream": "Không có luồng video",
+    "untitled-project": "Dự án chưa đặt tên",
+    "phase-stt": "Nhận dạng giọng nói",
+    "phase-translation": "Dịch thuật",
+    "phase-tts": "Tổng hợp giọng nói"
+  },
+  "ducking-hint": {
+    "subtle": "Nhẹ (−6 dB) — tiếng nền vẫn nghe rõ",
+    "standard": "Vừa (−12 dB) — khuyến nghị",
+    "strong": "Mạnh (−18 dB) — tiếng nền lùi hẳn ra sau",
+    "very-strong": "Rất mạnh (−24 dB) — gần như không nghe tiếng nền"
+  },
+  "speed-hint": {
+    "1-3": "Tăng tốc nhẹ; các đoạn thoại dày sẽ có nhiều cảnh báo thời gian hơn.",
+    "1-6": "Phù hợp với hầu hết nội dung; giọng vẫn nghe rõ ràng.",
+    "1-8": "Giọng nói nhanh thấy rõ; ít cảnh báo thời gian.",
+    "2-0": "Giảm tối đa xung đột thời gian; giọng có thể nghe gấp gáp."
+  },
+  "storage-loc": {
+    "engines": "Gói engine",
+    "models": "Mô hình đã tải (Whisper, Piper)",
+    "cache": "Bộ nhớ đệm tạm"
+  },
+  "reason": {
+    "ram-constrained": "Với {{ ram }} GB RAM, chỉ mô hình nhận dạng lời thoại nhỏ nhất chạy thoải mái; STT trên đám mây sẽ chính xác hơn rõ rệt.",
+    "ram-balanced": "{{ ram }} GB RAM chạy được “large-v3-turbo” — độ chính xác gần như tốt nhất mà nhanh hơn large-v3 6-8 lần, rất cân bằng cho chế độ ngoại tuyến.",
+    "ram-performance": "{{ ram }} GB RAM chạy “large-v3-turbo” rất thoải mái; “large-v3” cũng chạy được nếu bạn chấp nhận chờ lâu hơn để có độ chính xác cao nhất.",
+    "apple-metal": "Trên Apple Silicon, hãy cài gói engine whisper.cpp (Metal) để nhanh hơn hẳn so với bản chạy CPU.",
+    "slow-cpu": "Máy có {{ cores }} nhân CPU nên nhận dạng lời thoại sẽ chậm với video dài — cân nhắc dùng STT đám mây cho video quá vài phút.",
+    "nvidia": "Đã phát hiện {{ name }} ({{ vram }} GB) — hãy cài các gói engine CUDA trong Cài đặt → Engine để tăng tốc nhận dạng và dịch bằng GPU. Chúng cần driver NVIDIA 551.61 trở lên; với driver cũ hơn, ứng dụng sẽ tự chuyển sang bản Vulkan."
+  },
+  "capacity": {
+    "one-at-a-time": "Với {{ cores }} nhân CPU và {{ ram }} GB RAM, chạy mỗi lần một dự án sẽ giữ máy mượt — chạy hai sẽ chỉ làm cả hai chậm đi.",
+    "multiple": "{{ cores }} nhân CPU và {{ ram }} GB RAM thừa sức cho {{ n }} dự án cùng lúc (mỗi dự án cần khoảng 3 nhân và vài GB lúc cao điểm).",
+    "cpu-bound": "Số nhân CPU là yếu tố giới hạn trên máy này.",
+    "ram-bound": "Dung lượng RAM là yếu tố giới hạn trên máy này.",
+    "hard-cap": "Giới hạn ở {{ cap }}: vượt quá mức đó, các dịch vụ nhận dạng/dịch/tổng hợp giọng dùng chung cũng chỉ xử lý từng yêu cầu một.",
+    "heavy-engines": "Dự án dùng engine tải thêm (whisper.cpp, TranslateGemma/Gemma, LibreTranslate, tách giọng, căn thời gian) luôn chạy một dự án mỗi lần trên mọi máy — những engine này chiếm trọn máy và cản nhau khi chạy chồng.",
+    "manual": "Bạn đã đặt thủ công {{ n }} dự án cùng lúc (mức khuyến nghị cho máy này là {{ recommended }})."
   }
 }

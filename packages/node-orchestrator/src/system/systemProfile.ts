@@ -26,6 +26,7 @@ import {
   NVIDIA_GPU_RE,
   type GpuInfo,
   type HardwareRecommendation,
+  type LocalizedText,
   type SystemProfile,
   type SystemProfileResponse,
 } from '@videodubber/shared';
@@ -207,38 +208,30 @@ export async function getSystemProfile(): Promise<SystemProfile> {
  */
 export function recommendSetup(profile: SystemProfile): HardwareRecommendation {
   const ramGb = profile.totalRamMb / 1024;
-  const reasons: string[] = [];
+  const reasons: LocalizedText[] = [];
   let tier: HardwareRecommendation['tier'];
   let whisperModel: string;
 
   if (ramGb < 8) {
     tier = 'constrained';
     whisperModel = 'tiny';
-    reasons.push(
-      `With ${ramGb.toFixed(0)} GB RAM, only the smallest local speech-recognition model fits comfortably; cloud STT will be noticeably more accurate.`,
-    );
+    reasons.push({ key: 'reason.ram-constrained', params: { ram: ramGb.toFixed(0) } });
   } else if (ramGb < 16) {
     tier = 'balanced';
     whisperModel = 'large-v3-turbo';
-    reasons.push(
-      `${ramGb.toFixed(0)} GB RAM runs "large-v3-turbo" — near-best accuracy at 6-8x the speed of large-v3, a great offline balance.`,
-    );
+    reasons.push({ key: 'reason.ram-balanced', params: { ram: ramGb.toFixed(0) } });
   } else {
     tier = 'performance';
     whisperModel = 'large-v3-turbo';
-    reasons.push(
-      `${ramGb.toFixed(0)} GB RAM easily runs "large-v3-turbo"; "large-v3" also fits for maximum accuracy if you accept the extra time.`,
-    );
+    reasons.push({ key: 'reason.ram-performance', params: { ram: ramGb.toFixed(0) } });
     if (profile.appleSilicon) {
-      reasons.push('On Apple Silicon, install the whisper.cpp (Metal) engine pack for a large speed-up over the CPU build.');
+      reasons.push({ key: 'reason.apple-metal' });
     }
   }
 
   const slowCpu = profile.cpuCores < 4;
   if (slowCpu) {
-    reasons.push(
-      `${profile.cpuCores} CPU cores will make local transcription slow on long videos — consider cloud STT for anything over a few minutes.`,
-    );
+    reasons.push({ key: 'reason.slow-cpu', params: { cores: profile.cpuCores } });
   }
 
   // NVIDIA: say what the card actually buys, and name the one prerequisite that
@@ -248,9 +241,7 @@ export function recommendSetup(profile: SystemProfile): HardwareRecommendation {
   const nvidia = profile.gpus.find((g) => NVIDIA_GPU_RE.test(g.name));
   if (nvidia && (nvidia.vramMb ?? 0) >= 4096) {
     const vramGb = Math.round((nvidia.vramMb ?? 0) / 1024);
-    reasons.push(
-      `${nvidia.name} (${vramGb} GB) detected — install the CUDA engine packs in Settings → Engines for GPU-accelerated transcription and translation. They need NVIDIA driver 551.61 or newer; on an older driver the app falls back to the Vulkan build automatically.`,
-    );
+    reasons.push({ key: 'reason.nvidia', params: { name: nvidia.name, vram: vramGb } });
   }
 
   return {

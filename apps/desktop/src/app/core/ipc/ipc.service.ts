@@ -40,6 +40,7 @@ import type {
   UpdateInfo,
   UpdatePreferences,
 } from '../models/setup';
+import type { ResolvedVideo } from '../models/download';
 import type {
   EnginePrerequisites,
   EnginesResponse,
@@ -444,6 +445,21 @@ export class IpcService {
   /** GET /providers — selectable providers per phase, with availability + readiness. */
   getProviders(): Promise<ProvidersResponse> {
     return this.http<ProvidersResponse>('GET', '/providers');
+  }
+
+  // ----- Source-video downloader (experimental) -----
+
+  /** POST /download/resolve — look up a pasted link without downloading. */
+  resolveDownload(input: string): Promise<ResolvedVideo> {
+    return this.http<ResolvedVideo>('POST', '/download/resolve', { input });
+  }
+
+  /**
+   * POST /download/start — kicks off the async download. Returns once the job
+   * is queued; progress arrives on the `/download/events` SSE stream.
+   */
+  startDownload(input: string, page: number, qualityId?: string): Promise<{ jobId: string }> {
+    return this.http<{ jobId: string }>('POST', '/download/start', { input, page, qualityId });
   }
 
   // ----- Argos translation packs (browse the full index + install/remove) -----

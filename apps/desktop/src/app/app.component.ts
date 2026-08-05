@@ -32,6 +32,7 @@ import { TranslatePipe } from './core/i18n';
           >{{ 'nav.projects' | translate }}</a
         >
         <a routerLink="/new" routerLinkActive="active">{{ 'nav.new-project' | translate }}</a>
+        <a routerLink="/download" routerLinkActive="active">{{ 'nav.download' | translate }}</a>
         <a routerLink="/settings" routerLinkActive="active">{{ 'nav.settings' | translate }}</a>
         <a routerLink="/support" routerLinkActive="active">{{ 'nav.support' | translate }}</a>
       </nav>

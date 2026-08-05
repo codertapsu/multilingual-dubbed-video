@@ -18,7 +18,8 @@
     "settings": "Cài đặt",
     "support": "♥ Ủng hộ",
     "primary": "Điều hướng chính",
-    "home-aria": "Trang chủ VideoDubber"
+    "home-aria": "Trang chủ VideoDubber",
+    "download": "Tải video"
   },
   "shell": {
     "mode-desktop": "Ứng dụng",
@@ -50,6 +51,33 @@
   "download": {
     "done": "Xong",
     "working": "Đang chạy…"
+  },
+  "source-video": {
+    "title": "Tải video nguồn",
+    "experimental": "Thử nghiệm",
+    "subtitle": "Tải video từ Bilibili về máy để dùng làm video nguồn cho dự án lồng tiếng.",
+    "link-heading": "Dán liên kết",
+    "link-label": "Liên kết Bilibili",
+    "link-placeholder": "https://www.bilibili.com/video/BV…",
+    "link-hint": "Bạn có thể dán liên kết đầy đủ, liên kết rút gọn b23.tv, hoặc chỉ mã BV.",
+    "resolve": "Kiểm tra liên kết",
+    "resolving": "Đang kiểm tra…",
+    "preview-heading": "Video tìm được",
+    "part-label": "Chọn phần muốn tải",
+    "start": "Tải về",
+    "progress-heading": "Tiến trình tải",
+    "progress-aria": "Tiến trình tải video",
+    "phase-video": "Đang tải hình…",
+    "phase-audio": "Đang tải tiếng…",
+    "phase-merging": "Đang ghép hình và tiếng…",
+    "done": "Đã tải xong.",
+    "saved-to": "Lưu tại:",
+    "use-as-source": "Dùng cho dự án mới",
+    "reveal": "Mở thư mục",
+    "another": "Tải video khác",
+    "respect-notice": "Chỉ tải những video mà bạn có quyền sử dụng, và nhớ tôn trọng công sức của người đăng.",
+    "quality-note": "Bilibili chỉ cho phép tải ở chất lượng tiêu chuẩn (khoảng 480p) khi không đăng nhập. Video vẫn dùng lồng tiếng tốt, nhưng nếu bạn cần bản nét hơn thì nên tải thủ công.",
+    "quality-label": "Chất lượng"
   },
   "home": {
     "title": "Dự án",

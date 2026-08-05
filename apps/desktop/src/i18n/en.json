@@ -18,7 +18,8 @@
     "settings": "Settings",
     "support": "♥ Support",
     "primary": "Primary",
-    "home-aria": "VideoDubber home"
+    "home-aria": "VideoDubber home",
+    "download": "Download"
   },
   "shell": {
     "mode-desktop": "Desktop",
@@ -50,6 +51,33 @@
   "download": {
     "done": "Done",
     "working": "Working…"
+  },
+  "source-video": {
+    "title": "Download a source video",
+    "experimental": "Experimental",
+    "subtitle": "Fetch a video from Bilibili to use as the source for a dubbing project.",
+    "link-heading": "Paste a link",
+    "link-label": "Bilibili link",
+    "link-placeholder": "https://www.bilibili.com/video/BV…",
+    "link-hint": "A full link, a b23.tv short link, or just the BV id all work.",
+    "resolve": "Check link",
+    "resolving": "Checking…",
+    "preview-heading": "Video found",
+    "part-label": "Which part to download",
+    "start": "Download",
+    "progress-heading": "Download progress",
+    "progress-aria": "Video download progress",
+    "phase-video": "Downloading video…",
+    "phase-audio": "Downloading audio…",
+    "phase-merging": "Combining video and audio…",
+    "done": "Download complete.",
+    "saved-to": "Saved to:",
+    "use-as-source": "Use in a new project",
+    "reveal": "Open folder",
+    "another": "Download another",
+    "respect-notice": "Only download videos you have the right to use, and please respect the people who made them.",
+    "quality-note": "Without an account Bilibili only serves standard quality (around 480p). That is fine for dubbing, but grab the file yourself if you need a sharper source.",
+    "quality-label": "Quality"
   },
   "home": {
     "title": "Projects",

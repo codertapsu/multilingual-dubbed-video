@@ -5,6 +5,7 @@ import {
   computed,
   effect,
   inject,
+  input,
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -125,6 +126,12 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   protected readonly formatDuration = formatDurationCoarse;
   protected readonly inTauri = this.ipc.inTauri;
 
+  /**
+   * `?source=<path>` — a file handed over from the downloader screen. Bound by
+   * the router's component input binding (configured in main.ts).
+   */
+  readonly source = input<string | undefined>(undefined);
+
   // -------- form state --------
   protected readonly step = signal<WizardStep>(1);
   protected readonly name = signal('');
@@ -242,6 +249,11 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   });
 
   ngOnInit(): void {
+    // A video handed over from the downloader arrives as ?source=<path>, so the
+    // wizard opens with step 1 already filled in.
+    const handedOver = this.source();
+    if (handedOver) this.onPathInput(handedOver);
+
     void this.loadLanguages();
     void this.init();
   }

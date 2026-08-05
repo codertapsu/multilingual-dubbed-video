@@ -67,6 +67,14 @@ export const APP_ROUTES: Routes = [
       import('./screens/export/export.component').then((m) => m.ExportComponent),
   },
   {
+    path: 'download',
+    title: 'VideoDubber — Download source video',
+    loadComponent: () =>
+      import('./screens/download/download.component').then(
+        (m) => m.DownloadComponent,
+      ),
+  },
+  {
     path: 'support',
     title: 'VideoDubber — Support',
     loadComponent: () =>

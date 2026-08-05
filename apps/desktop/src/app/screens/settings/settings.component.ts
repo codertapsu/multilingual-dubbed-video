@@ -124,6 +124,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // Per-service key editing state.
   protected readonly keyInputs = signal<Partial<Record<CloudServiceId, string>>>({});
   protected readonly credBusy = signal<CloudServiceId | null>(null);
+
   protected readonly testResults = signal<Partial<Record<CloudServiceId, CredentialTestResult>>>({});
 
   // -------- engine packs --------

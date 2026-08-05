@@ -1,0 +1,174 @@
+<section class="page stack">
+  <div class="row row-between">
+    <div>
+      <h1>
+        {{ 'source-video.title' | translate }}
+        <span class="badge badge-warning">{{ 'source-video.experimental' | translate }}</span>
+      </h1>
+      <p class="muted">{{ 'source-video.subtitle' | translate }}</p>
+    </div>
+  </div>
+
+  <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
+
+  <!-- Step 1: paste a link -->
+  <div class="card stack">
+    <h2>{{ 'source-video.link-heading' | translate }}</h2>
+    <label class="stack-sm">
+      <span class="label">{{ 'source-video.link-label' | translate }}</span>
+      <input
+        type="text"
+        class="input"
+        [ngModel]="input()"
+        (ngModelChange)="input.set($event)"
+        (keydown.enter)="resolve()"
+        [placeholder]="'source-video.link-placeholder' | translate"
+        [disabled]="downloading()"
+      />
+      <span class="hint muted">{{ 'source-video.link-hint' | translate }}</span>
+      <span class="hint muted">{{ 'source-video.quality-note' | translate }}</span>
+    </label>
+
+    <div class="row">
+      <button
+        type="button"
+        class="btn"
+        (click)="resolve()"
+        [disabled]="resolving() || downloading() || !input().trim()"
+      >
+        {{ (resolving() ? 'source-video.resolving' : 'source-video.resolve') | translate }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Step 2: confirm what was found -->
+  @if (video(); as info) {
+    <div class="card stack">
+      <h2>{{ 'source-video.preview-heading' | translate }}</h2>
+      <div class="preview">
+        @if (info.coverUrl) {
+          <img class="cover" [src]="info.coverUrl" alt="" />
+        }
+        <div class="preview-details stack-sm">
+          <p class="preview-title">{{ info.title }}</p>
+          @if (info.ownerName) {
+            <p class="muted">{{ info.ownerName }}</p>
+          }
+          <p class="muted">{{ formatDuration(info.durationSec) }}</p>
+        </div>
+      </div>
+
+      @if (showPartPicker()) {
+        <label class="stack-sm">
+          <span class="label">{{ 'source-video.part-label' | translate }}</span>
+          <select
+            class="input"
+            [ngModel]="selectedPage()"
+            (ngModelChange)="selectedPage.set(+$event)"
+            [disabled]="downloading()"
+          >
+            @for (part of info.parts; track part.id) {
+              <option [value]="part.page">
+                P{{ part.page }} — {{ part.title }} ({{ formatDuration(part.durationSec) }})
+              </option>
+            }
+          </select>
+        </label>
+      }
+
+      @if (showQualityPicker()) {
+        <label class="stack-sm">
+          <span class="label">{{ 'source-video.quality-label' | translate }}</span>
+          <select
+            class="input"
+            [ngModel]="selectedQuality()"
+            (ngModelChange)="selectedQuality.set($event)"
+            [disabled]="downloading()"
+          >
+            <!-- Only qualities this viewer can actually be served: the API
+                 advertises more than it will deliver to a logged-out client. -->
+            @for (q of qualities(); track q.id) {
+              <option [value]="q.id">{{ q.label }}</option>
+            }
+          </select>
+        </label>
+      }
+
+      <div class="row">
+        <button
+          type="button"
+          class="btn btn-primary"
+          (click)="start()"
+          [disabled]="starting() || downloading()"
+        >
+          {{ 'source-video.start' | translate }}
+        </button>
+      </div>
+    </div>
+  }
+
+  <!-- Step 3: progress / result -->
+  @if (progress(); as p) {
+    <div class="card stack">
+      <h2>{{ 'source-video.progress-heading' | translate }}</h2>
+
+      @if (completedPath(); as path) {
+        <p>{{ 'source-video.done' | translate }}</p>
+        <p>
+          <span class="label">{{ 'source-video.saved-to' | translate }}</span>
+          <span class="mono">{{ path }}</span>
+        </p>
+        <div class="row">
+          <button type="button" class="btn btn-primary" (click)="useAsSource()">
+            {{ 'source-video.use-as-source' | translate }}
+          </button>
+          <button type="button" class="btn" (click)="reveal()">
+            {{ 'source-video.reveal' | translate }}
+          </button>
+          <button type="button" class="btn btn-ghost" (click)="reset()">
+            {{ 'source-video.another' | translate }}
+          </button>
+        </div>
+      } @else {
+        <!-- Literal keys per branch, not a built string: the i18n checker can
+             only verify keys it can see. -->
+        <p class="muted">
+          @switch (p.phase) {
+            @case ('video') {
+              {{ 'source-video.phase-video' | translate }}
+            }
+            @case ('audio') {
+              {{ 'source-video.phase-audio' | translate }}
+            }
+            @case ('merging') {
+              {{ 'source-video.phase-merging' | translate }}
+            }
+          }
+        </p>
+        <!-- A null percent means the server sent no length: show an
+             indeterminate bar rather than a number that would be a guess. -->
+        @if (p.percent !== null) {
+          <div
+            class="progress"
+            role="progressbar"
+            [attr.aria-label]="'source-video.progress-aria' | translate"
+            [attr.aria-valuenow]="p.percent"
+          >
+            <span [style.width.%]="p.percent"></span>
+          </div>
+          <p class="muted">{{ p.percent }}%</p>
+        } @else {
+          <div
+            class="progress indeterminate"
+            role="progressbar"
+            [attr.aria-label]="'source-video.progress-aria' | translate"
+          >
+            <span></span>
+          </div>
+        }
+      }
+    </div>
+  }
+
+  <p class="muted fineprint">{{ 'source-video.respect-notice' | translate }}</p>
+</section>

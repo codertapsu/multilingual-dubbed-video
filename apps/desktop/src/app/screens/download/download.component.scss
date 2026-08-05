@@ -1,0 +1,41 @@
+:host {
+  display: block;
+}
+
+.preview {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vd-sp-4);
+}
+
+/* Bilibili covers are 16:9; fix the box so a slow-loading image does not
+   reflow the card underneath it. */
+.cover {
+  width: 160px;
+  height: 90px;
+  flex: none;
+  object-fit: cover;
+  background: var(--vd-surface-2);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+}
+
+.preview-details {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Titles run long and carry CJK text with no spaces to break on. */
+.preview-title {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  font-size: 0.8rem;
+}
+
+.fineprint {
+  font-size: 0.8rem;
+}

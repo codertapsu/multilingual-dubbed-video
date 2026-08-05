@@ -1,13 +1,16 @@
 import { AppErrorException } from '@videodubber/shared';
 
 import {
+  checkSession,
   fetchStreams,
   fetchVideoInfo,
   mediaHeaders,
   resolveInput,
+  setSessionCookie,
   type FetchLike,
 } from './client.js';
 import { qualityLabel } from './quality.js';
+import { BilibiliSessionStore } from './session.js';
 import { looksLikeBilibili } from './url.js';
 import type {
   PreparedDownload,
@@ -53,6 +56,7 @@ export interface BilibiliProviderDeps {
 
 export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvider {
   const fetchImpl = deps.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+  const store = new BilibiliSessionStore(deps.configDir);
 
   /** Shared by resolve() and prepare(): both start from a pasted string. */
   const lookup = async (
@@ -139,6 +143,23 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
       };
     },
 
+    session: {
+      describe: () => store.describe(),
+      async set(raw) {
+        await store.set(raw);
+        // Re-read rather than reusing `raw`: the store normalises what was
+        // pasted, and the live cookie must match what was persisted.
+        setSessionCookie(await store.get());
+      },
+      async clear() {
+        await store.clear();
+        setSessionCookie(undefined);
+      },
+      check: () => checkSession(fetchImpl),
+      async load() {
+        setSessionCookie(await store.get());
+      },
+    },
   };
 }
 

@@ -170,5 +170,86 @@
     </div>
   }
 
+  <!-- Optional credentials, one card per provider that takes one. Collapsed
+       by default: most people never need it, and it is the one control here
+       that carries real risk. -->
+  @if (sessionProviders().length > 0) {
+    <details class="card stack" [open]="sessionOpen()">
+      <summary class="session-summary">{{ 'source-video.session.heading' | translate }}</summary>
+      <p class="muted">{{ 'source-video.session.intro' | translate }}</p>
+      <p class="hint">{{ 'source-video.session.warning' | translate }}</p>
+
+      @for (p of sessionProviders(); track p.id) {
+        <div class="cred-row stack-sm">
+          <div class="cred-head">
+            <span class="cred-name">{{ providerLabel(p.id) }}</span>
+            @if (sessionFor(p.id); as sess) {
+              @if (sess.configured) {
+                <span class="badge badge-completed">
+                  {{
+                    sess.fromEnv
+                      ? ('source-video.session.from-env' | translate)
+                      : ('source-video.session.set' | translate: { masked: sess.masked ?? '' })
+                  }}
+                </span>
+              } @else {
+                <span class="badge">{{ 'source-video.session.not-configured' | translate }}</span>
+              }
+            }
+          </div>
+          <div class="cred-controls">
+            <input
+              type="password"
+              class="grow"
+              [attr.aria-label]="'source-video.session.heading' | translate"
+              [placeholder]="'source-video.session.placeholder' | translate"
+              [ngModel]="sessionInput()"
+              (ngModelChange)="sessionInput.set($event)"
+              [name]="'session-' + p.id"
+              autocomplete="off"
+            />
+            <button
+              type="button"
+              class="btn btn-sm"
+              (click)="saveSession(p.id)"
+              [disabled]="sessionBusy() !== null || sessionInput().trim().length === 0"
+            >
+              {{ 'source-video.session.save' | translate }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm"
+              (click)="checkSession(p.id)"
+              [disabled]="sessionBusy() !== null || !(sessionFor(p.id)?.configured ?? false)"
+            >
+              {{ sessionBusy() === p.id ? '…' : ('source-video.session.check' | translate) }}
+            </button>
+            @if (sessionFor(p.id)?.configured && !sessionFor(p.id)?.fromEnv) {
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                (click)="clearSession(p.id)"
+                [disabled]="sessionBusy() !== null"
+              >
+                {{ 'source-video.session.remove' | translate }}
+              </button>
+            }
+          </div>
+          <!-- An expired credential does not error, it silently drops back to
+               the anonymous ceiling, so the check has to say so out loud. -->
+          @if (sessionCheck(); as check) {
+            <p class="hint" [class.test-ok]="check.valid" [class.test-fail]="!check.valid">
+              {{
+                check.valid
+                  ? ('source-video.session.valid' | translate: { name: check.uname ?? '' })
+                  : ('source-video.session.invalid' | translate)
+              }}
+            </p>
+          }
+        </div>
+      }
+    </details>
+  }
+
   <p class="muted fineprint">{{ 'source-video.respect-notice' | translate }}</p>
 </section>

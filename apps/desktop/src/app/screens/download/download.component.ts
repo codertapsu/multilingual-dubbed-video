@@ -12,10 +12,16 @@ import { Router } from '@angular/router';
 
 import { DownloadEventsService } from '../../core/ipc/download-events.service';
 import { IpcService } from '../../core/ipc/ipc.service';
-import { TranslatePipe } from '../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import type { AppError } from '../../core/models';
-import type { QualityOption, ResolvedVideo } from '../../core/models/download';
+import type {
+  DownloadProvider,
+  QualityOption,
+  ResolvedVideo,
+  SessionCheck,
+  SessionInfo,
+} from '../../core/models/download';
 
 /**
  * DownloadComponent (route "download") — fetch a source video to dub.
@@ -38,6 +44,7 @@ import type { QualityOption, ResolvedVideo } from '../../core/models/download';
 export class DownloadComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
   private readonly router = inject(Router);
+  private readonly translate = inject(TranslateService);
   protected readonly events = inject(DownloadEventsService);
 
   protected readonly input = signal('');
@@ -75,10 +82,99 @@ export class DownloadComponent implements OnInit, OnDestroy {
   protected readonly qualities = computed<QualityOption[]>(() => this.video()?.qualities ?? []);
   protected readonly showQualityPicker = computed(() => this.qualities().length > 1);
 
+  // ---- optional per-provider credentials -------------------------------
+  // Deliberately owned by this screen rather than Settings: it exists only to
+  // raise the ceiling of THIS feature, and a credential for a downloader is
+  // meaningless anywhere else in the app.
+  protected readonly providers = signal<DownloadProvider[]>([]);
+  protected readonly sessionInput = signal('');
+  protected readonly sessionBusy = signal<string | null>(null);
+  protected readonly sessionCheck = signal<SessionCheck | null>(null);
+  protected readonly sessionOpen = signal(false);
+
+  /** Only providers that actually take a credential get any UI. */
+  protected readonly sessionProviders = computed(() =>
+    this.providers().filter((p) => p.supportsSession),
+  );
+
   ngOnInit(): void {
     // Connect on entry so a download already running (started before the user
     // navigated away) is picked up from the server's replayed state.
     this.events.connect();
+    void this.loadProviders();
+  }
+
+  private async loadProviders(): Promise<void> {
+    try {
+      this.providers.set(await this.ipc.getDownloadProviders());
+    } catch {
+      /* optional affordance — never block the screen on it */
+    }
+  }
+
+  protected sessionFor(providerId: string): SessionInfo | undefined {
+    return this.providers().find((p) => p.id === providerId)?.session;
+  }
+
+  /**
+   * Display name for a provider.
+   *
+   * The key is built from the provider id so a new source needs only one line
+   * of i18n — but a missing key renders as the raw key string, which would be
+   * an ugly way to meet a new provider. Fall back to the id itself, so adding
+   * a provider without translations still looks deliberate.
+   */
+  protected providerLabel(providerId: string): string {
+    const key = `source-video.provider.${providerId}`;
+    const label = this.translate.instant(key);
+    return label === key ? providerId : label;
+  }
+
+  protected async saveSession(providerId: string): Promise<void> {
+    const value = this.sessionInput().trim();
+    if (!value || this.sessionBusy()) return;
+    this.sessionBusy.set(providerId);
+    this.sessionCheck.set(null);
+    try {
+      await this.ipc.setProviderSession(providerId, value);
+      // Drop the plaintext from the form as soon as it is stored; leaving a
+      // live credential sitting in an input is needless exposure.
+      this.sessionInput.set('');
+      await this.loadProviders();
+    } catch (err) {
+      this.localError.set(err as AppError);
+    } finally {
+      this.sessionBusy.set(null);
+    }
+  }
+
+  protected async clearSession(providerId: string): Promise<void> {
+    if (this.sessionBusy()) return;
+    this.sessionBusy.set(providerId);
+    try {
+      await this.ipc.clearProviderSession(providerId);
+      this.sessionInput.set('');
+      this.sessionCheck.set(null);
+      await this.loadProviders();
+    } catch (err) {
+      this.localError.set(err as AppError);
+    } finally {
+      this.sessionBusy.set(null);
+    }
+  }
+
+  /** Surface an expired credential, which otherwise just silently caps quality. */
+  protected async checkSession(providerId: string): Promise<void> {
+    if (this.sessionBusy()) return;
+    this.sessionBusy.set(providerId);
+    this.sessionCheck.set(null);
+    try {
+      this.sessionCheck.set(await this.ipc.testProviderSession(providerId));
+    } catch (err) {
+      this.localError.set(err as AppError);
+    } finally {
+      this.sessionBusy.set(null);
+    }
   }
 
   ngOnDestroy(): void {

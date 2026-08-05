@@ -196,16 +196,37 @@ a full `bilibili.com/video/BV…` link, a `b23.tv` short link, and a bare `BV` i
 all work, but a search-results or user-profile page is not a video.
 
 **Downloads come back at ~480p.** That is the ceiling Bilibili serves to a
-logged-out client, and VideoDubber never signs in. It is a perfectly good
-dubbing source; if you need a sharper master, fetch it yourself and pick it in
-the New project wizard.
+logged-out client. VideoDubber never signs in on its own, so this is the
+default and it is a perfectly good dubbing source.
+
+To raise it, paste your own `SESSDATA` cookie under **Download source video →
+Source account**. It lives on that screen rather than in Settings because it
+only affects this feature. That unlocks 1080p; 1080p+ and 4K additionally require a VIP
+account. Understand what you are storing: `SESSDATA` is a live session key, so
+anyone who obtains it can act as you on Bilibili. It is written to
+`<configDir>/bilibili-session.json` as **plain text** with mode 0600, is sent
+only to bilibili.com, and can be removed at any time from that screen — or
+invalidated by logging out on Bilibili. `BILIBILI_SESSDATA` in the environment
+overrides the stored file.
+
+An **expired** cookie does not produce an error; it silently drops you back to
+the anonymous ceiling while the settings screen still shows a saved value. Use
+the **Check** button there to see whether it is still live.
+
+**Adding another source (Douyin, …).** Downloads go through a provider
+registry: implement `SourceProvider`
+(`packages/node-orchestrator/src/providers/download/types.ts`) and add one line
+to `registry.ts`. Nothing above that — routes, the job service, the screen —
+mentions a provider by name. A provider serving one already-muxed file omits
+`audioUrl` and the ffmpeg merge is skipped; one needing no credential omits
+`session` and the whole credentials card disappears. The only UI change is one
+i18n key for the display name, and even that falls back to the provider id.
 
 If the link *is* a video page and it still fails, the video itself may be
 private, removed, region-locked, or require an account: open it in a browser
 while logged out to check. The downloader only reaches what an anonymous
 visitor can already play, so anything paid or members-only is out of scope by
 design.
-
 
 ### worker timeout
 Heavy model or large file — see [`WORKER_TIMEOUT`](#worker_timeout). Prefer a smaller

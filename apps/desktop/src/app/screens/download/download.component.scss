@@ -39,3 +39,44 @@
 .fineprint {
   font-size: 0.8rem;
 }
+
+/* Credentials are collapsed by default; make the summary read as a control
+   rather than as body text. */
+.session-summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.cred-row {
+  padding-top: var(--vd-sp-3);
+}
+
+.cred-head {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+}
+
+.cred-name {
+  font-weight: 600;
+}
+
+.cred-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--vd-sp-2);
+}
+
+.cred-controls .grow {
+  flex: 1;
+  min-width: 220px;
+}
+
+.test-ok {
+  color: var(--vd-ok, #2e7d32);
+}
+
+.test-fail {
+  color: var(--vd-danger, #c62828);
+}

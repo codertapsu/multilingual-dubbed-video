@@ -77,7 +77,24 @@
     "another": "Download another",
     "respect-notice": "Only download videos you have the right to use, and please respect the people who made them.",
     "quality-note": "Without an account Bilibili only serves standard quality (around 480p). That is fine for dubbing, but grab the file yourself if you need a sharper source.",
-    "quality-label": "Quality"
+    "quality-label": "Quality",
+    "session": {
+      "heading": "Source account (optional)",
+      "intro": "Logged out, most sites only serve lower quality. Paste your own session cookie to download sharper sources. For Bilibili that cookie is SESSDATA and unlocks 1080p (1080p+ and 4K also need a VIP account).",
+      "warning": "Heads up: a session cookie is a live key to your account — anyone holding it can act as you. VideoDubber stores it on this machine as plain text (mode 0600) and sends it only to that site. Remove it here any time, or log out on the site to invalidate it.",
+      "placeholder": "Paste SESSDATA=… or just the value",
+      "set": "Saved ({masked})",
+      "not-configured": "Not configured",
+      "from-env": "From environment",
+      "save": "Save",
+      "remove": "Remove",
+      "check": "Check",
+      "valid": "✓ Cookie is live ({name})",
+      "invalid": "✗ Cookie is expired or invalid — downloads are still capped at lower quality. Log in again and paste a fresh one."
+    },
+    "provider": {
+      "bilibili": "Bilibili"
+    }
   },
   "home": {
     "title": "Projects",

@@ -4,7 +4,14 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createBilibiliProvider, partBaseName } from './bilibiliProvider.js';
-import { _resetWbiKeyCache, getWbiKey, type FetchLike } from './client.js';
+import {
+  _resetWbiKeyCache,
+  getWbiKey,
+  hasSessionCookie,
+  mediaHeaders,
+  setSessionCookie,
+  type FetchLike,
+} from './client.js';
 
 /** A fetch stand-in that answers from a URL-substring -> payload map. */
 function fakeFetch(routes: Record<string, unknown>): FetchLike {
@@ -40,9 +47,11 @@ let dir: string;
 beforeEach(async () => {
   dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'vd-bili-provider-'));
   _resetWbiKeyCache();
+  setSessionCookie(undefined);
 });
 
 afterEach(async () => {
+  setSessionCookie(undefined);
   await fsp.rm(dir, { recursive: true, force: true });
 });
 
@@ -177,5 +186,44 @@ describe('getWbiKey', () => {
     await expect(
       getWbiKey(fakeFetch({ '/x/web-interface/nav': { code: -101, message: '账号未登录', data: {} } })),
     ).rejects.toThrow(/signed request/);
+  });
+});
+
+describe('session cookie', () => {
+  it('sends no Cookie header at all when unconfigured', () => {
+    // The anonymous path must be byte-for-byte what it was before sessions
+    // existed — an empty or malformed Cookie header can itself be grounds for
+    // rejection.
+    setSessionCookie(undefined);
+    expect(mediaHeaders()['Cookie']).toBeUndefined();
+    expect(hasSessionCookie()).toBe(false);
+  });
+
+  it('sends only SESSDATA when configured', () => {
+    setSessionCookie('abc123');
+    expect(mediaHeaders()['Cookie']).toBe('SESSDATA=abc123');
+    // Nothing else from a pasted jar may ride along.
+    expect(mediaHeaders()['Cookie']).not.toContain('bili_jct');
+  });
+
+  it('treats an all-whitespace cookie as unconfigured', () => {
+    setSessionCookie('   ');
+    expect(hasSessionCookie()).toBe(false);
+    expect(mediaHeaders()['Cookie']).toBeUndefined();
+  });
+
+  it('exposes the credential as a capability, applied through the store', async () => {
+    const p = createBilibiliProvider({ configDir: dir, fetchImpl: fakeFetch({}) });
+    expect(p.session).toBeDefined();
+
+    expect(await p.session?.describe()).toEqual({ configured: false });
+    await p.session?.set('SESSDATA=abcdefghijklmnop');
+    // set() must apply the value live, not merely persist it, or the very next
+    // download still runs anonymously until a restart.
+    expect(hasSessionCookie()).toBe(true);
+    expect(await p.session?.describe()).toMatchObject({ configured: true });
+
+    await p.session?.clear();
+    expect(hasSessionCookie()).toBe(false);
   });
 });

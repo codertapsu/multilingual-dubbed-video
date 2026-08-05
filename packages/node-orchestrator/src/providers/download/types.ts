@@ -65,6 +65,41 @@ export interface PreparedDownload {
   headers: Record<string, string>;
 }
 
+/** Display-safe view of a stored credential. */
+export interface SessionInfo {
+  configured: boolean;
+  /** Masked value, so the user can confirm which one is stored. */
+  masked?: string;
+  /** True when it comes from the environment rather than the stored file. */
+  fromEnv?: boolean;
+}
+
+/** Result of asking the site whether a stored credential is still live. */
+export interface SessionCheck {
+  valid: boolean;
+  /** Account name, when the credential is live. */
+  uname?: string;
+}
+
+/**
+ * Optional per-provider credential.
+ *
+ * Declared as a capability rather than assumed, because it is genuinely
+ * optional: a provider needing no credential simply omits it, and the UI hides
+ * the whole section rather than showing a control that does nothing.
+ */
+export interface SessionCapability {
+  /** Masked status; never the raw value. */
+  describe(): Promise<SessionInfo>;
+  /** Store (or, given an empty value, clear) the credential. */
+  set(raw: string): Promise<void>;
+  clear(): Promise<void>;
+  /** Ask the site whether the stored credential still works. */
+  check(): Promise<SessionCheck>;
+  /** Load the persisted value and apply it, at boot. */
+  load(): Promise<void>;
+}
+
 /** A source of downloadable videos. */
 export interface SourceProvider {
   /** Stable id used in routes and by the UI to pick its labels. */
@@ -80,11 +115,16 @@ export interface SourceProvider {
   resolve(input: string): Promise<ResolvedSourceVideo>;
   /** Resolve concrete media URLs for one part at (at most) the given quality. */
   prepare(input: string, page: number, qualityId?: string): Promise<PreparedDownload>;
+  /** Present only when the provider accepts an optional credential. */
+  session?: SessionCapability;
 }
 
 /** What the UI needs to render provider-specific affordances. */
 export interface ProviderDescriptor {
   id: string;
+  supportsSession: boolean;
+  /** Current credential status, when the provider has one. */
+  session?: SessionInfo;
 }
 
 /** Raised when nothing recognises the pasted input. */

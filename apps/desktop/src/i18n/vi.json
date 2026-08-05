@@ -77,7 +77,24 @@
     "another": "Tải video khác",
     "respect-notice": "Chỉ tải những video mà bạn có quyền sử dụng, và nhớ tôn trọng công sức của người đăng.",
     "quality-note": "Bilibili chỉ cho phép tải ở chất lượng tiêu chuẩn (khoảng 480p) khi không đăng nhập. Video vẫn dùng lồng tiếng tốt, nhưng nếu bạn cần bản nét hơn thì nên tải thủ công.",
-    "quality-label": "Chất lượng"
+    "quality-label": "Chất lượng",
+    "session": {
+      "heading": "Tài khoản nguồn (không bắt buộc)",
+      "intro": "Khi chưa đăng nhập, nhiều trang chỉ cho tải ở chất lượng thấp. Dán cookie phiên của tài khoản bạn để tải bản nét hơn. Với Bilibili, cookie này là SESSDATA và sẽ mở tới 1080p (1080p+ và 4K cần tài khoản VIP).",
+      "warning": "Lưu ý: cookie phiên giống như chìa khoá tài khoản của bạn — ai có nó cũng có thể thao tác thay bạn. Ứng dụng lưu trên máy bạn ở dạng văn bản thường (quyền 0600) và chỉ gửi tới đúng trang đó. Bạn có thể xoá bất cứ lúc nào, hoặc đăng xuất trên trang để vô hiệu hoá.",
+      "placeholder": "Dán SESSDATA=… hoặc chỉ phần giá trị",
+      "set": "Đã lưu ({masked})",
+      "not-configured": "Chưa thiết lập",
+      "from-env": "Lấy từ biến môi trường",
+      "save": "Lưu",
+      "remove": "Xoá",
+      "check": "Kiểm tra",
+      "valid": "✓ Cookie còn hiệu lực ({name})",
+      "invalid": "✗ Cookie đã hết hạn hoặc không hợp lệ — hiện vẫn tải ở chất lượng thấp. Hãy đăng nhập lại rồi dán cookie mới."
+    },
+    "provider": {
+      "bilibili": "Bilibili"
+    }
   },
   "home": {
     "title": "Dự án",

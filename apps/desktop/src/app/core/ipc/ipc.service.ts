@@ -40,7 +40,12 @@ import type {
   UpdateInfo,
   UpdatePreferences,
 } from '../models/setup';
-import type { ResolvedVideo } from '../models/download';
+import type {
+  DownloadProvider,
+  ResolvedVideo,
+  SessionCheck,
+  SessionInfo,
+} from '../models/download';
 import type {
   EnginePrerequisites,
   EnginesResponse,
@@ -50,7 +55,7 @@ import type {
 } from '../models';
 
 /** HTTP verbs the fetch fallback understands. */
-type HttpMethod = 'GET' | 'POST' | 'PUT';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 /**
  * Detect whether we are running inside the Tauri webview. Tauri 2 injects
@@ -460,6 +465,43 @@ export class IpcService {
    */
   startDownload(input: string, page: number, qualityId?: string): Promise<{ jobId: string }> {
     return this.http<{ jobId: string }>('POST', '/download/start', { input, page, qualityId });
+  }
+
+  /** The sources this build can download from, with credential status. */
+  getDownloadProviders(): Promise<DownloadProvider[]> {
+    return this.http<DownloadProvider[]>('GET', '/download/providers');
+  }
+
+  /**
+   * A provider's optional credential. Only ever MASKED status crosses this
+   * boundary — the raw value travels one way, into the orchestrator.
+   */
+  getProviderSession(providerId: string): Promise<SessionInfo> {
+    return this.http<SessionInfo>('GET', `/download/providers/${encodeURIComponent(providerId)}/session`);
+  }
+
+  setProviderSession(providerId: string, value: string): Promise<SessionInfo> {
+    return this.http<SessionInfo>(
+      'PUT',
+      `/download/providers/${encodeURIComponent(providerId)}/session`,
+      { value },
+    );
+  }
+
+  clearProviderSession(providerId: string): Promise<SessionInfo> {
+    return this.http<SessionInfo>(
+      'DELETE',
+      `/download/providers/${encodeURIComponent(providerId)}/session`,
+    );
+  }
+
+  /** Ask the site whether the stored credential is still live. */
+  testProviderSession(providerId: string): Promise<SessionCheck> {
+    return this.http<SessionCheck>(
+      'POST',
+      `/download/providers/${encodeURIComponent(providerId)}/session/test`,
+      {},
+    );
   }
 
   // ----- Argos translation packs (browse the full index + install/remove) -----

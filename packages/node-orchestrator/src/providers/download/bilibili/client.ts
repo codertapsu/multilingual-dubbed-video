@@ -38,6 +38,39 @@ const BROWSER_HEADERS: Record<string, string> = {
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
 };
 
+/**
+ * The opt-in session cookie, held in memory for the life of the process.
+ *
+ * Module-level rather than threaded through every call site because it is
+ * cross-cutting and optional: an undefined value must behave EXACTLY like the
+ * anonymous path did before this existed, which is easiest to guarantee when
+ * there is one place that decides whether a Cookie header exists at all.
+ */
+let sessionCookie: string | undefined;
+
+/** Set (or clear, with undefined) the session cookie used for all requests. */
+export function setSessionCookie(sessdata: string | undefined): void {
+  sessionCookie = sessdata?.trim() || undefined;
+}
+
+/** True when a session cookie is in force (for status display only). */
+export function hasSessionCookie(): boolean {
+  return sessionCookie !== undefined;
+}
+
+/**
+ * Headers for a Bilibili request, with the session cookie when configured.
+ *
+ * Only SESSDATA is ever sent. The store already strips anything else out of a
+ * pasted cookie jar; building the header from that single field means a future
+ * change to the store cannot widen what leaves the machine.
+ */
+function requestHeaders(): Record<string, string> {
+  return sessionCookie
+    ? { ...BROWSER_HEADERS, Cookie: `SESSDATA=${sessionCookie}` }
+    : { ...BROWSER_HEADERS };
+}
+
 /** One selectable part of a (possibly multi-part) video. */
 export interface BilibiliPart {
   cid: number;
@@ -95,7 +128,7 @@ interface ApiEnvelope<T> {
 async function callEnvelope<T>(fetchImpl: FetchLike, url: string): Promise<ApiEnvelope<T>> {
   let res;
   try {
-    res = await fetchImpl(url, { headers: BROWSER_HEADERS });
+    res = await fetchImpl(url, { headers: requestHeaders() });
   } catch (cause) {
     throw new AppErrorException('WORKER_UNAVAILABLE', 'Could not reach Bilibili.', {
       remediation: 'Check your internet connection and try again.',
@@ -128,7 +161,7 @@ async function callApi<T>(fetchImpl: FetchLike, url: string): Promise<T> {
 
 /** Follow a `b23.tv` short link to the page it points at. */
 export async function resolveShortLink(fetchImpl: FetchLike, url: string): Promise<string> {
-  const res = await fetchImpl(url, { headers: BROWSER_HEADERS });
+  const res = await fetchImpl(url, { headers: requestHeaders() });
   return res.url || url;
 }
 
@@ -216,6 +249,33 @@ export async function getWbiKey(fetchImpl: FetchLike, now = Date.now()): Promise
   return key;
 }
 
+/** What a session check found. */
+export interface SessionCheck {
+  valid: boolean;
+  /** The account name, when the cookie is live. */
+  uname?: string;
+}
+
+/**
+ * Ask Bilibili whether the configured cookie is still live.
+ *
+ * Worth an explicit control rather than inferring it: an expired cookie does
+ * not fail, it silently drops the user back to the anonymous ~480p ceiling
+ * while the settings screen still reads "Saved". `nav` is the natural probe —
+ * it is the account endpoint, and it is already the one we call for the
+ * signing key.
+ */
+export async function checkSession(fetchImpl: FetchLike): Promise<SessionCheck> {
+  if (!sessionCookie) return { valid: false };
+  const body = await callEnvelope<{ isLogin?: boolean; uname?: string }>(
+    fetchImpl,
+    `${API}/x/web-interface/nav`,
+  );
+  const isLogin = body.data?.isLogin === true;
+  const uname = body.data?.uname?.trim();
+  return { valid: isLogin, ...(isLogin && uname ? { uname } : {}) };
+}
+
 /** Reset the cached signing key (tests). */
 export function _resetWbiKeyCache(): void {
   cachedKey = null;
@@ -281,7 +341,12 @@ export async function fetchStreams(
   };
 }
 
-/** Headers any media fetch must carry (see BROWSER_HEADERS). */
+/**
+ * Headers any media fetch must carry (see BROWSER_HEADERS).
+ *
+ * The cookie goes here too: media hosts check it for higher-quality streams,
+ * and a URL obtained with a session but fetched without one can 403.
+ */
 export function mediaHeaders(): Record<string, string> {
-  return { ...BROWSER_HEADERS };
+  return requestHeaders();
 }

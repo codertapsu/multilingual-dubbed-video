@@ -51,3 +51,26 @@ export type DownloadEvent = (
   /** Set on catch-up events sent when the stream is (re)connected. */
   replay?: boolean;
 };
+
+/** Whether an optional provider credential is configured (never the value). */
+export interface SessionInfo {
+  configured: boolean;
+  /** Masked cookie, so the user can confirm which value is stored. */
+  masked?: string;
+  /** True when it comes from BILIBILI_SESSDATA rather than the stored file. */
+  fromEnv?: boolean;
+}
+
+/** Result of asking the site whether a stored credential is still live. */
+export interface SessionCheck {
+  valid: boolean;
+  uname?: string;
+}
+
+/** A source this build can download from. */
+export interface DownloadProvider {
+  id: string;
+  /** Whether it accepts an optional credential (drives the whole session UI). */
+  supportsSession: boolean;
+  session?: SessionInfo;
+}

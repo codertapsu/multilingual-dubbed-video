@@ -55,7 +55,30 @@ export function requireProviderFor(
   });
 }
 
-/** Provider list for the UI. */
-export function describeProviders(providers: readonly SourceProvider[]): ProviderDescriptor[] {
-  return providers.map((p) => ({ id: p.id }));
+/** Provider list for the UI, including credential status where applicable. */
+export async function describeProviders(
+  providers: readonly SourceProvider[],
+): Promise<ProviderDescriptor[]> {
+  return Promise.all(
+    providers.map(async (p) => ({
+      id: p.id,
+      supportsSession: p.session !== undefined,
+      ...(p.session ? { session: await p.session.describe() } : {}),
+    })),
+  );
+}
+
+/** Apply any persisted credentials at boot, best-effort. */
+export async function loadProviderSessions(providers: readonly SourceProvider[]): Promise<void> {
+  await Promise.all(
+    providers.map(async (p) => {
+      // One provider's unreadable credential file must not stop the others
+      // from loading theirs, nor block the server from starting.
+      try {
+        await p.session?.load();
+      } catch {
+        /* a missing or corrupt credential simply means "anonymous" */
+      }
+    }),
+  );
 }

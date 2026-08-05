@@ -75,7 +75,12 @@ import {
   resolveVideo,
   startDownload,
 } from './providers/download/downloadService.js';
-import { createProviders, describeProviders } from './providers/download/registry.js';
+import {
+  createProviders,
+  describeProviders,
+  loadProviderSessions,
+  providerById,
+} from './providers/download/registry.js';
 
 /** Ollama's OpenAI-compatible base URL (for the prerequisites probe). */
 const OLLAMA_URL = process.env.OLLAMA_URL?.trim() || 'http://127.0.0.1:11434/v1';
@@ -219,8 +224,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // Source-video downloader (experimental): its own bus, so a long download
   // never interleaves with first-run setup progress on the same stream.
   const downloadBus = new DownloadBus();
-  // The source providers this build carries.
+  // Source providers, plus any persisted credentials applied at boot so the
+  // very first download already runs at the user's real quality ceiling.
   const downloadProviders = createProviders(config.configDir);
+  void loadProviderSessions(downloadProviders);
   const installer =
     options.installer ?? new SetupInstaller({ config, store: setupStore, bus: setupBus });
 
@@ -533,11 +540,81 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   app.get('/download/providers', async (_req, reply) => {
     try {
-      return describeProviders(downloadProviders);
+      return await describeProviders(downloadProviders);
     } catch (err) {
       return sendError(reply, err);
     }
   });
+
+  /** Resolve a provider by id, or 404 rather than silently doing nothing. */
+  const requireProvider = (id: string): (typeof downloadProviders)[number] => {
+    const provider = providerById(downloadProviders, id);
+    if (!provider) {
+      throw new AppErrorException('INVALID_VIDEO_LINK', `Unknown download provider "${id}".`, {
+        remediation: 'Reload the app; the list of providers comes from GET /download/providers.',
+      });
+    }
+    return provider;
+  };
+
+  /** Providers without a credential must reject rather than pretend to store one. */
+  const requireSession = (id: string): NonNullable<(typeof downloadProviders)[number]['session']> => {
+    const provider = requireProvider(id);
+    if (!provider.session) {
+      throw new AppErrorException('INVALID_VIDEO_LINK', `Provider "${id}" takes no credentials.`, {
+        remediation: 'Nothing to configure for this source.',
+      });
+    }
+    return provider.session;
+  };
+
+  app.get(
+    '/download/providers/:id/session',
+    async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      try {
+        return await requireSession(req.params.id).describe();
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  app.put(
+    '/download/providers/:id/session',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { value?: string } }>, reply) => {
+      try {
+        const session = requireSession(req.params.id);
+        await session.set(req.body?.value ?? '');
+        return await session.describe();
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  app.delete(
+    '/download/providers/:id/session',
+    async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      try {
+        const session = requireSession(req.params.id);
+        await session.clear();
+        return await session.describe();
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  app.post(
+    '/download/providers/:id/session/test',
+    async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      try {
+        return await requireSession(req.params.id).check();
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
 
   app.get('/download/events', (req, reply) => {
     reply.raw.writeHead(200, {

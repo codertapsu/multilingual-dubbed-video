@@ -76,7 +76,7 @@
     "reveal": "Open folder",
     "another": "Download another",
     "respect-notice": "Only download videos you have the right to use, and please respect the people who made them.",
-    "quality-note": "Without an account Bilibili serves up to about 720p. Add a session cookie below to download sharper sources.",
+    "quality-note": "The best available quality varies by video (usually 720p when logged out). Add a session cookie below for sharper sources.",
     "quality-label": "Quality",
     "session": {
       "heading": "Source account (optional)",
@@ -94,7 +94,16 @@
     },
     "provider": {
       "bilibili": "Bilibili"
-    }
+    },
+    "quality-best": "Best available",
+    "quality-4k": "4K (2160p)",
+    "quality-2k": "2K (1440p)",
+    "quality-1080p": "Full HD (1080p)",
+    "quality-720p": "HD (720p)",
+    "quality-480p": "480p",
+    "quality-360p": "360p",
+    "quality-resolved": "Will download at {quality}.",
+    "quality-resolved-lower": "This video does not offer that — will download at {quality}, the closest available."
   },
   "home": {
     "title": "Projects",

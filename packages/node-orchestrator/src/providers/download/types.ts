@@ -113,8 +113,15 @@ export interface SourceProvider {
   matches(input: string): boolean;
   /** Look the input up without downloading anything. */
   resolve(input: string): Promise<ResolvedSourceVideo>;
-  /** Resolve concrete media URLs for one part at (at most) the given quality. */
-  prepare(input: string, page: number, qualityId?: string): Promise<PreparedDownload>;
+  /**
+   * Resolve concrete media URLs for one part.
+   *
+   * `targetHeightPx` is a PREFERENCE, not a demand: the provider serves the
+   * closest it can (see `pickClosestHeight`), because a target the source
+   * cannot meet should downgrade rather than fail. Undefined means "the best
+   * there is".
+   */
+  prepare(input: string, page: number, targetHeightPx?: number): Promise<PreparedDownload>;
   /** Present only when the provider accepts an optional credential. */
   session?: SessionCapability;
 }

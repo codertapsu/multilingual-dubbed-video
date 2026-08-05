@@ -195,16 +195,20 @@ The **Download source video** screen could not recognise what you pasted
 a full `bilibili.com/video/BV…` link, a `b23.tv` short link, and a bare `BV` id
 all work, but a search-results or user-profile page is not a video.
 
-**Downloads come back at ~720p.** That is the ceiling Bilibili serves a
-logged-out client, and VideoDubber never signs in on its own.
+**Downloads cap out below what the site shows.** The ceiling for a logged-out
+client varies per video — 720p on every one of twelve popular videos sampled,
+360p on an old upload — and VideoDubber never signs in on its own. The quality
+control states what the video you pasted will actually give you.
 
 Bilibili serves the same video through two pipes, gated differently, and the
 downloader offers both. The adaptive (DASH) pipe reaches 1080p+ and 4K but is
 capped at **480p** for anonymous viewers; the legacy single-file pipe serves
 **720p** to that same viewer and arrives already muxed, so it needs no ffmpeg
-step. The quality picker lists whatever each pipe can actually deliver and
-defaults to the best of the two — which, logged out, is the legacy one. If you
-add a session cookie the adaptive pipe overtakes it and is chosen instead.
+step. You choose a target — Best available, 4K, 2K, 1080p, 720p, 480p, 360p — and the
+download takes the closest the video can serve WITHOUT exceeding it, across
+both pipes. Asking for 1080p on a video capped at 720p downloads 720p. If every
+available quality is above the target, the smallest is used. Adding a session
+cookie lifts the ceiling, and the adaptive pipe then wins at the top end.
 
 To raise it, paste your own `SESSDATA` cookie under **Download source video →
 Source account**. It lives on that screen rather than in Settings because it

@@ -1,4 +1,4 @@
-import { AppErrorException } from '@videodubber/shared';
+import { AppErrorException, pickClosestHeight } from '@videodubber/shared';
 
 import {
   checkSession,
@@ -10,10 +10,9 @@ import {
   setSessionCookie,
   type FetchLike,
 } from './client.js';
-import type { BilibiliRef } from './url.js';
 import { qualityHeight, qualityLabel } from './quality.js';
 import { BilibiliSessionStore } from './session.js';
-import { looksLikeBilibili } from './url.js';
+import { looksLikeBilibili, type BilibiliRef } from './url.js';
 import type {
   PreparedDownload,
   ResolvedSourceVideo,
@@ -44,22 +43,18 @@ export const BILIBILI_PROVIDER_ID = 'bilibili';
  *   prog — legacy single file: unsigned, already muxed, no merge. Serves 720p
  *          to that same logged-out viewer.
  *
- * The quality id carries which pipe it came from, which is exactly what the
- * contract's opaque ids are for — nothing above the provider has to know that
- * Bilibili has two.
+ * Which pipe a stream came from stays INSIDE this module: the contract deals in
+ * pixel heights, so nothing above the provider has to know that Bilibili has
+ * two pipes, or that the newer one is the more restricted.
  */
 type StreamPath = 'dash' | 'prog';
 
-function encodeQualityId(pathKind: StreamPath, qn: number): string {
-  return `${pathKind}:${qn}`;
-}
-
-function decodeQualityId(id: string | undefined): { pathKind?: StreamPath; qn?: number } {
-  if (!id) return {};
-  const [kind, raw] = id.split(':');
-  const qn = Number(raw);
-  if ((kind !== 'dash' && kind !== 'prog') || !Number.isFinite(qn)) return {};
-  return { pathKind: kind, qn };
+/** A concrete stream one of the two pipes can serve. */
+interface Candidate {
+  pathKind: StreamPath;
+  qn: number;
+  heightPx: number;
+  label: string;
 }
 
 /**
@@ -80,17 +75,17 @@ export function partBaseName(
 }
 
 /**
- * Everything both pipes can deliver for one part, best first.
+ * Every stream both pipes can serve for one part, best first.
  *
  * Deduplicated by height with the progressive path winning ties: at equal
  * resolution it is strictly cheaper (one request, no merge) and avoids a remux
  * of an already-correct container.
  */
-async function probeQualities(
+async function probeCandidates(
   fetchImpl: FetchLike,
   ref: BilibiliRef,
   cid: number,
-): Promise<SourceQuality[]> {
+): Promise<Candidate[]> {
   // Independent probes: one path failing must not hide the other, which is the
   // whole point of offering both.
   const [dash, prog] = await Promise.allSettled([
@@ -98,30 +93,29 @@ async function probeQualities(
     fetchProgressiveStream(fetchImpl, ref, cid),
   ]);
 
-  const byHeight = new Map<number, SourceQuality>();
+  const byHeight = new Map<number, Candidate>();
 
   if (prog.status === 'fulfilled' && prog.value) {
-    const h = qualityHeight(prog.value.qn);
-    byHeight.set(h, {
-      id: encodeQualityId('prog', prog.value.qn),
-      label: qualityLabel(prog.value.qn),
-      ...(h ? { heightPx: h } : {}),
-    });
-  }
-
-  if (dash.status === 'fulfilled') {
-    for (const q of dash.value.qualities) {
-      const h = q.heightPx ?? qualityHeight(q.qn);
-      if (byHeight.has(h)) continue;
-      byHeight.set(h, {
-        id: encodeQualityId('dash', q.qn),
-        label: q.label,
-        ...(h ? { heightPx: h } : {}),
+    const heightPx = qualityHeight(prog.value.qn);
+    if (heightPx) {
+      byHeight.set(heightPx, {
+        pathKind: 'prog',
+        qn: prog.value.qn,
+        heightPx,
+        label: qualityLabel(prog.value.qn),
       });
     }
   }
 
-  return [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([, q]) => q);
+  if (dash.status === 'fulfilled') {
+    for (const q of dash.value.qualities) {
+      const heightPx = q.heightPx ?? qualityHeight(q.qn);
+      if (!heightPx || byHeight.has(heightPx)) continue;
+      byHeight.set(heightPx, { pathKind: 'dash', qn: q.qn, heightPx, label: q.label });
+    }
+  }
+
+  return [...byHeight.values()].sort((a, b) => b.heightPx - a.heightPx);
 }
 
 export interface BilibiliProviderDeps {
@@ -165,7 +159,12 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
       // must not sink the whole preview: the title and part list are still
       // useful, and the download falls back to the best available anyway.
       const probe = parts.find((p) => p.page === ref.page) ?? parts[0];
-      const qualities = probe ? await probeQualities(fetchImpl, ref, Number(probe.id)) : [];
+      const candidates = probe ? await probeCandidates(fetchImpl, ref, Number(probe.id)) : [];
+      const qualities: SourceQuality[] = candidates.map((c) => ({
+        id: String(c.heightPx),
+        label: c.label,
+        heightPx: c.heightPx,
+      }));
 
       return {
         providerId: BILIBILI_PROVIDER_ID,
@@ -179,7 +178,7 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
       };
     },
 
-    async prepare(input, page, qualityId): Promise<PreparedDownload> {
+    async prepare(input, page, targetHeightPx): Promise<PreparedDownload> {
       const { ref, info, parts } = await lookup(input);
       const part = parts.find((p) => p.page === page) ?? parts[0];
       if (!part) {
@@ -190,19 +189,20 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
       const cid = Number(part.id);
       const baseName = partBaseName({ title: info.title, parts }, part);
 
-      // No explicit choice means "best available", which requires knowing what
-      // both pipes offer — the adaptive one is not always the richer.
-      let { pathKind, qn } = decodeQualityId(qualityId);
-      if (!pathKind) {
-        const best = (await probeQualities(fetchImpl, ref, cid))[0];
-        ({ pathKind, qn } = decodeQualityId(best?.id));
-      }
+      // Snap the preference onto what this video can actually serve, using the
+      // SAME rule the screen used to promise a result before starting.
+      const candidates = await probeCandidates(fetchImpl, ref, cid);
+      const height = pickClosestHeight(
+        candidates.map((c) => c.heightPx),
+        targetHeightPx,
+      );
+      const chosen = candidates.find((c) => c.heightPx === height);
 
-      if (pathKind === 'prog') {
+      if (chosen?.pathKind === 'prog') {
         // Catch as well as null-check: this endpoint REJECTS (non-zero envelope
         // code) for some videos rather than returning an empty result, and
         // either way the right answer is to try the other pipe, not to fail.
-        const prog = await fetchProgressiveStream(fetchImpl, ref, cid, qn ?? 80).catch(
+        const prog = await fetchProgressiveStream(fetchImpl, ref, cid, chosen.qn).catch(
           () => undefined,
         );
         if (prog) {
@@ -219,7 +219,7 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
         // for an individual video, and a working lower quality beats an error.
       }
 
-      const streams = await fetchStreams(fetchImpl, ref, cid, qn);
+      const streams = await fetchStreams(fetchImpl, ref, cid, chosen?.qn);
       return {
         videoUrl: streams.videoUrl,
         audioUrl: streams.audioUrl,

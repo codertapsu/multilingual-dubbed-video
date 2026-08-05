@@ -116,12 +116,12 @@ export function startDownload(
   page: number,
   deps: DownloadDeps,
   jobId: string,
-  qualityId?: string,
+  targetHeightPx?: number,
 ): string {
   void (async () => {
     try {
       const provider = requireProviderFor(deps.providers, input);
-      const prepared = await provider.prepare(input, page, qualityId);
+      const prepared = await provider.prepare(input, page, targetHeightPx);
 
       const filePath = await downloadMedia(
         {

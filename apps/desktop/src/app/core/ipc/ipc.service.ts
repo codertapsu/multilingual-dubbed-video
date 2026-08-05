@@ -463,8 +463,16 @@ export class IpcService {
    * POST /download/start — kicks off the async download. Returns once the job
    * is queued; progress arrives on the `/download/events` SSE stream.
    */
-  startDownload(input: string, page: number, qualityId?: string): Promise<{ jobId: string }> {
-    return this.http<{ jobId: string }>('POST', '/download/start', { input, page, qualityId });
+  startDownload(
+    input: string,
+    page: number,
+    targetHeightPx?: number,
+  ): Promise<{ jobId: string }> {
+    return this.http<{ jobId: string }>('POST', '/download/start', {
+      input,
+      page,
+      targetHeightPx,
+    });
   }
 
   /** The sources this build can download from, with credential status. */

@@ -76,7 +76,7 @@
     "reveal": "Mở thư mục",
     "another": "Tải video khác",
     "respect-notice": "Chỉ tải những video mà bạn có quyền sử dụng, và nhớ tôn trọng công sức của người đăng.",
-    "quality-note": "Khi chưa đăng nhập, Bilibili cho tải tối đa khoảng 720p. Nếu bạn thêm cookie tài khoản ở mục bên dưới thì có thể tải bản nét hơn.",
+    "quality-note": "Chất lượng cao nhất tuỳ từng video (thường là 720p khi chưa đăng nhập). Thêm cookie tài khoản ở mục bên dưới để tải bản nét hơn.",
     "quality-label": "Chất lượng",
     "session": {
       "heading": "Tài khoản nguồn (không bắt buộc)",
@@ -94,7 +94,16 @@
     },
     "provider": {
       "bilibili": "Bilibili"
-    }
+    },
+    "quality-best": "Tốt nhất có thể",
+    "quality-4k": "4K (2160p)",
+    "quality-2k": "2K (1440p)",
+    "quality-1080p": "Full HD (1080p)",
+    "quality-720p": "HD (720p)",
+    "quality-480p": "480p",
+    "quality-360p": "360p",
+    "quality-resolved": "Sẽ tải ở {quality}.",
+    "quality-resolved-lower": "Video này không có mức bạn chọn — sẽ tải ở {quality}, mức gần nhất."
   },
   "home": {
     "title": "Dự án",

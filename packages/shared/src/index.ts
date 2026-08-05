@@ -123,6 +123,8 @@ export type {
   SystemProfileResponse,
 } from './models/setup.js';
 export { ALL_CLOUD_SERVICES } from './models/setup.js';
+export { QUALITY_LADDER, pickClosestHeight } from './models/download.js';
+export type { QualityTarget } from './models/download.js';
 
 // ---- Provider / service contracts -----------------------------------------
 export type {

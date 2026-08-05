@@ -513,7 +513,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   app.post(
     '/download/start',
     async (
-      req: FastifyRequest<{ Body: { input?: string; page?: number; qualityId?: string } }>,
+      req: FastifyRequest<{ Body: { input?: string; page?: number; targetHeightPx?: number } }>,
       reply,
     ) => {
       try {
@@ -530,7 +530,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
             providers: downloadProviders,
           },
           randomUUID(),
-          req.body?.qualityId,
+          req.body?.targetHeightPx,
         );
         return reply.status(202).send({ jobId });
       } catch (err) {

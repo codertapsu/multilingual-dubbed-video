@@ -129,7 +129,7 @@ describe('Bilibili provider', () => {
     expect(info.providerId).toBe('bilibili');
     expect(info.requestedPage).toBe(2);
     expect(info.parts.map((x) => x.id)).toEqual(['11', '22']);
-    expect(info.qualities).toEqual([{ id: 'dash:32', label: '480p', heightPx: 480 }]);
+    expect(info.qualities).toEqual([{ id: '480', label: '480p', heightPx: 480 }]);
   });
 
   it('still previews the video when the quality probe fails', async () => {
@@ -163,9 +163,9 @@ describe('Bilibili provider', () => {
     });
 
     const info = await p.resolve('BV1GJ411x7h7');
-    expect(info.qualities[0]).toMatchObject({ id: 'prog:64', label: '720p', heightPx: 720 });
-    // Lower DASH rungs remain selectable underneath it.
-    expect(info.qualities.map((q) => q.id)).toEqual(['prog:64', 'dash:32', 'dash:16']);
+    expect(info.qualities[0]).toMatchObject({ label: '720p', heightPx: 720 });
+    // Lower DASH rungs remain available underneath it.
+    expect(info.qualities.map((q) => q.heightPx)).toEqual([720, 480, 360]);
   });
 
   it('downloads the legacy path without an audio stream, so no merge runs', async () => {
@@ -179,7 +179,7 @@ describe('Bilibili provider', () => {
       }),
     });
 
-    const prepared = await p.prepare('BV1GJ411x7h7', 1, 'prog:64');
+    const prepared = await p.prepare('BV1GJ411x7h7', 1, 720);
     expect(prepared.videoUrl).toBe('https://example.invalid/whole.mp4');
     // Omitting audioUrl is what makes downloadMedia skip ffmpeg entirely.
     expect(prepared.audioUrl).toBeUndefined();
@@ -196,7 +196,7 @@ describe('Bilibili provider', () => {
       }),
     });
 
-    const prepared = await p.prepare('BV1GJ411x7h7', 1, 'dash:32');
+    const prepared = await p.prepare('BV1GJ411x7h7', 1, 480);
     expect(prepared.videoUrl).toBe('v480');
     expect(prepared.audioUrl).toBe('a');
   });
@@ -215,9 +215,9 @@ describe('Bilibili provider', () => {
     });
 
     const info = await p.resolve('BV1GJ411x7h7');
-    expect(info.qualities.map((q) => q.id)).toEqual(['dash:32', 'dash:16']);
+    expect(info.qualities.map((q) => q.heightPx)).toEqual([480, 360]);
 
-    const prepared = await p.prepare('BV1GJ411x7h7', 1, 'prog:64');
+    const prepared = await p.prepare('BV1GJ411x7h7', 1, 720);
     expect(prepared.videoUrl).toBe('v480');
     expect(prepared.audioUrl).toBe('a');
   });
@@ -238,7 +238,44 @@ describe('Bilibili provider', () => {
       }),
     });
     const info = await p.resolve('BV1GJ411x7h7');
-    expect(info.qualities.every((q) => q.id.startsWith('dash:'))).toBe(true);
+    expect(info.qualities.map((q) => q.heightPx)).toEqual([480, 360]);
+  });
+
+  it('downgrades a target the video cannot meet, across both pipes', async () => {
+    // Asking for 1080p on a video whose best is 720p downloads 720p — and the
+    // 720p happens to live on the OTHER pipe, so the snap has to consider both
+    // rather than picking within one.
+    const p = createBilibiliProvider({
+      configDir: dir,
+      fetchImpl: fakeFetch({
+        '/x/web-interface/view': VIEW_OK,
+        '/x/web-interface/nav': NAV_OK,
+        '/x/player/wbi/playurl': DASH_480,
+        '/x/player/playurl': PROG_720,
+      }),
+    });
+
+    const prepared = await p.prepare('BV1GJ411x7h7', 1, 1080);
+    expect(prepared.videoUrl).toBe('https://example.invalid/whole.mp4');
+    expect(prepared.audioUrl).toBeUndefined();
+  });
+
+  it('never exceeds the target when something at or below exists', async () => {
+    // Asking for 480p must not hand back the 720p stream just because it is
+    // the best available; the target is a ceiling.
+    const p = createBilibiliProvider({
+      configDir: dir,
+      fetchImpl: fakeFetch({
+        '/x/web-interface/view': VIEW_OK,
+        '/x/web-interface/nav': NAV_OK,
+        '/x/player/wbi/playurl': DASH_480,
+        '/x/player/playurl': PROG_720,
+      }),
+    });
+
+    const prepared = await p.prepare('BV1GJ411x7h7', 1, 480);
+    expect(prepared.videoUrl).toBe('v480');
+    expect(prepared.audioUrl).toBe('a');
   });
 
   it('surfaces the server’s own message when Bilibili refuses', async () => {

@@ -118,6 +118,10 @@ const DYNAMIC_KEY_PREFIXES = [
   'ducking-hint.',
   'speed-hint.',
   'misc.phase-',
+  // The quality ladder and the provider list are both data-driven: their leaves
+  // are chosen at runtime from a table, so the static scan cannot see them.
+  'source-video.quality-',
+  'source-video.provider.',
   'storage-loc.',
   'reason.',
   'capacity.',

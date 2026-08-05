@@ -13,6 +13,7 @@ import { Router } from '@angular/router';
 import { DownloadEventsService } from '../../core/ipc/download-events.service';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { QUALITY_LADDER, pickClosestHeight } from '@videodubber/shared';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import type { AppError } from '../../core/models';
 import type {
@@ -52,8 +53,15 @@ export class DownloadComponent implements OnInit, OnDestroy {
   protected readonly starting = signal(false);
   protected readonly video = signal<ResolvedVideo | null>(null);
   protected readonly selectedPage = signal(1);
-  /** Chosen quality id, or undefined to take the best on offer. */
-  protected readonly selectedQuality = signal<string | undefined>(undefined);
+  /**
+   * Preferred quality, as a pixel height. Undefined means "the best there is".
+   *
+   * A standing preference rather than a pick from this video's list: the whole
+   * ladder stays selectable, and the download snaps to the closest the video
+   * can actually serve.
+   */
+  protected readonly targetHeight = signal<number | undefined>(undefined);
+  protected readonly qualityLadder = QUALITY_LADDER;
   private readonly localError = signal<AppError | null>(null);
 
   /** Either a local failure (bad link) or one reported by the running job. */
@@ -80,7 +88,29 @@ export class DownloadComponent implements OnInit, OnDestroy {
    * saying nothing and letting the download take the best available.
    */
   protected readonly qualities = computed<QualityOption[]>(() => this.video()?.qualities ?? []);
-  protected readonly showQualityPicker = computed(() => this.qualities().length > 1);
+  protected readonly showQualityPicker = computed(() => this.qualities().length > 0);
+
+  /**
+   * What the current preference will actually download for THIS video.
+   *
+   * Computed with the same function the orchestrator uses, so the promise made
+   * here and the choice made there cannot drift.
+   */
+  protected readonly resolvedQuality = computed<QualityOption | undefined>(() => {
+    const available = this.qualities();
+    const height = pickClosestHeight(
+      available.map((q) => q.heightPx ?? 0),
+      this.targetHeight(),
+    );
+    return available.find((q) => q.heightPx === height);
+  });
+
+  /** True when the preference cannot be met exactly, so the UI can say so. */
+  protected readonly qualityDowngraded = computed(() => {
+    const target = this.targetHeight();
+    const resolved = this.resolvedQuality()?.heightPx;
+    return target !== undefined && resolved !== undefined && resolved !== target;
+  });
 
   // ---- optional per-provider credentials -------------------------------
   // Deliberately owned by this screen rather than Settings: it exists only to
@@ -128,6 +158,19 @@ export class DownloadComponent implements OnInit, OnDestroy {
     const key = `source-video.provider.${providerId}`;
     const label = this.translate.instant(key);
     return label === key ? providerId : label;
+  }
+
+  /**
+   * Name a quality rung.
+   *
+   * Same shape as {@link providerLabel}: the key is derived from the ladder so
+   * a new rung needs one line of i18n, and a missing key falls back to a plain
+   * "1080p" rather than rendering the raw key at the user.
+   */
+  protected qualityLabelFor(rung: { heightPx: number; key: string }): string {
+    const key = `source-video.quality-${rung.key}`;
+    const label = this.translate.instant(key);
+    return label === key ? `${rung.heightPx}p` : label;
   }
 
   protected async saveSession(providerId: string): Promise<void> {
@@ -197,7 +240,8 @@ export class DownloadComponent implements OnInit, OnDestroy {
       const wanted = info.parts.find((p) => p.page === info.requestedPage);
       this.selectedPage.set(wanted?.page ?? info.parts[0]?.page ?? 1);
       // Default to the best that can actually be delivered.
-      this.selectedQuality.set(info.qualities[0]?.id);
+      // Leave the preference alone across resolves: it is the user's standing
+      // choice, not a property of whichever video they just pasted.
     } catch (err) {
       this.localError.set(err as AppError);
     } finally {
@@ -214,7 +258,7 @@ export class DownloadComponent implements OnInit, OnDestroy {
     this.localError.set(null);
     this.events.reset();
     try {
-      await this.ipc.startDownload(value, this.selectedPage(), this.selectedQuality());
+      await this.ipc.startDownload(value, this.selectedPage(), this.targetHeight());
     } catch (err) {
       this.localError.set(err as AppError);
     } finally {
@@ -246,7 +290,6 @@ export class DownloadComponent implements OnInit, OnDestroy {
     this.localError.set(null);
     this.video.set(null);
     this.input.set('');
-    this.selectedQuality.set(undefined);
   }
 
   protected dismissError(): void {

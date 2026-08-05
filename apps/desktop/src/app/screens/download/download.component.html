@@ -81,16 +81,30 @@
           <span class="label">{{ 'source-video.quality-label' | translate }}</span>
           <select
             class="input"
-            [ngModel]="selectedQuality()"
-            (ngModelChange)="selectedQuality.set($event)"
+            [ngModel]="targetHeight() ?? ''"
+            (ngModelChange)="targetHeight.set($event === '' ? undefined : +$event)"
             [disabled]="downloading()"
           >
-            <!-- Only qualities this viewer can actually be served: the API
-                 advertises more than it will deliver to a logged-out client. -->
-            @for (q of qualities(); track q.id) {
-              <option [value]="q.id">{{ q.label }}</option>
+            <!-- The whole ladder stays selectable even when this video cannot
+                 serve a rung: it is a standing preference, not a claim about
+                 this video. What it resolves to is stated underneath. -->
+            <option value="">{{ 'source-video.quality-best' | translate }}</option>
+            @for (q of qualityLadder; track q.heightPx) {
+              <option [value]="q.heightPx">
+                {{ qualityLabelFor(q) }}
+              </option>
             }
           </select>
+          @if (resolvedQuality(); as picked) {
+            <span class="hint muted">
+              {{
+                (qualityDowngraded()
+                  ? 'source-video.quality-resolved-lower'
+                  : 'source-video.quality-resolved'
+                ) | translate: { quality: picked.label }
+              }}
+            </span>
+          }
         </label>
       }
 

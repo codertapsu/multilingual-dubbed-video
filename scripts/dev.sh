@@ -145,6 +145,29 @@ check_bin_warn() {
 check_bin_warn ffmpeg FFMPEG_PATH
 check_bin_warn ffprobe FFPROBE_PATH
 
+# --- Build the workspace libraries -------------------------------------------
+# The Angular app and the orchestrator both consume @videodubber/shared (and
+# @videodubber/media-worker) through their package "exports", which point at
+# dist/ — NOT at src/. So dev needs these built exactly as production does.
+#
+# Without this step the failure modes are nasty and look nothing like the cause:
+#   - No dist at all (fresh clone): "Could not resolve @videodubber/shared".
+#   - Stale dist (someone edited packages/shared/src): the import resolves, but
+#     anything added since the last build is missing — e.g. "updateNoticeFor is
+#     not exported" — which reads like a bug in the app, not a stale artifact.
+# `pnpm build` at the root hides both, which is why production always worked.
+#
+# This is a hard precondition, not a warning: nothing downstream can start
+# without it, and continuing would only produce the confusing errors above.
+LIB_FILTERS=(--filter @videodubber/shared --filter @videodubber/media-worker)
+info "Building workspace libraries (shared, media-worker)…"
+if ! pnpm "${LIB_FILTERS[@]}" build >"${LOG_DIR}/libs-build.log" 2>&1; then
+  err "Failed to build the workspace libraries. See ${LOG_DIR}/libs-build.log"
+  tail -n 20 "${LOG_DIR}/libs-build.log" >&2 || true
+  exit 1
+fi
+ok "Workspace libraries built."
+
 # --- Helper: start a python worker -------------------------------------------
 # Args: <name> <worker-dir> <port> <env-port-var>
 start_worker() {
@@ -183,6 +206,29 @@ start_worker() {
   # Export the resolved port so the orchestrator/UI know where to reach it.
   export "${portvar}=http://127.0.0.1:${port}"
 }
+
+# --- Keep the libraries rebuilt while you work --------------------------------
+# A one-off build fixes startup but not the edit loop: without a watcher, every
+# change under packages/shared/src is invisible until the stack is restarted,
+# and the app silently keeps running the previous build. `tsc --watch` writes
+# dist on save, which the Angular dev server and `tsx watch` then pick up.
+#
+# Skippable (SKIP_LIB_WATCH=1) for anyone who only wants the app running.
+if [[ "${SKIP_LIB_WATCH:-0}" != "1" ]]; then
+  for lib in "packages/shared" "workers/media-worker"; do
+    name="$(basename "${lib}")"
+    info "Watching ${lib} for changes (logs: ${LOG_DIR}/watch-${name}.log)"
+    (
+      cd "${ROOT_DIR}/${lib}" || exit 1
+      # --preserveWatchOutput keeps the log readable instead of having tsc
+      # clear the screen on every rebuild.
+      exec npx tsc -p tsconfig.json --watch --preserveWatchOutput
+    ) >"${LOG_DIR}/watch-${name}.log" 2>&1 &
+    PIDS+=("$!")
+  done
+else
+  warn "SKIP_LIB_WATCH=1 — library changes will NOT be picked up until you rebuild."
+fi
 
 # --- Start workers -----------------------------------------------------------
 if [[ "${SKIP_WORKERS:-0}" != "1" ]]; then

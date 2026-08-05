@@ -253,6 +253,44 @@ The Angular UI talks to the orchestrator at `http://127.0.0.1:5100` over HTTP an
 subscribes to SSE for progress. Native-only features (file dialog, "open folder")
 degrade gracefully outside Tauri.
 
+> **The workspace libraries must be built, even in dev.** `@videodubber/shared`
+> and `@videodubber/media-worker` are consumed through their package `exports`,
+> which point at `dist/`, not `src/`. `pnpm dev` / `pnpm start` now build them
+> first and keep a `tsc --watch` running per library, so this is handled for
+> you — but if you start `ng serve` **by itself**, build them yourself first:
+>
+> ```bash
+> pnpm --filter @videodubber/shared --filter @videodubber/media-worker build
+> ```
+>
+> Skipping it fails in two ways that look nothing like the cause:
+> *no* `dist` gives `Could not resolve "@videodubber/shared"`, while a **stale**
+> `dist` resolves fine but is missing anything added since the last build (e.g.
+> `updateNoticeFor is not exported`), which reads like an app bug rather than a
+> stale artifact. `pnpm build` builds the libraries as a matter of course, which
+> is why production never showed this.
+>
+> Set `SKIP_LIB_WATCH=1` to skip the watchers if you are not editing the
+> libraries — but then your edits to them will not appear until you rebuild.
+
+> **Do not remove `prebundle.exclude` from `apps/desktop/angular.json`.** The
+> dev server is Vite-based and pre-bundles dependencies into
+> `.angular/cache/**/vite/deps/`. That cache is keyed on dependency *metadata*,
+> not on the contents of a linked workspace package, so a rebuilt
+> `packages/shared/dist` does **not** invalidate it: the browser keeps loading
+> a bundle that can be months old and fails with
+> `does not provide an export named 'updateNoticeFor'` even though `dist` is
+> perfectly correct. Listing the two workspace libraries under
+> `serve.options.prebundle.exclude` keeps them out of that cache so they are
+> always read fresh; third-party packages are still pre-bundled, so startup
+> stays fast. Add any future first-party `@videodubber/*` library to the list.
+>
+> If you hit a stale prebundle anyway, clear it with:
+>
+> ```bash
+> rm -rf apps/desktop/.angular/cache
+> ```
+
 **Full Tauri desktop app (needs Rust):** see next section.
 
 ---

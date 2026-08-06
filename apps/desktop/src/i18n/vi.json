@@ -55,11 +55,11 @@
   "source-video": {
     "title": "Tải video nguồn",
     "experimental": "Thử nghiệm",
-    "subtitle": "Tải video từ Bilibili về máy để dùng làm video nguồn cho dự án lồng tiếng.",
+    "subtitle": "Tải video từ Bilibili hoặc Douyin về máy để dùng làm video nguồn cho dự án lồng tiếng.",
     "link-heading": "Dán liên kết",
-    "link-label": "Liên kết Bilibili",
-    "link-placeholder": "https://www.bilibili.com/video/BV…",
-    "link-hint": "Bạn có thể dán liên kết đầy đủ, liên kết rút gọn b23.tv, hoặc chỉ mã BV.",
+    "link-label": "Liên kết Bilibili hoặc Douyin",
+    "link-placeholder": "https://www.bilibili.com/video/BV… hoặc https://www.douyin.com/video/…",
+    "link-hint": "Dán liên kết đầy đủ, liên kết rút gọn (b23.tv, v.douyin.com), hoặc chỉ mã video.",
     "resolve": "Kiểm tra liên kết",
     "resolving": "Đang kiểm tra…",
     "preview-heading": "Video tìm được",
@@ -93,7 +93,8 @@
       "invalid": "✗ Cookie đã hết hạn hoặc không hợp lệ — hiện vẫn tải ở chất lượng thấp. Hãy đăng nhập lại rồi dán cookie mới."
     },
     "provider": {
-      "bilibili": "Bilibili"
+      "bilibili": "Bilibili",
+      "douyin": "Douyin (抖音)"
     },
     "quality-best": "Tốt nhất có thể",
     "quality-4k": "4K (2160p)",

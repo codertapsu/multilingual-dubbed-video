@@ -1,6 +1,7 @@
 import { AppErrorException } from '@videodubber/shared';
 
 import { createBilibiliProvider } from './bilibili/bilibiliProvider.js';
+import { createDouyinProvider } from './douyin/douyinProvider.js';
 import type { ProviderDescriptor, SourceProvider } from './types.js';
 
 /**
@@ -12,7 +13,7 @@ import type { ProviderDescriptor, SourceProvider } from './types.js';
  * no change.
  */
 export function createProviders(configDir: string): SourceProvider[] {
-  return [createBilibiliProvider({ configDir })];
+  return [createBilibiliProvider({ configDir }), createDouyinProvider()];
 }
 
 /**

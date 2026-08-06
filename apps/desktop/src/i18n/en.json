@@ -55,11 +55,11 @@
   "source-video": {
     "title": "Download a source video",
     "experimental": "Experimental",
-    "subtitle": "Fetch a video from Bilibili to use as the source for a dubbing project.",
+    "subtitle": "Fetch a video from Bilibili or Douyin to use as the source for a dubbing project.",
     "link-heading": "Paste a link",
-    "link-label": "Bilibili link",
-    "link-placeholder": "https://www.bilibili.com/video/BV…",
-    "link-hint": "A full link, a b23.tv short link, or just the BV id all work.",
+    "link-label": "Bilibili or Douyin link",
+    "link-placeholder": "https://www.bilibili.com/video/BV… or https://www.douyin.com/video/…",
+    "link-hint": "A full link, a short link (b23.tv, v.douyin.com), or just the video id all work.",
     "resolve": "Check link",
     "resolving": "Checking…",
     "preview-heading": "Video found",
@@ -93,7 +93,8 @@
       "invalid": "✗ Cookie is expired or invalid — downloads are still capped at lower quality. Log in again and paste a fresh one."
     },
     "provider": {
-      "bilibili": "Bilibili"
+      "bilibili": "Bilibili",
+      "douyin": "Douyin (抖音)"
     },
     "quality-best": "Best available",
     "quality-4k": "4K (2160p)",

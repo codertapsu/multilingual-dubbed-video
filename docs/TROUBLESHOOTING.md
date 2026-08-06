@@ -231,11 +231,24 @@ audio track would otherwise surface much later as "no audio to transcribe",
 pointing at the wrong step. Retry, or pick a different quality. If `ffprobe` is
 missing the check is skipped rather than failing the download.
 
-**Adding another source (Douyin, …).** Downloads go through a provider
-registry: implement `SourceProvider`
+**Supported sources.** Bilibili and Douyin. Bilibili accepts
+`bilibili.com/video/BV…` or `av…`, `b23.tv` short links, festival/list pages
+carrying `?bvid=`, and bare ids. Douyin accepts `douyin.com/video/…`,
+`?modal_id=…` (what the share button on a feed or profile actually produces),
+`v.douyin.com` short links, and the bare numeric id.
+
+Douyin needs no account and offers a single already-muxed 1080p file, so its
+downloads run one request with no ffmpeg step. It is read from the public share
+page rather than Douyin's own web API, which requires a signature recomputed
+from obfuscated site JavaScript. One consequence worth knowing: that page is
+only served to a MOBILE user agent — with a desktop one the request succeeds and
+returns a page containing no data at all.
+
+**Adding another source.** Downloads go through a provider registry: implement
+`SourceProvider`
 (`packages/node-orchestrator/src/providers/download/types.ts`) and add one line
-to `registry.ts`. Nothing above that — routes, the job service, the screen —
-mentions a provider by name. A provider serving one already-muxed file omits
+to `registry.ts` — adding Douyin changed exactly those two lines. Nothing above
+that — routes, the job service, the screen — mentions a provider by name. A provider serving one already-muxed file omits
 `audioUrl` and the ffmpeg merge is skipped; one needing no credential omits
 `session` and the whole credentials card disappears. The only UI change is one
 i18n key for the display name, and even that falls back to the provider id.

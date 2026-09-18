@@ -90,3 +90,7 @@ Thumbs.db
 # ===== Claude Code =====
 # Commit team-wide .claude/settings.json; keep personal overrides local.
 .claude/settings.local.json
+
+# Apple signing + notarization credentials. Only the .example is committed;
+# the filled-in file holds an app-specific password and must never be staged.
+/scripts/apple-credentials.env

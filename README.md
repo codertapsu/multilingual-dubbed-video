@@ -77,15 +77,23 @@ Turn it off, or check manually, in **Settings → Updates**.
 > [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
 
 **Cutting a release locally?** Releases are built on the maintainer's own Mac +
-Windows (CI is opt-in per OS). The short version:
+Windows (CI is opt-in per OS). The short version, **the same on both machines**:
 
 ```bash
-pnpm package:sidecars && pnpm app:build        # self-contained installer for this OS
-# macOS — one command (build + deep-sign + notarize + upload):
-SIDECARS=1 UPLOAD=1 bash scripts/package/release-macos.sh
-# other OSes — upload to the shared draft release:
-bash scripts/package/release-upload.sh upload <artifact>      # Windows: release-upload.ps1
+pnpm release:check      # preflight only — nothing is built or uploaded
+pnpm release            # cut this OS's release end to end
 ```
+
+`pnpm release` is a thin front door that reimplements nothing: on macOS it delegates to
+`release-macos.sh` (build → deep-sign → notarize → staple → updater archive → upload),
+on Windows to `release-windows.ps1`. Add `--sidecars --upload` (macOS) or
+`-Sidecars -Upload` (Windows) to rebuild the bundled sidecars and publish. Both
+machines upload to the **same** draft release, and `latest.json` is merged so the
+updater sees both platforms.
+
+Run `pnpm release:check` first, always — it answers "could I cut a release right now?"
+in seconds without building anything, which on macOS saves discovering a missing
+`APPLE_TEAM_ID` after a 20-minute build and a trip to Apple's notary service.
 
 Full runbook (per-OS steps, signing, opt-in CI): [`docs/RELEASING.md`](docs/RELEASING.md);
 macOS deep-sign rationale + troubleshooting: [`docs/APPLE_SIGNING.md`](docs/APPLE_SIGNING.md).
@@ -218,30 +226,64 @@ first run (small installer). A build can instead **bundle** the default-pair
 
 ## Quick start
 
+**Two commands, the same two on every OS** — macOS, Linux and Windows:
+
 ```bash
-# 0. Clone, then enable pnpm
-corepack enable
+corepack enable         # (once) gives you the pnpm version this repo pins
 
-# 1. Install all TypeScript/Node workspace deps
-pnpm install
-
-# 2. One-time local setup: create Python venvs, install worker deps,
-#    pre-cache the whisper model, install an Argos pair, fetch a Piper voice.
-#    (Network step. Everything is individually skippable — see the script header.)
-bash scripts/setup-local-models.sh        # Windows: pwsh scripts/setup-local-models.ps1
-
-# 3. Verify your environment (Node, pnpm, Python, ffmpeg, workers, models)
-pnpm verify
-
-# 4. Run EVERYTHING with ONE command, then open http://localhost:1420
-pnpm dev          # foreground (Ctrl-C stops everything)
-#   ...or detached, so your terminal returns:
-pnpm start        # start the whole stack in the background
-pnpm stop         # stop the whole stack (single command)
+pnpm bootstrap          # set everything up
+pnpm dev                # run everything
 ```
 
 Then open **http://localhost:1420** in your browser, pick a video, choose source/target
-languages, and run the pipeline.
+languages, and run the pipeline. `Ctrl-C` stops the whole stack.
+
+### What `pnpm bootstrap` does
+
+Five phases, printed as numbered banners so you can see where you are:
+
+1. **Prerequisites** — Node, pnpm, Python, FFmpeg, and Rust if you want the native
+   window. Anything missing is reported with the **exact install command for your OS**,
+   and bootstrap stops there: it never installs system software, runs `sudo`, or edits
+   your PATH on your behalf.
+2. **Workspace dependencies** — `pnpm install`.
+3. **Build the workspace libraries** — `pnpm build`, because `@videodubber/shared` and
+   `@videodubber/media-worker` are consumed through `exports` that point at `dist/`.
+4. **Python workers + models** — a `.venv` per worker with its `requirements.txt`, a
+   pre-cached faster-whisper model, an Argos language pair, and a Piper voice, built
+   with a **resolved Python 3.12** rather than whatever `python3` happens to be. Uses
+   the network, but never fails hard offline; it prints the manual steps instead.
+5. **Verify** — the environment doctor, so you end on an OK/WARN/MISSING table rather
+   than a surprise three commands later.
+
+It is safe to re-run at any time, and a re-run skips what is already in place.
+Flags go straight after the task name, with **no `--` separator** (pnpm 11 forwards a
+literal `--` and the script rejects it): `--skip-deps`, `--skip-build`, `--skip-python`,
+`--skip-models`, `--strict`, `--help`. On Windows: `-SkipDeps`, `-SkipBuild`,
+`-SkipPython`, `-SkipModels`, `-Strict`. Each also works as an env var
+(`SKIP_MODELS=1`, …).
+
+### Doing it by hand
+
+```bash
+corepack enable && corepack prepare pnpm@11.9.0 --activate
+pnpm install
+pnpm build
+node scripts/run.mjs setup-local-models    # the .sh / .ps1 pair, dispatched per OS
+pnpm doctor                                # = scripts/verify-environment.ts
+```
+
+`setup-local-models` is individually skippable — `SKIP_VENVS=1`, `SKIP_MODELS=1`,
+`SKIP_WHISPER=1`, `SKIP_ARGOS=1`, `SKIP_PIPER=1` — and tunable with `PYTHON_PATH`,
+`FASTER_WHISPER_MODEL`, `ARGOS_FROM`/`ARGOS_TO`, `PIPER_VOICE` and
+`VIDEODUBBER_DEV_HOME`. See [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md).
+
+### Other ways to run it
+
+```bash
+pnpm start        # the whole stack, detached — your terminal returns
+pnpm stop         # stop it (port-based; works however it was started)
+```
 
 > Prefer a **native desktop window**? Run `pnpm app` (needs Rust) — it opens the app and
 > **auto-starts/stops all backend services for you**. See
@@ -297,8 +339,9 @@ degrade gracefully outside Tauri. **No Rust toolchain needed** — great for dev
 
 - `pnpm stop` is **port-based** — it reliably stops the whole stack (UI 1420, orchestrator
   5100, workers 5101–5103) however it was started.
-- **Windows:** use the PowerShell equivalents — `pwsh scripts/start.ps1`,
-  `pwsh scripts/stop.ps1`, `pwsh scripts/dev.ps1`.
+- **Every one of these works on Windows too.** Each task ships as a `.sh` + `.ps1` pair
+  and `scripts/run.mjs` dispatches to the right half, so `pnpm dev` / `pnpm start` /
+  `pnpm stop` are the commands on every OS — no separate `pwsh scripts/…` invocation.
 - Put machine-specific paths in a `.env` (copy from `.env.example`) — `FFMPEG_PATH`,
   `PYTHON_PATH`, `PIPER_*`, ports, etc. The start scripts load it automatically.
 
@@ -312,11 +355,14 @@ degrade gracefully outside Tauri. **No Rust toolchain needed** — great for dev
 
 ## Dev command reference
 
+**Every command below runs on macOS, Linux and Windows.** The task scripts ship as
+`.sh` + `.ps1` pairs and `scripts/run.mjs` picks the right one, forwarding your
+arguments, the exit code and Ctrl-C.
+
 | Command | What it does |
 |---|---|
-| `pnpm install` | Install all TS/Node workspace dependencies. |
-| `bash scripts/setup-local-models.sh` | Create Python venvs + install worker deps + download models. (`.ps1` on Windows.) |
-| `pnpm verify` | Run `scripts/verify-environment.ts`: checks Node/pnpm/Python/ffmpeg/workers/models. |
+| `pnpm bootstrap` | **Start here.** Prerequisite check → `pnpm install` → `pnpm build` → Python venvs + models → doctor. Idempotent. |
+| `pnpm doctor` | Run `scripts/verify-environment.ts`: Node/pnpm/Python/ffmpeg/workers/models, with a fix hint per row. (`pnpm verify` is the same script.) |
 | `pnpm dev` | Start the **full** stack (3 workers + orchestrator + Angular UI), foreground. |
 | `pnpm start` | Start the full stack **detached** (background); terminal returns. |
 | `pnpm stop` | **Stop everything** (port-based; works for any start method). |
@@ -328,13 +374,25 @@ degrade gracefully outside Tauri. **No Rust toolchain needed** — great for dev
 | `pnpm dev:desktop` | Start only the Angular UI (`ng serve`, port 1420). |
 | `pnpm build` | Build the TS packages + media-worker. |
 | `pnpm typecheck` | Type-check every workspace package. |
-| `pnpm test` | Run unit tests (shared utils, media-worker, orchestrator). |
+| `pnpm test` | TypeScript unit tests (shared utils, media-worker, orchestrator, desktop i18n check). |
+| `pnpm test:workers` | The **Python** pytest suites — which `pnpm test` cannot reach, because the workers are not pnpm packages. |
+| `pnpm test:all` | `pnpm test` + `pnpm test:workers`. |
+| `pnpm check` | `lint` → `typecheck` → `test:all` → version-consistency check → shell-twin check. The full gate. |
 | `pnpm lint` | ESLint over the TypeScript sources. |
+| `pnpm package:sidecars` | Stage everything an installer bundles (orchestrator SEA, frozen workers, ffmpeg, uv + CPython). |
+| `pnpm release` / `pnpm release:check` | Cut this OS's release, or run only its preflight (builds nothing, takes seconds). See [`docs/RELEASING.md`](docs/RELEASING.md). |
+| `pnpm desktop:rebuild` | Fully clean rebuild of the desktop app (keeps node_modules, cargo cache and venvs; `DEEP=1` wipes the venvs too). |
 
-> Environment overrides for `scripts/dev.sh`: `SKIP_WORKERS=1`, `SKIP_UI=1`. For
-> `scripts/setup-local-models.sh`: `SKIP_VENVS=1`, `SKIP_MODELS=1`, `SKIP_WHISPER=1`,
+> Environment overrides for `pnpm dev` on macOS/Linux: `SKIP_WORKERS=1`, `SKIP_UI=1`,
+> `SKIP_LIB_WATCH=1`. On Windows use the switches on `scripts\dev.ps1` instead —
+> `-SkipWorkers` / `-SkipUi` / `-SkipLibWatch` (only `-SkipLibWatch` also honors its
+> env var). For
+> `setup-local-models`: `SKIP_VENVS=1`, `SKIP_MODELS=1`, `SKIP_WHISPER=1`,
 > `SKIP_ARGOS=1`, `SKIP_PIPER=1`, plus `FASTER_WHISPER_MODEL`, `ARGOS_FROM`/`ARGOS_TO`,
 > `PIPER_VOICE`.
+
+New to the codebase? [`CONTRIBUTING.md`](CONTRIBUTING.md) has the full task reference,
+the repo layout, the house conventions, and the gotchas that actually bite.
 
 Copy `.env.example` to `.env` and adjust ports, binary paths, and model settings as
 needed. All values have sensible defaults; the app runs fully offline with none set.
@@ -384,6 +442,7 @@ worker and setting them does nothing. See [`docs/PROVIDERS.md`](docs/PROVIDERS.m
 
 | Doc | Contents |
 |---|---|
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | **Start here if you are new.** `pnpm bootstrap`, the full task reference, repo layout, how to run every test suite, house conventions, and how to propose a change. |
 | [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md) | Node/pnpm/Python/FFmpeg/Rust setup; running, starting & stopping each service. |
 | [`docs/WINDOWS.md`](docs/WINDOWS.md) | The complete Windows onboarding + build + release guide (the canonical toolchain versions). |
 | [`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) | Running the Tauri desktop shell **from source** and how it auto-starts/stops the backend. |

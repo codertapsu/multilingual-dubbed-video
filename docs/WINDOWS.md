@@ -10,9 +10,46 @@ There are **two things** you can do:
 - **Run in dev mode** — hot-reloading workers + orchestrator + Angular UI, either
   in the browser or in the native Tauri window. Needs the Python worker venvs and
   models, but **not** the release toolchain (signing key etc.).
-- **Build → release → publish** — produce the signed `.exe` installer and
-  upload it to the GitHub release. Needs the updater signing key + a GitHub
-  token on top of the dev prerequisites.
+- **Build → release → publish** — produce the `.exe` installer and upload it to
+  the GitHub release. Needs the updater signing key + a GitHub token on top of
+  the dev prerequisites.
+
+---
+
+## The short version
+
+Once the toolchain in **Part A** is installed and you have the repo cloned:
+
+```powershell
+corepack enable         # (once) gives you the pnpm version this repo pins
+
+pnpm bootstrap          # set everything up  (Parts B + C, in one command)
+pnpm dev                # run everything  -> http://localhost:1420
+```
+
+**These are the same commands the Mac uses.** Every task script in this repo ships
+as a `.sh` + `.ps1` pair and `scripts/run.mjs` runs the `.ps1` half on Windows, so
+`pnpm dev`, `pnpm start`, `pnpm stop`, `pnpm services`, `pnpm dev:workers`,
+`pnpm test:workers`, `pnpm package:sidecars` and `pnpm release` all work here —
+there is no `pwsh scripts\...` form you have to remember any more. (The `.ps1`
+files are still there, and still worth invoking directly when you want to pass a
+switch such as `-SkipWorkers`.)
+
+`pnpm bootstrap` runs five numbered phases — prerequisites → `pnpm install` →
+`pnpm build` → Python venvs + models → `pnpm doctor`. Phase 1 **checks** the
+Part A prerequisites and, for anything missing, prints the exact `winget` line
+to run. It will not install system software for you — that is your decision, not
+a setup script's. So if bootstrap stops and points at Part A, come back here,
+install that one tool, reopen `pwsh`, and run bootstrap again. It is idempotent.
+
+Switches: `-SkipDeps`, `-SkipBuild`, `-SkipPython`, `-SkipModels`, `-Strict`,
+`-Help` — each also available as an env var (`$env:SKIP_MODELS='1'`, …), which is
+the form the macOS twin uses. Through pnpm, with **no `--` separator**:
+`pnpm bootstrap -SkipModels`. (pnpm 11 forwards a literal `--` to the script,
+which then stops with `Unknown option: --`.)
+
+Parts B and C below are what bootstrap does, by hand, for when you want to
+understand a step or one of them fails.
 
 ---
 
@@ -22,6 +59,10 @@ Run each install from an **Administrator PowerShell** window. Every tool below i
 available via `winget` (ships with Windows 10/11); the manual download link is
 given too. **After installing, close and reopen the terminal** so PATH updates
 take effect.
+
+> You do not have to guess which of these you are missing: run `pnpm bootstrap`
+> (or `pnpm doctor`, which is read-only) and it will name each one and print the
+> command for it.
 
 ### 1. PowerShell 7 (`pwsh`) — required
 
@@ -144,8 +185,10 @@ voice while developing:
    `D:\piper` (so you have `D:\piper\piper.exe`). The old `rhasspy/piper` repo
    was archived read-only on 2025-10-06 and its last binaries predate what the
    packaged app ships (`vd-piper` freezes `piper1-gpl`), so don't use it.
-2. The `setup-local-models.ps1` step below downloads the Vietnamese voice into
-   `%USERPROFILE%\VideoDubber\models\piper`.
+2. The setup step in Part C downloads the Vietnamese voice into
+   `%USERPROFILE%\VideoDubber-dev\models\piper` (the **dev** model home —
+   `VIDEODUBBER_DEV_HOME`, which `dev.ps1` points the workers at; the installed
+   app uses `%USERPROFILE%\VideoDubber`).
 3. Set these in your dev session (see Part E) — `PIPER_BINARY_PATH` and
    `PIPER_VOICE_MODEL_PATH`.
 
@@ -158,6 +201,13 @@ cd D:\development\projects
 git clone https://github.com/codertapsu/multilingual-dubbed-video.git   # (skip if already cloned)
 cd multilingual-dubbed-video
 
+pnpm bootstrap          # does this part AND Part C
+```
+
+If you would rather run the JS half on its own — for example to reinstall
+dependencies after a lockfile change:
+
+```powershell
 pnpm install --frozen-lockfile
 ```
 
@@ -165,23 +215,30 @@ pnpm install --frozen-lockfile
 
 ## Part C — Set up the Python workers + local models (one-time)
 
-This creates a `.venv` in each worker, installs its dependencies, and downloads
+`pnpm bootstrap` already did this. This is the same step on its own, for when
+you want to re-run it with different options.
+
+It creates a `.venv` in each worker, installs its dependencies, and downloads
 the default models (faster-whisper `small`, Argos `en→vi`, the `vi` Piper voice).
 It never fails hard if you're offline — it prints manual steps instead.
 
 ```powershell
-pwsh scripts\setup-local-models.ps1
+node scripts/run.mjs setup-local-models      # or, to pass switches:
+pwsh scripts\setup-local-models.ps1 -SkipModels
 ```
 
-Useful switches: `-SkipModels` (venvs only), `-SkipPiper`, or override with
-`$env:FASTER_WHISPER_MODEL='small'`, `$env:ARGOS_FROM='en'`, `$env:ARGOS_TO='vi'`.
+Useful switches: `-SkipVenvs`, `-SkipModels` (venvs only), `-SkipWhisper`,
+`-SkipArgos`, `-SkipPiper`. Each also works as an env var (`$env:SKIP_MODELS='1'`,
+…), which is the form the `.sh` twin uses. Override the defaults with
+`$env:FASTER_WHISPER_MODEL='small'`, `$env:ARGOS_FROM='en'`, `$env:ARGOS_TO='vi'`,
+`$env:PIPER_VOICE`, `$env:PYTHON_PATH`, `$env:VIDEODUBBER_DEV_HOME`.
 See [`MODEL_SETUP.md`](MODEL_SETUP.md) for other languages (note: a non-English
 pair like `zh→vi` needs **both** `zh→en` and `en→vi` — Argos pivots through
 English).
 
 Sanity-check the whole environment:
 ```powershell
-pnpm verify
+pnpm doctor          # = scripts/verify-environment.ts  (`pnpm verify` is the same script)
 ```
 
 ---
@@ -197,17 +254,30 @@ browser. No Rust/Tauri needed.
 
 ```powershell
 # (recommended) point the TTS worker at your Piper binary + voice for real audio:
-$env:PIPER_BINARY_PATH     = 'D:\piper\piper.exe'
-$env:PIPER_VOICE_MODEL_PATH = "$env:USERPROFILE\VideoDubber\models\piper\vi_VN-vais1000-medium.onnx"
+$env:PIPER_BINARY_PATH      = 'D:\piper\piper.exe'
+$env:PIPER_VOICE_MODEL_PATH = "$env:USERPROFILE\VideoDubber-dev\models\piper\vi_VN-vais1000-medium.onnx"
 
-pwsh scripts\dev.ps1
+pnpm dev
 ```
 Then open **<http://127.0.0.1:1420>**. Logs stream to `.dev-logs\`. Other ports:
 orchestrator 5100, STT 5101, translation 5102, TTS 5103.
 
-Variants: `pwsh scripts\dev.ps1 -SkipWorkers` (reuse already-running workers),
-`pwsh scripts\start.ps1` (detached — terminal returns), `pwsh scripts\stop.ps1`
-(stop a detached stack).
+Variants — all cross-platform `pnpm` names now:
+
+| Goal | Command |
+|---|---|
+| Start everything, foreground (Ctrl-C stops) | `pnpm dev` |
+| Start everything, **detached** (terminal returns) | `pnpm start` |
+| **Stop** the stack, however it was started | `pnpm stop` |
+| Backend only (no UI) | `pnpm services` |
+| Just the 3 Python workers | `pnpm dev:workers` |
+
+To skip a piece of the stack, invoke the `.ps1` directly with its switch — e.g.
+`pwsh scripts\dev.ps1 -SkipWorkers` to reuse already-running workers, or
+`-SkipUi` / `-SkipLibWatch`. Unlike `setup-local-models.ps1`, only
+`-SkipLibWatch` has an env-var default here: `$env:SKIP_WORKERS='1'` and
+`$env:SKIP_UI='1'` are **not** read by `dev.ps1`, so the switch is the form that
+works on Windows.
 
 ### Option 2 — Native desktop app (the real Tauri window)
 
@@ -230,8 +300,10 @@ window behavior, the bundled-service lifecycle).
 
 ## Part E — Build, release, and publish
 
-This produces the signed Windows installers and uploads them to the GitHub
-release. macOS is built separately on the Mac; both machines upload to the **same**
+This produces the Windows installers and uploads them to the GitHub release.
+They are **not Authenticode-signed** — that is a standing decision, not an
+oversight; see the note at the end of this part. The `.sig` files the build does
+produce are the **updater** signatures, which is a different thing. macOS is built separately on the Mac; both machines upload to the **same**
 draft and the updater manifest (`latest.json`) is merged so auto-update sees both
 platforms. CI is **off** (`RELEASE_CI_WINDOWS=false`) — everything is local.
 
@@ -253,6 +325,28 @@ platforms. CI is **off** (`RELEASE_CI_WINDOWS=false`) — everything is local.
 
 ```powershell
 pnpm install --frozen-lockfile
+
+pnpm release:check      # preflight only: nothing is built or uploaded
+pnpm release            # the real thing
+```
+
+`pnpm release` runs `scripts\release.ps1` here and the macOS twin on the Mac, so
+the release command is the same on both machines. It is a thin wrapper over
+`release-windows.ps1` and reimplements none of the build, verification, upload or
+`latest.json` merge — it adds the single entry point and the fast preflight.
+
+It takes the same switches, forwarded straight through:
+
+```powershell
+pnpm release -Sidecars -Upload      # note: no `--` separator
+# -Sidecars  rebuild the bundled sidecars first
+# -Upload    upload to the draft release and merge latest.json
+# -Tag       override the tag (default v<tauri.conf.json version>)
+```
+
+Or invoke the underlying script directly, which is equivalent:
+
+```powershell
 pwsh scripts\package\release-windows.ps1 -Sidecars -Upload
 ```
 
@@ -308,8 +402,10 @@ previous version get the auto-update.
 |---|---|
 | Script errors with weird parameter/parse errors | You're in **Windows PowerShell 5.1**. Use **`pwsh`** (PowerShell 7). |
 | `pnpm` not found after installing Node | Reopen the terminal; run `corepack enable`. |
+| Not sure what's missing | `pnpm doctor` — read-only, prints an OK/WARN/MISSING row per prerequisite with the fix for each. |
+| `run.mjs: no .ps1 implementation for task "…"` | That task has a `.sh` but no Windows twin yet. The message says so explicitly; report it, or write the `.ps1` half. |
 | Rust/Tauri build fails with "link.exe not found" / MSVC errors | The **C++ Build Tools** workload isn't installed (Part A.5). |
-| A worker window says "no `.venv`" | Run `pwsh scripts\setup-local-models.ps1` (Part C). |
+| A worker window says "no `.venv`" | Run `pnpm bootstrap` (or just the Part C step). |
 | Installing a Python engine pack says **"`uv` is required … but was not found"** | Only possible on an old build. Current builds download a pinned uv themselves on first install. To skip that download, stage the sidecar once with `pwsh scripts\package\fetch-uv.ps1` (needs `rustc` for the target triple, or pass `-TargetTriple x86_64-pc-windows-msvc`) — `scripts\dev.ps1` then picks it up. A system-wide uv also works: `winget install --id=astral-sh.uv -e`, then reopen the terminal. |
 | Rendered video fails / "ffmpeg not found" in dev | Confirm `ffmpeg -version` works in a fresh `pwsh` (PATH from Part A.7). |
 | Release build fails on ffmpeg with a "SHARED build" error | You set `FFMPEG_PATH` to `D:\ffmpeg` (a shared build). Unset it — the build auto-downloads a static one. Only add `D:\ffmpeg\bin` to **PATH**, not to `FFMPEG_PATH`. |
@@ -317,6 +413,8 @@ previous version get the auto-update.
 | TTS produces silence in dev | Set `PIPER_BINARY_PATH` + `PIPER_VOICE_MODEL_PATH` (Part A.8 / D), or accept the silent dev fallback. |
 | Auto-update didn't offer the new version | Check that the release is **published** (not draft) and `latest.json` has your platform entry with the right download URL. |
 
-More detail: [`LOCAL_SETUP.md`](LOCAL_SETUP.md) (setup internals),
+More detail: [`../CONTRIBUTING.md`](../CONTRIBUTING.md) (the full `pnpm` task
+reference, repo layout, tests and house conventions),
+[`LOCAL_SETUP.md`](LOCAL_SETUP.md) (setup internals),
 [`RELEASING.md`](RELEASING.md) (release runbook + signing),
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).

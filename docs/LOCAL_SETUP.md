@@ -3,8 +3,58 @@
 How to install everything VideoDubber needs and run each piece locally. Everything here
 is **offline-first** — once dependencies and models are present, no network is required.
 
-> TL;DR: `corepack enable && pnpm install`, then
-> `bash scripts/setup-local-models.sh`, then `pnpm verify`, then `pnpm dev`.
+---
+
+## 0. The short version
+
+```bash
+corepack enable         # (once) gives you the pnpm version this repo pins
+
+pnpm bootstrap          # set everything up
+pnpm dev                # run everything → http://localhost:1420
+```
+
+**`pnpm bootstrap` is the same command on macOS, Linux and Windows.** Every task script
+in this repo ships as a `.sh` + `.ps1` pair, and `scripts/run.mjs` dispatches to the
+right half for your OS — so there is no separate `pwsh scripts/…` invocation to
+remember any more.
+
+It runs five numbered phases:
+
+1. **Prerequisites** — Node, pnpm, Python, FFmpeg, and Rust only if you want the native
+   desktop window. Anything missing is reported with the **exact install command for
+   your OS**, and bootstrap stops. It deliberately does **not** install system
+   software, run `sudo`, or change your PATH for you.
+2. **`pnpm install`** — the TypeScript/Node workspace dependencies (section 1 below).
+3. **`pnpm build`** — the workspace libraries. Not optional: `@videodubber/shared` and
+   `@videodubber/media-worker` are consumed through `exports` that point at `dist/`, so
+   without this `pnpm dev` dies at `Could not resolve "@videodubber/shared"`.
+4. **`setup-local-models`** — a `.venv` per Python worker with its `requirements.txt`,
+   a pre-cached faster-whisper model, an Argos language pair, a Piper voice
+   (sections 2 and [`MODEL_SETUP.md`](MODEL_SETUP.md)). It resolves a real **Python
+   3.12** and passes it as `PYTHON_PATH` rather than letting the ambient interpreter
+   decide — see [Choosing the Python version](#choosing-the-python-version) for why
+   that matters. Needs the network, but never fails hard offline: it prints the manual
+   steps instead.
+5. **`pnpm doctor`** — the environment table (section 4).
+
+It is **idempotent**; re-run it whenever you want, and it skips what is already there.
+
+Flags go straight after the task name, with **no `--` separator** —
+`pnpm bootstrap --skip-models`. (pnpm 11 forwards a literal `--` to the script
+instead of swallowing it, and the script rejects it as an unknown option.)
+
+| macOS / Linux | Windows | Env | Effect |
+|---|---|---|---|
+| `--skip-deps` | `-SkipDeps` | `SKIP_DEPS=1` | Skip `pnpm install`. |
+| `--skip-build` | `-SkipBuild` | `SKIP_BUILD=1` | Skip `pnpm build`. |
+| `--skip-python` | `-SkipPython` | `SKIP_PYTHON=1` | No venvs, no models. |
+| `--skip-models` | `-SkipModels` | `SKIP_MODELS=1` | Venvs yes, model downloads no. |
+| `--strict` | `-Strict` | `STRICT=1` | Treat optional prerequisites as errors. |
+| `--help` | `-Help` | — | The flag list. |
+
+**The rest of this page is the by-hand version**: what each of those steps actually
+does, how to change it, and what to do when one of them fails.
 
 ---
 
@@ -52,16 +102,18 @@ you hit on 3.13 may not be a bug a user can hit. ⚠️ **Avoid 3.14 for now** �
 wheels aren't published for the newest interpreter yet, which forces slow or failing
 source builds. See [Choosing the Python version](#choosing-the-python-version).
 
-Each worker has its own `requirements.txt` and gets its own `.venv`. The setup script
-does this for all three at once:
+Each worker has its own `requirements.txt` and gets its own `.venv`. `pnpm bootstrap`
+already did this; to run just this step again, on any OS:
 
 ```bash
-bash scripts/setup-local-models.sh        # Windows: pwsh scripts/setup-local-models.ps1
+node scripts/run.mjs setup-local-models
 ```
 
 That creates `workers/<name>/.venv`, installs each `requirements.txt`, then pre-caches
 models (see [`MODEL_SETUP.md`](MODEL_SETUP.md)). Individual steps are skippable via env
-vars (`SKIP_VENVS=1`, `SKIP_MODELS=1`, `SKIP_WHISPER=1`, `SKIP_ARGOS=1`, `SKIP_PIPER=1`).
+vars (`SKIP_VENVS=1`, `SKIP_MODELS=1`, `SKIP_WHISPER=1`, `SKIP_ARGOS=1`, `SKIP_PIPER=1`),
+which the PowerShell twin also accepts as the switches `-SkipVenvs`, `-SkipModels`,
+`-SkipWhisper`, `-SkipArgos`, `-SkipPiper`.
 
 ### Choosing the Python version
 
@@ -74,7 +126,14 @@ the setup at it:
 ```bash
 # macOS: install a specific Python, then build the worker venvs with it
 brew install python@3.12
-PYTHON_PATH=/opt/homebrew/bin/python3.12 bash scripts/setup-local-models.sh
+PYTHON_PATH=/opt/homebrew/bin/python3.12 node scripts/run.mjs setup-local-models
+```
+
+```powershell
+# Windows: same idea
+winget install --id Python.Python.3.12 -e
+$env:PYTHON_PATH = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"
+node scripts/run.mjs setup-local-models
 ```
 
 This creates `workers/<name>/.venv` on 3.12; `pnpm dev` / `pnpm app` then use them
@@ -175,13 +234,18 @@ Missing FFmpeg surfaces as `FFMPEG_NOT_FOUND` / `FFPROBE_NOT_FOUND` — see
 ## 4. Verify your environment
 
 ```bash
-pnpm verify        # runs scripts/verify-environment.ts
+pnpm doctor        # runs scripts/verify-environment.ts  (pnpm verify is the same script)
 ```
+
+`pnpm bootstrap` ends with this, but run it any time — it is read-only and cheap.
 
 This checks Node, pnpm, Python, ffmpeg/ffprobe, the three worker `/health` endpoints,
 the orchestrator `/health`, a faster-whisper model hint, installed Argos languages, and
 Piper configuration. It only exits non-zero when a **core** requirement (Node or pnpm) is
 missing; everything else is reported with a remediation hint and a docs link.
+
+It is written in TypeScript and runs identically on every OS, which is why there is no
+shell "checker" to keep in sync alongside it.
 
 ---
 
@@ -189,13 +253,20 @@ missing; everything else is reported with a remediation hint and a docs link.
 
 ### Start & stop everything (single commands)
 
-| Goal | macOS / Linux | Windows |
-|---|---|---|
-| Start everything, **foreground** (Ctrl-C stops) | `pnpm dev` | `pwsh scripts/dev.ps1` |
-| Start everything, **detached** (terminal returns) | `pnpm start` | `pwsh scripts/start.ps1` |
-| **Stop everything** (any start method) | `pnpm stop` | `pwsh scripts/stop.ps1` |
-| Backend only (no UI), foreground | `pnpm services` | `pwsh scripts/start-services.ps1` |
-| Native desktop app (auto start/stop) | `pnpm app` | `pnpm app` |
+**One command per goal, identical on every OS** — `scripts/run.mjs` runs the `.sh` on
+macOS/Linux and the `.ps1` on Windows:
+
+| Goal | Command |
+|---|---|
+| Start everything, **foreground** (Ctrl-C stops) | `pnpm dev` |
+| Start everything, **detached** (terminal returns) | `pnpm start` |
+| **Stop everything** (any start method) | `pnpm stop` |
+| Backend only (no UI), foreground | `pnpm services` |
+| Native desktop app (auto start/stop) | `pnpm app` |
+
+> The `.ps1` scripts are still there and still runnable directly if you want to pass a
+> PowerShell switch such as `-SkipWorkers`; you just no longer *have* to know which file
+> to invoke.
 
 URLs printed on startup:
 
@@ -210,7 +281,9 @@ URLs printed on startup:
 - `pnpm stop` is **port-based**, so it reliably tears down the whole stack however it was
   started (foreground, detached, individual `dev:*` commands, or the desktop app).
 - `SKIP_WORKERS=1 pnpm dev` (UI + orchestrator only) and `SKIP_UI=1 pnpm dev` (workers +
-  orchestrator only) are available. Logs land in `.dev-logs/`.
+  orchestrator only) are available, as is `SKIP_LIB_WATCH=1`. On Windows the same three
+  exist as the switches `-SkipWorkers`, `-SkipUi`, `-SkipLibWatch` on `scripts\dev.ps1`.
+  Logs land in `.dev-logs/`.
 - The start/stop scripts **load `.env`** automatically, so machine paths like
   `FFMPEG_PATH`, `PYTHON_PATH`, and `PIPER_*` are applied to every service.
 
@@ -233,7 +306,8 @@ cd workers/tts-worker
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 5103 --reload
 ```
 
-Or start all three with `pnpm dev:workers` (`scripts/dev-workers.sh`).
+Or start all three with `pnpm dev:workers` (`scripts/dev-workers.sh` on macOS/Linux,
+`scripts\dev-workers.ps1` on Windows — `pnpm dev:workers` picks the right one).
 
 Each `/health` returns `{ "status":"ok", ... }` plus capability hints:
 
@@ -383,3 +457,12 @@ app runs fully offline with none set.
 
 For models (Whisper / Argos / Piper) see [`MODEL_SETUP.md`](MODEL_SETUP.md). For
 problems, see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
+
+---
+
+## 8. Next
+
+[`../CONTRIBUTING.md`](../CONTRIBUTING.md) has the full `pnpm` task reference, the repo
+layout, how to run every test suite (TypeScript, Python and Rust), the house
+conventions, and how to propose a change. [`WINDOWS.md`](WINDOWS.md) is the complete
+Windows toolchain walkthrough, including the release path.

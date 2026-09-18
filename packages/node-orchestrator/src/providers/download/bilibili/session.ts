@@ -125,6 +125,15 @@ export class BilibiliSessionStore {
     const tmp = path.join(dir, `.bilibili-session.${crypto.randomBytes(6).toString('hex')}.tmp`);
     await fsp.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     await fsp.rename(tmp, this.filePath);
+    // 0o600 is enforced on POSIX only. Windows does not implement these bits:
+    // the mode above yields 0o666 and this chmod merely toggles the read-only
+    // attribute. Confidentiality on Windows therefore rests entirely on the ACL
+    // of the config directory this store lives in — in production that is
+    // `~/VideoDubber` (C:\Users\<name>\VideoDubber), which Windows grants to that
+    // user, SYSTEM and Administrators only. If the config dir is ever moved
+    // somewhere world-readable (a shared drive, C:\ProgramData, a custom
+    // VIDEODUBBER_CONFIG_DIR), this secret loses its protection on Windows with
+    // nothing here to catch it.
     await fsp.chmod(this.filePath, 0o600).catch(() => {
       /* best-effort on platforms without POSIX modes */
     });

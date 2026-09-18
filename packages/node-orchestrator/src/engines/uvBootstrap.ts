@@ -106,9 +106,24 @@ export function managedUvPath(configDir: string, platform: NodeJS.Platform = pro
   return path.join(configDir, 'tools', 'uv', UV_VERSION, uvBinName(platform));
 }
 
-/** True if a managed uv is already on disk (and executable-looking). */
-export async function managedUvInstalled(configDir: string): Promise<string | null> {
-  const p = managedUvPath(configDir);
+/**
+ * True if a managed uv is already on disk (and executable-looking).
+ *
+ * Takes the platform for the same reason `managedUvPath` does: the binary is
+ * `uv` on POSIX and `uv.exe` on Windows, so a caller that resolved a platform
+ * must be able to ask about THAT platform rather than the host's. `bootstrapUv`
+ * accepts a `platform` override and then asked this function, which silently
+ * used `process.platform` — so the "already installed, skip the download"
+ * short-circuit consulted the wrong filename whenever the two disagreed. On
+ * macOS the bug was invisible (the override is only ever 'linux' or 'darwin' in
+ * tests, and both spell it `uv`); on Windows the check looked for `uv.exe`,
+ * missed, and re-downloaded.
+ */
+export async function managedUvInstalled(
+  configDir: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<string | null> {
+  const p = managedUvPath(configDir, platform);
   const ok = await fsp
     .stat(p)
     .then((s) => s.isFile())
@@ -182,7 +197,7 @@ export function bootstrapUv(deps: UvBootstrapDeps): Promise<string> {
 async function doBootstrap(deps: UvBootstrapDeps): Promise<string> {
   const platform = deps.platform ?? process.platform;
   const arch = deps.arch ?? process.arch;
-  const already = await managedUvInstalled(deps.configDir);
+  const already = await managedUvInstalled(deps.configDir, platform);
   if (already) return already;
 
   const artifact = uvArtifactFor(platform, arch);

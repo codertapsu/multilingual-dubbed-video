@@ -68,7 +68,21 @@ describe('BilibiliSessionStore', () => {
     const store = new BilibiliSessionStore(dir);
     await store.set('abcdefghijklmnop');
     const info = await fsp.stat(path.join(dir, 'bilibili-session.json'));
-    expect(info.mode & 0o777).toBe(0o600);
+
+    expect(info.isFile()).toBe(true);
+
+    // POSIX only. Windows does not implement these bits: `writeFile(..., {mode:
+    // 0o600})` yields 0o666 there and `chmod` only toggles the read-only
+    // attribute, so the assertion cannot hold — the store is not weaker on
+    // Windows, the mechanism is different. Confidentiality there comes from the
+    // ACL on the per-user profile directory the store lives under in production
+    // (`~/VideoDubber`, i.e. C:\Users\<name>\VideoDubber), which by default
+    // grants only that user, SYSTEM and Administrators. That is a property of the
+    // real config dir, not of this test's mkdtemp fixture, so there is nothing
+    // honest to assert here instead — see the note in session.ts.
+    if (process.platform !== 'win32') {
+      expect(info.mode & 0o777).toBe(0o600);
+    }
   });
 
   it('does not leak the raw value through describe()', async () => {

@@ -104,8 +104,16 @@ describe('installFromArchive (post-verification unpack)', () => {
     // the managed path, executable, so resolveUvPath can hand it to spawn().
     const stat = await fsp.stat(published);
     expect(stat.isFile()).toBe(true);
-    expect(stat.mode & 0o111).toBeGreaterThan(0);
-    expect(await managedUvInstalled(cfg)).toBe(published);
+    // The execute bit is a POSIX concept. Windows decides executability from the
+    // file extension (.exe) and NTFS ACLs, `fs.chmod` there only toggles the
+    // read-only attribute, and `mode & 0o111` is therefore always 0 — asserting
+    // it unconditionally failed on Windows against a perfectly good install.
+    if (process.platform !== 'win32') {
+      expect(stat.mode & 0o111).toBeGreaterThan(0);
+    }
+    // Ask about the platform the archive was installed FOR, not the host's:
+    // on Windows the default would look for uv.exe and miss this linux fixture.
+    expect(await managedUvInstalled(cfg, 'linux')).toBe(published);
   });
 
   it('rejects an archive with no uv binary rather than recording a broken install', async () => {

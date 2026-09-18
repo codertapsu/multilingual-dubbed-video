@@ -19,8 +19,11 @@
 # is a fine alternative; if you prefer it, replace steps 2-3 with
 # `pkg dist/server.js --targets node20-<os>-<arch> --output ...`.)
 #
-# Prerequisites: node >=20.11 (SEA + the bundled blob API), pnpm, and `npx`
-# access to `esbuild` + `postject` (installed on demand here).
+# Prerequisites: node >=20.11 (SEA + the bundled blob API), pnpm, and a completed
+# `pnpm install` — esbuild and postject are taken from node_modules at the versions
+# package.json pins. Nothing here fetches from the registry: a release must be
+# buildable offline and must not silently adopt a newer bundler than the one that
+# was reviewed.
 #
 # Env knobs
 # ---------
@@ -51,6 +54,12 @@ if [[ -z "${NODE_BIN}" ]]; then echo "ERROR: node not found." >&2; exit 1; fi
 echo "==> Building orchestrator sidecar (Node SEA)"
 echo "    node:    ${NODE_BIN} ($(${NODE_BIN} --version))"
 echo "    triple:  ${TRIPLE}"
+# Start from an EMPTY scratch dir. Without this, a failed esbuild leaves the
+# PREVIOUS build's orchestrator.cjs in place and step 3 happily turns that stale
+# bundle into a blob — shipping last week's orchestrator with no sign anything
+# went wrong. `set -e` covers the failure here, but not a re-run that skips
+# step 2, and the .ps1 twin had no exit-code checks at all.
+rm -rf "${SEA_DIR}"
 mkdir -p "${SEA_DIR}"
 
 # 1. Compile the orchestrator + its workspace deps to dist/.
@@ -104,6 +113,44 @@ case "${TRIPLE}" in
 esac
 
 chmod +x "${OUT}" || true
+
+# Prove the injection actually happened. The output path exists either way (it is
+# a copy of the node binary made a few lines above), so "the file is there" proves
+# nothing.
+#
+# Do NOT prove it by comparing sizes on macOS: `codesign --remove-signature` above
+# strips ~1 MB of __LINKEDIT code-directory hashes out of the copy BEFORE postject
+# adds the blob, so the net growth is only the blob minus the signature. Measured
+# on 0.9.0: node 120,965,360 -> orchestrator 121,949,984, i.e. a 984 KB margin on
+# a 121 MB file for a 1.9 MB blob. A slightly larger node signature (or a slightly
+# smaller bundle) flips that comparison and fails a perfectly good build with the
+# words "the SEA blob was not injected", which is the worst possible diagnosis.
+# postject's --macho-segment-name gives us an exact answer instead: the segment
+# exists iff the blob went in (`otool -l` on a bare node reports zero matches).
+out_size="$(wc -c < "${OUT}" | tr -d ' ')"
+node_size="$(wc -c < "${NODE_BIN}" | tr -d ' ')"
+blob_size="$(wc -c < "${SEA_DIR}/orchestrator.blob" | tr -d ' ')"
+case "${TRIPLE}" in
+  *apple-darwin*)
+    if ! otool -l "${OUT}" 2>/dev/null | grep -q 'segname NODE_SEA'; then
+      echo "ERROR: ${OUT} has no NODE_SEA segment — postject did not inject the blob." >&2
+      echo "       This would ship a bare node as the orchestrator (a REPL, not :5100)." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    # ELF/PE: nothing is stripped between the copy and the injection, so growth is
+    # a sound proof and needs no platform tooling.
+    if [[ "${out_size}" -le "${node_size}" ]]; then
+      echo "ERROR: postject left ${OUT} the same size as the node binary (${out_size} <= ${node_size})." >&2
+      echo "       The SEA blob was not injected; this would ship a bare node as the orchestrator." >&2
+      exit 1
+    fi
+    ;;
+esac
+
 echo ""
 echo "==> Orchestrator sidecar built:"
-echo "    -> ${OUT}"
+# Report the BLOB's size, not (out - node): on macOS that difference is the blob
+# minus the stripped signature and rounds to "0 MB", which reads like a failure.
+echo "    -> ${OUT} ($(( out_size / 1024 / 1024 )) MB, node + a $(( blob_size / 1024 )) KB SEA blob)"

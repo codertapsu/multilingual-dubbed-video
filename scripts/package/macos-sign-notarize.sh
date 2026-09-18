@@ -87,8 +87,60 @@ ARCH="$([ "$(uname -m)" = "arm64" ] && echo aarch64 || echo x64)"
 DMGDIR="$(cd "$(dirname "$APP")/.." && pwd)/dmg"
 mkdir -p "$DMGDIR"
 DMG="$DMGDIR/VideoDubber_${VER}_${ARCH}.dmg"
+
+# --- Preserve the Finder layout Tauri's bundler produced ---------------------
+# We rebuild the image from scratch (the .app inside has to be the repaired,
+# re-signed, later stapled one), and `hdiutil create` from a bare mktemp dir
+# produces a DEFAULT Finder window: a generic disk icon and two unpositioned
+# items side by side, with no arrow and no hint that one is meant to be dragged
+# onto the other. The likeliest non-technical reaction is to double-click
+# VideoDubber.app on the image itself — which runs it under Gatekeeper app
+# translocation from a read-only volume: slow launch, works well enough to look
+# fine (it writes to ~/VideoDubber, outside the bundle), then the app "disappears"
+# when the image is ejected and the in-app updater can never replace a bundle at a
+# randomized translocated path.
+#
+# Tauri's own bundle_dmg.sh already laid that window out. Its `.DS_Store` holds the
+# window geometry and the icon positions, and `.VolumeIcon.icns` the volume icon —
+# so lift both out of the DMG it built (BEFORE we overwrite it, since it has the
+# same name) and drop them into every stage dir we hand to hdiutil.
+LAYOUT="$(mktemp -d)"
+# Clean up on EXIT, not just on the happy path: everything between here and the
+# end of the script (codesign, `notarytool submit`, stapling, the asset upload)
+# can fail under `set -e`, and each failed run would otherwise leave another
+# /tmp/tmp.XXXX behind holding a copy of the DMG's .DS_Store and volume icon.
+trap 'rm -rf "${LAYOUT}"' EXIT
+capture_dmg_layout() {
+  local src="$1"
+  [ -f "$src" ] || { echo "    NOTE: no Tauri-built DMG at $src — the image will have no Finder layout."; return 0; }
+  local mnt; mnt="$(mktemp -d)"
+  if hdiutil attach "$src" -nobrowse -readonly -mountpoint "$mnt" >/dev/null 2>&1; then
+    for f in .DS_Store .VolumeIcon.icns .background; do
+      [ -e "$mnt/$f" ] && cp -a "$mnt/$f" "$LAYOUT/" || true
+    done
+    hdiutil detach "$mnt" >/dev/null 2>&1 || true
+    echo "    captured Finder layout: $(ls -A "$LAYOUT" | tr '\n' ' ')"
+  else
+    echo "    NOTE: could not mount $src to capture its Finder layout."
+  fi
+  rmdir "$mnt" 2>/dev/null || true
+}
+apply_dmg_layout() {
+  local stage="$1"
+  for f in .DS_Store .VolumeIcon.icns .background; do
+    [ -e "$LAYOUT/$f" ] && cp -a "$LAYOUT/$f" "$stage/" || true
+  done
+  # A .VolumeIcon.icns only shows once the volume root carries the custom-icon
+  # bit. SetFile ships with the Xcode command line tools; skip it if absent.
+  if [ -e "$LAYOUT/.VolumeIcon.icns" ] && command -v SetFile >/dev/null 2>&1; then
+    SetFile -a C "$stage" || true
+  fi
+}
+capture_dmg_layout "$DMG"
+
 STAGE="$(mktemp -d)"
 cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
+apply_dmg_layout "$STAGE"
 rm -f "$DMG"
 hdiutil create -volname "VideoDubber" -srcfolder "$STAGE" -fs HFS+ -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"
@@ -133,6 +185,7 @@ xcrun stapler staple "$APP"
 xcrun stapler validate "$APP"
 STAGE2="$(mktemp -d)"
 cp -R "$APP" "$STAGE2/"; ln -s /Applications "$STAGE2/Applications"
+apply_dmg_layout "$STAGE2"
 rm -f "$DMG"
 hdiutil create -volname "VideoDubber" -srcfolder "$STAGE2" -fs HFS+ -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE2"

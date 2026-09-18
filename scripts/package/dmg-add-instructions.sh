@@ -56,6 +56,22 @@ inject() {
   local dmg="$1"
   [[ -f "${dmg}" ]] || { warn "no such dmg: ${dmg}"; return 0; }
   local base; base="$(basename "${dmg}")"
+
+  # HARD REFUSAL on a notarized image. Everything below converts the DMG to UDRW
+  # and back, producing a NEW file with a new cdhash — which silently invalidates
+  # the notarization staple. The re-uploaded installer then greets every user with
+  # "VideoDubber can't be opened because Apple cannot check it for malicious
+  # software", while the file this script just injected tells them the build isn't
+  # notarized, confirming the wrong diagnosis. Builds have been Developer-ID
+  # signed, notarized and stapled since v0.7.0 (macos-sign-notarize.sh), so this
+  # script only ever applies to an unsigned build. CI already gates it on
+  # HAS_APPLE_CERT != true; this is the guard for a hand-run `pnpm dmg:instructions`.
+  if xcrun stapler validate "${dmg}" >/dev/null 2>&1; then
+    warn "${base} is NOTARIZED and STAPLED — refusing to modify it."
+    warn "  Re-packing it would strip the staple and make Gatekeeper block the app."
+    warn "  The install steps belong in the release body / README for signed builds."
+    return 0
+  fi
   local work backup mnt out
   work="$(mktemp -u /tmp/vd-dmg-XXXXXX).dmg"
   backup="$(mktemp -u /tmp/vd-dmg-bak-XXXXXX).dmg"

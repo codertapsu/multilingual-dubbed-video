@@ -60,6 +60,34 @@ if ($env:UV_URL) {
 Write-Host "==> Downloading $url"
 $zip = Join-Path $Work "uv.zip"
 Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+
+# VERIFY. This binary is bundled into the installer, while the RUNTIME twin of
+# this very fetch (engines/uvBootstrap.ts) has always checked a pinned sha256 —
+# the build-time path being the weaker of the two is backwards. The same hashes
+# are mirrored in pinned-downloads.json and enforced here.
+$expected = $null
+$pinsFile = Join-Path $ScriptDir "pinned-downloads.json"
+# $env:UV_URL is a dev knob pointing at an arbitrary archive, so it carries no pin
+# and must not be judged against one - otherwise every UV_URL run on Windows dies
+# with "uv archive failed its checksum", which reads like a compromised download.
+# fetch-uv.sh has always excluded it (`-z "${UV_URL:-}"`); this is the missing twin.
+if ((Test-Path $pinsFile) -and (-not $env:UV_URL) -and ($UvVersion -ne 'latest')) {
+  $pins = (Get-Content -Raw $pinsFile | ConvertFrom-Json).uv
+  # Only trust the hashes when they belong to the version we actually asked for.
+  if ($pins.version -eq $UvVersion -and ($pins.PSObject.Properties.Name -contains $Triple)) {
+    $expected = $pins.$Triple
+  }
+}
+if ($expected) {
+  $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLowerInvariant()
+  if ($actual -ne $expected.ToLowerInvariant()) {
+    throw "uv archive failed its checksum.`n       expected $expected`n       actual   $actual`n       Refresh scripts/package/pinned-downloads.json (and UV_ARTIFACTS in packages/node-orchestrator/src/engines/uvBootstrap.ts - they must agree)."
+  }
+  Write-Host "    sha256 OK (uv $UvVersion $Triple)"
+} else {
+  Write-Warning "no pinned sha256 for uv $UvVersion on $Triple; staging an UNVERIFIED binary."
+}
+
 Write-Host "==> Extracting..."
 Expand-Archive -Path $zip -DestinationPath (Join-Path $Work "x") -Force
 

@@ -58,6 +58,31 @@ function Resolve-Triple {
 $Triple = Resolve-Triple
 Write-Host "==> Fetching libass-enabled ffmpeg/ffprobe"
 Write-Host "    triple: $Triple"
+
+# Pinned URL + sha256 for this triple. This binary is bundled into the installer;
+# until 2026-09 it was whatever "newest autobuild" the GitHub API happened to
+# return at build time, unverified, so no release recorded which ffmpeg it shipped.
+$PinsFile = Join-Path $ScriptDir "pinned-downloads.json"
+$Pin = $null
+if ((Test-Path $PinsFile) -and ($env:FFMPEG_PINS -ne '0')) {
+  $pins = Get-Content -Raw $PinsFile | ConvertFrom-Json
+  if ($pins.ffmpeg.PSObject.Properties.Name -contains $Triple) { $Pin = $pins.ffmpeg.$Triple.archive }
+}
+
+# Fail the build when a bundled download does not match its pin: a mismatch means
+# the pin is stale (upstream re-cut the build) or the bytes are not what was
+# reviewed, and neither may be shipped on a shrug.
+function Assert-Sha256($File, $Expected, $Label) {
+  if (-not $Expected) {
+    Write-Warning "no pinned sha256 for $Label; staging an UNVERIFIED binary."
+    return
+  }
+  $actual = (Get-FileHash -Algorithm SHA256 -Path $File).Hash.ToLowerInvariant()
+  if ($actual -ne $Expected.ToLowerInvariant()) {
+    throw "$Label failed its checksum.`n       expected $Expected`n       actual   $actual`n       Refresh the pin in scripts/package/pinned-downloads.json (see the '//' notes there)."
+  }
+  Write-Host "    sha256 OK ($Label)"
+}
 New-Item -ItemType Directory -Force -Path $BinDir, $Work | Out-Null
 Get-ChildItem $Work -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 
@@ -111,7 +136,13 @@ if ($LocalFfmpeg -and $LocalFfprobe -and (Test-Path $LocalFfmpeg) -and (Test-Pat
 # (each broke a Windows release build). The dated `autobuild-YYYY-MM-DD-*`
 # releases are immutable once published, so we pick the newest one that has a
 # win64-gpl (non-shared) asset and download it by its permanent URL.
+$FfmpegSha = $null
+if (-not $FfmpegUrl -and $Pin) {
+  $FfmpegUrl = $Pin.url
+  $FfmpegSha = $Pin.sha256
+}
 if (-not $FfmpegUrl) {
+  Write-Warning "re-resolving the newest BtbN autobuild instead of the pin - not reproducible, not verified."
   $headers = @{ 'User-Agent' = 'videodubber-ci'; 'Accept' = 'application/vnd.github+json' }
   if ($env:GITHUB_TOKEN) { $headers['Authorization'] = "Bearer $env:GITHUB_TOKEN" }
   $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/BtbN/FFmpeg-Builds/releases?per_page=15' -Headers $headers
@@ -132,6 +163,7 @@ for ($i = 1; $i -le 3; $i++) {
   try { Invoke-WebRequest -Uri $FfmpegUrl -OutFile $Zip -UseBasicParsing; break }
   catch { if ($i -eq 3) { throw }; Write-Host "   download failed (attempt $i/3), retrying in 5s..."; Start-Sleep -Seconds 5 }
 }
+Assert-Sha256 $Zip $FfmpegSha "BtbN win64-gpl"
 Write-Host "==> Extracting..."
 Expand-Archive -Path $Zip -DestinationPath (Join-Path $Work "ff") -Force
 

@@ -1,0 +1,76 @@
+{
+  "//": [
+    "Pinned third-party binaries that get BUNDLED into the installer — and, on macOS,",
+    "deep-signed with the maintainer's Developer ID and notarized. Until 2026-09 the",
+    "macOS ffmpeg was fetched from `/redirect/latest/` with no version and no checksum,",
+    "so two releases cut a month apart carried different, unrecorded ffmpeg builds: when",
+    "an ffmpeg CVE lands, 'which of our releases is affected?' could only be answered by",
+    "unpacking each DMG. The Windows/Linux ffmpeg re-resolved 'newest autobuild' from the",
+    "GitHub API on every build, with the same effect.",
+    "",
+    "Every entry here is url + sha256. The fetch scripts refuse a download whose hash",
+    "does not match. Bumping a pin is a reviewable diff, which is the whole point.",
+    "",
+    "How to refresh a pin:",
+    "  ffmpeg (macOS)  curl -sL -r 0-0 -o /dev/null -w '%{url_effective}\\n' \\",
+    "                    https://ffmpeg.martin-riedl.de/redirect/latest/macos/<arch>/release/ffmpeg.zip",
+    "                  then take the hash from that same URL + '.sha256' (upstream publishes one).",
+    "  ffmpeg (BtbN)   gh api repos/BtbN/FFmpeg-Builds/releases?per_page=5 — pick the newest",
+    "                  autobuild-* tag; each asset carries a `digest` field (sha256:...).",
+    "  uv              https://github.com/astral-sh/uv/releases/download/<ver>/<asset>.sha256",
+    "                  These MUST stay equal to UV_ARTIFACTS in",
+    "                  packages/node-orchestrator/src/engines/uvBootstrap.ts — the app",
+    "                  self-installs the same release when no sidecar is bundled."
+  ],
+
+  "ffmpeg": {
+    "comment": "martin-riedl.de macOS builds are static + notarized and link only against system frameworks (fetch-ffmpeg's assert_portable re-checks that). BtbN win64-gpl/linux64-gpl are static with libass + libx264/x265; dated autobuild-* tags are immutable once published, unlike the rolling `latest` release whose assets are deleted and re-uploaded hourly.",
+    "aarch64-apple-darwin": {
+      "version": "9.0.1",
+      "ffmpeg": {
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1787073674_9.0.1/ffmpeg.zip",
+        "sha256": "8287a1b2229e05eb41859f073e18e6c52c60a778f2f5e6881070fe51b79407fe"
+      },
+      "ffprobe": {
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1787073674_9.0.1/ffprobe.zip",
+        "sha256": "102a26b8940a053298d9929bfaae71e4b6ef65ba5f19a99a88c433108560741a"
+      }
+    },
+    "x86_64-apple-darwin": {
+      "version": "9.0.1",
+      "ffmpeg": {
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1787081194_9.0.1/ffmpeg.zip",
+        "sha256": "5bdead62ff504ab9b447cc72b212c4fb481e3f7de5877d427a51bee8136dda40"
+      },
+      "ffprobe": {
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1787081194_9.0.1/ffprobe.zip",
+        "sha256": "34511bbcf1988ad2886023bf5ace4f44cf62e6defeb3d194d6f7619e5b061f7f"
+      }
+    },
+    "x86_64-pc-windows-msvc": {
+      "version": "autobuild-2026-09-17-13-19 (N-126626-g7070fe638e)",
+      "archive": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-17-13-19/ffmpeg-N-126626-g7070fe638e-win64-gpl.zip",
+        "sha256": "26e9035f26ddc871512a956e29da036e300dd1f16ae7dd53327bef7aa627b7b8"
+      }
+    },
+    "x86_64-unknown-linux-gnu": {
+      "version": "autobuild-2026-09-17-13-19 (N-126626-g7070fe638e)",
+      "archive": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-17-13-19/ffmpeg-N-126626-g7070fe638e-linux64-gpl.tar.xz",
+        "sha256": "c4efd28eed88d68edab94210af35287f12d9b30ea52f80e743d5aa5078d9293c"
+      }
+    }
+  },
+
+  "uv": {
+    "comment": "MIRROR of UV_ARTIFACTS in packages/node-orchestrator/src/engines/uvBootstrap.ts, keyed by Rust triple instead of platform-arch. The version lives in fetch-uv.{sh,ps1} (a unit test keeps it in lockstep with the orchestrator's UV_VERSION); only the hashes live here.",
+    "version": "0.12.1",
+    "aarch64-apple-darwin": "77d2906988e8074fd43f2f329ec452ebbf9b0c257ba1c66451c71de70a6baf42",
+    "x86_64-apple-darwin": "69d9f9a00337f25a50dcb13882052da08b8469bac11091c98c5694c3c6721467",
+    "x86_64-pc-windows-msvc": "8fcb0cb46e1229065e344758980924e569bef5882ef45f46fada8fb24e06b74a",
+    "aarch64-pc-windows-msvc": "9bc7c18e616230fa2dc6fb24bc3afde18a95c2b5c9433de747e9502c66041568",
+    "x86_64-unknown-linux-gnu": "90b2f223fb69d19db49e117da601f64978593417988530aa733d456141b4bcbb",
+    "aarch64-unknown-linux-gnu": "769d373e146692c639b5fbaae33b331c297a32e03d30448772051902df52bbf4"
+  }
+}

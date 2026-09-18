@@ -66,6 +66,47 @@ echo "==> Downloading ${url}"
 archive="${WORK}/uv.${ARCHIVE_EXT}"
 curl -fsSL "${url}" -o "${archive}"
 
+# VERIFY. This binary is bundled into the installer and, on macOS, deep-signed
+# with the maintainer's Developer ID and notarized — while the RUNTIME twin of
+# this very fetch (engines/uvBootstrap.ts) has always checked a pinned sha256.
+# The build-time path being the weaker of the two is backwards, so the same
+# hashes are mirrored in pinned-downloads.json and enforced here.
+PINS_FILE="${SCRIPT_DIR}/pinned-downloads.json"
+expected=""
+if [[ -f "${PINS_FILE}" && -z "${UV_URL:-}" && "${UV_VERSION}" != "latest" ]]; then
+  # Hard requirement, not a soft skip. Under `set -e` a missing python3 would
+  # abort inside the assignment below with a bare "command not found" and no
+  # mention of pins; skipping instead would stage an UNVERIFIED uv into a
+  # Developer-ID-signed, notarized app. UV_URL= opts out of the pin explicitly.
+  command -v python3 >/dev/null 2>&1 || {
+    echo "ERROR: python3 is required to read $(basename "${PINS_FILE}"), which holds the" >&2
+    echo "       pinned sha256 for the uv this build bundles and signs." >&2
+    echo "       Install python3, or set UV_URL=<archive> to opt out of the pin." >&2
+    exit 1
+  }
+  expected="$(python3 -c '
+import json, sys
+pins = json.load(open(sys.argv[1])).get("uv", {})
+# Only trust the hashes when they belong to the version we actually asked for.
+print(pins.get(sys.argv[2], "") if pins.get("version") == sys.argv[3] else "")
+' "${PINS_FILE}" "${TRIPLE}" "${UV_VERSION}")"
+fi
+if [[ -n "${expected}" ]]; then
+  actual="$(shasum -a 256 "${archive}" 2>/dev/null | awk '{print $1}')"
+  [[ -n "${actual}" ]] || actual="$(sha256sum "${archive}" | awk '{print $1}')"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "ERROR: uv archive failed its checksum." >&2
+    echo "       expected ${expected}" >&2
+    echo "       actual   ${actual}" >&2
+    echo "       Refresh scripts/package/pinned-downloads.json (and UV_ARTIFACTS in" >&2
+    echo "       packages/node-orchestrator/src/engines/uvBootstrap.ts — they must agree)." >&2
+    exit 1
+  fi
+  echo "    sha256 OK (uv ${UV_VERSION} ${TRIPLE})"
+else
+  echo "WARNING: no pinned sha256 for uv ${UV_VERSION} on ${TRIPLE}; staging an UNVERIFIED binary." >&2
+fi
+
 echo "==> Extracting..."
 mkdir -p "${WORK}/x"
 if [[ "${ARCHIVE_EXT}" == "zip" ]]; then

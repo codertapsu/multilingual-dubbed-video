@@ -19,9 +19,13 @@
 #                       GitHub-hosted = reliable from CI; johnvansickle.com blocks
 #                       datacenter IPs (curl exit 22) so it is NOT used here.
 #
-# These URLs change with each release; pin a known-good version per platform via
-# the env knobs below, or override the whole URL. The script is defensive: it
-# checks the libass `subtitles` filter is present before staging.
+# These binaries are bundled into the installer and, on macOS, deep-signed with
+# the maintainer's Developer ID and notarized — the strongest distribution wrapper
+# we have, wrapped around a payload that used to be fetched from
+# `/redirect/latest/` with no version and no checksum. So the URL and its sha256
+# are PINNED in scripts/package/pinned-downloads.json and verified after download.
+# The script is also defensive about capability: it checks the libass `subtitles`
+# filter is present before staging.
 #
 # Env knobs
 # ---------
@@ -33,7 +37,13 @@
 #   FFMPEG_BIN /      Stage these exact binaries instead of downloading
 #   FFPROBE_BIN       (build-time opt-in; must be a STATIC build). The runtime
 #                     FFMPEG_PATH/FFPROBE_PATH are deliberately NOT honored here.
-#   FFMPEG_VERSION    Version tag used in default URLs (best-effort).
+#   FFMPEG_PINS       "0" => resolve the newest upstream build instead of the
+#                     pinned one (development only; the download is then NOT
+#                     checksum-verified and the build is not reproducible).
+#
+# Pinned URLs + sha256 live in scripts/package/pinned-downloads.json. Overriding
+# FFMPEG_URL / FFPROBE_URL / FFMPEG_BIN bypasses the pin AND its checksum — those
+# are dev knobs, not release knobs.
 #
 set -euo pipefail
 
@@ -62,7 +72,65 @@ echo "    triple: ${TRIPLE}"
 mkdir -p "${BIN_DIR}" "${WORK}"
 rm -rf "${WORK:?}/"*
 
-FFMPEG_VERSION="${FFMPEG_VERSION:-7.1}"
+PINS_FILE="${SCRIPT_DIR}/pinned-downloads.json"
+
+# The pins are read with python3 (the interpreter release-upload.sh next door
+# already uses for JSON). Check it ONCE and fail loudly, because the alternative
+# failure is silent in the two ways that matter: under `set -e` a missing python3
+# aborts the build inside a `$(pin ...)` assignment with a bare "command not
+# found" and no mention of pins, and a lenient skip would stage an UNVERIFIED
+# ffmpeg into a Developer-ID-signed, notarized app — the exact outcome the pins
+# exist to prevent. The Git Bash / WSL branches below are where python3 is most
+# likely to be absent. FFMPEG_PINS=0 opts out explicitly and loudly instead.
+if [[ -f "${PINS_FILE}" && "${FFMPEG_PINS:-1}" == "1" ]] \
+   && ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 is required to read $(basename "${PINS_FILE}"), which holds the" >&2
+  echo "       pinned url + sha256 for the ffmpeg this build bundles and signs." >&2
+  echo "       Install python3, or set FFMPEG_PINS=0 to download an UNVERIFIED build." >&2
+  exit 1
+fi
+
+# Read one pinned value, e.g. `pin ffmpeg "${TRIPLE}" ffmpeg url`. Prints nothing
+# (exit 0) when the path is absent, so callers can fall back deliberately.
+pin() {
+  [[ -f "${PINS_FILE}" ]] || return 0
+  # Honour the opt-out HERE, not only at the call sites: every branch below calls
+  # pin() unconditionally and only *then* decides whether to use the result, so
+  # without this FFMPEG_PINS=0 would still shell out to python3 — and would still
+  # fail on a box that has none, which is the one thing the opt-out is for.
+  [[ "${FFMPEG_PINS:-1}" == "1" ]] || return 0
+  python3 -c '
+import json, sys
+node = json.load(open(sys.argv[1]))
+for key in sys.argv[2:]:
+    if not isinstance(node, dict) or key not in node:
+        sys.exit(0)
+    node = node[key]
+print(node if isinstance(node, str) else "")
+' "${PINS_FILE}" "$@"
+}
+
+# Fail the build when a bundled download does not match its pin. A mismatch means
+# the pin is stale (upstream re-cut the build) or the bytes are not what was
+# reviewed — neither may be signed and shipped on a shrug.
+verify_sha256() {
+  local file="$1" expected="$2" label="$3"
+  if [[ -z "${expected}" ]]; then
+    echo "WARNING: no pinned sha256 for ${label}; staging an UNVERIFIED binary into a signed app." >&2
+    return 0
+  fi
+  local actual
+  actual="$(shasum -a 256 "${file}" 2>/dev/null | awk '{print $1}')"
+  [[ -n "${actual}" ]] || actual="$(sha256sum "${file}" | awk '{print $1}')"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "ERROR: ${label} failed its checksum." >&2
+    echo "       expected ${expected}" >&2
+    echo "       actual   ${actual}" >&2
+    echo "       Refresh the pin in scripts/package/pinned-downloads.json (see the '//' notes there)." >&2
+    exit 1
+  fi
+  echo "    sha256 OK (${label})"
+}
 
 # ---------------------------------------------------------------------------
 # Stage helper: copy a found ffmpeg/ffprobe pair to the triple-suffixed names
@@ -179,18 +247,36 @@ fetch_macos() {
     fi
   fi
 
-  # 2. Download a STATIC, libass-enabled, portable build. Default to the
-  #    Martin-Riedl macOS arm64/x64 static release (signed+notarized, links only
-  #    against macOS system frameworks — verified with `otool -L`). This is what
-  #    makes the distributable .dmg self-contained. Override with FFMPEG_URL/
-  #    FFPROBE_URL to pin a specific build.
+  # 2. Download a STATIC, libass-enabled, portable build: the Martin-Riedl macOS
+  #    arm64/x64 static release (signed+notarized, links only against macOS system
+  #    frameworks — verified with `otool -L`). This is what makes the distributable
+  #    .dmg self-contained.
+  #
+  #    The URL is the PERMANENT versioned path from pinned-downloads.json, not
+  #    `/redirect/latest/`: the redirect meant two releases cut a month apart
+  #    carried different, unrecorded ffmpeg builds — the shipped 0.9.0 binary is
+  #    ffmpeg 9.0 and nothing in the repo or the release says so.
   local arch="arm64"; case "${TRIPLE}" in x86_64-*) arch="amd64" ;; esac
-  local ff_url="${FFMPEG_URL:-https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/ffmpeg.zip}"
-  local fp_url="${FFPROBE_URL:-https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/ffprobe.zip}"
+  local ff_url fp_url ff_sha fp_sha
+  ff_url="$(pin ffmpeg "${TRIPLE}" ffmpeg url)"
+  fp_url="$(pin ffmpeg "${TRIPLE}" ffprobe url)"
+  ff_sha="$(pin ffmpeg "${TRIPLE}" ffmpeg sha256)"
+  fp_sha="$(pin ffmpeg "${TRIPLE}" ffprobe sha256)"
+  if [[ "${FFMPEG_PINS:-1}" != "1" || -z "${ff_url}" ]]; then
+    echo "WARNING: using /redirect/latest/ instead of the pin — this build is not reproducible." >&2
+    ff_url="https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/ffmpeg.zip"
+    fp_url="https://ffmpeg.martin-riedl.de/redirect/latest/macos/${arch}/release/ffprobe.zip"
+    ff_sha=""; fp_sha=""
+  fi
+  # An explicit URL override is a dev knob and carries no pin, so it carries no hash.
+  if [[ -n "${FFMPEG_URL:-}" ]]; then ff_url="${FFMPEG_URL}"; ff_sha=""; fi
+  if [[ -n "${FFPROBE_URL:-}" ]]; then fp_url="${FFPROBE_URL}"; fp_sha=""; fi
   echo "==> Downloading static ffmpeg:  ${ff_url}"
   curl -fsSL "${ff_url}" -o "${WORK}/ffmpeg.zip"
+  verify_sha256 "${WORK}/ffmpeg.zip" "${ff_sha}" "macOS ffmpeg.zip"
   echo "==> Downloading static ffprobe: ${fp_url}"
   curl -fsSL "${fp_url}" -o "${WORK}/ffprobe.zip"
+  verify_sha256 "${WORK}/ffprobe.zip" "${fp_sha}" "macOS ffprobe.zip"
   unzip -o -q "${WORK}/ffmpeg.zip" -d "${WORK}/ff"
   unzip -o -q "${WORK}/ffprobe.zip" -d "${WORK}/fp"
   verify_and_stage \
@@ -232,10 +318,18 @@ fetch_linux() {
   # CI). The -gpl build is static and includes libass (subtitles) + libx264/x265
   # (H.264/HEVC render). Binaries live under bin/ in a single ffmpeg-* top dir.
   # Resolve a permanent dated-autobuild asset via the API (see resolve_btbn_asset).
-  local url="${FFMPEG_URL:-$(resolve_btbn_asset linux64-gpl.tar.xz)}"
-  if [ -z "${url}" ]; then echo "ERROR: could not resolve a BtbN linux64-gpl asset from the GitHub API." >&2; exit 1; fi
+  local url sha
+  url="$(pin ffmpeg "${TRIPLE}" archive url)"
+  sha="$(pin ffmpeg "${TRIPLE}" archive sha256)"
+  if [[ "${FFMPEG_PINS:-1}" != "1" || -z "${url}" ]]; then
+    echo "WARNING: re-resolving the newest BtbN autobuild instead of the pin — not reproducible, not verified." >&2
+    url="$(resolve_btbn_asset linux64-gpl.tar.xz)"; sha=""
+  fi
+  if [[ -n "${FFMPEG_URL:-}" ]]; then url="${FFMPEG_URL}"; sha=""; fi
+  if [ -z "${url}" ]; then echo "ERROR: no pinned BtbN linux64-gpl asset and none resolvable from the GitHub API." >&2; exit 1; fi
   echo "==> Downloading ${url}"
   curl -fsSL --retry 3 --retry-delay 5 "${url}" -o "${WORK}/ffmpeg.tar.xz"
+  verify_sha256 "${WORK}/ffmpeg.tar.xz" "${sha}" "BtbN linux64-gpl"
   tar -xJf "${WORK}/ffmpeg.tar.xz" -C "${WORK}"
   local dir; dir="$(find "${WORK}" -maxdepth 1 -type d -name 'ffmpeg-*' | head -n1)"
   verify_and_stage "${dir}/bin/ffmpeg" "${dir}/bin/ffprobe"
@@ -251,10 +345,18 @@ fetch_windows() {
   # ships the *full* build only as .7z; its *.zip is 'essentials'. This branch is
   # the Git Bash / WSL path; fetch-ffmpeg.ps1 is the native Windows-runner path.
   # Resolve a permanent dated-autobuild asset via the API (see resolve_btbn_asset).
-  local url="${FFMPEG_URL:-$(resolve_btbn_asset win64-gpl.zip)}"
-  if [ -z "${url}" ]; then echo "ERROR: could not resolve a BtbN win64-gpl asset from the GitHub API." >&2; exit 1; fi
+  local url sha
+  url="$(pin ffmpeg "${TRIPLE}" archive url)"
+  sha="$(pin ffmpeg "${TRIPLE}" archive sha256)"
+  if [[ "${FFMPEG_PINS:-1}" != "1" || -z "${url}" ]]; then
+    echo "WARNING: re-resolving the newest BtbN autobuild instead of the pin — not reproducible, not verified." >&2
+    url="$(resolve_btbn_asset win64-gpl.zip)"; sha=""
+  fi
+  if [[ -n "${FFMPEG_URL:-}" ]]; then url="${FFMPEG_URL}"; sha=""; fi
+  if [ -z "${url}" ]; then echo "ERROR: no pinned BtbN win64-gpl asset and none resolvable from the GitHub API." >&2; exit 1; fi
   echo "==> Downloading ${url}"
   curl -fsSL --retry 3 --retry-delay 5 "${url}" -o "${WORK}/ffmpeg.zip"
+  verify_sha256 "${WORK}/ffmpeg.zip" "${sha}" "BtbN win64-gpl"
   unzip -o -q "${WORK}/ffmpeg.zip" -d "${WORK}/ff"
   local dir; dir="$(find "${WORK}/ff" -maxdepth 1 -type d -name 'ffmpeg-*' | head -n1)"
   verify_and_stage "${dir}/bin/ffmpeg.exe" "${dir}/bin/ffprobe.exe"

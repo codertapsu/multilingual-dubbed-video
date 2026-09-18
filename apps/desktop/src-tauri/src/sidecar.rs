@@ -43,11 +43,15 @@
 //!   `RunEvent::Exit`, terminating both the dev process group AND any
 //!   production sidecar children.
 
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
+
+use crate::logging::LogSink;
 // Shell plugin: `ShellExt` adds `app.shell()`; `Command::spawn()` returns
 // `(Receiver<CommandEvent>, CommandChild)`. `CommandChild::kill()` terminates a
 // spawned sidecar. `app.shell().sidecar("name")` resolves the externalBin for
@@ -69,6 +73,25 @@ pub struct SidecarManager {
     prod_children: Mutex<Vec<CommandChild>>,
 }
 
+/// How long we let the orchestrator wind itself down before we SIGKILL it.
+///
+/// Sized for what it is actually waiting on: `engineManager.stopAll()` stopping
+/// a resident llama.cpp / whisper.cpp / neural-TTS server, each of which is
+/// holding gigabytes it has to release. Quitting the app must still *feel*
+/// immediate, so this is a ceiling, not a sleep — we poll and return the moment
+/// the process is gone.
+const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// The same courtesy for the one-dir workers / dev launcher — shorter, because
+/// nothing downstream of them holds a multi-GB model: uvicorn answers SIGTERM in
+/// well under a second. Worst case a quit therefore blocks for
+/// `GRACEFUL_STOP_TIMEOUT + GROUP_STOP_TIMEOUT`, and only when something is
+/// genuinely refusing to die — which is exactly when waiting is right.
+const GROUP_STOP_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// Poll interval while waiting for a graceful stop.
+const GRACEFUL_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 impl SidecarManager {
     /// Register a dev-launcher child (`std::process::Child`) so it is terminated
     /// when the app exits.
@@ -88,37 +111,79 @@ impl SidecarManager {
 
     /// Best-effort termination of every tracked child.
     ///
-    /// * Dev launcher: SIGTERM to the process **group** first (so the launcher's
-    ///   trap and the workers shut down cleanly), then SIGKILL as a backstop.
-    /// * Production sidecars: `CommandChild::kill()` each one.
+    /// * Production sidecars (the orchestrator): a GRACEFUL stop first, then
+    ///   `CommandChild::kill()` as the backstop.
+    /// * Dev launcher / one-dir workers: SIGTERM to the process **group** first
+    ///   (so the launcher's trap and the workers shut down cleanly), then
+    ///   SIGKILL.
     ///
-    /// Called on app exit (`RunEvent::Exit`).
+    /// WHY THE GRACEFUL STEP EXISTS: `CommandChild::kill()` is a SIGKILL on
+    /// Unix and a TerminateProcess on Windows — neither of which the Node
+    /// orchestrator can intercept. Its SIGTERM/SIGINT handler
+    /// (server.ts, `app.close()` -> `engineManager.stopAll()`) is what stops the
+    /// engine-pack children, and those children bind EPHEMERAL ports, so the
+    /// port sweep below cannot see them either. Killing the orchestrator
+    /// outright therefore left a `llama-server` holding 8-20 GB of RAM/VRAM
+    /// alive with no window and no app to close — and on Windows that orphan
+    /// also keeps its venv/exe open, which is what makes the next NSIS update
+    /// fail with "Error opening file for writing".
+    ///
+    /// Called on app exit (`RunEvent::Exit`) and before an update installs.
     pub fn shutdown(&self) {
         // Production sidecars first — each is an independent process.
         let mut had_prod = false;
         if let Ok(mut guard) = self.prod_children.lock() {
             had_prod = !guard.is_empty();
+            let pids: Vec<u32> = guard.iter().map(|c| c.pid()).collect();
+            if !pids.is_empty() {
+                request_graceful_stop(&pids);
+                wait_for_exit(&pids, GRACEFUL_STOP_TIMEOUT);
+            }
             for child in guard.drain(..) {
-                // `kill()` consumes the handle and sends a terminate signal.
+                // `kill()` consumes the handle. A no-op for anything that
+                // already exited above; the backstop for anything that didn't.
                 let _ = child.kill();
             }
         }
-        // PyInstaller one-file workers run a bootloader that forks a child;
-        // killing the tracked bootloader can orphan that child (which still holds
-        // the port). Sweep the known service ports to guarantee a clean teardown.
-        // Gated on `had_prod` so we never touch a user's separately-run dev stack.
-        if had_prod {
-            sweep_service_ports();
-        }
-
-        // Dev launcher process group(s).
+        // One-dir worker / dev launcher process group(s).
+        //
+        // Signal them ALL first and then wait once: waiting per child would sum
+        // three graceful windows into a quit that can take half a minute, which
+        // is the kind of "the app won't close" report this teardown is supposed
+        // to prevent.
         if let Ok(mut guard) = self.dev_children.lock() {
-            for mut child in guard.drain(..) {
+            let mut children: Vec<Child> = guard.drain(..).collect();
+            for child in &children {
+                signal_group_terminate(child.id());
+            }
+            wait_for_children(&mut children, GROUP_STOP_TIMEOUT);
+            for child in &mut children {
+                // Force-kill ONLY what we can still positively see running.
+                // A reaped pid is free for the kernel to reuse immediately, and
+                // a group kill aimed at a RECYCLED id would take down some
+                // unrelated process tree on the user's machine — so an
+                // `Err` here (status unknowable, see `wait_for_children`) must
+                // skip too, not fall through to the kill. `try_wait` caches the
+                // status, so this is just a read of what we learned above.
+                if !matches!(child.try_wait(), Ok(None)) {
+                    continue;
+                }
+                // Backstop on the group and on the direct handle, in case the
+                // graceful signal missed (or, on Windows, never existed).
                 terminate_group(child.id());
-                // Backstop on the direct handle in case the group signal missed.
                 let _ = child.kill();
                 let _ = child.wait();
             }
+        }
+
+        // LAST: PyInstaller one-file workers run a bootloader that forks a child;
+        // killing the tracked bootloader can orphan that child (which still holds
+        // the port). Sweep the known service ports to guarantee a clean teardown.
+        // Gated on `had_prod` so we never touch a user's separately-run dev stack,
+        // and deliberately after the graceful passes above — sweeping first would
+        // SIGKILL the very processes we just asked to shut down cleanly.
+        if had_prod {
+            sweep_service_ports();
         }
     }
 }
@@ -439,7 +504,17 @@ fn spawn_one(app: &AppHandle, name: &str, env: &[(&str, String)]) {
     }
 
     match sidecar.spawn() {
-        Ok((_rx, child)) => {
+        Ok((rx, child)) => {
+            // The whole descendant tree joins the Windows job object, so the
+            // engine-pack servers the orchestrator spawns die with the app even
+            // if the app crashes. No-op on Unix (process groups cover it).
+            adopt_into_process_tree(child.pid());
+            // Drain the event receiver into `<config>/logs/<name>.log`. This used
+            // to be dropped on the floor ("we don't stream worker logs to the
+            // webview"), which meant a packaged build kept NO record of why the
+            // orchestrator failed to start — the single biggest hole in
+            // diagnosing a user's broken install.
+            pipe_command_events_to_log(name, rx);
             // Track the child so it is killed on app exit. Fetch the managed
             // SidecarManager here (avoids threading a `State` borrow through the
             // builder, which would tangle lifetimes with the `Command`).
@@ -484,13 +559,30 @@ fn spawn_worker(app: &AppHandle, name: &str, env: &[(&str, String)]) {
     }
     // No console window / its own process group (Windows: CREATE_NO_WINDOW |
     // CREATE_NEW_PROCESS_GROUP; unix: setpgid) so we can kill the tree on exit.
-    // Null stdio: we don't surface worker logs in the webview, and a valid (null)
-    // handle keeps the windowed build's sys.stdout/stderr non-None.
-    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    // stdin stays null; stdout/stderr are PIPED and pumped into
+    // `<config>/logs/<name>.log` below. They used to be `Stdio::null()` — a
+    // valid handle (so the windowed build's sys.stdout/stderr stay non-None)
+    // but one that threw every traceback away, leaving a user whose dub failed
+    // on an installed build with literally nothing to send back. A pipe is
+    // equally valid as a handle and keeps the output.
+    cmd.stdin(Stdio::null());
+    let capture = worker_log_sink(name);
+    if capture.is_some() {
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    } else {
+        // No writable log dir — fall back to the old behaviour rather than
+        // leaving pipes nobody drains, which would block the worker once the
+        // pipe buffer filled.
+        cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    }
     configure_process_group(&mut cmd);
 
     match cmd.spawn() {
-        Ok(child) => {
+        Ok(mut child) => {
+            adopt_into_process_tree(child.id());
+            if let Some(sink) = capture {
+                pipe_child_output_to_log(&mut child, sink);
+            }
             app.state::<SidecarManager>().track(child);
             log_info(&format!("launched one-dir worker '{name}'."));
         }
@@ -639,7 +731,7 @@ fn dir_has_cpython(dir: &Path) -> bool {
 
 /// Resolve the app config dir per the SHARED CONTRACT: `VIDEODUBBER_CONFIG_DIR`
 /// env if set, else `~/VideoDubber`.
-fn resolve_config_dir() -> PathBuf {
+pub(crate) fn resolve_config_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("VIDEODUBBER_CONFIG_DIR") {
         let trimmed = dir.trim();
         if !trimmed.is_empty() {
@@ -693,6 +785,11 @@ fn spawn_dev_services(app: &AppHandle) -> Result<(), String> {
 
     match cmd.spawn() {
         Ok(child) => {
+            // Same job object as the production spawns: on Windows the launcher
+            // is a PowerShell script whose node/python grandchildren are NOT
+            // reachable from `terminate_group` once the launcher itself is gone.
+            // No-op off Windows.
+            adopt_into_process_tree(child.id());
             app.state::<SidecarManager>().track(child);
             log_info("backend services launching (orchestrator + STT/translation/TTS workers).");
         }
@@ -782,14 +879,63 @@ fn configure_process_group(cmd: &mut Command) {
     cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
 }
 
-/// Terminate the process group led by `pid`.
+/// Ask the process group led by `pid` to stop cleanly (SIGTERM), so the dev
+/// launcher's trap runs and uvicorn finishes its own shutdown.
+///
+/// Paired with `wait_for_children` + `terminate_group`, which are the backstop.
+#[cfg(unix)]
+fn signal_group_terminate(pid: u32) {
+    // SAFETY: `killpg` on a group id with a valid signal is safe; a group that
+    // has already exited just returns ESRCH.
+    unsafe {
+        libc::killpg(pid as libc::pid_t, libc::SIGTERM);
+    }
+}
+
+/// Windows has no SIGTERM and our sidecars are spawned with CREATE_NO_WINDOW,
+/// so there is no console to send a CTRL_BREAK to either. Nothing graceful is
+/// available here — `terminate_group` (taskkill /T /F) plus the Job Object is
+/// the whole story.
+#[cfg(windows)]
+fn signal_group_terminate(_pid: u32) {}
+
+/// Wait for every child to exit, or until `budget` elapses — ONE shared window
+/// for the whole set, not one per child.
+///
+/// Reaps as it goes (`try_wait`), which is also why this cannot be expressed
+/// with the pid-based `process_alive`: a child we own but have not waited on
+/// stays a zombie, and a zombie answers `kill(pid, 0)` as alive forever.
+fn wait_for_children(children: &mut [Child], budget: Duration) {
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        // `Ok(None)` — still running — is the ONLY state worth waiting for.
+        // `Err` means we can never learn this child's status (`waitpid` answers
+        // ECHILD once something else has reaped it, which happens as soon as
+        // anything in the process sets SIGCHLD to SIG_IGN), so treating it as
+        // "alive" would spend the entire budget on a status that can never
+        // arrive — a four-second stall on every quit.
+        let still_running = children
+            .iter_mut()
+            .any(|c| matches!(c.try_wait(), Ok(None)));
+        if !still_running {
+            return;
+        }
+        std::thread::sleep(GRACEFUL_POLL_INTERVAL);
+    }
+    log_info("a backend worker did not stop within the graceful window; forcing termination.");
+}
+
+/// Terminate the process group led by `pid` (the forceful backstop).
 #[cfg(unix)]
 fn terminate_group(pid: u32) {
-    // Negative pid targets the whole process group. SIGTERM lets the launcher's
-    // trap and the workers exit cleanly; SIGKILL is the backstop.
-    let _ = Command::new("kill").args(["-TERM", &format!("-{pid}")]).status();
-    std::thread::sleep(std::time::Duration::from_millis(800));
-    let _ = Command::new("kill").args(["-KILL", &format!("-{pid}")]).status();
+    // `killpg` targets the whole group the child leads (see
+    // `configure_process_group`); this used to shell out to /bin/kill with a
+    // negative pid, which spawned two processes per service on every quit.
+    //
+    // SAFETY: as in `signal_group_terminate`.
+    unsafe {
+        libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+    }
 }
 
 #[cfg(windows)]
@@ -803,6 +949,217 @@ fn terminate_group(pid: u32) {
         .creation_flags(CREATE_NO_WINDOW)
         .status();
 }
+
+// ===========================================================================
+// Graceful stop — give the orchestrator a chance to reap its OWN children
+// ===========================================================================
+
+/// Ask every tracked production sidecar to stop cleanly.
+///
+/// Two channels, because neither one covers both platforms:
+///   * **HTTP** — `POST /shutdown` on the orchestrator. This is the only
+///     graceful channel that can work on Windows, where Node cannot receive
+///     SIGTERM at all and our sidecars have no console to send a CTRL_BREAK to.
+///     Tolerates a 404 (see the handoff note below).
+///   * **SIGTERM** — Unix only, and the channel that works today: the
+///     orchestrator installs SIGTERM/SIGINT handlers that run `app.close()` ->
+///     `engineManager.stopAll()`, which is what stops the engine-pack children.
+///
+/// NOTE: the HTTP half is deliberately written against a route the orchestrator
+/// does not expose yet; until it does, Windows still relies on the Job Object
+/// (see `job`) to take the tree down, which is abrupt but never orphans.
+fn request_graceful_stop(pids: &[u32]) {
+    post_shutdown_over_http();
+    signal_terminate(pids);
+}
+
+/// A minimal, blocking `POST /shutdown` written straight onto a socket.
+///
+/// WHY NOT `reqwest`: this runs from `RunEvent::Exit` and from the updater's
+/// `on_before_exit` hook. The first is the main thread outside any async
+/// context; the second may already be inside one, where `block_on` panics. A
+/// 20-line blocking request with its own deadline is safe from both, and the
+/// dependency-free version cannot fail to build on either platform.
+fn post_shutdown_over_http() {
+    use std::io::Write as _;
+    use std::net::{TcpStream, ToSocketAddrs};
+
+    let base = crate::orchestrator_client::base_url();
+    let Some(authority) = base.split("://").nth(1) else {
+        return;
+    };
+    let Ok(mut addrs) = authority.to_socket_addrs() else {
+        return;
+    };
+    let Some(addr) = addrs.next() else {
+        return;
+    };
+    // Short connect deadline: if the orchestrator is not listening there is
+    // nothing to shut down and quitting must not stall on it.
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else {
+        return;
+    };
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.write_all(
+        format!("POST /shutdown HTTP/1.1\r\nHost: {authority}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    );
+    let _ = stream.flush();
+}
+
+/// Unix: SIGTERM each sidecar so its own signal handler runs.
+#[cfg(unix)]
+fn signal_terminate(pids: &[u32]) {
+    for &pid in pids {
+        // SAFETY: `kill` with a positive pid and a valid signal is always safe;
+        // a stale pid just returns ESRCH, which we ignore.
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
+    }
+}
+
+/// Windows has no SIGTERM. The graceful channel there is the HTTP request
+/// above; the guaranteed one is the Job Object.
+#[cfg(windows)]
+fn signal_terminate(_pids: &[u32]) {}
+
+/// Block until every pid has exited, or `budget` elapses. Returns early the
+/// moment they are all gone so quitting still feels instant.
+fn wait_for_exit(pids: &[u32], budget: Duration) {
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        if !pids.iter().copied().any(process_alive) {
+            return;
+        }
+        std::thread::sleep(GRACEFUL_POLL_INTERVAL);
+    }
+    log_info("backend did not stop within the graceful window; forcing termination.");
+}
+
+/// Is the process still running? (Reaped/zombie counts as gone — the shell
+/// plugin's waiter thread reaps the child as soon as it exits.)
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 performs the permission/existence check without
+    // delivering anything.
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    // SAFETY: a failed OpenProcess returns null (checked); the handle is closed
+    // on every path.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut code) != 0;
+        CloseHandle(handle);
+        ok && code == STILL_ACTIVE as u32
+    }
+}
+
+// ===========================================================================
+// Windows Job Object — the backstop that makes orphans impossible
+// ===========================================================================
+
+/// Windows-only: a process Job with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+///
+/// WHY: on Unix a process group plus a SIGTERM/SIGKILL pair reaches the whole
+/// tree, and a killed parent's children are at least reparented somewhere we
+/// can sweep. Windows has neither — `taskkill /T` walks the tree we know about
+/// at that instant, and if the app CRASHES nothing runs at all. The result was
+/// llama.cpp / whisper.cpp / neural-TTS servers surviving with gigabytes
+/// resident and no window to close, and holding their venv `.exe`s open so the
+/// next NSIS update failed with "Error opening file for writing".
+///
+/// A Job fixes both: every backend process we spawn is assigned to it, the
+/// handle is deliberately LEAKED into a `OnceLock` for the app's lifetime, and
+/// when the last handle closes — normal exit, crash, or Task Manager — Windows
+/// terminates every process still in the job, descendants included.
+#[cfg(windows)]
+mod job {
+    use std::sync::OnceLock;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    };
+
+    /// The job handle as a `usize` so it is `Send + Sync` in the `OnceLock`.
+    /// Never closed: closing it is exactly what kills the backend, so it must
+    /// outlive everything and be released by the OS at process teardown.
+    static JOB: OnceLock<usize> = OnceLock::new();
+
+    fn handle() -> Option<HANDLE> {
+        let raw = JOB.get_or_init(|| {
+            // SAFETY: a null name/attrs creates an anonymous job; the limit
+            // struct is fully initialised before it is handed over.
+            unsafe {
+                let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if job.is_null() {
+                    return 0;
+                }
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let ok = SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const core::ffi::c_void,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                ) != 0;
+                if !ok {
+                    CloseHandle(job);
+                    return 0;
+                }
+                job as usize
+            }
+        });
+        (*raw != 0).then_some(*raw as HANDLE)
+    }
+
+    /// Put a spawned backend process (and therefore everything it spawns) into
+    /// the job. Best-effort: a failure only costs us the backstop, never the
+    /// launch, so it is logged and ignored.
+    pub fn assign(pid: u32) {
+        let Some(job) = handle() else {
+            super::log_info("could not create the Windows job object; backend processes may survive a crash.");
+            return;
+        };
+        // SAFETY: the handle is checked for null and closed on every path.
+        unsafe {
+            let proc = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+            if proc.is_null() {
+                return;
+            }
+            if AssignProcessToJobObject(job, proc) == 0 {
+                super::log_info(&format!("could not add pid {pid} to the job object."));
+            }
+            CloseHandle(proc);
+        }
+    }
+}
+
+/// Assign a freshly spawned backend process to the Windows job object. No-op
+/// elsewhere — Unix uses process groups (see `configure_process_group`).
+#[cfg(windows)]
+fn adopt_into_process_tree(pid: u32) {
+    job::assign(pid);
+}
+
+#[cfg(not(windows))]
+fn adopt_into_process_tree(_pid: u32) {}
 
 /// The backend service ports the bundled app owns. Kept in sync with the env we
 /// hand the sidecars in `spawn_bundled_sidecars` (orchestrator + 3 workers).
@@ -954,7 +1311,137 @@ fn export_system_ca_bundle() -> Option<String> {
     None
 }
 
-/// Minimal logging to stdout (visible in `tauri dev` / the app's console).
+// ===========================================================================
+// Logging — see logging.rs for why a packaged build needs a file sink at all
+// ===========================================================================
+
+/// The shell's own append-only log (`<config>/logs/shell.log`), opened once.
+/// `None` when the config dir is not writable; logging then degrades to the
+/// `println!` that a windowed release build has nobody to read.
+fn shell_log() -> &'static Mutex<Option<LogSink>> {
+    static SHELL_LOG: OnceLock<Mutex<Option<LogSink>>> = OnceLock::new();
+    SHELL_LOG.get_or_init(|| {
+        Mutex::new(crate::logging::log_dir().and_then(|dir| LogSink::open(&dir, "shell")))
+    })
+}
+
+/// Open the per-service log sink for a spawned backend process.
+fn worker_log_sink(name: &str) -> Option<std::sync::Arc<Mutex<LogSink>>> {
+    let dir = crate::logging::log_dir()?;
+    LogSink::open(&dir, name).map(|s| std::sync::Arc::new(Mutex::new(s)))
+}
+
+/// Pump a one-dir worker's piped stdout/stderr into its log file.
+///
+/// One thread per stream, each owning the pipe end: a blocking line reader is
+/// the simplest thing that cannot deadlock the child (the pipe is always being
+/// drained) and it costs two idle threads per worker.
+fn pipe_child_output_to_log(child: &mut Child, sink: std::sync::Arc<Mutex<LogSink>>) {
+    if let Some(out) = child.stdout.take() {
+        spawn_line_pump(out, sink.clone(), "out");
+    }
+    if let Some(err) = child.stderr.take() {
+        spawn_line_pump(err, sink, "err");
+    }
+}
+
+/// Largest chunk written as a single log line.
+///
+/// A pump that only ever returns on a `\n` is a memory leak waiting for a
+/// progress bar: `tqdm`, `huggingface_hub` and llama.cpp's loader all redraw
+/// with a bare `\r` and can run for minutes without ever emitting a newline.
+/// Capping each read flushes such output in slices instead of buffering the
+/// whole run.
+const MAX_LOG_LINE_BYTES: u64 = 16 * 1024;
+
+fn spawn_line_pump<R: std::io::Read + Send + 'static>(
+    reader: R,
+    sink: std::sync::Arc<Mutex<LogSink>>,
+    stream: &'static str,
+) {
+    // `by_ref` (used with `take` below) is a provided method on `Read`.
+    use std::io::Read as _;
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(reader);
+        let mut buf: Vec<u8> = Vec::new();
+        loop {
+            buf.clear();
+            // BYTES, not `BufRead::lines()`. `lines()` yields
+            // `Err(InvalidData)` for a line that is not valid UTF-8, and
+            // stopping the pump there would leave the pipe undrained — which
+            // BLOCKS the worker for good once the ~64 KB pipe buffer fills, a
+            // strictly worse failure than the `Stdio::null()` this replaced.
+            // The workers load native libraries (llama.cpp, whisper.cpp,
+            // torch) that print raw bytes, so that is a matter of when, not
+            // if. Lossy decoding keeps the pump alive on any byte sequence.
+            match reader
+                .by_ref()
+                .take(MAX_LOG_LINE_BYTES)
+                .read_until(b'\n', &mut buf)
+            {
+                // EOF: the child closed the pipe (or exited).
+                Ok(0) => break,
+                Ok(_) => {}
+                // A real I/O error on the pipe: there is nothing left to drain.
+                Err(_) => break,
+            }
+            let line = String::from_utf8_lossy(&buf);
+            if let Ok(mut sink) = sink.lock() {
+                sink.write_line(&format!("[{stream}] {line}"));
+            }
+        }
+    });
+}
+
+/// Drain a shell-plugin sidecar's `CommandEvent` stream into its log file.
+///
+/// Also records the exit status, which is the one line that actually answers
+/// "why is the backend unavailable?" — a missing DLL, a port already in use, or
+/// an antivirus quarantine all show up here and nowhere else.
+fn pipe_command_events_to_log(
+    name: &str,
+    mut rx: tauri::async_runtime::Receiver<tauri_plugin_shell::process::CommandEvent>,
+) {
+    use tauri_plugin_shell::process::CommandEvent;
+    let Some(sink) = worker_log_sink(name) else {
+        return;
+    };
+    let name = name.to_string();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            let line = match event {
+                CommandEvent::Stdout(bytes) => {
+                    format!("[out] {}", String::from_utf8_lossy(&bytes))
+                }
+                CommandEvent::Stderr(bytes) => {
+                    format!("[err] {}", String::from_utf8_lossy(&bytes))
+                }
+                CommandEvent::Error(e) => format!("[shell] error: {e}"),
+                CommandEvent::Terminated(payload) => format!(
+                    "[shell] '{name}' terminated (code={:?}, signal={:?})",
+                    payload.code, payload.signal
+                ),
+                _ => continue,
+            };
+            if let Ok(mut sink) = sink.lock() {
+                sink.write_line(&line);
+            }
+        }
+    });
+}
+
+/// Log a shell-level event.
+///
+/// Goes to BOTH stdout (visible under `tauri dev`) and `<config>/logs/shell.log`.
+/// The file half is the load-bearing one: `main.rs` sets
+/// `windows_subsystem = "windows"` in release, so a packaged build has no
+/// console and every one of these lines used to vanish — including the ones
+/// that say a sidecar could not be resolved or failed to launch.
 fn log_info(msg: &str) {
     println!("[videodubber:services] {msg}");
+    if let Ok(mut guard) = shell_log().lock() {
+        if let Some(sink) = guard.as_mut() {
+            sink.write_line(msg);
+        }
+    }
 }

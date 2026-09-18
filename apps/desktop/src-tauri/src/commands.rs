@@ -37,9 +37,15 @@ use crate::orchestrator_client as orch;
 ///
 /// `input` is a `CreateProjectInput` (`{ name, inputVideoPath, settings, outputDir? }`).
 /// Returns the created `Project`.
+///
+/// Uses the LONG timeout: the orchestrator copies the whole source video into
+/// the workspace before it answers, which for a multi-GB file — or any file on a
+/// USB stick or a network share — runs past the ordinary 120s ceiling. When it
+/// did, the wizard reported WORKER_TIMEOUT while the copy finished and silently
+/// created the project anyway.
 #[tauri::command]
 pub async fn create_project(input: Value) -> Result<Value, String> {
-    orch::post_json("/projects", &input).await
+    orch::post_json_with_timeout("/projects", &input, orch::LONG_OPERATION_TIMEOUT).await
 }
 
 /// `list_projects` -> `GET /projects`. Returns `Project[]`.
@@ -142,13 +148,24 @@ pub async fn synthesize_single_segment(
 ///
 /// Body `{ subtitleExportMode?, burnSubtitleStyle? }`. Returns `RenderFinalVideoResult`.
 /// `options` is forwarded verbatim (may be omitted to use project settings).
+///
+/// Uses the LONG timeout: unlike `/run`, this route is NOT a kick-off — the
+/// orchestrator awaits `renderFinalVideo` to completion, so the response only
+/// arrives after FFmpeg has finished. On the 120s ceiling, re-rendering with
+/// burned-in subtitles told the user the export had failed while FFmpeg ran on
+/// to success, and pressing the button again started a second render.
 #[tauri::command]
 pub async fn render_final_video(
     project_id: String,
     options: Option<Value>,
 ) -> Result<Value, String> {
     let body = options.unwrap_or_else(|| json!({}));
-    orch::post_json(&format!("/projects/{}/render", project_id), &body).await
+    orch::post_json_with_timeout(
+        &format!("/projects/{}/render", project_id),
+        &body,
+        orch::LONG_OPERATION_TIMEOUT,
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -415,12 +432,16 @@ pub fn updater_with_teardown(app: &AppHandle) -> Result<tauri_plugin_updater::Up
 ///
 /// Kept in sync with tauri.conf.json by a unit test — see `min_macos_matches_config`.
 #[cfg(target_os = "macos")]
-const MIN_MACOS: (u32, u32) = (13, 5);
+const MIN_MACOS: (u32, u32) = (14, 0);
 
 /// On macOS, is the host too old to RUN the update we would install?
 ///
 /// 0.4.0 raised the deployment floor to 13.5 (the Node-based orchestrator
-/// sidecar needs it). The updater has no notion of OS requirements: it would
+/// sidecar needs it), and 2026-09 raised it again to 14.0: numpy, onnxruntime
+/// and av publish `macosx_14_0_arm64` wheels ONLY, so the frozen STT and
+/// translation workers carry `minos 14.0` Mach-O files no build flag can lower
+/// (capping the wheel platform was measured — av has no wheel at or below 12.0
+/// and its source build fails). The updater has no notion of OS requirements: it would
 /// happily replace a working 0.2.0/0.3.0 install on macOS 12 with a bundle
 /// launchd then refuses to open, leaving the user with no app and no in-app way
 /// back. So we refuse the offer instead of destroying the install.
@@ -451,6 +472,47 @@ pub fn unsupported_host_reason() -> Option<String> {
 #[cfg(not(target_os = "macos"))]
 pub fn unsupported_host_reason() -> Option<String> {
     None
+}
+
+/// Why installing an update right now would destroy work, or `None` when the
+/// backend is idle.
+///
+/// Installing is destructive by construction: `updater_with_teardown`'s
+/// `on_before_exit` stops the whole backend and the app then relaunches. Nothing
+/// used to consult pipeline state, and the payload is large enough (bundled
+/// models, a CPython runtime, three one-dir worker trees) that the download
+/// window is minutes — plenty of time for the user to start a dub after the
+/// check ran. The result was an app that killed its own backend partway through
+/// a render, losing the run and orphaning its ffmpeg child.
+///
+/// Unreachable backend => `None`: if we cannot ask, there is no run to protect,
+/// and refusing to ever update because `/queue` is down would be worse.
+pub(crate) async fn busy_with_a_run_reason() -> Option<String> {
+    busy_reason_from_queue(&orch::get_json("/queue").await.ok()?)
+}
+
+/// The pure half of [`busy_with_a_run_reason`]: read a `/queue` body.
+///
+/// Split out so the field names can be pinned by a test. They are the one
+/// fragile part of this guard — `QueueState` lives in the orchestrator
+/// (orchestrator.ts `queueState()`) and if `running`/`entries` are ever renamed
+/// there, this reads two missing keys as zero and the guard FAILS OPEN, which
+/// is the exact outcome it exists to prevent.
+fn busy_reason_from_queue(queue: &Value) -> Option<String> {
+    let count = |key: &str| {
+        queue
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
+    };
+    let (running, queued) = (count("running"), count("entries"));
+    if running == 0 && queued == 0 {
+        return None;
+    }
+    Some(format!(
+        "{running} dub(s) running and {queued} queued — installing now would stop them partway"
+    ))
 }
 
 /// `check_for_update` -> queries the updater endpoint and returns an
@@ -529,6 +591,19 @@ pub async fn download_and_install_update(app: AppHandle) -> Result<Value, String
             "UNKNOWN",
             &format!("this update cannot be installed: {reason}"),
             Some("Update your OS first. Your installed version keeps working in the meantime."),
+        ));
+    }
+    // Never tear the backend out from under a running dub. See
+    // `busy_with_a_run_reason`.
+    if let Some(reason) = busy_with_a_run_reason().await {
+        // RUN_IN_PROGRESS, not UNKNOWN: it is a real `ErrorCode`
+        // (packages/shared/src/errors.ts) that the banner renders with its own
+        // remediation and a docs anchor, where UNKNOWN renders as "something
+        // went wrong" for a situation that is neither unknown nor wrong.
+        return Err(app_error_json(
+            "RUN_IN_PROGRESS",
+            &format!("VideoDubber is busy: {reason}"),
+            Some("Wait for the current dub to finish (or cancel it), then install the update."),
         ));
     }
     let updater = updater_with_teardown(&app)?;
@@ -620,6 +695,40 @@ fn app_error_json(code: &str, message: &str, remediation: Option<&str>) -> Strin
 
 #[cfg(test)]
 mod update_gate_tests {
+    use super::busy_reason_from_queue;
+    use serde_json::json;
+
+    /// The guard must key off the field names `GET /queue` actually returns.
+    /// A rename on the orchestrator side would make both lookups miss, read as
+    /// zero, and let an update tear the backend out from under a live dub — so
+    /// pin the shape here, where a Rust test can fail the build.
+    #[test]
+    fn a_running_or_queued_dub_blocks_the_install() {
+        assert!(busy_reason_from_queue(&json!({ "running": [], "entries": [] })).is_none());
+        let running = busy_reason_from_queue(&json!({
+            "running": [{ "projectId": "p1", "name": "Ep. 1", "heavy": false }],
+            "entries": [],
+        }))
+        .expect("a running dub must block");
+        assert!(running.contains("1 dub(s) running"), "got {running}");
+        let queued = busy_reason_from_queue(&json!({
+            "running": [],
+            "entries": [{ "projectId": "p2", "name": "Ep. 2" }],
+        }))
+        .expect("a queued dub must block");
+        assert!(queued.contains("1 queued"), "got {queued}");
+    }
+
+    /// Documents the deliberate fail-open: a body we cannot read counts as
+    /// idle, the same as an unreachable backend, because refusing to ever
+    /// update because `/queue` is unintelligible would be worse than the risk.
+    /// That is precisely why the test above pins the field names — it is the
+    /// only thing standing between a rename and this branch.
+    #[test]
+    fn an_unrecognisable_queue_body_reads_as_idle_by_design() {
+        assert!(busy_reason_from_queue(&json!({})).is_none());
+    }
+
     /// The OS gate must match what the bundle actually declares.
     ///
     /// If `bundle.macOS.minimumSystemVersion` is raised without updating

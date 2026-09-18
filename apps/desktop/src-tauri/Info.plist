@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Merged into the generated Info.plist by tauri-bundler (a plist sitting next
+    to tauri.conf.json is merged over the generated one).
+
+    WHY: the first thing a user does after onboarding is pick a video, and that
+    video is overwhelmingly in ~/Downloads or on the Desktop — both TCC-protected
+    on macOS. The read does not even happen in this process: the shell shows the
+    picker, then the orchestrator sidecar and the bundled ffmpeg read the ORIGINAL
+    path (runner.ts probe/extractAudio). macOS shows a consent prompt for these
+    categories with or without a usage string, but without one the prompt is a
+    bare "VideoDubber would like to access files in your Downloads folder" at the
+    exact moment the user expected work to start — and a user who clicks
+    "Don't Allow" gets a pipeline that fails at the probe step with an ffmpeg
+    error and no way back short of System Settings.
+
+    These strings do not prevent the prompt; they explain it.
+  -->
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>VideoDubber needs access to read the video you chose so it can transcribe, translate and re-voice it on this Mac.</string>
+
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>VideoDubber needs access to read the video you chose so it can transcribe, translate and re-voice it on this Mac.</string>
+
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>VideoDubber needs access to read the video you chose so it can transcribe, translate and re-voice it on this Mac.</string>
+
+  <!--
+    VideoDubber is local/offline-first: everything runs on the user's machine.
+    It never sends a video, a transcript or a model anywhere, so declare that
+    rather than letting the default (which permits arbitrary outbound HTTP)
+    stand. Downloads of models and engine packs go to HTTPS endpoints, which
+    needs no exception.
+  -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <!-- The backend is four loopback HTTP services (127.0.0.1:5100-5103); ATS
+         does not apply to loopback, but be explicit about the intent. -->
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+</dict>
+</plist>

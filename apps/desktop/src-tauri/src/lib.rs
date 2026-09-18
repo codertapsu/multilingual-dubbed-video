@@ -16,6 +16,7 @@
 //! `/setup/events`) and is NOT routed through Rust.
 
 mod commands;
+mod logging;
 mod orchestrator_client;
 mod sidecar;
 
@@ -34,6 +35,24 @@ use sidecar::SidecarManager;
 pub fn run() {
     tauri::Builder::default()
         // --- Plugins ----------------------------------------------------
+        // single-instance MUST be registered first (Tauri's own guidance): it
+        // has to claim the lock before anything else in the second process
+        // starts doing work.
+        //
+        // WHY IT MATTERS HERE, beyond tidiness: this app owns four fixed
+        // loopback ports. A second copy finds them taken, fails to boot its own
+        // backend — and then, when the user closes that useless second window,
+        // its `RunEvent::Exit` runs `sweep_service_ports()`, which kills the
+        // FIRST instance's orchestrator and workers out from under a running
+        // dub. Double-clicking the icon twice was enough to do it.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // Bring the window the user already has to the front instead.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         // dialog -> native open-file picker (commands::pick_video_file).
         .plugin(tauri_plugin_dialog::init())
         // opener -> open files/folders/URLs with the OS default handler
@@ -179,6 +198,13 @@ async fn maybe_auto_update(app: AppHandle) {
         return;
     }
 
+    // Never start an unattended update on top of a running dub. Checked again
+    // after the download, immediately before the install — see below.
+    if let Some(reason) = commands::busy_with_a_run_reason().await {
+        println!("[videodubber:update] skipping auto-update: {reason}.");
+        return;
+    }
+
     // Same builder as the manual path: the pre-install teardown must run here
     // too, or a background Windows update hits locked sidecar files.
     let updater = match crate::commands::updater_with_teardown(&app) {
@@ -192,16 +218,32 @@ async fn maybe_auto_update(app: AppHandle) {
     match updater.check().await {
         Ok(Some(update)) => {
             println!(
-                "[videodubber:update] update {} available; downloading + installing…",
+                "[videodubber:update] update {} available; downloading…",
                 update.version
             );
-            // Download + install, then relaunch. On success `restart()` diverges
-            // so nothing below runs; on failure we just log and leave the running
-            // app untouched.
-            match update
-                .download_and_install(|_chunk, _total| {}, || {})
-                .await
-            {
+            // DOWNLOAD and INSTALL are deliberately split rather than using
+            // `download_and_install`. Installing tears the backend down
+            // (`updater_with_teardown`'s `on_before_exit`) and relaunches, and
+            // the payload here is large enough that the download takes minutes
+            // — long enough for the user to have started a dub since the check.
+            // Splitting gives us a second idleness check at the only moment that
+            // matters: after the bytes are on disk, immediately before the
+            // install. If they are busy we simply drop the download and try
+            // again on the next launch.
+            let bytes = match update.download(|_chunk, _total| {}, || {}).await {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    println!("[videodubber:update] auto-download failed: {e}");
+                    return;
+                }
+            };
+            if let Some(reason) = commands::busy_with_a_run_reason().await {
+                println!("[videodubber:update] deferring install to the next launch — {reason}.");
+                return;
+            }
+            // On success `restart()` diverges so nothing below runs; on failure
+            // we just log and leave the running app untouched.
+            match update.install(bytes) {
                 Ok(()) => {
                     println!("[videodubber:update] installed; relaunching.");
                     app.restart();
@@ -213,5 +255,119 @@ async fn maybe_auto_update(app: AppHandle) {
         }
         Ok(None) => println!("[videodubber:update] already up to date."),
         Err(e) => println!("[videodubber:update] update check failed: {e}"),
+    }
+}
+
+/// Config invariants that are easy to regress and impossible to notice.
+///
+/// `tauri.conf.json` is JSON, so it cannot carry the comments the rest of this
+/// codebase uses to explain WHY a setting is what it is. These tests are where
+/// that reasoning lives — and, like `commands::update_gate_tests`, they fail the
+/// build rather than letting a silent drift ship. (Precedent: the macOS floor
+/// gate, added after the updater offered a build the host could not launch.)
+#[cfg(test)]
+mod config_tests {
+    fn config() -> serde_json::Value {
+        serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json parses")
+    }
+
+    fn csp() -> String {
+        config()["app"]["security"]["csp"]
+            .as_str()
+            .expect("app.security.csp must be declared")
+            .to_string()
+    }
+
+    /// `base-uri` and `form-action` have NO `default-src` fallback in the CSP
+    /// spec, so omitting them left a `<base>` injection able to repoint every
+    /// relative URL in the app. `object-src` does fall back, but stating it
+    /// costs nothing and survives a future `default-src` change.
+    #[test]
+    fn csp_declares_the_directives_default_src_does_not_cover() {
+        let csp = csp();
+        for directive in ["base-uri 'none'", "form-action 'none'", "object-src 'none'"] {
+            assert!(csp.contains(directive), "CSP is missing `{directive}`");
+        }
+    }
+
+    /// Every `<video>`/`<audio>` preview in the app is an ELEMENT src pointing
+    /// at the orchestrator's `/file?path=` route (editor.component.ts
+    /// `previewUrl`, export.component.ts) — and an element src is governed by
+    /// `media-src`, which does NOT fall back to `connect-src`. `media-src` was
+    /// `'self' blob: asset: http://asset.localhost` and never named the
+    /// orchestrator, so in the PACKAGED app (origin `tauri://localhost`) every
+    /// preview was blocked and the editor fell back to its "preview
+    /// unavailable" badge. Invisible in `pnpm dev`, where the page is served by
+    /// the Angular dev server and Tauri injects no CSP at all.
+    #[test]
+    fn csp_lets_the_webview_play_media_served_by_the_orchestrator() {
+        let csp = csp();
+        let media = csp
+            .split(';')
+            .map(str::trim)
+            .find(|d| d.starts_with("media-src"))
+            .expect("media-src must be declared");
+        for origin in ["http://127.0.0.1:5100", "http://localhost:5100"] {
+            assert!(media.contains(origin), "media-src is missing `{origin}`");
+        }
+    }
+
+    /// The webview talks ONLY to the four loopback services and Tauri's own IPC.
+    /// It carried grants for `https://github.com` and `*.githubusercontent.com`
+    /// that nothing used — release links open in the native browser via
+    /// `open_external`, and the updater fetches from Rust, outside the CSP — so
+    /// they bought nothing and gave a future XSS somewhere to exfiltrate to.
+    #[test]
+    fn csp_grants_no_remote_origins() {
+        let csp = csp();
+        assert!(
+            !csp.contains("githubusercontent"),
+            "dead GitHub grant is back"
+        );
+        assert!(
+            !csp.contains("https://github.com"),
+            "dead GitHub grant is back"
+        );
+        // The asset protocol is not enabled (`app.security.assetProtocol` is
+        // unset) and previews go through the orchestrator's /file route, so the
+        // `asset:` grants were dead too.
+        assert!(
+            !csp.contains("asset:"),
+            "asset: grant without assetProtocol"
+        );
+        assert!(
+            !csp.contains("https://"),
+            "the webview should reach nothing off this machine: {csp}"
+        );
+    }
+
+    /// The WebView2 install step must be a deliberate choice, not the default.
+    ///
+    /// Tauri's default is `downloadBootstrapper`: the installer downloads the
+    /// bootstrapper AND then the runtime. `embedBootstrapper` (what we ship)
+    /// carries the ~1.8 MB bootstrapper in the installer, so it survives a
+    /// blocked bootstrapper URL — but BE CLEAR THAT IT IS NOT AN OFFLINE
+    /// INSTALL: it still fetches the runtime from Microsoft's CDN, and on a
+    /// machine with no WebView2 and no internet the install still fails. The
+    /// only fully offline modes are `offlineInstaller` (+127 MB) and
+    /// `fixedRuntime` (+180 MB), both of which are an installer-size decision
+    /// rather than a code one (docs/WINDOWS.md §6 still says WebView2 is
+    /// preinstalled on Windows 10/11, which is the assumption in force).
+    ///
+    /// This test therefore pins "not the default", which is the part that can
+    /// silently regress — not a claim about offline capability.
+    #[test]
+    fn windows_installer_does_not_rely_on_the_default_download_bootstrapper() {
+        let cfg = config();
+        let mode = cfg["bundle"]["windows"]["webviewInstallMode"]["type"]
+            .as_str()
+            .expect("bundle.windows.webviewInstallMode.type must be declared");
+        assert_ne!(mode, "downloadBootstrapper");
+        // `skip` would leave a machine without WebView2 with an app that opens
+        // a blank window and no explanation — never an acceptable default here.
+        assert_ne!(mode, "skip");
+        // The install location is a deliberate choice given the multi-GB
+        // payload, not whatever the NSIS default happens to be.
+        assert!(cfg["bundle"]["windows"]["nsis"]["installMode"].is_string());
     }
 }

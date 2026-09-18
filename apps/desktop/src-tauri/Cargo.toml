@@ -42,11 +42,17 @@ tauri = { version = "2", features = [] }
 #   * shell   -> spawn the bundled `externalBin` sidecars in PRODUCTION
 #               (ShellExt::shell().sidecar("…")). The dev path still uses
 #               std::process to launch scripts/start-services.sh.
+#   * single-instance -> refuse a SECOND copy of the app and focus the first.
+#               Load-bearing here, not cosmetic: two instances both try to own
+#               ports 5100-5103, and the second one's QUIT runs the port sweep
+#               (sidecar.rs::sweep_service_ports), which kills the FIRST
+#               instance's orchestrator out from under a running dub.
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
 
 # Serialization for command params / responses.
 serde = { version = "1", features = ["derive"] }
@@ -63,6 +69,29 @@ reqwest = { version = "0.12", default-features = false, features = [
 # Async runtime. Tauri re-exports `tauri::async_runtime` (a tokio wrapper); we
 # also use tokio directly in commands.rs (oneshot channel bridging the dialog).
 tokio = { version = "1", features = ["full"] }
+
+# Process control for the managed backend, per platform.
+#
+# unix: signal the orchestrator (SIGTERM, so its SIGTERM handler runs
+#       engineManager.stopAll() and multi-GB llama.cpp/whisper.cpp servers are
+#       not orphaned) and probe liveness with `kill(pid, 0)` — previously this
+#       shelled out to /bin/kill on every poll.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# windows: a Job Object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE. Windows has no
+#          process groups we can signal and Node cannot receive SIGTERM there,
+#          so the ONLY reliable way to guarantee the whole backend descendant
+#          tree dies with the app — including if the app crashes — is to put
+#          every spawned backend process in a job whose handle we hold open for
+#          the process lifetime. See sidecar.rs::job.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 # ---------------------------------------------------------------------------
 # Service management (auto start/stop of the backend) lives in `sidecar.rs` and

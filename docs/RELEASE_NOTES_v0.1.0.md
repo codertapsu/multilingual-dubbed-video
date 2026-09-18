@@ -1,5 +1,11 @@
 # VideoDubber v0.1.0
 
+> **Historical.** This is the v0.1.0 release page, kept as written. Do not read it
+> as current: the "Coming shortly" Linux row below never arrived — `bundle.targets`
+> still contains no Linux package type and no release has ever carried a `.deb` or
+> an `.AppImage` — and auto-update, which this page predates, shipped in v0.2.0.
+> For today's downloads see [`USER_GUIDE.md`](USER_GUIDE.md).
+
 The first public release of **VideoDubber** — a local/offline-first desktop app
 that dubs videos into another language. Transcription, translation, and voice
 synthesis run **on your machine**; only the AI models download on first run.

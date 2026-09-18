@@ -57,7 +57,7 @@ per project in the new-project wizard — and changed again at any time.
 | Translation | `anthropic-translate` | Anthropic Claude (default `claude-haiku-4-5`) | cloud | Anthropic key |
 | Translation | `gemini-translate` | Google Gemini (default `gemini-2.0-flash`) | cloud | Gemini key |
 | TTS | `piper-local` | Piper → system voice → silent fallback, worker `:5103` | local | — |
-| TTS | `neural-tts` | Neural voices (Kokoro / VieNeu / Chatterbox / Qwen3-TTS) | local | engine pack |
+| TTS | `neural-tts` | **Vietnamese** neural voice — VieNeu-TTS v3-Turbo, 48 kHz, 10 preset voices. Vietnamese only; it is not a multilingual engine | local | engine pack |
 | TTS | `omnivoice` | OmniVoice multilingual neural voices (600+ languages; Apple Silicon / PyTorch MPS) — **on hold, not in releases** ([OMNIVOICE.md](OMNIVOICE.md)) | local | engine pack (disabled) |
 | TTS | `openai-tts` | OpenAI speech API (default `gpt-4o-mini-tts`) | cloud | OpenAI key |
 | Rendering | — | FFmpeg (bundled, libass; opt-in HW encode) | **always local** | — |
@@ -78,15 +78,15 @@ for the per-hardware-tier matrix behind the recommendations.
 
 | Pack | Provides | Delivery |
 |---|---|---|
-| `whisper-cpp-metal` / `-cuda` / `-vulkan` | Accelerated STT (`whisper-cpp`) | native binary |
+| `whisper-cpp-cuda` / `-vulkan` | Accelerated STT (`whisper-cpp`) | native binary |
 | `llama-cpp-metal` / `-cuda` / `-vulkan` | Local LLM translation **runtime** (`llama-cpp`) | native binary |
 | `translategemma-4b` / `-12b` / `-27b` | **TranslateGemma** GGUF weights the runtime loads (4B from 8 GB; 12B/27B with a GPU/Apple-Silicon) | model download |
 | `chat-gemma3-4b` / `-12b` | **Gemma 3 instruct** GGUF weights for the context-aware tiers (`llama-cpp-chat`, `argos-llm-repair`) — TranslateGemma cannot follow instructions, so the pronoun/glossary sheet needs these | model download |
 | `chat-gemma4-12b` / `-26b-a4b` | **Gemma 4 instruct** GGUF weights (newest generation, **Apache 2.0** — no Gemma ToU) for the same context-aware tiers; preferred over Gemma 3 when installed. The 26B-A4B is a mixture-of-experts: 26B-class quality, ~4B active params (24 GB+ RAM). **Pilot**: strong published multilingual gains, no Vietnamese benchmark yet — A/B against Gemma 3 on a real project before standardizing (see below) | model download |
-| `tts-neural` | Neural multilingual + Vietnamese voices (`neural-tts`) | uv-managed Python env |
+| `tts-neural` | **Vietnamese** neural voice, VieNeu-TTS v3-Turbo (`neural-tts`) — 48 kHz, 10 presets, CPU-only. *Not* multilingual: this row used to read "multilingual + Vietnamese", and a non-Vietnamese user who installed the ~1.5 GB pack on that basis got an engine that only speaks Vietnamese | uv-managed Python env |
 | `tts-omnivoice` | **OmniVoice** multilingual neural voices, 600+ languages (`omnivoice`) — Apple Silicon / PyTorch MPS. **On hold**: gated out of releases pending output-quality work; see [OMNIVOICE.md](OMNIVOICE.md) | uv-managed Python env |
-| `separation-audio` | Vocal/M&E separation for the “replace voices” mix | uv-managed Python env |
-| `alignment-whisperx` | Word-accurate timing + speaker diarization | uv-managed Python env |
+| `separation-audio` | Vocal/M&E separation for the “replace voices” mix — **not built**: its `vd_separator` worker is an unimplemented stub, so the pack is in `DISABLED_PACK_IDS` and never appears in Settings | uv-managed Python env |
+| `alignment-whisperx` | Word-accurate timing + speaker diarization — **not built**: its `vd_whisperx` worker is an unimplemented stub, so the pack is in `DISABLED_PACK_IDS` and never appears in Settings | uv-managed Python env |
 
 How packs run:
 - **Native-binary packs** (whisper.cpp, llama.cpp) are downloaded, checksum-verified,
@@ -109,12 +109,12 @@ How packs run:
   dev/source build, install uv and the rest of the app keeps working regardless.
 
 > **Maintainers:** the download URLs live in `enginePackCatalog.ts`. The
-> `llama-cpp-*` packs use upstream binaries; the macOS Metal whisper.cpp binary
-> must be built and self-hosted (ggml-org ships whisper.cpp binaries for Windows
-> only). The `translategemma-*` model packs pin **community GGUF requants** (no
-> official Google GGUF exists) by URL + sha256. See
-> **[`ENGINE_PACKS.md`](ENGINE_PACKS.md)** for where to host and how to pin
-> URLs/checksums.
+> `llama-cpp-*` packs use upstream binaries; ggml-org ships whisper.cpp binaries
+> for Windows only, so there is **no macOS Metal whisper.cpp pack** — Apple Silicon
+> uses batched faster-whisper. The `translategemma-*` and `chat-gemma*` model packs
+> pin **community GGUF requants** (no official Google GGUF exists) by URL + sha256,
+> which means a deleted upstream requant breaks an install. See
+> **[`ENGINE_PACKS.md`](ENGINE_PACKS.md)** for the catalog and how to re-pin.
 
 > **License — TranslateGemma weights:** unlike the MIT/Apache engines, the
 > TranslateGemma GGUFs are under the **Gemma Terms of Use**
@@ -265,6 +265,30 @@ chat-based services — one class covers OpenAI, Claude and Gemini through per-s
 request builders.
 
 ---
+
+
+## Adding a download source
+
+The **Download source video** screen goes through its own small provider registry,
+separate from the STT/MT/TTS one above.
+
+Implement `SourceProvider`
+(`packages/node-orchestrator/src/providers/download/types.ts`) and add one line to
+`registry.ts` — adding Douyin changed exactly those two lines. Nothing above that
+layer (routes, the job service, the screen) names a provider.
+
+The contract degrades by omission rather than by flag:
+
+- A provider that serves **one already-muxed file** omits `audioUrl`, and the
+  ffmpeg merge step is skipped.
+- A provider that needs **no credential** omits `session`, and the whole
+  credentials card disappears from the screen.
+- The only UI change a new provider needs is one i18n key for its display name,
+  and even that falls back to the provider id.
+
+What each shipping provider can and cannot reach — and the `SESSDATA` storage and
+risk model — is documented for users in
+[`USER_GUIDE.md`](USER_GUIDE.md#5-downloading-a-source-video).
 
 ## Choosing providers in a project
 

@@ -10,17 +10,23 @@ is **offline-first** — once dependencies and models are present, no network is
 
 ## 1. Node.js + pnpm
 
-VideoDubber targets **Node 20.11+** (LTS) and **pnpm 9.x**.
+The project needs **Node ≥ 22.12**; **use Node 24 LTS** to match what the release was
+built with, and **pnpm 11.9.0** (pinned in `package.json`'s `packageManager`).
+
+`package.json` is the single source of truth for both. Node 20 is not an option any
+more: it went end-of-life on 2026-04-30, and Angular 22's CLI declares
+`engines.node = "^22.22.3 || ^24.15.0 || >=26.0.0"`, so it refuses to run on it.
 
 ```bash
-# Install Node 20+ (nvm shown; or use https://nodejs.org)
-nvm install 20
-nvm use 20
+# Install Node 24 LTS (nvm shown; or use https://nodejs.org)
+nvm install 24
+nvm use 24
 
-# Enable pnpm via Corepack (ships with Node) — preferred:
+# Enable the pinned pnpm via Corepack (ships with Node) — preferred:
 corepack enable
-# ...or install globally:
-npm i -g pnpm
+corepack prepare pnpm@11.9.0 --activate
+node --version   # expect v24.x
+pnpm --version   # expect 11.9.0
 
 # Install all TypeScript/Node workspace dependencies from the repo root:
 pnpm install
@@ -37,10 +43,14 @@ pnpm install
 
 ## 2. Python workers (per-worker venvs)
 
-**Recommended Python: 3.11–3.13** (3.13 verified — faster-whisper/ctranslate2,
-argostranslate, and Piper all ship wheels for it). 3.10 works. ⚠️ **Avoid 3.14 for now** —
-some ML wheels aren't published for the very newest interpreter yet, which forces slow or
-failing source builds.
+**Use Python 3.12.** It is what `UV_PYTHON_VERSION` gives every engine-pack venv and
+what the installer's bundled interpreter is, so matching it keeps dependency
+resolution identical to a release. 3.11 and 3.13 do run — faster-whisper/ctranslate2,
+argostranslate and Piper all ship wheels — but the metadata is marker-sensitive
+across that boundary (libretranslate resolves a different numpy on 3.13), so a bug
+you hit on 3.13 may not be a bug a user can hit. ⚠️ **Avoid 3.14 for now** — some ML
+wheels aren't published for the newest interpreter yet, which forces slow or failing
+source builds. See [Choosing the Python version](#choosing-the-python-version).
 
 Each worker has its own `requirements.txt` and gets its own `.venv`. The setup script
 does this for all three at once:
@@ -57,19 +67,20 @@ vars (`SKIP_VENVS=1`, `SKIP_MODELS=1`, `SKIP_WHISPER=1`, `SKIP_ARGOS=1`, `SKIP_P
 
 The project **never uses your system `python3`** for the workers — it builds a `.venv`
 per worker from whatever **`PYTHON_PATH`** points at (default `python3`), and the run
-scripts prefer those `.venv`s. So to pin a specific interpreter (e.g. 3.13 while your
-system is on 3.14), just point the setup at it:
+scripts prefer those `.venv`s. So to pin a specific interpreter — and you should pin
+**3.12**, the version the bundled interpreter and every engine-pack venv use — point
+the setup at it:
 
 ```bash
 # macOS: install a specific Python, then build the worker venvs with it
-brew install python@3.13
-PYTHON_PATH=/opt/homebrew/bin/python3.13 bash scripts/setup-local-models.sh
+brew install python@3.12
+PYTHON_PATH=/opt/homebrew/bin/python3.12 bash scripts/setup-local-models.sh
 ```
 
-This creates `workers/<name>/.venv` on 3.13; `pnpm dev` / `pnpm app` then use them
+This creates `workers/<name>/.venv` on 3.12; `pnpm dev` / `pnpm app` then use them
 automatically. (Optionally also set `PYTHON_PATH` in your `.env` as a fallback.) The same
-works with `pyenv` — `pyenv install 3.13 && pyenv local 3.13` writes a `.python-version`
-so `python3` resolves to 3.13 inside the repo.
+works with `pyenv` — `pyenv install 3.12 && pyenv local 3.12` writes a `.python-version`
+so `python3` resolves to 3.12 inside the repo.
 
 ### Manual per-worker setup (if you prefer)
 
@@ -140,7 +151,7 @@ with any FFmpeg.
   ```
 - Most Linux distro `ffmpeg` packages already include libass.
 - If it's missing, burning fails with the clear error `FFMPEG_FILTER_MISSING` (not a
-  cryptic exit code) — see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#ffmpeg-filter-missing).
+  cryptic exit code) — see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#ffmpeg_filter_missing).
 
 If FFmpeg is not on your `PATH`, point the app at the binaries explicitly:
 

@@ -8,7 +8,7 @@ original timing, mixes it back over the (optionally ducked) background, and rend
 finished dubbed video — with optional soft, burned-in, or sidecar subtitles.
 
 Everything runs on your machine by default. No cloud account, no API keys, no
-per-minute billing. Cloud providers are an **opt-in** future enhancement, never a
+per-minute billing. Cloud providers are **opt-in**, per phase and per key, never a
 requirement.
 
 ---
@@ -17,18 +17,31 @@ requirement.
 
 **Just want to use VideoDubber?** Head to the
 [**Releases**](https://github.com/codertapsu/multilingual-dubbed-video/releases) page and
-grab the installer for your OS — no Python, Node, or FFmpeg required. Each build is
+grab the installer for your machine — no Python, Node, or FFmpeg required. Each build is
 **fully self-contained**: it bundles the app, the pipeline engine, all three AI
 workers, and FFmpeg.
+
+> 📖 **New here? Read [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md)** — install, first
+> launch, your first dub, where files live, updating, uninstalling. No terminal
+> required. The rest of this README is about **developing from source**.
 
 | Your machine | File to download | First launch |
 |---|---|---|
 | **Mac — Apple Silicon** (M1/M2/M3/M4) | `VideoDubber_<ver>_aarch64.dmg` | Double-click to open (signed + notarized). |
-| **Windows (64-bit)** | `VideoDubber_<ver>_x64-setup.exe` (or `_x64_en-US.msi`) | SmartScreen → **More info → Run anyway**. |
-| **Linux (64-bit)** | `VideoDubber_<ver>_amd64.AppImage` / `.deb` | `chmod +x *.AppImage && ./VideoDubber*.AppImage`, or `sudo dpkg -i *.deb`. |
-| **Mac — Intel** | `VideoDubber_<ver>_x64.dmg` | Double-click to open (signed + notarized). |
+| **Windows 10/11 (64-bit)** | `VideoDubber_<ver>_x64-setup.exe` | Unsigned → SmartScreen shows "Windows protected your PC". Click **More info** (a link, above the button), then **Run anyway**. |
 
 > **Which Mac do I have?**  → **About This Mac**: "Apple M…" = Apple Silicon, "Intel" = Intel.
+
+The other assets on a release are **not** installers — `…_aarch64.app.tar.gz`,
+`…_x64_en-US.msi`, the `.sig` files and `latest.json` exist for the in-app updater
+and for IT-managed Windows deployment. Downloading the `.app.tar.gz` by hand leaves
+a loose app in your Downloads folder that can never update itself. See
+[the user guide](docs/USER_GUIDE.md#files-you-should-ignore).
+
+**Intel macOS and Linux are not built today.** `bundle.targets` produces
+`app`/`dmg`/`nsis`/`msi` only, the macOS release script is arm64-only, and no
+release has ever carried an `_x64.dmg`, a `.deb` or an `.AppImage`. On those
+machines, build from source — see [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md).
 
 ### macOS first launch
 
@@ -43,14 +56,22 @@ Terminal, no right-click:
 > quarantine it; the one-time unlock and the full signing/notarization setup are
 > documented in [`docs/APPLE_SIGNING.md`](docs/APPLE_SIGNING.md).
 
-Not every platform is necessarily attached to a given release — builds are added as
-they're ready, so check the Releases page for the installers currently available.
+### Windows first launch
+
+The Windows installers are **not code-signed** — there is no Authenticode
+certificate for this project — so every Windows user sees SmartScreen's
+"Unknown publisher" panel on a hand-downloaded installer, exactly once per
+version. Updates the app installs for itself do not show it again. Antivirus
+false positives are also possible; what to exclude is in
+[the user guide](docs/USER_GUIDE.md#antivirus-removed-something).
 
 **First launch** runs a one-time wizard that downloads the AI **models** for the
 languages you choose (the only thing not in the installer); after that the app works
-fully **offline**. To update, download a newer release from the Releases page —
-in-app auto-update arrives in a later version (then toggleable in **Settings →
-Updates**).
+fully **offline**.
+
+**Updating is automatic.** Since v0.2.0 VideoDubber checks GitHub Releases for a
+newer version, verifies the update's signature on-device, and installs it in place.
+Turn it off, or check manually, in **Settings → Updates**.
 
 > Bundle internals: [`docs/PRODUCTION.md`](docs/PRODUCTION.md) · auto-update design:
 > [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
@@ -85,16 +106,17 @@ VideoDubber flips that model:
 - **Private by default.** Your video, audio, and transcripts never leave your computer
   unless *you* explicitly enable a cloud provider.
 - **Offline-capable.** Once models are downloaded, no network is required.
-- **Cloud is optional.** A future `cloud-enhanced` mode lets you opt specific steps into
-  higher-quality cloud providers (per-key, per-step), but the default is always local.
+- **Cloud is optional.** Per-step, key-gated cloud providers (OpenAI / Anthropic /
+  Gemini) can be opted into where quality matters, but the default is always local.
   See [`docs/PROVIDERS.md`](docs/PROVIDERS.md).
 
 ---
 
 ## Features
 
-- 8-step dubbing pipeline: **probe → extract-audio → STT → translation → TTS →
-  alignment → audio-mix → render**.
+- 9-step dubbing pipeline: **probe → extract-audio → STT → translation → refine →
+  TTS → alignment → audio-mix → render** (`refine` is an optional AI review pass
+  that no-ops when unconfigured).
 - Local speech-to-text via **faster-whisper** (word timestamps, language auto-detect).
 - Local machine translation via **Argos Translate** (offline neural MT).
 - Local text-to-speech via **Piper**, with graceful fallbacks to **system TTS**
@@ -111,8 +133,20 @@ VideoDubber flips that model:
   retry a single step to re-run it and everything downstream.
 - **Editable transcript**: review and correct translated segments, re-synthesize a
   single segment without re-running the whole job.
+- **Download a source video** from **Bilibili** or **Douyin** and dub it, with a
+  quality target and an optional per-source session cookie — see
+  [the user guide](docs/USER_GUIDE.md#5-downloading-a-source-video).
+- **Optional engine packs** (Settings → Engines): GPU-accelerated whisper.cpp,
+  local-LLM translation via llama.cpp, neural Vietnamese TTS. Downloaded on demand,
+  run only while a project uses them, hardware-gated so an unrunnable pack is never
+  offered. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md#engine-packs).
+- **Opt-in cloud providers** (OpenAI / Anthropic / Gemini) per phase, per key.
+- **Run queue**: dub several videos at once, bounded by what the machine can take —
+  see [`docs/RUN_QUEUE.md`](docs/RUN_QUEUE.md).
+- **English + Vietnamese UI** (Settings → Language), switchable at runtime.
 - **Dual mode**: run the Angular UI in a plain browser (no Rust needed), or build the
   full **Tauri 2** native desktop app.
+- **Signed in-app auto-update** (Settings → Updates) — [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md).
 - Live progress over **Server-Sent Events (SSE)**.
 
 ---
@@ -122,7 +156,7 @@ VideoDubber flips that model:
 ```
                           ┌──────────────────────────────────────────┐
                           │  videodubber-desktop                       │
-                          │  Angular 18 UI  ──(SSE + HTTP)──┐           │
+                          │  Angular 22 UI  ──(SSE + HTTP)──┐           │
                           │   in a browser  OR  in Tauri 2  │           │
                           └─────────────┬───────────────────┘          │
                                         │ HTTP / SSE                    │
@@ -151,9 +185,9 @@ VideoDubber flips that model:
   workspaces, and streams progress via SSE.
 - **Python workers** (FastAPI + uvicorn): STT **5101**, Translation **5102**, TTS
   **5103**.
-- **`videodubber-desktop`** — Angular 18 standalone UI inside a Tauri 2 shell.
+- **`videodubber-desktop`** — Angular 22 standalone UI inside a Tauri 2 shell.
 
-Full details, the 8-step flow, and the data model are in
+Full details, the 9-step flow, and the data model are in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
@@ -162,11 +196,11 @@ Full details, the 8-step flow, and the data model are in
 
 | Requirement | Version / notes |
 |---|---|
-| **OS** | macOS 13.5+ (Apple Silicon), Windows 10/11, or a modern Linux. (Validated end-to-end on macOS arm64.) |
-| **Node.js** | 20.11+ (LTS). Provides global `fetch` and ES2022. |
-| **pnpm** | 9.x. Enable via `corepack enable` or `npm i -g pnpm`. |
-| **Python** | **3.11–3.13** (3.13 verified working — faster-whisper/ctranslate2, argostranslate, Piper all have wheels). 3.10 works. ⚠️ **Avoid 3.14 for now** — some ML wheels aren't published yet, forcing slow/failing source builds. On macOS: `brew install python@3.13` (or `@3.12`). The project uses a **per-project** interpreter (a `.venv` or `PYTHON_PATH`), so your system `python3` version doesn't matter — see [switching Python](docs/LOCAL_SETUP.md#choosing-the-python-version). |
-| **FFmpeg + ffprobe** | Required at run time for probe / extract / mix / render. Install per OS — see [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md#3-ffmpeg). **For burned-in subtitles** you need an FFmpeg built **with libass** (the `subtitles` filter). macOS Homebrew's default `ffmpeg` omits it — use `brew install ffmpeg-full` and set `FFMPEG_PATH`/`FFPROBE_PATH`. The other subtitle modes (soft / sidecar) work with any FFmpeg. |
+| **OS** | macOS 14.0+ (Apple Silicon), Windows 10/11, or a modern Linux. Only macOS arm64 and Windows x64 get released installers; Linux and Intel macOS are build-from-source. (Validated end-to-end on macOS arm64.) |
+| **Node.js** | **≥ 22.12**; **use Node 24 LTS** — what releases are built with. Angular 22's CLI refuses anything below 22.22.3, and Node 20 went end-of-life 2026-04-30. |
+| **pnpm** | **11.9.0**, pinned in `package.json` `packageManager`. Enable with `corepack enable && corepack prepare pnpm@11.9.0 --activate`. |
+| **Python** | **3.12** — the version `UV_PYTHON_VERSION` gives every engine-pack venv and the version of the interpreter the installer bundles, so matching it keeps dependency resolution identical to a release. Other 3.11–3.13 interpreters run, but metadata is marker-sensitive across that boundary (libretranslate resolves a different numpy on 3.13). ⚠️ **Avoid 3.14** — some ML wheels aren't published yet, forcing slow/failing source builds. On macOS: `brew install python@3.12`. The project uses a **per-project** interpreter (a `.venv` or `PYTHON_PATH`), so your system `python3` version doesn't matter — see [switching Python](docs/LOCAL_SETUP.md#choosing-the-python-version). |
+| **FFmpeg + ffprobe** | Required at run time for probe / extract / mix / render. Install per OS — see [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md#3-ffmpeg--ffprobe). **For burned-in subtitles** you need an FFmpeg built **with libass** (the `subtitles` filter). macOS Homebrew's default `ffmpeg` omits it — use `brew install ffmpeg-full` and set `FFMPEG_PATH`/`FFPROBE_PATH`. The other subtitle modes (soft / sidecar) work with any FFmpeg. |
 | **Disk** | ~1–2 GB for Node deps + Python venvs + models (a small/base Whisper model, one Argos pair, one Piper voice). |
 | **Rust (optional)** | Only needed to build/run the **native Tauri desktop app** (`pnpm app`). Install via [rustup](https://rustup.rs). The browser dev mode does **not** need Rust. |
 
@@ -219,7 +253,7 @@ languages, and run the pipeline.
 
 ## Running the app
 
-VideoDubber's UI is plain Angular 18 talking to the orchestrator over HTTP/SSE, so you
+VideoDubber's UI is plain Angular 22 talking to the orchestrator over HTTP/SSE, so you
 can run it two ways. **Either way, "everything" = the 3 Python workers + the Node
 orchestrator + the UI.**
 
@@ -239,7 +273,7 @@ It also adds real native commands (`pick_video_file`, "open output folder", …)
 to the orchestrator. Auto-management is controlled by `VIDEODUBBER_MANAGE_SERVICES`
 (default on; set to `0` if you'd rather run the backend yourself). Implementation:
 [`apps/desktop/src-tauri/src/sidecar.rs`](apps/desktop/src-tauri/src/sidecar.rs). See
-[`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) for the simple install & use guide.
+[`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) for running the shell from source.
 
 ### B. Browser dev mode (no Rust required)
 
@@ -268,10 +302,11 @@ degrade gracefully outside Tauri. **No Rust toolchain needed** — great for dev
 - Put machine-specific paths in a `.env` (copy from `.env.example`) — `FFMPEG_PATH`,
   `PYTHON_PATH`, `PIPER_*`, ports, etc. The start scripts load it automatically.
 
-> Building a release **installer** (`pnpm app:build`) additionally needs app icons
-> (`pnpm tauri icon …`) and, for a fully standalone installer, bundling the Python
-> workers — see [`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) and
-> [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> Building a release **installer** (`pnpm app:build`) needs the sidecars staged first
+> (`pnpm package:sidecars` — the Node orchestrator, the three Python workers, `vd-piper`,
+> `vd-uv`, a bundled CPython and a libass FFmpeg). Full runbook:
+> [`docs/RELEASING.md`](docs/RELEASING.md); the developer-facing summary is in
+> [`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md).
 
 ---
 
@@ -322,27 +357,61 @@ Key environment variables (see `.env.example` for the full list):
 | `FASTER_WHISPER_MODEL` | `small` | Whisper model size. |
 | `PIPER_BINARY_PATH` / `PIPER_VOICE_MODEL_PATH` | (unset) | Enable the Piper TTS engine. |
 
-Optional cloud keys (`OPENAI_API_KEY`, `DEEPL_API_KEY`,
-`GOOGLE_APPLICATION_CREDENTIALS`, `AZURE_SPEECH_KEY`/`AZURE_SPEECH_REGION`,
-`ELEVENLABS_API_KEY`) are **only** used by the future cloud-enhanced mode and are never
-required. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md).
+Optional cloud keys — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and
+`GEMINI_API_KEY` (or `GOOGLE_API_KEY`) — are used **only** when you select a cloud
+provider for a phase, and are never required. They can also be entered in the app
+(**Settings → Cloud API keys**), which stores them in `<config>/credentials.json`
+with owner-only permissions. `.env.example` additionally lists `DEEPL_API_KEY`,
+`GOOGLE_APPLICATION_CREDENTIALS`, `AZURE_SPEECH_*` and `ELEVENLABS_API_KEY`: those
+belong to **deliberately unimplemented** placeholder backends in the translation
+worker and setting them does nothing. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md).
 
 ---
 
 ## Documentation
 
+**For users** — you need none of the rest of this README.
+
 | Doc | Contents |
 |---|---|
-| [`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) | **Simple install & use guide for the desktop app** + auto start/stop of services. |
-| [`docs/PRODUCTION.md`](docs/PRODUCTION.md) | The fully self-contained installer: what's bundled vs. downloaded on first run, the first-run wizard, prod sidecar lifecycle, storage & sizes. |
-| [`docs/RELEASING.md`](docs/RELEASING.md) | Release runbook: cut a release **locally** (`pnpm package:sidecars` + `pnpm app:build` → `release-upload.{sh,ps1}`); macOS deep-sign + notarize via `release-macos.sh`; updater keys; opt-in per-OS CI. |
-| [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md) | How auto-update works (endpoint, pubkey, signature verification), the auto/manual setting, manual checks, rollback. |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, pipeline flow, data model, workspace layout, HTTP API, Tauri commands, SSE model, service lifecycle. |
-| [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md) | Node/pnpm/Python/FFmpeg/Rust setup; running, starting & stopping each service. |
+| [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) | **Start here.** Which file to download, first launch on each OS, the setup wizard, dubbing a video, the downloader, Settings, where files live, updating, uninstalling. |
+| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Every error code, plus common failures — split into "using the app" and "developing". |
+| [`docs/VIENEU_TTS_SETUP.md`](docs/VIENEU_TTS_SETUP.md) | The optional neural Vietnamese voice (VieNeu v3): install it and use it. |
+| [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Every engine you can pick per phase — local defaults, engine packs, optional cloud adapters + what data they send. |
 | [`docs/MODEL_SETUP.md`](docs/MODEL_SETUP.md) | Whisper / Argos / Piper models: download, storage, troubleshooting. |
-| [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Local defaults, provider interfaces, optional cloud adapters + data flow. |
-| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Every error code, common failures, and fixes. |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Planned features (diarization, source separation, voice cloning, packaging…). |
+
+**For contributors** — building and running from source.
+
+| Doc | Contents |
+|---|---|
+| [`docs/LOCAL_SETUP.md`](docs/LOCAL_SETUP.md) | Node/pnpm/Python/FFmpeg/Rust setup; running, starting & stopping each service. |
+| [`docs/WINDOWS.md`](docs/WINDOWS.md) | The complete Windows onboarding + build + release guide (the canonical toolchain versions). |
+| [`docs/DESKTOP_APP.md`](docs/DESKTOP_APP.md) | Running the Tauri desktop shell **from source** and how it auto-starts/stops the backend. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, pipeline flow, data model, workspace layout, HTTP API, Tauri commands, SSE model, service lifecycle. |
+| [`docs/RUN_QUEUE.md`](docs/RUN_QUEUE.md) | How simultaneous dubs are admitted, bounded and sequenced. |
+| [`docs/DUBBING_QUALITY.md`](docs/DUBBING_QUALITY.md) | Why dubs sound the way they do, and the ranked plan to improve them. |
+| [`docs/ENGINE_PACKS.md`](docs/ENGINE_PACKS.md) | Maintainer runbook for the engine-pack catalog: pins, checksums, re-pinning a dead URL. |
+
+**For maintainers** — packaging, signing, shipping.
+
+| Doc | Contents |
+|---|---|
+| [`docs/RELEASING.md`](docs/RELEASING.md) | Release runbook: cut a release **locally** (`pnpm package:sidecars` + `pnpm app:build` → `release-upload.{sh,ps1}`); macOS deep-sign + notarize via `release-macos.sh`; updater keys; opt-in per-OS CI. |
+| [`docs/APPLE_SIGNING.md`](docs/APPLE_SIGNING.md) | Developer ID signing + notarization: why a deep-sign pass is mandatory, and how to debug it. |
+| [`docs/AUTOUPDATE.md`](docs/AUTOUPDATE.md) | How auto-update works (endpoint, pubkey, signature verification), the auto/manual setting, manual checks, rollback. |
+| [`docs/PRODUCTION.md`](docs/PRODUCTION.md) | The self-contained installer: what's bundled vs. downloaded on first run, prod sidecar lifecycle, storage & sizes. |
+
+**Research & decisions**
+
+| Doc | Contents |
+|---|---|
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | What has shipped, and what is genuinely still planned. |
+| [`docs/TECH_STACK_RESEARCH.md`](docs/TECH_STACK_RESEARCH.md) | The on-device AI landscape survey the engine-pack system came out of. |
+| [`docs/TRANSLATION_EVAL.md`](docs/TRANSLATION_EVAL.md) | What is and isn't known about translation quality for our pairs. |
+| [`docs/OMNIVOICE.md`](docs/OMNIVOICE.md) | The OmniVoice TTS pack: why it is on hold and the re-enable checklist. |
+| [`docs/RELEASE_NOTES_v0.1.0.md`](docs/RELEASE_NOTES_v0.1.0.md) | The first release's notes, kept for reference. |
+
+An index with the same grouping lives at [`docs/README.md`](docs/README.md).
 
 ---
 
@@ -350,9 +419,25 @@ required. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md).
 
 - TTS quality depends on the chosen Piper voice; without a Piper binary/voice the worker
   falls back to system TTS or a silent/sine placeholder.
-- No speaker diarization yet — all segments use a single voice.
-- No source separation (music/voice) yet; ducking is a volume reduction, not stem
-  isolation.
+- No speaker diarization — all segments use a single voice unless you assign one per
+  segment in the editor. The `alignment-whisperx` pack that would provide it is an
+  **unimplemented stub** and is hidden from Settings → Engines rather than shipped
+  broken.
+- No source separation (music/voice); ducking is a volume reduction, not stem
+  isolation. The `separation-audio` pack is likewise an unimplemented stub.
+- **Windows installers are unsigned, by choice.** No Authenticode certificate is
+  provisioned and none is planned, so every hand-downloaded install and update shows
+  SmartScreen's "Unknown publisher" panel ([what to click](#windows-first-launch));
+  managed Windows images that block unsigned installers outright cannot install
+  VideoDubber at all. In-app auto-updates are unaffected — those carry the updater's
+  own signature. Rationale: [`docs/RELEASING.md`](docs/RELEASING.md#windows-code-signing--deliberately-not-configured).
+- **Intel macOS and Linux get no installers.** See the download section.
+- **macOS below 26 cannot run any *published* release (≤ 0.9.0)**: the frozen Python
+  workers in those builds were compiled against the macOS 26 SDK although the app
+  declared 13.5. `build-workers.{sh,ps1}` now freeze from the bundled portable
+  CPython instead, which fixes it — but **no published release carries that fix yet**.
+  The next release requires **macOS 14.0+**: numpy/onnxruntime/av publish no arm64
+  wheels below `macosx_14_0`, so 14.0 is the real floor and the app now declares it.
 - Argos language coverage and quality vary by pair; some pairs are not available.
 - Alignment uses time-stretching within limits; very dense speech may overflow and get
   flagged for review.

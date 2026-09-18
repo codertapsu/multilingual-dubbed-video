@@ -491,7 +491,7 @@ so **no secrets were required**:
    the 10x-billed macOS runners stay idle. On each machine build the
    self-contained installer and upload it to the shared **draft** release with
    `scripts/package/release-upload.{sh,ps1}`. Full per-OS steps:
-   [Local-first release](#local-first-release-build-locally-no-ci).
+   [Local-first release](#local-first-release-build-locally).
 2. **Review the draft release**, then **Publish** it. Users can now download from
    the Releases page.
 
@@ -516,14 +516,20 @@ so **no secrets were required**:
 >   don't have the private key, or if you'd prefer a password-protected key (safe
 >   pre-launch — no installs exist yet; just re-commit the new pubkey).
 
-### Engine-pack assets (one-time, for the macOS Metal whisper.cpp engine)
+### Engine-pack assets — nothing to host
 
-Only `whisper-cpp-metal` is self-hosted. Build it once and upload it to an
-`engine-packs-v1` release on this repo — full recipe in
-[`ENGINE_PACKS.md`](ENGINE_PACKS.md#3-self-hosting-the-macos-metal-whispercpp-binary).
-Every other engine pack (llama.cpp, neural TTS, separation, alignment) needs no
-hosting. Paste the built asset's `shasum -a 256` into the `whisper-cpp-metal`
-artifact's `sha256` in `enginePackCatalog.ts`.
+**No engine pack is self-hosted.** Every native pack points at an upstream
+ggml-org release, and the Python packs have no URLs at all, so there is no
+one-time asset step here.
+
+*(This section used to describe building and hosting a `whisper-cpp-metal`
+binary. That pack id is not in `ENGINE_PACKS`, and the `SELF_HOSTED_BASE`
+constant it referenced no longer exists anywhere in the tree.)*
+
+What **does** need maintenance is the seven GGUF model packs, which pin community
+requants on HuggingFace by URL + sha256: if an uploader deletes or re-quantizes
+one, every install of that pack fails at once. The re-pin procedure is
+[`ENGINE_PACKS.md` §3](ENGINE_PACKS.md#3-re-pinning-a-model-pack-whose-upstream-vanished).
 
 ---
 
@@ -692,14 +698,35 @@ Before publishing, check on the draft:
 3. The draft's tag is the real `vX.Y.Z` (the merge script's `--fix-tag` repairs
    a stray `untagged-<sha>` draft) — otherwise every download URL in
    `latest.json` 404s after publish.
+4. **The release body opens with the download table.** `release-upload.sh` /
+   `.ps1` seed a new draft's body from
+   [`scripts/package/release-body-header.md`](../scripts/package/release-body-header.md)
+   (`{{VERSION}}` and `{{MIN_MACOS}}` substituted at upload time), so this is
+   normally automatic — confirm it is actually there, and **write the changelog
+   underneath it rather than replacing it**.
+
+   It matters because the assets list shows `…_aarch64.app.tar.gz` — the updater
+   payload, not an installer — next to the `.dmg` at a similar size, and a Mac user
+   who picks it gets a loose `.app` in `~/Downloads` that is signed, opens fine, and
+   is never installed or updatable. That failure looks like success, which is why
+   the page has to say which file to click before it says what changed.
 
 Then **Publish** on the Releases page — publishing is what makes
 `releases/latest/download/latest.json` (the updater endpoint) point at this
 version. Assets can still be added after publishing if needed.
 
-> **Intel (x86_64) macOS / Linux** aren't part of the two-machine flow yet — ship
-> Apple-Silicon + Windows now and add them later (or run the manual CI workflow
-> scoped to just those targets).
+> **Intel (x86_64) macOS and Linux produce nothing.** This is not "not yet in the
+> two-machine flow" — `release-macos.sh` hardcodes `aarch64`, `bundle.targets`
+> contains no Linux package type (so a Linux `tauri build` exits 0 having bundled
+> nothing), there is no `release-linux.sh`, and nothing ever merges a Linux entry
+> into `latest.json` — so even a hand-built `.AppImage` would not be offered as an
+> update. (`merge-latest-json.mjs` itself does *not* validate `--platform`: it
+> writes whatever string you pass, which is how `release-windows.ps1` adds the
+> third key `windows-x86_64-msi`. Do not read "no Linux key" as a guard.) The
+> manual CI
+> workflow is not a rescue either: its Intel-mac job targets the retired
+> `macos-13` runner image. Ship Apple Silicon + Windows, and say so in the README
+> rather than advertising files that have never existed.
 
 > **Re-cutting a draft:** the upload helper overwrites same-named assets in
 > place, so you do NOT need to delete the draft or move the tag between
@@ -759,22 +786,74 @@ cannot check it for malicious software").
   CI step signs them (hardened runtime + timestamp + entitlements) **before**
   `tauri-action` bundles + notarizes. Entitlements live in
   `apps/desktop/src-tauri/entitlements.plist` (`bundle.macOS.entitlements`).
-* Universal vs. per-arch: we build **per-arch** (arm64 on macos-14, x64 on
-  macos-13) so each `.dmg` is native. Users download the one for their Mac.
+* Universal vs. per-arch: we build **per-arch** so each `.dmg` is native. In
+  practice only **arm64** is ever built — `release-macos.sh` hardcodes `aarch64`,
+  and no published release has carried an `_x64.dmg`. The CI matrix still names
+  the retired `macos-13` runner image for the Intel job, so a manual
+  `workflow_dispatch` (which forces every OS on) would fail on it; the successor
+  label is `macos-15-intel`, available until August 2027.
 
 > **Full step-by-step (cert creation, the 7 secrets, the nested-binary fix,
 > verification, troubleshooting):** see **[`APPLE_SIGNING.md`](APPLE_SIGNING.md)**.
 
-### Windows (Authenticode)
+### Windows code signing — deliberately not configured
 
-If `WINDOWS_CERTIFICATE` is set, the `-setup.exe` is Authenticode-signed, which
-avoids the SmartScreen "unknown publisher" warning. Unsigned builds still work but
-show that warning. EV certificates clear SmartScreen reputation fastest.
+**Every Windows artifact this project has ever published is unsigned.**
+`tauri.conf.json` *does* have a `bundle.windows` block — but it carries only
+`webviewInstallMode` and `nsis.installMode`, and **none** of the signing fields
+(`certificateThumbprint`, `signCommand`, `digestAlgorithm`, `timestampUrl`). So
+`tauri build` has nothing to sign with, and `release-windows.ps1` never signs
+anything either: a repo-wide grep for `signtool` / `osslsigncode` finds nothing
+outside the CI workflow.
+
+The `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD` secrets listed in the CI
+table above are consumed **only** by `.github/workflows/release.yml`, and that path
+is off by default (`RELEASE_CI_WINDOWS` defaults to `false`). In the local-only flow
+this repo actually uses, setting them does nothing. This section used to say
+"if `WINDOWS_CERTIFICATE` is set, the `-setup.exe` is Authenticode-signed" — in the
+local flow that is false, and it is why the gap went unnoticed.
+
+**What the user sees:** the full-screen "Windows protected your PC — Unknown
+publisher" panel whose default button is *Don't run*, with *Run anyway* hidden
+behind a *More info* link. This is the single largest install-funnel loss, and it
+recurs on every hand-downloaded update (though not on updates the app installs
+itself).
+
+**DECIDED 2026-09-18: Windows builds stay unsigned.** This is a standing choice,
+not an omission or a pending task — do not re-open it at release time. The
+practical consequences, accepted knowingly:
+
+* Every hand-downloaded install and every hand-downloaded update shows the
+  SmartScreen panel. Both `README.md` and `docs/USER_GUIDE.md` tell users exactly
+  what they will see and which link to click; keep that wording accurate, because
+  it is the only mitigation there is.
+* In-app auto-updates are **not** affected — those are verified by the updater's
+  own minisign signature, which is configured and working.
+* Some corporate/managed Windows images block unsigned installers outright, with
+  no "Run anyway". Those users cannot install VideoDubber at all.
+
+**If that is ever revisited**, a certificate has to be bought — a maintainer
+decision, not a code change. Two notes for whoever makes it:
+
+* Azure Artifact Signing (ex-Trusted Signing) restricts *individual* sign-up to the
+  USA and Canada, so it may not be available to this maintainer.
+* "EV clears SmartScreen reputation instantly" has not been true since the 2023 FIPS
+  key-storage change made OV and EV equally hardware-bound. Reputation accrues
+  across releases signed by the **same identity**, so the warning fades over several
+  releases rather than disappearing on day one. Keep the identity stable.
+
+Should one ever be bought, wire it in as `bundle.windows.signCommand` (Tauri 2
+supports a custom sign command with a `%1` binary placeholder, which is how cloud
+signing tools integrate) so `tauri build` signs the NSIS exe, the MSI **and** the
+sidecar exes — and make `release-windows.ps1` fail the build when signing is
+configured but produced no signature, mirroring the existing `.sig` hard-fail.
 
 ### Linux
 
-`.deb` and `.AppImage` are not code-signed in the OS sense; integrity comes from
-the updater signature on the AppImage and from the HTTPS GitHub download.
+Not applicable today — no Linux artifact is produced (`bundle.targets` contains no
+Linux package type, and there is no `release-linux.sh`). If Linux ships, note that
+`.deb` and `.AppImage` are not code-signed in the OS sense; integrity would come
+from the updater signature on the AppImage and the HTTPS GitHub download.
 
 ---
 

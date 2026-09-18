@@ -8,7 +8,8 @@ mode you use day-to-day.
 > the Angular UI, the Node orchestrator, the three Python workers, and an
 > libass-enabled FFmpeg/ffprobe — as Tauri **externalBin sidecars**. The **AI
 > models** are downloaded on **first run** via an in-app wizard, which keeps the
-> installer small (~0.5 GB). A build can **opt in** to bundling a small
+> installer small (~0.3 GB — see [Approximate sizes](#approximate-sizes)). A build
+> can **opt in** to bundling a small
 > default-model set (faster-whisper `small` + the Argos legs + the Piper voice for
 > the default pairs `en→vi` / `zh→vi`) with `BUNDLE_DEFAULT_MODELS=1` for an
 > offline out-of-box first dub — at the cost of ~1 GB more installer size. Default
@@ -19,12 +20,12 @@ mode you use day-to-day.
 ## What's bundled vs. downloaded
 
 ```
-┌──────────────────────── VideoDubber installer (.dmg / .msi / .deb / AppImage) ────────────────────────┐
+┌──────────────── VideoDubber installer (.dmg · -setup.exe · .msi — no Linux target) ───────────────────┐
 │                                                                                                        │
 │   Tauri 2 shell  ──────────────────────────────────────────────────────────────────────────────────┐ │
 │   (native window + auto-updater + sidecar lifecycle)                                                 │ │
 │                                                                                                       │ │
-│   Angular 18 UI  (frontendDist, compiled into the app)                                                │ │
+│   Angular 22 UI  (frontendDist, compiled into the app)                                                │ │
 │                                                                                                       │ │
 │   ┌──────────────────────────── bundle.externalBin SIDECARS (frozen binaries) ───────────────────────┐│ │
 │   │  videodubber-orchestrator   Node SEA single-exe        :5100   (pipeline brain)                   ││ │
@@ -83,7 +84,7 @@ any one user. So by default the app ships **no models** and fetches them on dema
 
 | Component | Approx. size | Notes |
 |---|---|---|
-| Installer (shell + UI + sidecars, no models) | ~150–300 MB | Dominated by PyInstaller workers (ctranslate2, stanza) + ffmpeg. |
+| Installer (shell + UI + sidecars, no models) | **~250–330 MB** | Dominated by the PyInstaller workers (ctranslate2, onnxruntime) + ffmpeg/ffprobe + the bundled CPython. Measured from the published 0.8.1 artifacts (296.8 MB `.dmg`, 245.8 MB `-setup.exe`); the staged macOS sidecars alone total ~338 MB before compression. |
 | faster-whisper `base` | ~145 MB | Recommended starter; `small` ~480 MB. |
 | faster-whisper `large-v3` | ~3 GB | Best quality; CPU-heavy. |
 | One Argos pair (e.g. en→vi) | ~100–200 MB | Per language pair. |
@@ -95,6 +96,9 @@ is roughly **300–500 MB of models** on top of the installed app.
 ---
 
 ## The first-run wizard
+
+> The **user-facing** walkthrough of this wizard — and of every other screen — is
+> [`USER_GUIDE.md`](USER_GUIDE.md). What follows is the implementation view.
 
 On boot the shell calls `setup_get_status`. If `firstRunComplete` is `false`, the
 UI routes to the **onboarding wizard** (`/welcome`) instead of Home:
@@ -125,9 +129,9 @@ appears once. Users can fetch more languages/voices later from Settings.
 
 ### What a brand-new user has to do (nothing preinstalled)
 
-1. **Install** — drag the app from the `.dmg` (macOS) / run the `.msi`/`.exe`
-   (Windows) / `.deb`/AppImage (Linux). No Python, Node, FFmpeg, or anything else
-   is required first.
+1. **Install** — drag the app from the `.dmg` (macOS) or run the `-setup.exe`
+   (Windows). No Python, Node, FFmpeg, or anything else is required first. There is
+   no Linux package: `bundle.targets` contains no Linux type.
 2. **Open it** — the backend (orchestrator + workers + ffmpeg) auto-starts.
 3. **Follow the wizard** — pick languages, click **Download**; it fetches just the
    models for those languages. That's the entire required setup; the app can now
@@ -152,8 +156,17 @@ downloads — everything is obtained through the app's UI.
   launches `scripts/start-services.sh` (workers run from their venvs). This is the
   current `pnpm app` behavior and is unchanged.
 * **Production path** (bundled app — no source tree; or `VIDEODUBBER_BUNDLED=1`):
-  launches the **externalBin sidecars** via the Tauri shell plugin's `sidecar()`
-  API. For each child the shell sets:
+  launches two *different* kinds of child, which matters when debugging "a worker
+  didn't start":
+  * the **orchestrator** goes through the Tauri shell plugin's `sidecar()` API
+    (`spawn_one`), so it is the only child governed by the shell-plugin capability
+    ACL in `capabilities/default.json`;
+  * the **three Python workers** are one-dir resource trees launched directly with
+    `std::process::Command` (`spawn_worker`), located by `resolve_worker_exe` — no
+    shell plugin involved. If a worker is "not found", that function is the code to
+    read, not the capability file.
+
+  For each child the shell sets:
   * ports (`ORCHESTRATOR_PORT=5100`, `STT_PORT=5101`,
     `TRANSLATION_WORKER_PORT=5102`, `TTS_WORKER_PORT=5103`),
   * `FFMPEG_PATH` / `FFPROBE_PATH` -> the bundled ffmpeg/ffprobe sidecars,
@@ -193,14 +206,22 @@ related runs until the user installs a pack and a project uses it.
 | `<config>/preferences.json` | Preferences (auto-update + default per-phase providers). |
 | `<config>/credentials.json` | Cloud API keys (owner-only `0600`; optional). |
 | `<config>/engines.json` + `<config>/engines/<packId>/` | Installed engine packs + their files. |
-| `~/VideoDubber/models/piper` | Downloaded Piper voices. |
-| `~/.cache/huggingface` | faster-whisper model cache (HF default). |
-| argostranslate user-data dir | Installed Argos `.argosmodel` packages. |
+| `<config>/models/piper` | Downloaded Piper voices (`PIPER_VOICES_DIR`). |
+| `<config>/models/huggingface` | faster-whisper model cache. The shell exports it as **both** `STT_MODEL_CACHE_DIR` and `HF_HOME` (`sidecar.rs`), so it is **not** the user's global `~/.cache/huggingface` — the whole point is that everything lives under one deletable folder. |
+| `<config>/models/argos` | Installed Argos `.argosmodel` packages (`ARGOS_PACKAGES_DIR`) — **not** argostranslate's global user-data dir. |
 | `~/VideoDubber/projects` | Per-project workspaces (unchanged from dev). |
+
+> This table used to name `~/.cache/huggingface` and "the argostranslate user-data
+> dir". Both were wrong, and `config.ts` warns in so many words that a mismatch here
+> makes the first-run progress poller watch the wrong directory and report 0%.
 
 Uninstalling the app does **not** delete `~/VideoDubber`, the model caches, or
 engine packs — re-installing reuses everything already downloaded (no second
-first-run download, no re-installing engine packs).
+first-run download, no re-installing engine packs). Users who want that space back
+can either delete the folder by hand or use **Settings → Storage → Delete all
+downloaded data**, which clears models, packs and caches but keeps projects. The
+user-facing instructions are in
+[`USER_GUIDE.md`](USER_GUIDE.md#11-uninstalling).
 
 ---
 

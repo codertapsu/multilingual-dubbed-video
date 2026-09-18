@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes how VideoDubber is put together: the components, the 8-step
+This document describes how VideoDubber is put together: the components, the 9-step
 pipeline (with inputs/outputs/artifacts), the provider architecture, the shared data
 model, the per-project workspace layout, the orchestrator HTTP API, the Tauri command
 mapping, and the SSE event model. It closes with why `jianchang512/stt` is
@@ -14,7 +14,7 @@ reference-only.
  ┌─────────────────────────────────────────────────────────────────────────────┐
  │ videodubber-desktop  (apps/desktop)                                           │
  │                                                                               │
- │   Angular 18 standalone UI                                                    │
+ │   Angular 22 standalone UI                                                    │
  │     • HTTP calls + EventSource(SSE) ───────────────────────────┐              │
  │                                                                │              │
  │   Tauri 2 shell (src-tauri, Rust)  [optional native mode]      │              │
@@ -28,7 +28,7 @@ reference-only.
  │ @videodubber/node-orchestrator   (packages/node-orchestrator)   PORT 5100     │
  │                                                                               │
  │   • Fastify HTTP server (CORS open to localhost)                              │
- │   • Resumable 8-step pipeline runner (skip-if-artifact-exists)                │
+ │   • Resumable 9-step pipeline runner (skip-if-artifact-exists)                │
  │   • Provider registry (STT / Translation / TTS)                               │
  │   • Project workspace store (project.json, pipeline.json, artifacts)          │
  │   • Alignment + audio-mix orchestration                                       │
@@ -56,24 +56,36 @@ reference-only.
 | `@videodubber/shared` | TS types + subtitle/language/pipeline utils + error model | (none) |
 | `@videodubber/media-worker` | FFmpeg/ffprobe wrapper, `MediaService` impl | `@videodubber/shared` |
 | `@videodubber/node-orchestrator` | HTTP engine, pipeline, providers, workspace, SSE | `@videodubber/shared`, `@videodubber/media-worker` |
-| `videodubber-desktop` | Angular 18 UI + Tauri 2 shell | `@videodubber/shared` (types only) |
+| `videodubber-desktop` | Angular 22 UI + Tauri 2 shell | `@videodubber/shared` (types only) |
 | `workers/stt-worker` | Python FastAPI + faster-whisper | (Python venv) |
 | `workers/translation-worker` | Python FastAPI + Argos Translate | (Python venv) |
 | `workers/tts-worker` | Python FastAPI + Piper/system/fallback | (Python venv) |
+| `workers/tts-engine-neural` | `vd_tts_engine` — the VieNeu v3 engine-pack server, launched by the orchestrator inside a uv venv | (uv-managed venv) |
+| `workers/tts-engine-omnivoice` | The OmniVoice engine-pack server — **on hold**, excluded from releases | (uv-managed venv) |
 
 The Python workers are **not** pnpm packages; they have their own venvs +
 `requirements.txt`.
 
+The orchestrator has grown several subsystems since this diagram was first drawn;
+they are not separate packages but they are where most new code lives:
+`src/engines/` (the engine-pack catalog, installer and manager), `src/scheduler/`
+(run-queue admission and workload sizing), `src/credentials/` (on-disk cloud keys),
+`src/system/` (hardware probing for the recommendations), `src/setup/` (the
+first-run wizard's install service) and `src/providers/download/` (the Bilibili and
+Douyin source providers).
+
 ---
 
-## 2. Pipeline flow (the 8 steps)
+## 2. Pipeline flow (the 9 steps)
 
 The orchestrator runs an ordered list of steps. Each step reads upstream artifacts and
 writes its own, so a step is **skipped** if its expected output already exists and
 upstream did not change. Retrying a step resets it and everything downstream.
 
-`PipelineStepId` order: `probe-video → extract-audio → stt → translation → tts →
-alignment → audio-mix → render`.
+`PipelineStepId` order: `probe-video → extract-audio → stt → translation → refine →
+tts → alignment → audio-mix → render`. The canonical list is
+`PIPELINE_STEP_DEFS` in `packages/shared/src/pipeline/steps.ts` — prefer it over
+this prose, which has been off by one before.
 
 | # | Step | Input | Engine / service | Output artifact(s) |
 |---|---|---|---|---|
@@ -81,10 +93,16 @@ alignment → audio-mix → render`.
 | 2 | `extract-audio` | original video | media-worker → `ffmpeg` | `audio/original.wav`, `audio/original_16k_mono.wav` |
 | 3 | `stt` | `original_16k_mono.wav` | STT worker (faster-whisper) | `subtitles/source.json`, `subtitles/source.srt` |
 | 4 | `translation` | source segments | Translation worker (Argos) | `subtitles/translated.json`, `translated.srt`, `translated.vtt` |
-| 5 | `tts` | translated segments | TTS worker (Piper/system/fallback) | `audio/tts_segments/segment_0001.wav…` |
-| 6 | `alignment` | TTS segments + source timing | orchestrator (`alignment/align.ts`) | `subtitles/translated.aligned.json`, `audio/tts_full.wav` |
-| 7 | `audio-mix` | TTS full + original audio | media-worker → `ffmpeg` | `audio/final_mix.wav` |
-| 8 | `render` | original video + final mix + subtitles | media-worker → `ffmpeg` | `render/output.mp4` + sidecar subtitle files |
+| 5 | `refine` | translated segments + character sheet | a provider with `supportsRefinement` (optional; `settings.refineProviderId`) | rewritten `subtitles/translated.json` — a no-op that completes instantly when unconfigured |
+| 6 | `tts` | translated segments | TTS worker (Piper/system/fallback) or a neural engine pack | `audio/tts_segments/segment_0001.wav…` |
+| 7 | `alignment` | TTS segments + source timing | orchestrator (`alignment/align.ts`) | `subtitles/translated.aligned.json` |
+| 8 | `audio-mix` | aligned TTS + original audio | orchestrator (`buildTtsTimeline`) + media-worker → `ffmpeg` | `audio/tts_full.wav`, `audio/final_mix.wav` |
+| 9 | `render` | original video + final mix + subtitles | media-worker → `ffmpeg` | `render/output.mp4` + sidecar subtitle files |
+
+> `audio/tts_full.wav` is produced by **audio-mix**, not alignment: `buildTtsTimeline`
+> is called from `stepAudioMix` in the runner. This table credited it to alignment for
+> months, which is the kind of off-by-one-stage error that has already caused a
+> real redub-stage-map bug.
 
 ### Step detail
 
@@ -101,11 +119,16 @@ alignment → audio-mix → render`.
 - **tts** — Synthesizes one WAV per segment, named by the numeric part of the id
   (`segment_0001.wav`). Engines tried in priority: Piper → system TTS → silent/sine
   fallback. Durations are measured from the real WAV headers.
+- **refine** — An optional second pass over the whole translated transcript: re-reads
+  it with the character sheet and polishes every line for consistency and naturalness.
+  Only providers declaring `supportsRefinement` can serve it (the cloud LLMs,
+  `llama-cpp-chat`); with `settings.refineProviderId` unset the step completes
+  immediately as a no-op, which is the default.
 - **alignment** — Computes, per segment, a `speedRatio` to fit the generated audio into
   its time window, bounded by `maxSpeedRatio`/`allowedOverflowMs`. Marks each
-  `AlignedSegment` `ok` / `needs-review` / `timing-conflict`, then assembles the placed
-  segments into a continuous `tts_full.wav`.
-- **audio-mix** — Mixes the aligned TTS over the original background according to
+  `AlignedSegment` `ok` / `needs-review` / `timing-conflict`.
+- **audio-mix** — Assembles the placed segments into a continuous `tts_full.wav`, then
+  mixes it over the original background according to
   `includeOriginalBackgroundAudio`, `duckOriginalAudio`, `duckingLevelDb`, `ttsGainDb`.
 - **render** — Muxes video + `final_mix.wav` into the output, applying the chosen
   `subtitleExportMode` (sidecar / embedded-soft / burned-in with `burnSubtitleStyle`).
@@ -172,13 +195,22 @@ interface TtsProvider         { id; displayName; isLocal; synthesizeSegments(inp
 Each local provider is a thin HTTP client (`providers/workerHttp.ts`) over its Python
 worker.
 
-### Cloud adapters (optional, placeholder)
+### Cloud adapters (optional, shipped)
 
-`providers/cloudPlaceholders.ts` holds **scaffolded, non-functional** cloud adapters
-with clear `TODO`s and the env var each would read. They are not wired into the default
-pipeline. The default `processingMode` is `local`; `cloud-enhanced` is reserved for
-future opt-in use. See [`PROVIDERS.md`](PROVIDERS.md) for the full table, the data each
-cloud provider would send, and cost-first guidance.
+Cloud providers are **implemented and selectable per phase**, not scaffolding:
+`providers/stt/openaiSttProvider.ts`, `providers/translation/llmTranslationProvider.ts`
+(OpenAI / Anthropic / Gemini) and `providers/tts/openaiTtsProvider.ts`, all over the
+shared, SDK-free `providers/cloud/cloudHttp.ts`. Which provider a phase gets is decided
+by `providers/registry.ts` plus `providers/readiness.ts` (a provider whose key or
+engine pack is missing is not offered rather than failing at run time).
+
+The default remains **local** for every phase, and a cloud phase sends only that
+phase's data. [`PROVIDERS.md`](PROVIDERS.md) is the live catalog: the full table, key
+management, the Test buttons, what each provider sends, and cost-first guidance.
+
+> There is no `providers/cloudPlaceholders.ts`. This section described one, as
+> "scaffolded, non-functional … not wired into the default pipeline", long after the
+> cloud tier shipped.
 
 ---
 
@@ -276,7 +308,28 @@ steps, then re-runs from there.
 
 ## 6. Orchestrator HTTP API (port 5100)
 
-JSON over HTTP, CORS open to localhost. Each endpoint maps 1:1 to a Tauri command.
+JSON over HTTP, CORS open to localhost.
+
+The table below is the **core project/pipeline surface** and is the part that maps
+1:1 to a Tauri command. It is **not** the whole API: `server.ts` registers ~62
+handlers. The rest, by family:
+
+| Family | Routes | What it serves |
+|---|---|---|
+| Setup / first run | `/setup/*` | wizard status, preflight, model install, the setup SSE channel, completion |
+| Downloads | `/download/*` | source-video resolve, quality list, job start/progress, per-provider session credentials |
+| Engine packs | `/engines/*` | catalog with per-machine fit, install/remove/update, engine status |
+| Queue & preferences | `/queue`, `/projects/:id/run-next`, `/preferences` | run-queue state, the simultaneous-dub limit, per-phase defaults |
+| Providers | `/providers*`, `/projects/:id/run-preflight` | which providers a project can actually use, and why one is unavailable |
+| Credentials | `/credentials*` | cloud API keys (write-only from the UI's perspective; values are masked on read) |
+| Storage & system | `/storage*`, `/system` | disk usage, delete-downloaded-data, hardware probe |
+| Project extras | `/projects/:id/settings`, `/segments/:segId/refit`, `/translation-context` | per-project settings, single-segment re-fit, the character sheet / glossary |
+| Files | `/file` | static read of a project artifact for the browser-mode preview |
+
+> Adding a route family here is easy to forget, and this table sat at 16 rows
+> against 62 handlers for months. If you touch `server.ts`, touch this section.
+
+### Core project & pipeline routes
 
 | Method | Path | Command | Body → Response |
 |---|---|---|---|
@@ -388,9 +441,11 @@ quit app ──> RunEvent::Exit ────> SidecarManager::shutdown()
 - The Angular UI in `tauri dev` is started by `beforeDevCommand` (and stopped by Tauri on
   exit); in a packaged build the UI is served from `frontendDist`, so only the backend
   process group is managed.
-- **Standalone installers** (no pre-installed Node/Python) would bundle the orchestrator
-  and workers as Tauri sidecars (`bundle.externalBin`, via `pkg`/`pyinstaller`) and launch
-  those instead of the dev script — see [`ROADMAP.md`](ROADMAP.md).
+- **Standalone installers** shipped in v0.1.0. A packaged build has no source tree, so
+  the shell takes its production path: it launches the orchestrator as a Tauri
+  `externalBin` sidecar (Node SEA) and the three Python workers as one-dir resource
+  trees via `std::process::Command`, rather than the dev script. Details:
+  [`PRODUCTION.md`](PRODUCTION.md).
 
 ---
 

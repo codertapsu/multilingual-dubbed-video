@@ -2,7 +2,11 @@
 
 VideoDubber's local engines need three kinds of models:
 
-1. A **faster-whisper** speech-to-text model (default `small`).
+1. A **faster-whisper** speech-to-text model. Two different defaults are in play and
+   both are intentional: the orchestrator falls back to `small` when nothing is set
+   (`FASTER_WHISPER_MODEL`), while the **first-run wizard recommends
+   `large-v3-turbo`** on a capable machine. A packaged app therefore normally ends
+   up on `large-v3-turbo`, not `small`.
 2. **Argos Translate** language package(s) (default `en → vi`; a non-English pair like
    `zh → vi` pivots through English and needs both `zh → en` and `en → vi`).
 3. (Optional) A **Piper** voice for high-quality local TTS.
@@ -23,18 +27,31 @@ cached.
 
 ---
 
+<a id="stt-model"></a>
+
 ## 1. faster-whisper (speech-to-text)
 
 ### Model sizes
 
-| Model | Size (approx) | Speed | Quality | Notes |
-|---|---|---|---|---|
-| `tiny` | ~75 MB | fastest | lowest | quick smoke tests |
-| `base` | ~145 MB | fast | low | |
-| `small` | ~480 MB | balanced | good | **default** |
-| `medium` | ~1.5 GB | slower | better | |
-| `large-v3` | ~3 GB | slowest | best | needs RAM/VRAM |
-| `turbo` | ~1.6 GB | fast | high | speed-optimized large variant |
+The curated list the wizard shows comes from `WHISPER_MODELS` in
+`packages/node-orchestrator/src/setup/catalog.ts` — keep this table in step with it.
+
+| Model | Size (approx) | Notes |
+|---|---|---|
+| `tiny` | ~75 MB | fastest, lowest accuracy; quick smoke tests |
+| `base` | ~145 MB | balanced; good on 8 GB |
+| `small` | ~484 MB | better accuracy; the orchestrator's env fallback |
+| `large-v3-turbo` | ~1.62 GB | **recommended** — near-best accuracy at 6–8× the speed of `large-v3` |
+| `distil-large-v3.5` | ~760 MB | English only, fastest large |
+| `medium` | ~1.53 GB | high accuracy, slower |
+| `large-v3` | ~3.09 GB | best accuracy, slowest; needs RAM/VRAM |
+| `phowhisper-medium` | ~1.53 GB | VinAI PhoWhisper — pick when the **source** audio is Vietnamese |
+| `phowhisper-large` | ~3.09 GB | PhoWhisper, highest accuracy for Vietnamese-source audio |
+
+*(There is no model id `turbo`; that row was a fiction, and the table was missing
+`large-v3-turbo`, `distil-large-v3.5` and both PhoWhisper entries — i.e. the
+recommended default and the Vietnamese specialists, which is most of the reason to
+read this table at all.)*
 
 Set the model via env: `FASTER_WHISPER_MODEL=small`. The STT worker runs CPU inference
 with `compute_type=int8` (low memory, no GPU required).
@@ -60,18 +77,29 @@ FASTER_WHISPER_MODEL=medium bash scripts/setup-local-models.sh   # only re-cache
 
 ### Where it's cached
 
-faster-whisper downloads CTranslate2 model weights via Hugging Face Hub, so they land in
-the HF cache:
+faster-whisper downloads CTranslate2 model weights via Hugging Face Hub. **Where they
+land depends on how you run VideoDubber**, and getting this wrong is the usual cause
+of "the wizard sits at 0%" and "I deleted the HF cache and the models are still
+there":
 
-- macOS/Linux: `~/.cache/huggingface/hub/`
-- Windows: `%USERPROFILE%\.cache\huggingface\hub\`
+- **Packaged app** — `<config>/models/huggingface`, i.e. `~/VideoDubber/models/huggingface`
+  (`%USERPROFILE%\VideoDubber\models\huggingface` on Windows). The desktop shell
+  exports that path as **both** `STT_MODEL_CACHE_DIR` and `HF_HOME` so everything the
+  app downloads lives under one deletable folder, never your global HF cache.
+- **Dev / from source** — the HF default, `~/.cache/huggingface/hub/`
+  (`%USERPROFILE%\.cache\huggingface\hub\` on Windows), unless you set otherwise.
 
-Override with `HF_HOME` / `HF_HUB_CACHE` if you want a custom directory.
+Override with `STT_MODEL_CACHE_DIR`, `HF_HUB_CACHE` or `HF_HOME` — in that priority
+order. The orchestrator's progress poller resolves the cache with the **same**
+priority as the STT worker (`config.ts`); if the two disagree the poller watches the
+wrong directory and reports 0% forever.
 
 Missing/undownloadable model → **`STT_MODEL_MISSING`** (see
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#stt_model_missing)).
 
 ---
+
+<a id="translation-package"></a>
 
 ## 2. Argos Translate (machine translation)
 
@@ -143,10 +171,16 @@ Missing pair → **`TRANSLATION_PACKAGE_MISSING`**; the worker's error includes 
 
 ---
 
+<a id="piper"></a>
+<a id="tts-voice"></a>
+
 ## 3. Piper (text-to-speech)
 
 Piper is the **preferred** local TTS engine. The TTS worker invokes the Piper **binary**
-via subprocess (it does **not** pip-install `piper-tts`). If Piper isn't configured, the
+via subprocess. The *dev* worker does **not** pip-install `piper-tts` — you supply the
+binary (below). The *release* build does ship one: `scripts/package/vd-piper.spec`
+freezes the `piper-tts` (piper1-gpl) console script into the `vd-piper` sidecar, so an
+installed app needs nothing here. If Piper isn't configured, the
 worker falls back to system TTS (macOS `say`, Linux `espeak-ng`) and finally a dev
 silent/sine WAV so the pipeline still completes.
 
@@ -154,8 +188,10 @@ You need **two** things: the Piper **binary** and a **voice** (`.onnx` + `.onnx.
 
 ### Download the binary
 
-Grab a release for your OS from <https://github.com/rhasspy/piper/releases>, unpack it,
-and note the executable path:
+Grab a release for your OS from <https://github.com/OHF-Voice/piper1-gpl/releases>,
+unpack it, and note the executable path. (The old `rhasspy/piper` repository was
+archived read-only on 2025-10-06 — "Development has moved" — and its last binaries
+predate what the packaged app ships, so links to it send people to a dead end.)
 
 ```bash
 export PIPER_BINARY_PATH=/absolute/path/to/piper        # e.g. .../piper/piper
@@ -215,8 +251,8 @@ See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#piper_missing).
 
 | Model | Default location | Override |
 |---|---|---|
-| faster-whisper | `~/.cache/huggingface/hub/` | `HF_HOME` / `HF_HUB_CACHE` |
-| Argos packages | `~/.local/share/argos-translate/packages/` | `ARGOS_PACKAGES_DIR` |
+| faster-whisper | packaged: `~/VideoDubber/models/huggingface` · dev: `~/.cache/huggingface/hub/` | `STT_MODEL_CACHE_DIR` → `HF_HUB_CACHE` → `HF_HOME` |
+| Argos packages | packaged: `~/VideoDubber/models/argos` · dev: `~/.local/share/argos-translate/packages/` | `ARGOS_PACKAGES_DIR` |
 | Piper voices | `~/VideoDubber/models/piper/` | `PIPER_VOICES_DIR` (runtime), `MODELS_DIR` (setup), `PIPER_VOICE_MODEL_PATH` (single voice) |
 | Piper binary | wherever you unpacked it | `PIPER_BINARY_PATH` |
 

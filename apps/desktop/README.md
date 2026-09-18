@@ -1,6 +1,6 @@
 # videodubber-desktop
 
-Angular 18 (standalone, signals) UI for VideoDubber, designed to run inside a
+Angular 22 (standalone, signals) UI for VideoDubber, designed to run inside a
 Tauri 2 shell but fully usable in a plain browser during development.
 
 ## Two ways to run
@@ -63,19 +63,29 @@ src/app/
   screens/
     home/                     list/open/create projects
     new-project-wizard/       pick video + langs + options -> create -> probe -> run
-    processing/               live SSE pipeline view (8 steps, logs, cancel/retry)
+    processing/               live SSE pipeline view (9 steps, logs, cancel/retry)
     editor/                   side-by-side transcript/translation, per-segment TTS
     export/                   output path, preview, re-render, open folder
 ```
 
-## TypeScript version note
+## TypeScript version
 
-The repo root pins TypeScript `5.6`. **Angular 18 does not yet support TS 5.6**
-(it accepts `>=5.4 <5.6`). This package therefore pins its **own** dev
-TypeScript to `~5.5.4` (a version Angular 18 accepts). pnpm keeps the two
-TypeScript versions isolated per package, so this is intentional and does not
-conflict with the root toolchain. The shared library is consumed as a workspace
-package (types only) and is unaffected.
+This package and the repo root pin the **same** TypeScript version — there is no
+per-package split and nothing to keep isolated.
+
+Angular's supported range is declared by `@angular/compiler-cli`, so read it from
+the package rather than from prose here:
+
+```bash
+npm view @angular/compiler-cli peerDependencies.typescript
+```
+
+> This section used to claim the root pinned TS `5.6`, that "Angular 18 does not yet
+> support TS 5.6", and that this package therefore pinned `~5.5.4` on purpose. All of
+> it was false after the Angular 22 upgrade, and following it would have downgraded
+> TypeScript far enough to break the build. A doc that describes a deliberate pin
+> which does not exist is worse than a stale version number, because it invites
+> someone to "restore" it.
 
 ## Useful scripts
 

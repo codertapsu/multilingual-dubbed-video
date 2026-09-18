@@ -7,9 +7,11 @@ needs them — they're purely additive. This doc is for **maintainers**: where t
 URLs live, what you must host yourself, and how to pin checksums.
 
 > TL;DR — edit one file: **`packages/node-orchestrator/src/engines/enginePackCatalog.ts`**.
-> The `llama-cpp-*` packs already point at real upstream binaries. The macOS
-> `whisper-cpp-metal` binary has no upstream build, so you build it once and host
-> it on your own GitHub Release. The Python packs need no URLs at all.
+> Every native pack points at a real upstream binary; **nothing is self-hosted
+> today**. The seven GGUF model packs pin community requants on HuggingFace, which
+> is the one thing that genuinely breaks — see
+> [§3 Re-pinning a model pack](#3-re-pinning-a-model-pack-whose-upstream-vanished).
+> The Python packs need no URLs at all.
 
 ---
 
@@ -22,15 +24,17 @@ At the top of that file are the only knobs you normally touch:
 ```ts
 const LLAMA_CPP   = 'b9592';     // ggml-org/llama.cpp release tag
 const WHISPER_CPP = 'v1.8.6';    // ggml-org/whisper.cpp release tag
-const SELF_HOSTED_BASE = 'https://github.com/codertapsu/multilingual-dubbed-video/releases/download/engine-packs-v1';
 ```
 
 Each pack lists one or more `artifacts`, each with a `url`, an optional `sha256`,
 and `archive: true` (extract the archive into the pack dir). To change a pack:
 bump the version constant, or edit the artifact `url`/`sha256` directly.
 
-`SELF_HOSTED_BASE` can also be overridden at runtime with the
-`VIDEODUBBER_ENGINE_BASE` environment variable (handy for testing a mirror).
+> **`SELF_HOSTED_BASE` and `VIDEODUBBER_ENGINE_BASE` no longer exist.** Neither
+> name appears anywhere in `packages/`, `apps/` or `scripts/`. They were removed
+> along with the `whisper-cpp-metal` pack; this doc kept describing them for
+> months, which is how its longest section became a half-day of work for a pack
+> that can never load.
 
 ### CUDA packs: bump the driver floor with the toolkit
 
@@ -57,88 +61,109 @@ there when you move to a new toolkit
 
 ---
 
-## 2. What's upstream vs. what you must host
+## 2. The catalog, pack by pack
+
+All 18 ids in `ENGINE_PACKS`, so a reader can tell at a glance what needs
+maintenance. Keep this table in step with `enginePackCatalog.ts`.
+
+**Native runtimes** — downloaded binaries, pinned by URL + sha256.
 
 | Pack | Platform | Source | Action needed |
 |---|---|---|---|
-| `llama-cpp-metal` | macOS arm64 | **upstream** ggml-org/llama.cpp | none — works today |
+| `whisper-cpp-cuda` | Windows x64 | **upstream** ggml-org/whisper.cpp (cuBLAS) | none |
+| `llama-cpp-metal` | macOS arm64 | **upstream** ggml-org/llama.cpp | none |
 | `llama-cpp-cuda` | Windows x64 | **upstream** (binary + cudart) | none |
 | `llama-cpp-vulkan` | Windows x64 | **upstream** | none |
 | `llama-cpp-linux` | Linux x64 | **upstream** | none |
-| `whisper-cpp-cuda` | Windows x64 | **upstream** ggml-org/whisper.cpp (cuBLAS) | none |
-| `whisper-cpp-metal` | macOS arm64 | **self-host** (no upstream build) | **build + upload + set codertapsu/multilingual-dubbed-video** |
-| `tts-neural` | all | PyPI via bundled `uv` | none (no URL) |
-| `tts-omnivoice` | **macOS arm64** | PyPI (`torch` + `omnivoice`) via bundled `uv` | **ON HOLD** — gated out of releases (`DISABLED_PACK_IDS`) pending output-quality work; see [OMNIVOICE.md](OMNIVOICE.md) |
-| `separation-audio` | all | PyPI via bundled `uv` | **disabled** — worker is an unimplemented stub (`DISABLED_PACK_IDS`) |
-| `alignment-whisperx` | all | PyPI via bundled `uv` | **disabled** — worker is an unimplemented stub (`DISABLED_PACK_IDS`) |
 
-So out of the box, **everything works except the macOS Metal whisper.cpp pack**,
-which needs a one-time build because ggml-org only ships whisper.cpp binaries for
-Windows. (On macOS the bundled faster-whisper still does STT on CPU; this pack is
-the optional Metal speed-up.)
+**GGUF model packs** — weights the `llama-cpp` runtime loads. These pin
+**community requants** on HuggingFace, so an upstream deletion breaks the install;
+this is the class of breakage that actually happens. See §3.
+
+| Pack | Weights | License field to keep set |
+|---|---|---|
+| `translategemma-4b` / `-12b` / `-27b` | TranslateGemma requants | `licenseCategory: 'commercial-restricted'` + the Gemma note |
+| `chat-gemma3-4b` / `-12b` | Gemma 3 instruct requants | `licenseCategory: 'commercial-restricted'` + the Gemma note |
+| `chat-gemma4-12b` / `-26b-a4b` | Gemma 4 instruct requants (**Apache-2.0** — no Gemma ToU) | no restriction |
+
+**Python packs** — no URLs; `uv` materializes them from a locked requirement set.
+
+| Pack | Platform | Status |
+|---|---|---|
+| `tts-neural` | all | ships — VieNeu-TTS v3-Turbo, Vietnamese |
+| `tts-neural-v2` | Windows | **disabled** (`DISABLED_PACK_IDS`) — unvalidated path, Windows-only wheels, CC BY-NC voices; superseded by `tts-neural` |
+| `tts-omnivoice` | macOS arm64 | **ON HOLD** (`DISABLED_PACK_IDS`) pending output-quality work; see [OMNIVOICE.md](OMNIVOICE.md) |
+| `separation-audio` | all | **disabled** — its `vd_separator` worker is an unimplemented stub |
+| `alignment-whisperx` | all | **disabled** — its `vd_whisperx` worker is an unimplemented stub |
+| `translation-libretranslate` | all | ships — offline LibreTranslate as an alternative MT tier |
+
+> **There is no macOS Metal whisper.cpp pack.** ggml-org publishes whisper.cpp
+> binaries for Windows only, and the `whisper-cpp-metal` id that this doc used to
+> describe — along with a whole self-hosting runbook for it — is **not in
+> `ENGINE_PACKS`**. On Apple Silicon, STT uses batched faster-whisper. If you ever
+> want that pack back, the historical build recipe is in this file's git history
+> (`git log -p -- docs/ENGINE_PACKS.md`).
 
 ---
 
-## 3. Self-hosting the macOS Metal whisper.cpp binary
+## 3. Re-pinning a model pack whose upstream vanished
 
-You need a `whisper-server` built with Metal, packaged as
-`whisper-cpp-v1.8.6-macos-arm64.tar.gz`, hosted at `SELF_HOSTED_BASE`.
+The seven GGUF packs pin a single file on HuggingFace by URL + sha256, and those
+files can be renamed, re-quantized or deleted — at which point the pack's install
+fails for every user at once. This is the most likely real breakage in the catalog
+and it has no automated guard, so here is the procedure.
 
-### 3a. Build it (on an Apple Silicon Mac)
+Know which kind of pin you are repairing before you start, because the risk is not
+uniform:
 
-Follow the upstream build docs: <https://github.com/ggml-org/whisper.cpp> →
-"Quick start" / `cmake`. Metal is on by default on macOS.
+| Packs | Uploader | Quant |
+|---|---|---|
+| `translategemma-4b` | `mradermacher` (individual) | `Q4_K_M` |
+| `translategemma-12b` / `-27b` | `bullerwins` (individual) | `Q4_K_M` |
+| `chat-gemma3-4b` / `-12b` | `ggml-org` (first-party llama.cpp org) | `Q4_K_M` |
+| `chat-gemma4-12b` / `-26b-a4b` | `ggml-org` | **`Q4_0`** — ggml-org publishes Q4_0/Q8_0 only for Gemma 4, no Q4_K_M |
 
-```bash
-git clone --depth 1 --branch v1.8.6 https://github.com/ggml-org/whisper.cpp
-cd whisper.cpp
-cmake -B build -DGGML_METAL=ON -DWHISPER_BUILD_SERVER=ON
-cmake --build build --config Release -j
+Only the three TranslateGemma packs are community requants by an individual; the
+Gemma 3/4 packs come from `ggml-org` itself and are the least likely to vanish.
 
-# Collect the runtime files the app spawns + Metal needs at runtime.
-mkdir -p dist
-cp build/bin/whisper-server dist/
-cp build/bin/*.metal dist/ 2>/dev/null || true   # ggml-metal shader, if emitted
-cp build/ggml/src/ggml-metal/*.metallib dist/ 2>/dev/null || true
+1. **Confirm it's gone**, not a transient 5xx:
+   ```bash
+   curl -sI "<the url in enginePackCatalog.ts>" | head -1
+   ```
+2. **Find a replacement requant** of the *same base model at the same quant level* —
+   the level in the table above, which is also the pack's `version` field, not a
+   blanket `Q4_K_M`. Prefer an uploader with a long history and a model card that
+   names the source repo. Do not silently switch quant levels: `minRamMb` and
+   `approxSizeMb` are sized for the current one, and `version` is what the UI shows.
+3. **Download it once and hash it**:
+   ```bash
+   curl -fL -o candidate.gguf "<new url>"
+   shasum -a 256 candidate.gguf
+   ```
+4. **Smoke it** before pinning: install the pack, run a short dub, and confirm the
+   output is coherent in the target language. A requant from a different base model
+   will load happily and translate badly, so nothing but reading the output catches
+   this.
 
-# Package with the exact filename the catalog expects.
-tar -C dist -czf whisper-cpp-v1.8.6-macos-arm64.tar.gz .
-shasum -a 256 whisper-cpp-v1.8.6-macos-arm64.tar.gz   # copy this hash
-```
-
-> The EngineManager finds the server by recursively looking for a file named
-> `whisper-server` inside the pack dir, so the internal layout is flexible — just
-> make sure `whisper-server` and any `.metal`/`.metallib` it needs are in there.
-
-### 3b. Upload it to a GitHub Release
-
-Follow GitHub's docs:
-<https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository>.
-Create a release on **your** repo (e.g. tag `engine-packs-v1`) and attach the
-`.tar.gz` as a release asset, or with the `gh` CLI:
-
-```bash
-gh release create engine-packs-v1 --title "Engine packs v1" --notes "whisper.cpp Metal server"
-gh release upload engine-packs-v1 whisper-cpp-v1.8.6-macos-arm64.tar.gz
-```
-
-The asset's public URL is then:
-`https://github.com/codertapsu/multilingual-dubbed-video/releases/download/engine-packs-v1/whisper-cpp-v1.8.6-macos-arm64.tar.gz`
-
-### 3c. Point the catalog at it
-
-In `enginePackCatalog.ts`, set `codertapsu/multilingual-dubbed-video` (and the tag, if you changed it):
-
-```ts
-const SELF_HOSTED_BASE = 'https://github.com/codertapsu/multilingual-dubbed-video/releases/download/engine-packs-v1';
-```
-
-…and paste the hash from 3a into the `whisper-cpp-metal` artifact's `sha256`.
-
-> **Linux Metal/Vulkan whisper.cpp** is also not published upstream. If you want
-> a Linux whisper.cpp pack, build it the same way (`-DGGML_VULKAN=ON`), upload
-> `whisper-cpp-v1.8.6-linux-x64.tar.gz`, and add a pack entry mirroring
-> `whisper-cpp-cuda` with `platforms: ['linux']` and the self-hosted URL.
+   > **`LLAMACPP_MODEL` will not select it.** The managed llama.cpp path loads the
+   > model **by file**, via `resolveLocalLlmModelPath`; `LLAMACPP_MODEL` is only the
+   > label reported back in provider metadata (see the comment above it in
+   > `providers/registry.ts`). Which GGUF actually loads is decided by
+   > `pickInstalledLocalLlmModel` / the chat equivalent in `packSelection.ts`: the
+   > **most capable installed pack the machine fits**, ranked
+   > `translategemma-27b → -12b → -4b` for translation and
+   > `chat-gemma4-26b-a4b → chat-gemma4-12b → chat-gemma3-12b → chat-gemma3-4b`
+   > for the context-aware tiers. So to smoke a specific pack, **remove the
+   > higher-ranked packs of that family first** — otherwise you will test the old
+   > pin and pass.
+5. **Edit the pack**: replace the `url` and `sha256`, and update `approxSizeMb` if
+   the file size moved materially.
+6. **Keep the license fields.** Every TranslateGemma and Gemma 3 pack must keep
+   `licenseCategory: 'commercial-restricted'` and the Gemma terms note — that is
+   what the UI surfaces before install and what [`../NOTICE.md`](../NOTICE.md)
+   documents as a pass-through obligation. Gemma 4 packs are Apache-2.0 and must
+   **not** carry it. Getting this wrong is a licensing bug, not a cosmetic one.
+7. Run `pnpm test` — `engines.test.ts` guards the catalog's internal consistency.
 
 ---
 

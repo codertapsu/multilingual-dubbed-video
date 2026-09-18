@@ -1,12 +1,17 @@
-# Desktop app — install & use guide
+# Desktop app — running the Tauri shell from source
 
-This is the **simple guide** to installing and using VideoDubber as a desktop
-application. The desktop app opens a native window and **automatically starts and
-stops all the background services for you** — you never run `pnpm dev` by hand.
+This is the **contributor** guide to the native desktop shell: how to build and run
+it from a source checkout, and how it starts and stops the backend for you.
 
-> Prefer to run it in a browser instead (no Rust needed)? See the
+> **Installed the app from a release instead?** You are in the wrong place — this
+> page starts by asking you to install Rust. Read
+> [**USER_GUIDE.md**](USER_GUIDE.md), which assumes nothing but the installer.
+> (This file used to be indexed from the README as the "simple install & use
+> guide"; it never was one.)
+
+> Prefer to run the UI in a browser instead (no Rust needed)? See the
 > [README "Running the app"](../README.md#running-the-app) section. Everything below is
-> for the native desktop experience.
+> for the native desktop shell.
 
 ---
 
@@ -42,8 +47,8 @@ You need the things any local install needs, **plus Rust** (to build the native 
 
 | Tool | Install |
 |---|---|
-| **Node 20.11+ & pnpm 9** | `corepack enable` (pnpm) |
-| **Python 3.11–3.13** | macOS: `brew install python@3.13` · Windows: python.org · Linux: distro package |
+| **Node ≥ 22.12 — use Node 24 LTS** (what releases are built with) & **pnpm 11.9.0** | `corepack enable && corepack prepare pnpm@11.9.0 --activate` |
+| **Python 3.12** | macOS: `brew install python@3.12` · Windows: `winget install --id Python.Python.3.12 -e` · Linux: distro package. 3.12 is what the engine-pack venvs and the bundled interpreter use — matching it keeps dependency resolution identical to a release. |
 | **FFmpeg** (with **libass** for burned-in subs) | macOS: `brew install ffmpeg-full` · Linux: distro `ffmpeg` · Windows: gyan.dev build |
 | **Rust** | [rustup.rs](https://rustup.rs) — needed only for the native app |
 
@@ -94,8 +99,10 @@ That single command:
 First launch compiles the Rust shell (a few minutes); subsequent launches are fast.
 
 Inside the app: **New Project → pick a video → choose source & target languages →
-subtitle mode → Start**. Watch the 8 steps run, edit the translation if you like, then
-open the finished video from the Export screen.
+subtitle mode → Start**. Watch the nine steps run (`probe-video → extract-audio → stt
+→ translation → refine → tts → alignment → audio-mix → render`), edit the translation
+if you like, then open the finished video from the Export screen. The end-user walk
+through of every screen is in [`USER_GUIDE.md`](USER_GUIDE.md).
 
 ---
 
@@ -107,10 +114,15 @@ pnpm --filter videodubber-desktop tauri icon path/to/icon.png
 
 # build the bundled sidecars (orchestrator + workers + ffmpeg), then the native bundle
 pnpm package:sidecars
-pnpm app:build         # .app/.dmg (macOS), .msi/.exe (Windows), .deb/AppImage (Linux)
+pnpm app:build         # .app/.dmg (macOS), -setup.exe + .msi (Windows)
 ```
 
 The bundle lands under `apps/desktop/src-tauri/target/release/bundle/`.
+
+> `bundle.targets` in `tauri.conf.json` is `["app","dmg","nsis","msi"]`. Tauri
+> silently intersects that list with the host platform's supported types, so a
+> **Linux** `tauri build` matches nothing, exits 0, and produces no package at all.
+> Linux is not shippable today — see [`RELEASING.md`](RELEASING.md).
 
 > **Note — standalone installers.** The release bundle is **self-contained**: run
 > `pnpm package:sidecars` first, then `pnpm app:build`. The Node orchestrator (Node
@@ -145,7 +157,7 @@ running at `http://127.0.0.1:5100` (and the workers on 5101–5103).
 | Symptom | Fix |
 |---|---|
 | App opens but everything is "unavailable" | The shell couldn't find/launch the backend. Confirm you ran `pnpm install` + `setup-local-models.sh`, and that `pnpm dev` works from the same folder. Set `VIDEODUBBER_REPO_DIR` to the project root if running the app from elsewhere. |
-| Burned-in subtitles fail (`FFMPEG_FILTER_MISSING`) | Your FFmpeg lacks libass. Install one with it (`brew install ffmpeg-full`) and set `FFMPEG_PATH`/`FFPROBE_PATH` in `.env`, or use the **embedded-soft / srt-file** subtitle modes. See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#ffmpeg-filter-missing). |
+| Burned-in subtitles fail (`FFMPEG_FILTER_MISSING`) | Your FFmpeg lacks libass. Install one with it (`brew install ffmpeg-full`) and set `FFMPEG_PATH`/`FFPROBE_PATH` in `.env`, or use the **embedded-soft / srt-file** subtitle modes. See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#ffmpeg_filter_missing). |
 | STT/Translation errors about missing models | Run `scripts/setup-local-models.sh`; see [`MODEL_SETUP.md`](MODEL_SETUP.md). |
 | Ports already in use after a crash | `pnpm stop` (port-based; clears 1420 + 5100–5103). |
 | `pnpm app` fails to compile | Install Rust via [rustup](https://rustup.rs); on Linux install the [Tauri system deps](https://tauri.app/start/prerequisites/). |

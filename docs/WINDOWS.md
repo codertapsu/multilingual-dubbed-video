@@ -139,9 +139,11 @@ it falls back to system TTS or a silent placeholder WAV. (The *release* build
 freezes its own Piper, so this is a dev-only convenience.) To get real Piper
 voice while developing:
 
-1. Download `piper_windows_amd64.zip` from
-   <https://github.com/rhasspy/piper/releases> and extract it, e.g. to
-   `D:\piper` (so you have `D:\piper\piper.exe`).
+1. Download a Windows release from
+   <https://github.com/OHF-Voice/piper1-gpl/releases> and extract it, e.g. to
+   `D:\piper` (so you have `D:\piper\piper.exe`). The old `rhasspy/piper` repo
+   was archived read-only on 2025-10-06 and its last binaries predate what the
+   packaged app ships (`vd-piper` freezes `piper1-gpl`), so don't use it.
 2. The `setup-local-models.ps1` step below downloads the Vietnamese voice into
    `%USERPROFILE%\VideoDubber\models\piper`.
 3. Set these in your dev session (see Part E) — `PIPER_BINARY_PATH` and
@@ -245,7 +247,7 @@ platforms. CI is **off** (`RELEASE_CI_WINDOWS=false`) — everything is local.
    `$env:GH_TOKEN` to a token with `repo` scope.
 3. Make sure the checkout is on the commit/tag you're releasing and version is
    bumped (`apps/desktop/src-tauri/tauri.conf.json` + `package.json`s — see
-   [`RELEASING.md`](RELEASING.md#per-release-steps)).
+   [`RELEASING.md`](RELEASING.md#per-release-steps-reference)).
 
 ### Cut the Windows release — one command
 
@@ -259,11 +261,18 @@ What it does, in order:
 1. **`-Sidecars`** → `build-sidecars.ps1`: builds the orchestrator (Node SEA), the
    three PyInstaller workers, `vd-piper`, a **static** libass ffmpeg (auto-download
    — see Part A.7), `vd-uv` + bundled CPython, and stages the engine-pack source.
-2. `pnpm app:build` → Tauri build → the NSIS `…_x64-setup.exe` with an updater
-   `.sig` (the signing key from step 1). `bundle.targets` is `["app","dmg","nsis"]`,
-   so Windows produces the `-setup.exe` **only** — no MSI. The `.exe` is a complete
-   installer and is what auto-update uses; the MSI needs the WiX toolset and is
-   dropped for a simpler, faster local build.
+2. `pnpm app:build` → Tauri build. `bundle.targets` is
+   `["app","dmg","nsis","msi"]`, so Windows produces **both** the NSIS
+   `…_x64-setup.exe` and the WiX `…_x64_en-US.msi`, each with an updater `.sig`
+   (the signing key from step 1). The `-setup.exe` is the one to hand to users:
+   it installs per-user into `%LOCALAPPDATA%` with no prompts. The `.msi` is a
+   per-machine install into *Program Files* that requires elevation; it exists for
+   IT-managed/GPO deployment, and `latest.json` carries its own
+   `windows-x86_64-msi` key so MSI users still get updates.
+   *(This section used to say the MSI was dropped and `bundle.targets` was
+   `["app","dmg","nsis"]`. The MSI was re-enabled in `tauri.conf.json` and
+   `release-windows.ps1` and only this page was missed — which made a built MSI
+   look like a surprise and an absent one look correct.)*
 3. Verifies the `-setup.exe` + its `.sig` exist.
 4. **`-Upload`** → uploads them to the tag's **draft** release
    (`release-upload.ps1`) and merges the `windows-x86_64` entry into the release's

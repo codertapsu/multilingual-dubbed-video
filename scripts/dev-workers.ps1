@@ -10,7 +10,7 @@
       - TTS worker         (Piper/fallback)  on port 5103
 
     Each worker uses its local .venv if present, otherwise falls back to
-    PYTHON_PATH / python with a warning. Missing venvs are warnings, not fatal —
+    PYTHON_PATH / python with a warning. Missing venvs are warnings, not fatal -
     run scripts\setup-local-models.ps1 first (see docs\LOCAL_SETUP.md).
 
     Ctrl-C stops all workers.

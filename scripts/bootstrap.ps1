@@ -8,14 +8,14 @@
 .DESCRIPTION
     Windows twin of scripts\bootstrap.sh. Both halves are written from one shared
     spec and MUST agree on phase order, phase names, flag names, env-var names,
-    exit codes and the shape of the final summary — a reviewer diffs the two for
+    exit codes and the shape of the final summary - a reviewer diffs the two for
     drift, so prefer "boring and identical" over "clever and local".
 
     Invoked as:   pnpm bootstrap   ->   node scripts\run.mjs bootstrap   ->   this
 
     WHY THIS EXISTS: until 2026-09 nothing in this repo checked or guided
-    prerequisites at all — a repo-wide grep for brew/winget/apt/rustup in
-    scripts\ returned nothing — and six pnpm tasks were bash-only, so a Windows
+    prerequisites at all - a repo-wide grep for brew/winget/apt/rustup in
+    scripts\ returned nothing - and six pnpm tasks were bash-only, so a Windows
     contributor could not run the documented commands at all (scripts\run.mjs
     fixed the routing; this fixes the "what do I need first" half). The recurring
     first-hour failures were: the wrong Python (a 3.13 venv is what shipped macOS
@@ -48,7 +48,7 @@
     Skip phase 4 entirely (no venvs, no models). Env var: SKIP_PYTHON=1.
 
 .PARAMETER SkipModels
-    Run phase 4 but create only the venvs — no model downloads. Forwarded to
+    Run phase 4 but create only the venvs - no model downloads. Forwarded to
     setup-local-models.ps1, which already understands it. Env var: SKIP_MODELS=1.
 
 .PARAMETER Strict
@@ -136,7 +136,7 @@ foreach ($arg in $Rest) {
     # like a parameter name is not worth betting on: depending on the host and
     # the version, `--skip-python` can arrive as `--skip-python`, as
     # `-skip-python`, or with the dashes eaten entirely. Normalising means every
-    # spelling works and none of them is mistakenly rejected with exit 2 — which
+    # spelling works and none of them is mistakenly rejected with exit 2 - which
     # would break `pnpm bootstrap --skip-python`, the documented command line.
     $flag = $arg.ToLowerInvariant().TrimStart('-')
     if     ($flag -eq 'skip-deps')   { $SkipDeps   = $true }
@@ -166,7 +166,7 @@ if ($Help) {
     Write-Plain 'SKIP_MODELS, STRICT (set to 1). Pass-through tunables for phase 4: PYTHON_PATH,'
     Write-Plain 'FASTER_WHISPER_MODEL, ARGOS_FROM, ARGOS_TO, PIPER_VOICE, VIDEODUBBER_DEV_HOME.'
     Write-Plain ''
-    Write-Plain 'Exit codes: 0 ok · 1 a required prerequisite is missing · 2 a phase command failed.'
+    Write-Plain 'Exit codes: 0 ok | 1 a required prerequisite is missing | 2 a phase command failed.'
     Write-Plain 'Details: docs\LOCAL_SETUP.md, docs\WINDOWS.md, CONTRIBUTING.md'
     exit 0
 }
@@ -241,7 +241,7 @@ function Invoke-Probe {
 # Defined HERE, not next to its one obvious call site at the bottom, because
 # PowerShell resolves a function name against what has already been *executed*.
 # Every failure path below (Invoke-Phase, phase 4) prints this summary before
-# exiting, and a definition at the end of the file is not yet in scope then —
+# exiting, and a definition at the end of the file is not yet in scope then -
 # the failure path would have died with "Write-Summary is not recognized",
 # turning an honest "pnpm build failed" into a confusing PowerShell error.
 # ---------------------------------------------------------------------------
@@ -298,7 +298,7 @@ function Invoke-Phase {
 
     if ($code -ne 0) {
         Write-Err ("{0} failed (exit {1}): {2} {3}" -f $What, $code, $Exe, ($Arguments -join ' '))
-        Write-Err 'Fix the error above and re-run `pnpm bootstrap` — it is safe to re-run.'
+        Write-Err 'Fix the error above and re-run `pnpm bootstrap` - it is safe to re-run.'
         $script:Problems.Add("$What failed (exit $code)")
         Write-Summary -Title 'Bootstrap incomplete'
         exit 2
@@ -322,10 +322,10 @@ function ConvertTo-VersionOrNull {
 }
 
 # ---------------------------------------------------------------------------
-# Phase 1 — PREREQUISITES (check only, never install)
+# Phase 1 - PREREQUISITES (check only, never install)
 # ---------------------------------------------------------------------------
 Write-Phase 1 'PREREQUISITES'
-Write-Info 'Checking only — this script never installs anything or touches your PATH.'
+Write-Info 'Checking only - this script never installs anything or touches your PATH.'
 Write-Host ''
 
 # Read the REAL floors instead of keeping a second copy here. package.json is the
@@ -333,7 +333,7 @@ Write-Host ''
 # is a duplicate that goes stale without anyone noticing.
 $PkgJsonPath = Join-Path $RootDir 'package.json'
 if (-not (Test-Path -LiteralPath $PkgJsonPath)) {
-    Write-Err "package.json not found at $PkgJsonPath — is this a VideoDubber checkout?"
+    Write-Err "package.json not found at $PkgJsonPath - is this a VideoDubber checkout?"
     exit 2
 }
 try {
@@ -347,7 +347,7 @@ $NodeFloorText = [string]$Pkg.engines.node                       # ">=22.12.0"
 $NodeFloor     = ConvertTo-VersionOrNull $NodeFloorText
 if (-not $NodeFloor) { $NodeFloor = [version]'22.12.0' }
 
-# packageManager is "pnpm@11.9.0" and may carry a "+sha512.…" integrity suffix.
+# packageManager is "pnpm@11.9.0" and may carry a "+sha512...." integrity suffix.
 $PnpmPinned = 'unknown'
 if ($Pkg.packageManager -match '^pnpm@([^+]+)') { $PnpmPinned = $Matches[1] }
 
@@ -371,7 +371,7 @@ function Add-Row {
     Record a prerequisite miss plus the exact command that fixes it.
 .DESCRIPTION
     -Required misses fail phase 1 with exit 1. Optional misses are warnings
-    unless -Strict was passed, in which case they are promoted to required —
+    unless -Strict was passed, in which case they are promoted to required -
     that promotion is what STRICT means on both halves of this pair.
 #>
 function Add-Miss {
@@ -381,7 +381,7 @@ function Add-Miss {
         [string[]]$Fix = @(),
         [switch]$Required
     )
-    $entry = "$Tool — $Reason"
+    $entry = "$Tool - $Reason"
     $isRequired = ($Required -or $Strict)
     if ($isRequired) { $missingRequired.Add($entry) } else { $missingOptional.Add($entry) }
     if ($Fix.Count -gt 0) {
@@ -390,7 +390,7 @@ function Add-Miss {
         #
         # Written out twice rather than picking a list into a variable first:
         # `$t = if (...) { $list }` sends the list to the output stream, which
-        # ENUMERATES it — an empty List comes back as $null and `.Add()` then
+        # ENUMERATES it - an empty List comes back as $null and `.Add()` then
         # throws. Duplication is cheaper than that trap.
         if ($isRequired) {
             $fixesRequired.Add("${Tool}:")
@@ -405,11 +405,11 @@ function Add-Miss {
 # --- PowerShell itself -------------------------------------------------------
 # On Windows pwsh 7 is REQUIRED, not optional. It is also self-evidently present:
 # this file is `#requires -Version 7.0`, so if you are reading this output at all
-# the check has passed. Say so anyway — contributors land in Windows PowerShell
+# the check has passed. Say so anyway - contributors land in Windows PowerShell
 # 5.1 by default (it is what "PowerShell" in the Start menu means), and the 5.1
 # failure mode is a parse error that looks like a broken repo rather than a
 # missing tool.
-Add-Row 'PowerShell' 'OK' ("{0} ({1}) — required on Windows" -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition)
+Add-Row 'PowerShell' 'OK' ("{0} ({1}) - required on Windows" -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition)
 
 # --- Node --------------------------------------------------------------------
 $nodeProbe = Invoke-Probe -Exe 'node' -Arguments @('--version')
@@ -463,7 +463,7 @@ if (-not $pnpmProbe.Ok -or -not $pnpmVer) {
 # engine pack whose wheels do not match the runtime it will be loaded into.
 #
 # Windows notes: prefer `python` over `python3`, and beware the Microsoft Store
-# alias stub — a zero-byte python.exe under %LOCALAPPDATA%\Microsoft\WindowsApps
+# alias stub - a zero-byte python.exe under %LOCALAPPDATA%\Microsoft\WindowsApps
 # that opens the Store instead of running anything. Probing it produces NO
 # output, which is the tell. The py.exe launcher is checked first because
 # `py -3.12` names the version we want even when several are installed.
@@ -478,7 +478,7 @@ function Test-StoreAliasStub {
     try { return ((Get-Item -LiteralPath $Path).Length -eq 0) } catch { return $true }
 }
 
-# Candidate list, in order. PYTHON_PATH always wins — the caller was explicit.
+# Candidate list, in order. PYTHON_PATH always wins - the caller was explicit.
 $pythonCandidates = [System.Collections.Generic.List[object]]::new()
 if ($env:PYTHON_PATH) {
     $pythonCandidates.Add([pscustomobject]@{ Exe = $env:PYTHON_PATH; Args = @('--version'); Label = 'PYTHON_PATH' })
@@ -492,13 +492,13 @@ foreach ($candidate in $pythonCandidates) {
     if (-not $probe.Path) { continue }
 
     if (Test-StoreAliasStub -Path $probe.Path) {
-        $pythonNotes.Add("$($candidate.Label) is the Microsoft Store alias stub ($($probe.Path)) — it opens the Store, it is not an interpreter")
+        $pythonNotes.Add("$($candidate.Label) is the Microsoft Store alias stub ($($probe.Path)) - it opens the Store, it is not an interpreter")
         continue
     }
     if (-not $probe.Ok) {
         # No output at all from a `--version` is the other face of the Store stub
         # (and of a broken install). Either way it is not usable.
-        $pythonNotes.Add("$($candidate.Label) produced no usable version output — likely the Microsoft Store alias stub or a broken install")
+        $pythonNotes.Add("$($candidate.Label) produced no usable version output - likely the Microsoft Store alias stub or a broken install")
         continue
     }
 
@@ -508,7 +508,7 @@ foreach ($candidate in $pythonCandidates) {
         continue
     }
     if ($ver.Major -ne 3 -or $ver.Minor -ne 12) {
-        $pythonNotes.Add("$($candidate.Label) is Python $ver — this project needs 3.12.x")
+        $pythonNotes.Add("$($candidate.Label) is Python $ver - this project needs 3.12.x")
         continue
     }
 
@@ -527,7 +527,7 @@ foreach ($candidate in $pythonCandidates) {
 
 if (-not $PythonExe) {
     Add-Row 'Python 3.12' 'MISSING' 'no Python 3.12.x found'
-    Add-Miss -Tool 'Python 3.12' -Required -Reason 'not found (3.12 specifically — it is the bundled runtime and what the engine-pack venvs use)' -Fix @(
+    Add-Miss -Tool 'Python 3.12' -Required -Reason 'not found (3.12 specifically - it is the bundled runtime and what the engine-pack venvs use)' -Fix @(
         'winget install --id Python.Python.3.12 -e',
         'then open a NEW terminal, and confirm:  py -3.12 --version',
         'if you have another Python and want to keep it, point this script at 3.12:',
@@ -551,7 +551,7 @@ $cargoProbe = Invoke-Probe -Exe 'cargo' -Arguments @('--version')
 if ($cargoProbe.Ok) {
     Add-Row 'Rust (cargo)' 'OK' ($cargoProbe.Output.Split("`n")[0].Trim())
 } else {
-    Add-Row 'Rust (cargo)' 'WARN' 'not found — only needed for `pnpm app` (the native Tauri window)'
+    Add-Row 'Rust (cargo)' 'WARN' 'not found - only needed for `pnpm app` (the native Tauri window)'
     Add-Miss -Tool 'Rust' -Reason 'not installed; `pnpm dev` (browser dev mode) still works without it' -Fix @(
         'winget install --id Rustlang.Rustup -e',
         'on Windows Rust ALSO needs the MSVC C++ build tools:',
@@ -560,8 +560,8 @@ if ($cargoProbe.Ok) {
 }
 
 # --- ffmpeg / ffprobe (optional: the packaged app bundles its own) -----------
-# `(if ...)` is NOT a legal argument expression in PowerShell — parentheses take
-# a pipeline, not a statement — so resolve the names first.
+# `(if ...)` is NOT a legal argument expression in PowerShell - parentheses take
+# a pipeline, not a statement - so resolve the names first.
 $FfmpegBin  = if ($env:FFMPEG_PATH)  { $env:FFMPEG_PATH }  else { 'ffmpeg' }
 $FfprobeBin = if ($env:FFPROBE_PATH) { $env:FFPROBE_PATH } else { 'ffprobe' }
 $ffmpegProbe  = Invoke-Probe -Exe $FfmpegBin  -Arguments @('-version')
@@ -570,11 +570,11 @@ if ($ffmpegProbe.Ok -and $ffprobeProbe.Ok) {
     Add-Row 'FFmpeg' 'OK' ($ffmpegProbe.Output.Split("`n")[0].Trim())
 } else {
     $which = if ($ffmpegProbe.Ok) { 'ffprobe' } elseif ($ffprobeProbe.Ok) { 'ffmpeg' } else { 'ffmpeg and ffprobe' }
-    Add-Row 'FFmpeg' 'WARN' "$which not found — dev convenience only; the packaged app bundles its own"
+    Add-Row 'FFmpeg' 'WARN' "$which not found - dev convenience only; the packaged app bundles its own"
     Add-Miss -Tool 'FFmpeg' -Reason "$which not on PATH (needed for the dev media pipeline, not for the shipped build)" -Fix @(
         'winget install --id Gyan.FFmpeg -e',
         'or set FFMPEG_PATH / FFPROBE_PATH at an existing build',
-        'NOTE: do NOT point the release build at a shared ffmpeg — see docs\RELEASING.md'
+        'NOTE: do NOT point the release build at a shared ffmpeg - see docs\RELEASING.md'
     )
 }
 
@@ -598,7 +598,7 @@ Write-Host ''
 # outside the shared table that the macOS twin mirrors.
 Write-Info 'Windows notes:'
 
-# WebView2 — preinstalled on Win10/11, so only worth a word when it is absent.
+# WebView2 - preinstalled on Win10/11, so only worth a word when it is absent.
 $webView2Present = $false
 foreach ($key in @(
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
@@ -616,7 +616,7 @@ if (-not $webView2Present) {
     Write-Warn '    winget install --id Microsoft.EdgeWebView2Runtime -e'
 }
 
-# MSVC build tools — Rust on Windows links with MSVC; rustup alone is not enough.
+# MSVC build tools - Rust on Windows links with MSVC; rustup alone is not enough.
 $ProgramFilesX86 = ${env:ProgramFiles(x86)}
 if (-not $ProgramFilesX86) { $ProgramFilesX86 = $env:ProgramFiles }
 $vsWhere = if ($ProgramFilesX86) { Join-Path $ProgramFilesX86 'Microsoft Visual Studio\Installer\vswhere.exe' } else { $null }
@@ -632,7 +632,7 @@ if ($vcToolsPresent) {
     Write-Warn '  will fail at link time (link.exe not found). Install them with:'
     Write-Warn '    winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"'
 } else {
-    Write-Info '  MSVC C++ build tools not detected — only needed alongside Rust for `pnpm app`.'
+    Write-Info '  MSVC C++ build tools not detected - only needed alongside Rust for `pnpm app`.'
 }
 
 # Path hygiene. Every one of these has actually broken a build here: the uv and
@@ -658,7 +658,7 @@ if ($underOneDrive) {
 }
 # Long paths. The threshold is arithmetic, not taste: a pnpm store path such as
 # node_modules\.pnpm\@angular+build@22.0.0_<peer hash>\node_modules\@angular\build\src\...
-# runs to roughly 200 characters on its own, and MAX_PATH is 260 — so a checkout
+# runs to roughly 200 characters on its own, and MAX_PATH is 260 - so a checkout
 # root much past 60 characters starts losing files to "path too long" inside
 # node_modules or a worker .venv. Only nag about the switches that are actually
 # still off.
@@ -700,17 +700,17 @@ if ($missingOptional.Count -gt 0) {
 
 if ($missingRequired.Count -gt 0) {
     Write-Host ''
-    Write-Err 'Cannot continue — required prerequisites are missing:'
+    Write-Err 'Cannot continue - required prerequisites are missing:'
     foreach ($entry in $missingRequired) { Write-Err "  - $entry"; $script:Problems.Add($entry) }
     if ($fixesRequired.Count -gt 0) {
         Write-Host ''
-        Write-Host '  MUST FIX — nothing will run until these are installed:' -ForegroundColor Red
+        Write-Host '  MUST FIX - nothing will run until these are installed:' -ForegroundColor Red
         Write-Host ''
         foreach ($line in $fixesRequired) { Write-Plain "  $line" }
     }
     if ($fixesOptional.Count -gt 0) {
         Write-Host ''
-        Write-Host '  Optional — bootstrap continues without these:' -ForegroundColor Yellow
+        Write-Host '  Optional - bootstrap continues without these:' -ForegroundColor Yellow
         Write-Host ''
         foreach ($line in $fixesOptional) { Write-Plain "  $line" }
     }
@@ -722,16 +722,16 @@ if ($missingRequired.Count -gt 0) {
 
 if ($fixesOptional.Count -gt 0) {
     Write-Host ''
-    Write-Host '  Optional — bootstrap continues without these:' -ForegroundColor Yellow
+    Write-Host '  Optional - bootstrap continues without these:' -ForegroundColor Yellow
     Write-Host ''
     foreach ($line in $fixesOptional) { Write-Plain "  $line" }
 }
 Write-Host ''
 Write-Ok 'All required prerequisites are present.'
-$script:Ran.Add('1. PREREQUISITES — all required tools present')
+$script:Ran.Add('1. PREREQUISITES - all required tools present')
 
 # ---------------------------------------------------------------------------
-# Phase 2 — WORKSPACE DEPENDENCIES
+# Phase 2 - WORKSPACE DEPENDENCIES
 # ---------------------------------------------------------------------------
 Write-Phase 2 'WORKSPACE DEPENDENCIES'
 if ($SkipDeps) {
@@ -739,14 +739,14 @@ if ($SkipDeps) {
     $script:Skipped.Add('2. WORKSPACE DEPENDENCIES (--skip-deps)')
 } else {
     # corepack enable is best-effort. On Windows it writes shims next to node.exe,
-    # which can fail without Developer Mode or an elevated prompt — and a working
+    # which can fail without Developer Mode or an elevated prompt - and a working
     # standalone pnpm is a perfectly good outcome, so this must not be fatal.
     if (Get-Command corepack -ErrorAction SilentlyContinue) {
         # `2>&1` folds corepack's stderr into the pipeline, and under
         # $ErrorActionPreference = 'Stop' a native command's stderr can still
         # surface as a terminating NativeCommandError. corepack writes to stderr
-        # on precisely the failure this block exists to TOLERATE — it cannot
-        # write its shims next to node.exe without Developer Mode or elevation —
+        # on precisely the failure this block exists to TOLERATE - it cannot
+        # write its shims next to node.exe without Developer Mode or elevation -
         # so an unrelaxed preference here would abort the whole bootstrap with a
         # raw exception at the one place the comment above promises not to.
         # Invoke-Probe relaxes it for the same reason; do the same, and restore
@@ -765,7 +765,7 @@ if ($SkipDeps) {
             $ErrorActionPreference = $previousEap
         }
         if ($corepackCode -ne 0) {
-            Write-Warn "corepack enable exited $corepackCode — continuing with the pnpm already on PATH."
+            Write-Warn "corepack enable exited $corepackCode - continuing with the pnpm already on PATH."
             Write-Warn 'If pnpm is missing or the wrong version, run an elevated prompt and retry:'
             Write-Warn "  corepack enable; corepack prepare pnpm@$PnpmPinned --activate"
             $script:Problems.Add('corepack enable failed; using the ambient pnpm')
@@ -778,7 +778,7 @@ if ($SkipDeps) {
     }
 
     # CI wants the lockfile honoured exactly; a developer wants a resolve that can
-    # move. Same rule on both halves of this pair — and "same" has to mean the
+    # move. Same rule on both halves of this pair - and "same" has to mean the
     # same TEST, not just the same variable: GitHub Actions sets CI=true, not
     # CI=1, so an `-eq '1'` check silently gave CI a developer-style install
     # while the bash twin used --frozen-lockfile. Mirror bash exactly: set, and
@@ -786,14 +786,14 @@ if ($SkipDeps) {
     $ciValue = $env:CI
     $isCi = ($ciValue) -and ($ciValue -ne '0') -and ($ciValue -ne 'false')
     $installArgs = if ($isCi) { @('install', '--frozen-lockfile') } else { @('install') }
-    if ($isCi) { Write-Info "CI=$ciValue — pnpm install --frozen-lockfile" }
+    if ($isCi) { Write-Info "CI=$ciValue - pnpm install --frozen-lockfile" }
     Invoke-Phase -Exe 'pnpm' -Arguments $installArgs -What 'pnpm install'
     Write-Ok 'Workspace dependencies installed.'
-    $script:Ran.Add('2. WORKSPACE DEPENDENCIES — pnpm install')
+    $script:Ran.Add('2. WORKSPACE DEPENDENCIES - pnpm install')
 }
 
 # ---------------------------------------------------------------------------
-# Phase 3 — BUILD THE WORKSPACE LIBRARIES
+# Phase 3 - BUILD THE WORKSPACE LIBRARIES
 # ---------------------------------------------------------------------------
 Write-Phase 3 'BUILD THE WORKSPACE LIBRARIES'
 if ($SkipBuild) {
@@ -808,11 +808,11 @@ if ($SkipBuild) {
     Write-Info 'Building @videodubber/shared and @videodubber/media-worker (consumed from dist\).'
     Invoke-Phase -Exe 'pnpm' -Arguments @('build') -What 'pnpm build'
     Write-Ok 'Workspace libraries built.'
-    $script:Ran.Add('3. BUILD THE WORKSPACE LIBRARIES — pnpm build')
+    $script:Ran.Add('3. BUILD THE WORKSPACE LIBRARIES - pnpm build')
 }
 
 # ---------------------------------------------------------------------------
-# Phase 4 — PYTHON WORKERS + MODELS
+# Phase 4 - PYTHON WORKERS + MODELS
 # ---------------------------------------------------------------------------
 Write-Phase 4 'PYTHON WORKERS + MODELS'
 if ($SkipPython) {
@@ -841,7 +841,7 @@ if ($SkipPython) {
 
     # Tunables travel as process environment variables, which setup-local-models.ps1
     # already reads: PYTHON_PATH, FASTER_WHISPER_MODEL, ARGOS_FROM, ARGOS_TO,
-    # PIPER_VOICE, VIDEODUBBER_DEV_HOME. They are inherited as-is — we deliberately
+    # PIPER_VOICE, VIDEODUBBER_DEV_HOME. They are inherited as-is - we deliberately
     # do not re-marshal them onto a command line, where a value containing a space
     # (a PYTHON_PATH under "Program Files", say) would need quoting we would get
     # wrong exactly once.
@@ -853,20 +853,20 @@ if ($SkipPython) {
     # Run it as a CHILD PROCESS, not in-process with `& $setupScript`.
     #
     # In-process, $LASTEXITCODE after a .ps1 that runs off the end is the exit
-    # code of the last NATIVE command that script happened to run — not the
+    # code of the last NATIVE command that script happened to run - not the
     # script's own verdict. setup-local-models.ps1 never calls `exit` on its
     # success path, and it deliberately warns-and-continues past a failed
     # `python -m venv` or `pip install -r requirements.txt` ("it NEVER fails hard
-    # if you're offline — it prints manual instructions instead"). So a first run
+    # if you're offline - it prints manual instructions instead"). So a first run
     # on a flaky link completed the whole setup, printed "Setup complete", and
-    # left $LASTEXITCODE = 1 behind from pip — which this phase then reported as
+    # left $LASTEXITCODE = 1 behind from pip - which this phase then reported as
     # "Python worker setup failed", exited 2, and skipped phase 5 entirely. The
     # bash twin cannot have that bug: `bash scripts/setup-local-models.sh` is a
     # process, so it reads a real exit status. A child pwsh gives us the same.
     #
     # The tunables still travel as INHERITED environment variables (a child
-    # process inherits them), so nothing with a space in it — a PYTHON_PATH under
-    # "Program Files" — is ever re-marshalled onto a command line. -SkipModels is
+    # process inherits them), so nothing with a space in it - a PYTHON_PATH under
+    # "Program Files" - is ever re-marshalled onto a command line. -SkipModels is
     # a bare switch with no value, so passing it as an argument is safe.
     #
     # $PID's own executable, not a bare 'pwsh': we are `#requires -Version 7.0`,
@@ -902,12 +902,12 @@ if ($SkipPython) {
         exit 2
     }
     Write-Ok 'Python workers set up.'
-    $script:Ran.Add('4. PYTHON WORKERS + MODELS — setup-local-models.ps1')
+    $script:Ran.Add('4. PYTHON WORKERS + MODELS - setup-local-models.ps1')
     if ($SkipModels) { $script:Skipped.Add('   model downloads (--skip-models)') }
 }
 
 # ---------------------------------------------------------------------------
-# Phase 5 — VERIFY
+# Phase 5 - VERIFY
 # ---------------------------------------------------------------------------
 Write-Phase 5 'VERIFY'
 # Reuse the existing doctor rather than growing a second, drifting checker in
@@ -923,7 +923,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $RootDir 'node_modules'))) {
     # node_modules. With --skip-deps there is nothing to run it with, and the
     # resulting ERR_MODULE_NOT_FOUND reads like a broken doctor rather than a
     # skipped install.
-    Write-Warn 'node_modules\ is absent (--skip-deps), so the doctor cannot run — it needs tsx.'
+    Write-Warn 'node_modules\ is absent (--skip-deps), so the doctor cannot run - it needs tsx.'
     Write-Warn 'Run it later with:  pnpm doctor'
     $script:Skipped.Add('5. VERIFY (no node_modules)')
 } else {
@@ -937,12 +937,12 @@ if (-not (Test-Path -LiteralPath (Join-Path $RootDir 'node_modules'))) {
         Write-Warn 'The doctor reported problems (see its table above).'
         Write-Warn 'That is not fatal: it also checks optional engines and the dev servers,'
         Write-Warn 'which are not running yet. Re-check any time with:  pnpm doctor'
-        $script:Problems.Add("the doctor reported problems — see its table above (exit $verifyCode)")
+        $script:Problems.Add("the doctor reported problems - see its table above (exit $verifyCode)")
     } else {
         Write-Host ''
         Write-Ok 'Environment verified.'
     }
-    $script:Ran.Add('5. VERIFY — pnpm verify')
+    $script:Ran.Add('5. VERIFY - pnpm verify')
 }
 
 Write-Summary

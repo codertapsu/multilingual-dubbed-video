@@ -23,7 +23,7 @@
   Override the auto-detected Rust host triple (used to locate vd-uv).
 
 .PARAMETER PyVersion
-  CPython version to install (default "3.12" — matches uv.ts).
+  CPython version to install (default "3.12" - matches uv.ts).
 #>
 [CmdletBinding()]
 param(

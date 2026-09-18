@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
   One-command LOCAL Windows release: build sidecars + installers, then upload
-  them and merge the updater manifest onto the GitHub draft — no CI.
+  them and merge the updater manifest onto the GitHub draft - no CI.
 
 .DESCRIPTION
   Windows counterpart of scripts/package/release-macos.sh, for building releases
@@ -14,11 +14,11 @@
     pwsh scripts/package/release-windows.ps1 -Sidecars -Upload
 
   What it does:
-    1. (-Sidecars) pwsh scripts/package/build-sidecars.ps1 — orchestrator SEA,
+    1. (-Sidecars) pwsh scripts/package/build-sidecars.ps1 - orchestrator SEA,
        PyInstaller workers, vd-piper, static libass ffmpeg (auto-downloads the
        BtbN win64-gpl build; do NOT point FFMPEG_PATH at a *shared* ffmpeg),
        vd-uv + bundled CPython, engine-src.
-    2. pnpm app:build — Tauri build. TAURI_SIGNING_PRIVATE_KEY must be set so the
+    2. pnpm app:build - Tauri build. TAURI_SIGNING_PRIVATE_KEY must be set so the
        NSIS -setup.exe gets an updater signature (.sig). The key password is
        empty -> TAURI_SIGNING_PRIVATE_KEY_PASSWORD defaults to ''. bundle.targets
        is ["app","dmg","nsis","msi"], so Windows produces the NSIS -setup.exe AND
@@ -34,7 +34,7 @@
        the windows-x86_64 entry into latest.json (merge-latest-json.mjs,
        preserving the mac entry if the Mac already merged its side).
 
-  Prereqs (one-time, see docs/RELEASING.md "Windows — on your Windows desktop"):
+  Prereqs (one-time, see docs/RELEASING.md "Windows - on your Windows desktop"):
   pwsh 7, Node 24 + corepack/pnpm, Rust stable (MSVC), Python 3.12 with the
   three worker venvs (scripts/setup-local-models.ps1), the updater private key,
   and a GitHub token (git credential or $env:GH_TOKEN).
@@ -149,7 +149,7 @@ if ($Upload) {
   # `{os}-{arch}-{installer}` FIRST and only then falls back to `{os}-{arch}`
   # (tauri-plugin-updater updater.rs: targets = [windows-x86_64-msi, windows-x86_64]),
   # so without this entry an MSI install is handed the NSIS setup.exe and has to
-  # go through an elevated msiexec uninstall mid-update — or ends up with two
+  # go through an elevated msiexec uninstall mid-update - or ends up with two
   # parallel installs. v0.1.0+v0.2.0 have 26 MSI downloads, so this is a real
   # population, not a hypothetical one.
   if ($msi -and (Test-Path "$($msi.FullName).sig")) {

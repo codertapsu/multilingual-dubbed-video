@@ -23,7 +23,7 @@ param(
   # PINNED (not "latest"): the orchestrator can self-install this same uv release
   # when no sidecar is bundled, verifying a per-platform sha256 pinned in
   # packages/node-orchestrator/src/engines/uvBootstrap.ts. Keep the two in
-  # lockstep — a unit test fails the build if they drift.
+  # lockstep - a unit test fails the build if they drift.
   [string]$UvVersion = $(if ($env:UV_VERSION) { $env:UV_VERSION } else { "0.12.1" })
 )
 
@@ -62,7 +62,7 @@ $zip = Join-Path $Work "uv.zip"
 Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
 
 # VERIFY. This binary is bundled into the installer, while the RUNTIME twin of
-# this very fetch (engines/uvBootstrap.ts) has always checked a pinned sha256 —
+# this very fetch (engines/uvBootstrap.ts) has always checked a pinned sha256 -
 # the build-time path being the weaker of the two is backwards. The same hashes
 # are mirrored in pinned-downloads.json and enforced here.
 $expected = $null

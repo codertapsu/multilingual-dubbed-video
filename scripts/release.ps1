@@ -1,7 +1,7 @@
 #requires -Version 7.0
 <#
 .SYNOPSIS
-  The Windows front door to cutting a release — or to checking, in seconds,
+  The Windows front door to cutting a release - or to checking, in seconds,
   whether you could.
 
 .DESCRIPTION
@@ -13,7 +13,7 @@
 
   WHY THIS EXISTS: the machinery has been complete for a long time, but nothing
   pointed at it. docs/RELEASING.md spells the incantation out across several
-  sections, and it was re-derived from the doc every time — including the two
+  sections, and it was re-derived from the doc every time - including the two
   things that must be true before the first line runs (the updater private key,
   and a GitHub token) and which release-windows.ps1 only discovers partway in.
   A Windows release build is long; finding out afterwards that the updater key
@@ -23,7 +23,7 @@
     1. one memorable entry point          pnpm release
     2. a preflight that fails in seconds  pnpm release -Check
 
-  ABOUT SIGNING — READ THIS BEFORE "FIXING" IT. The Windows installer this
+  ABOUT SIGNING - READ THIS BEFORE "FIXING" IT. The Windows installer this
   produces is UNSIGNED, and that is a standing decision (2026-09-18,
   docs/RELEASING.md): this project has no Authenticode certificate and is not
   buying one. Every Windows artifact it has ever published is unsigned. First
@@ -68,7 +68,7 @@ param(
   # run.mjs forwards argv verbatim to `pwsh -File`, and package.json defines
   # `release:check` as `node scripts/run.mjs release --check`. PowerShell's -File
   # mode does not recognise a GNU long flag as a parameter NAME, so `--check`
-  # would bind POSITIONALLY — to $Tag, the only positional parameter here —
+  # would bind POSITIONALLY - to $Tag, the only positional parameter here -
   # leaving $Check false. `pnpm release:check` would then not preflight at all:
   # it would attempt a FULL RELEASE tagged "--check". Swallow the remaining
   # arguments and translate them, exactly as scripts/bootstrap.ps1 does.
@@ -268,10 +268,10 @@ function Test-GitHubToken {
     Write-Check 'OK' 'github token' 'from git credential (github.com)'
   } elseif ($Upload) {
     Write-Check 'MISSING' 'github token' 'none available, and -Upload was requested' `
-      '$env:GH_TOKEN = "…", or log in so git credential has one'
+      '$env:GH_TOKEN = "...", or log in so git credential has one'
   } else {
     Write-Check 'WARN' 'github token' 'none available (only needed for -Upload)' `
-      '$env:GH_TOKEN = "…", or log in so git credential has one'
+      '$env:GH_TOKEN = "...", or log in so git credential has one'
   }
 }
 

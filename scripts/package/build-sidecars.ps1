@@ -70,7 +70,7 @@ if (-not $SkipOrchestrator) {
   Write-Host "`n### Orchestrator ###########################################"
   & (Join-Path $ScriptDir "build-orchestrator.ps1") -TargetTriple $Triple
   # A sub-script that `exit`s non-zero does NOT abort the caller, it only sets
-  # $LASTEXITCODE — so without this a failed orchestrator build would fall through
+  # $LASTEXITCODE - so without this a failed orchestrator build would fall through
   # to the bundle step and ship whatever was in binaries/ from last time.
   if ($LASTEXITCODE -ne 0) { throw "build-orchestrator.ps1 failed ($LASTEXITCODE)" }
 }
@@ -133,7 +133,7 @@ if (-not $SkipEngineSrc) {
   if ($LASTEXITCODE -ne 0) { throw "stage-engine-src.mjs failed ($LASTEXITCODE)" }
 }
 
-# `resources/default-models` is a DECLARED Tauri resource — always exists.
+# `resources/default-models` is a DECLARED Tauri resource - always exists.
 $DmRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\default-models"
 # Bundling the default models is OPT-IN ($env:BUNDLE_DEFAULT_MODELS = '1'): it
 # makes a first en->vi / zh->vi dub work offline but adds ~1 GB to the installer.
@@ -172,8 +172,8 @@ foreach ($b in @("vd-stt-worker","vd-translation-worker","vd-tts-worker")) {
 }
 
 # --- Release bundle assertion (mirror of build-sidecars.sh) ------------------
-# A RELEASE must ship the bundled uv + CPython, and — WHEN opted into bundling the
-# default models ($env:BUNDLE_DEFAULT_MODELS = '1') — those too. Fail the build
+# A RELEASE must ship the bundled uv + CPython, and - WHEN opted into bundling the
+# default models ($env:BUNDLE_DEFAULT_MODELS = '1') - those too. Fail the build
 # rather than silently ship a degraded installer. Set $env:ASSERT_BUNDLE = '0' to
 # downgrade to a warning for a deliberately-partial build.
 if ($env:ASSERT_BUNDLE -ne '0') {
@@ -210,7 +210,7 @@ if ($env:ASSERT_BUNDLE -ne '0') {
   }
   # The orchestrator was never asserted at all. build-orchestrator.ps1 copies
   # node.exe to the output path BEFORE postject injects the blob, so the file
-  # exists even when the injection fails — and a bare node.exe starts a REPL
+  # exists even when the injection fails - and a bare node.exe starts a REPL
   # instead of binding :5100, passing every "is the file there" check on the way
   # to a bricked installer. Compare it against the node.exe it was copied from.
   if (-not $SkipOrchestrator) {

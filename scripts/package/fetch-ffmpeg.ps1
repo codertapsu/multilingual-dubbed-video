@@ -32,7 +32,7 @@ $Work      = Join-Path $BinDir ".ffmpeg"
 
 # Load .env (when run standalone) for machine-specific settings. NOTE: the
 # runtime FFMPEG_PATH/FFPROBE_PATH it usually carries do NOT select a build
-# source here — only the explicit FFMPEG_BIN/FFPROBE_BIN do.
+# source here - only the explicit FFMPEG_BIN/FFPROBE_BIN do.
 function Import-DotEnv($path) {
   if (-not (Test-Path $path)) { return }
   Get-Content $path | ForEach-Object {
@@ -91,7 +91,7 @@ Get-ChildItem $Work -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse 
 #
 # FFMPEG_PATH/FFPROBE_PATH are deliberately NOT honored: they are the
 # ORCHESTRATOR'S RUNTIME vars, normally set in .env (which this script imports)
-# so dev runs find ffmpeg — on this machine that is a SHARED D:\ffmpeg build,
+# so dev runs find ffmpeg - on this machine that is a SHARED D:\ffmpeg build,
 # which cannot be bundled. Letting a runtime setting steer the build is exactly
 # how the macOS release shipped Homebrew-linked binaries; here it merely stopped
 # the build, but the same separation applies.
@@ -126,7 +126,7 @@ if ($LocalFfmpeg -and $LocalFfprobe -and (Test-Path $LocalFfmpeg) -and (Test-Pat
 
 # BtbN GitHub builds: GitHub-hosted (reliable from CI), a .zip Expand-Archive can
 # open with no extra tool, and a -gpl build that includes libass (subtitles) plus
-# libx264/x265. NOTE: gyan.dev ships the *full* build only as .7z — its *.zip is
+# libx264/x265. NOTE: gyan.dev ships the *full* build only as .7z - its *.zip is
 # 'essentials', so the previously-used ffmpeg-release-full.zip URL is a 404.
 #
 # Resolve a PERMANENT dated-autobuild asset via the GitHub API instead of any

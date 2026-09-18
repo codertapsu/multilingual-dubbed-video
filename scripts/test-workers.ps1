@@ -32,7 +32,7 @@ $ErrorActionPreference = "Stop"
 # stderr re-emitted as a NativeCommandError, which "Stop" makes terminating. The
 # probe that decides whether to SKIP a suite deliberately runs
 # `python -c "import pytest"` and lets it fail with a traceback on stderr, so
-# "Stop" would turn the intended skip into a crash — in a script that
+# "Stop" would turn the intended skip into a crash - in a script that
 # release-windows.ps1 now runs as a release gate. Every native call here reports
 # failure through $LASTEXITCODE, which is what this script actually checks.
 $NativeEap = "Continue"

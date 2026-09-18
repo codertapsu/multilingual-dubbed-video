@@ -10,7 +10,7 @@
     4. Downloads a Piper voice (.onnx + .json) and prints PIPER_* env values.
 
     Network/destructive steps are clearly logged and individually skippable.
-    It NEVER fails hard if you're offline — it prints manual instructions instead.
+    It NEVER fails hard if you're offline - it prints manual instructions instead.
 
 .PARAMETER SkipVenvs
     Don't (re)create venvs or pip install.
@@ -39,7 +39,7 @@
 param(
     # Accept BOTH the switch and the env-var form. README.md documents
     # SKIP_VENVS/SKIP_MODELS/... as env vars (which is all setup-local-models.sh
-    # has ever supported), and this script used to ignore them silently — so a
+    # has ever supported), and this script used to ignore them silently - so a
     # Windows contributor following the README got a full re-run every time.
     [switch]$SkipVenvs   = ($env:SKIP_VENVS -eq '1'),
     [switch]$SkipModels  = ($env:SKIP_MODELS -eq '1'),
@@ -65,7 +65,7 @@ $PiperVoice          = if ($env:PIPER_VOICE)          { $env:PIPER_VOICE }      
 # README Quick start steps 2 and 4 do not connect: this script used to download
 # into %USERPROFILE%\VideoDubber (the INSTALLED app's home) and into the default
 # HuggingFace / argos-translate caches. Same defaults and the same precedence as
-# dev.ps1 — an already-set value always wins.
+# dev.ps1 - an already-set value always wins.
 $DevHome = if ($env:VIDEODUBBER_DEV_HOME) { $env:VIDEODUBBER_DEV_HOME }
            else { Join-Path $env:USERPROFILE 'VideoDubber-dev' }
 $env:VIDEODUBBER_DEV_HOME = $DevHome
@@ -87,7 +87,7 @@ function Write-Step { param($m) Write-Host "`n==> $m" -ForegroundColor White -Ba
 
 if (-not (Get-Command $PythonBin -ErrorAction SilentlyContinue)) {
     Write-Err "Python ('$PythonBin') not found. Install Python 3.10+ or set PYTHON_PATH."
-    Write-Err "See docs\LOCAL_SETUP.md. Aborting — venvs cannot be created without python."
+    Write-Err "See docs\LOCAL_SETUP.md. Aborting - venvs cannot be created without python."
     exit 1
 }
 Write-Ok ("Using python: {0}" -f (& $PythonBin --version 2>&1))
@@ -115,7 +115,7 @@ function New-WorkerVenv {
     }
 
     if (Test-Path $venv) {
-        Write-Info "${Dir}: .venv already exists — reusing it."
+        Write-Info "${Dir}: .venv already exists - reusing it."
     } else {
         Write-Info "${Dir}: creating .venv (this writes to $venv)"
         & $PythonBin -m venv $venv
@@ -155,7 +155,7 @@ if (-not $SkipVenvs) {
     Write-Step 'Step 1/4: Python virtual environments + dependencies'
     foreach ($w in $Workers) { New-WorkerVenv -Dir $w }
 } else {
-    Write-Warn '-SkipVenvs — skipping venv creation and pip installs.'
+    Write-Warn '-SkipVenvs - skipping venv creation and pip installs.'
 }
 
 # ----------------------------------------------------------------------------

@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   The app only surfaces the LAST ~1200 characters of an engine's stderr, which is
-  rarely where the real cause is — a missing DLL, a driver mismatch or a device
+  rarely where the real cause is - a missing DLL, a driver mismatch or a device
   probe failure all print early and then scroll away. This runs the installed
   llama-server exactly as the orchestrator does, with the same arguments, and
   writes the FULL output plus the machine's GPU/driver context to one file you
@@ -20,7 +20,7 @@
 
   WHY -Bisect EXISTS. When llama.cpp dies inside a CUDA_CHECK it calls
   ggml_cuda_error(), which prints the actual message ("CUDA error: <msg>", the
-  device, the failing statement) through GGML_LOG_ERROR — and llama.cpp routes
+  device, the failing statement) through GGML_LOG_ERROR - and llama.cpp routes
   that to an ASYNCHRONOUS logger that abort() never flushes. Only the final
   ggml_abort line, written with a direct fprintf, survives. So on an abort the
   one string you want is unrecoverable from ANY stderr capture, this script's
@@ -81,8 +81,8 @@
 
 .PARAMETER Raw
   Do not collapse consecutive identical log lines. The report is faithful either
-  way — collapsing is compression, not truncation, and every run of repeats is
-  replaced by its first line plus an explicit count — but --verbose emits the
+  way - collapsing is compression, not truncation, and every run of repeats is
+  replaced by its first line plus an explicit count - but --verbose emits the
   same 'ggml_cuda_graph_set_enabled' line hundreds of times and it buried the
   signal in 900 KB of noise.
 #>
@@ -113,7 +113,7 @@ W ("=" * 72)
 # buffer and only THEN aborts, with nothing in the message pointing at a driver
 # (546.29 failed, 610.88 ran the identical allocation). So take it from
 # --query-gpu, which is a machine-readable contract, and treat the banner as a
-# bonus — its "CUDA Version:" field is absent entirely on 610.x, which is exactly
+# bonus - its "CUDA Version:" field is absent entirely on 610.x, which is exactly
 # when we most needed it.
 W "`n## GPU / driver"
 if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
@@ -131,7 +131,7 @@ if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
   $banner = (nvidia-smi 2>&1 | Select-String 'CUDA Version') -join "`n"
   W "nvidia-smi banner CUDA line: $(if ($banner) { $banner.Trim() } else { '(not printed by this driver generation)' })"
 } else {
-  W "nvidia-smi NOT FOUND — no NVIDIA driver on PATH (expected on AMD/Intel machines)."
+  W "nvidia-smi NOT FOUND - no NVIDIA driver on PATH (expected on AMD/Intel machines)."
 }
 W ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption + " " + [Environment]::OSVersion.Version)
 W ("RAM: {0:N1} GB" -f ((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB))
@@ -182,7 +182,7 @@ W ((& $exe.FullName --list-devices 2>&1 | Out-String))
   Build the argv the orchestrator uses. The `$appArgs` line below MIRRORS
   ENGINE_LAUNCH_SPECS['local-llm'].args in engineManager.ts and is asserted
   against it by engines.test.ts ('the diagnostic script launches llama-server
-  with the orchestrator's exact arguments') — so this diagnostic cannot silently
+  with the orchestrator's exact arguments') - so this diagnostic cannot silently
   drift from what the app really does. If you change one, the test fails until
   you change the other.
 
@@ -212,7 +212,7 @@ function Get-LaunchArgs {
 #      line was 21% of the last report.
 #   2. per-tensor load chatter -> "N per-tensor lines". llama.cpp names all ~658
 #      tensors on every pass, and the fitter makes six passes, each name followed
-#      by its own buffer-type line — 52% of the last report, and never once the
+#      by its own buffer-type line - 52% of the last report, and never once the
 #      reason a server would not start. This is the only fold that drops distinct
 #      text, which is why it is named rather than inferred.
 function Format-Captured {
@@ -292,7 +292,7 @@ function Invoke-LlamaRun {
     $code = $proc.ExitCode
     W "  process exit code: $code"
     # 0xC0000409 is the fail-fast abort() raises; in llama.cpp that means a
-    # GGML_ABORT — a failed CUDA_CHECK, not a crash in our own code.
+    # GGML_ABORT - a failed CUDA_CHECK, not a crash in our own code.
     if ($code -eq -1073740791) { W "  (0xC0000409 STATUS_STACK_BUFFER_OVERRUN = abort() / GGML_ABORT, i.e. a failed assertion or CUDA_CHECK)" }
   }
 
@@ -310,7 +310,7 @@ function Invoke-LlamaRun {
 $results = [ordered]@{}
 if ($Bisect) {
   W "`n## MODE: -Bisect (three configurations, one report)"
-  W "  The actual CUDA error string cannot be captured — ggml_cuda_error() logs it"
+  W "  The actual CUDA error string cannot be captured - ggml_cuda_error() logs it"
   W "  through llama.cpp's ASYNCHRONOUS logger, which abort() never flushes. These"
   W "  three runs identify the cause from which of them survive instead."
   $results['baseline'] = Invoke-LlamaRun -Label 'baseline' -Port 5199 -Fitt 512  -Ngl -1 `
@@ -334,7 +334,7 @@ if ($Bisect) {
   if ($results['baseline']) {
     # These three knobs only move MEMORY. A working baseline therefore says the
     # cause was never in them, and something OUTSIDE this script changed since
-    # the failing report — so name the usual suspect rather than shrugging at
+    # the failing report - so name the usual suspect rather than shrugging at
     # "not deterministic". This is not hypothetical: an identical baseline that
     # aborted on driver 546.29 served on 610.88, same binary, same model, same
     # 1749.70/128.00/540.00 MiB allocation.

@@ -11,7 +11,7 @@
     - the Argos pivot legs      (translation)       -> argos\
     - the recommended Piper voice(s) (TTS)          -> piper\
 
-  WHAT gets staged is NOT hardcoded — it is derived from the single source of
+  WHAT gets staged is NOT hardcoded - it is derived from the single source of
   truth (packages\node-orchestrator\src\setup\defaultBundle.ts -> DEFAULT_PAIRS)
   via the print-default-bundle.ts bridge, exactly like the POSIX script. To
   add/change a bundled pair, edit that TS file and rebuild.

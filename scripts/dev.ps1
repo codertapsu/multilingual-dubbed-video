@@ -11,7 +11,7 @@
       3. The Angular dev server (videodubber-desktop).
 
     pnpm is REQUIRED (errors out if missing). Missing venvs / ffmpeg are
-    WARNINGS, not fatal — see docs\LOCAL_SETUP.md and run
+    WARNINGS, not fatal - see docs\LOCAL_SETUP.md and run
     scripts\setup-local-models.ps1 first.
 
     This script does NOT install anything.
@@ -87,7 +87,7 @@ function Write-Err  { param($m) Write-Host "[dev][error] $m" -ForegroundColor Re
 # This block was missing on Windows until 2026-09, so a Windows dev run wrote
 # straight into the installed app's tree: a dev orchestrator with a different
 # config schema, or an engine pack installed against a repo-local vd_tts_engine,
-# silently corrupted the installed app's state — and the maintainer's Windows
+# silently corrupted the installed app's state - and the maintainer's Windows
 # testing was never testing a clean first run. Windows is also the box that cuts
 # Windows releases, so this is the worst place for that overlap.
 #
@@ -150,7 +150,7 @@ Test-BinWarn -Bin 'ffprobe' -EnvVar 'FFPROBE_PATH'
 # packaged app gets this from the Tauri sidecar; in dev, reuse a sidecar already
 # staged by `pnpm package:sidecars` (or scripts\package\fetch-uv.ps1) so the
 # orchestrator doesn't download its own copy. Without one it falls back to PATH,
-# then self-installs a pinned uv into <config>\tools\uv — so this is an
+# then self-installs a pinned uv into <config>\tools\uv - so this is an
 # optimization, never a requirement.
 if (-not $env:VIDEODUBBER_UV_PATH) {
     $stagedUv = Get-ChildItem (Join-Path $RootDir 'apps\desktop\src-tauri\binaries') -Filter 'vd-uv-*' -File -ErrorAction SilentlyContinue |
@@ -200,28 +200,28 @@ function Start-Worker {
 # --- Build the workspace libraries (port of scripts/dev.sh) -------------------
 # The Angular app and the orchestrator both consume @videodubber/shared (and
 # @videodubber/media-worker) through their package "exports", which point at
-# dist\ — NOT at src\. So dev needs these built exactly as production does.
+# dist\ - NOT at src\. So dev needs these built exactly as production does.
 #
 # Without this step the failure modes are nasty and look nothing like the cause:
 #   - No dist at all (fresh clone): "Could not resolve @videodubber/shared".
 #   - Stale dist (someone edited packages\shared\src): the import resolves, but
-#     anything added since the last build is missing — e.g. "updateNoticeFor is
-#     not exported" — which reads like a bug in the app, not a stale artifact.
+#     anything added since the last build is missing - e.g. "updateNoticeFor is
+#     not exported" - which reads like a bug in the app, not a stale artifact.
 #
 # This is a hard precondition, not a warning: nothing downstream can start
 # without it. docs/LOCAL_SETUP.md told Windows contributors it was "handled for
 # you" for months while this block only existed in the .sh.
 $LibsBuildLog = Join-Path $LogDir 'libs-build.log'
-Write-Info 'Building workspace libraries (shared, media-worker)…'
+Write-Info 'Building workspace libraries (shared, media-worker)...'
 # $ErrorActionPreference is 'Stop' for this whole script, and in Windows
 # PowerShell 5.1 (which the #Requires above still allows, and which is what you
-# get from a plain `powershell.exe .\scripts\dev.ps1` — start.ps1 launches pwsh 7,
+# get from a plain `powershell.exe .\scripts\dev.ps1` - start.ps1 launches pwsh 7,
 # but a contributor running this by hand does not) a native command whose stderr
 # is REDIRECTED turns that stderr into a terminating NativeCommandError. pnpm
 # writes progress to stderr on a perfectly successful build, so leaving it at
 # 'Stop' across this `*>` redirect aborts dev.ps1 on a build that worked, with an
 # error naming pnpm rather than anything real. $LASTEXITCODE below is the actual
-# error handling — EAP was never what caught this failure.
+# error handling - EAP was never what caught this failure.
 $PrevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
 & pnpm --filter '@videodubber/shared' --filter '@videodubber/media-worker' build *> $LibsBuildLog
@@ -253,7 +253,7 @@ if (-not $SkipLibWatch) {
         [void]$script:Procs.Add($w)
     }
 } else {
-    Write-Warn '-SkipLibWatch — library changes will NOT be picked up until you rebuild.'
+    Write-Warn '-SkipLibWatch - library changes will NOT be picked up until you rebuild.'
 }
 
 # --- Start workers -----------------------------------------------------------
@@ -262,7 +262,7 @@ if (-not $SkipWorkers) {
     Start-Worker -Name 'Translation' -Dir 'translation-worker' -Port $TranslationWorkerPort
     Start-Worker -Name 'TTS'         -Dir 'tts-worker'         -Port $TtsWorkerPort
 } else {
-    Write-Warn "-SkipWorkers — not starting Python workers."
+    Write-Warn "-SkipWorkers - not starting Python workers."
 }
 
 # --- Start orchestrator ------------------------------------------------------
@@ -292,7 +292,7 @@ if (-not $SkipUi) {
         -NoNewWindow -PassThru
     [void]$script:Procs.Add($ui)
 } else {
-    Write-Warn "-SkipUi — not starting Angular dev server."
+    Write-Warn "-SkipUi - not starting Angular dev server."
 }
 
 # --- Print URLs --------------------------------------------------------------

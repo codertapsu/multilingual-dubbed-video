@@ -10,7 +10,7 @@
   carry the host triple (e.g. x86_64-pc-windows-msvc).
   Discover it with:  rustc -Vv | Select-String '^host:'
 
-  Where the build interpreter comes from — READ THIS BEFORE CHANGING IT
+  Where the build interpreter comes from - READ THIS BEFORE CHANGING IT
   --------------------------------------------------------------------
   Until 2026-09 both this script and its .sh twin froze each worker from the
   maintainer's DEV venv (workers\<worker>\.venv). That made a release a function
@@ -18,7 +18,7 @@
   independently (macOS was freezing Python 3.13 while Windows froze 3.12), editing
   a worker's requirements.txt had no effect on a build at all, and on macOS the
   ambient Homebrew interpreter stamped `minos 26.0` onto 175+ bundled Mach-O files
-  under a declared 13.5 floor — which is how v0.8.1 shipped workers that dyld
+  under a declared 13.5 floor - which is how v0.8.1 shipped workers that dyld
   refuses on every Mac below macOS 26.
 
   So the release build no longer touches the dev venvs. It creates a THROWAWAY venv
@@ -27,7 +27,7 @@
   the engine packs use at runtime), installs that worker's requirements.txt into it,
   and freezes from there. build-sidecars.ps1 stages uv and that CPython BEFORE
   calling this script for exactly that reason; if either is missing this script
-  falls back to the legacy dev-venv behaviour with a loud warning — a fallback that
+  falls back to the legacy dev-venv behaviour with a loud warning - a fallback that
   must never be what cuts a release.
 
 .PARAMETER Only
@@ -144,7 +144,7 @@ if ($VenvMode -eq "build") {
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 # key | requirements subdir | output base name | bundle mode
-# NOTE: "piper" is not a worker service — it's the frozen piper-tts CLI the TTS
+# NOTE: "piper" is not a worker service - it's the frozen piper-tts CLI the TTS
 # worker spawns per segment. It gets its OWN build venv holding nothing but
 # piper-tts, so the TTS worker tree stops carrying piper's onnxruntime/sympy.
 $Workers = @(
@@ -161,7 +161,7 @@ $Wanted = $Only.Split(",") | ForEach-Object { $_.Trim() }
 # artifact depends on requirements.txt + build-requirements.txt and nothing else.
 # Sets $script:BuildVenv rather than returning it: a PowerShell function returns
 # EVERYTHING that lands on the pipeline, and the native `uv` calls below write to
-# stdout — so `$venv = New-BuildVenv $w` would hand back uv's output with the path
+# stdout - so `$venv = New-BuildVenv $w` would hand back uv's output with the path
 # buried in it.
 function New-BuildVenv($w) {
   $venv = Join-Path $BuildVenvRoot $w.key
@@ -173,7 +173,7 @@ function New-BuildVenv($w) {
   & $Uv venv --quiet --python $BuildPy $venv
   Assert-NativeOk "uv venv ($($w.key))"
 
-  # The piper CLI freezes ONLY piper-tts (see entry_piper.py) — it must not drag
+  # The piper CLI freezes ONLY piper-tts (see entry_piper.py) - it must not drag
   # the TTS worker's FastAPI stack into a one-file binary.
   $buildReqs = $BuildReqs
   if ($w.key -eq "piper") {
@@ -215,7 +215,7 @@ function Build-One($w) {
 
   if ($VenvMode -eq "dev") {
     # Legacy path: the dev venv predates build-requirements.txt, so install the
-    # pinned freezer into it. Never --upgrade — that is what made every build
+    # pinned freezer into it. Never --upgrade - that is what made every build
     # silently adopt whatever PyInstaller PyPI served that morning.
     $devReqs = if ($w.key -eq "piper") { $BuildReqsPiper } else { $BuildReqs }
     & $py -m pip install --quiet -r $devReqs | Out-Null
@@ -264,5 +264,5 @@ Write-Host ""
 Write-Host "==> Worker sidecars built:"
 Get-ChildItem $BinDir -Filter "vd-*-$Triple.exe" | ForEach-Object { Write-Host "    $($_.Name)" }
 if ($VenvMode -eq "dev") {
-  Write-Warning "Built from the DEV venvs — not reproducible, and requirements.txt was not applied. See this script's .DESCRIPTION."
+  Write-Warning "Built from the DEV venvs - not reproducible, and requirements.txt was not applied. See this script's .DESCRIPTION."
 }

@@ -15,7 +15,7 @@
   ------------------------------------------------------------
   $ErrorActionPreference = "Stop" does NOT trap a native command's exit code.
   This script used to run esbuild and postject via `npx --yes` with no check, and
-  step 4 copies node.exe to the output path BEFORE postject runs — so a failed
+  step 4 copies node.exe to the output path BEFORE postject runs - so a failed
   postject (network, version skew, AV file lock) left
   videodubber-orchestrator-x86_64-pc-windows-msvc.exe as an unmodified copy of
   node.exe. Every downstream gate passed on the path existing, and the installer
@@ -82,18 +82,18 @@ Write-Host "==> [2/4] esbuild bundle -> orchestrator.cjs"
 # behind an isMain() guard (`fileURLToPath(import.meta.url) === process.argv[1]`)
 # that never fires inside a Node SEA binary, so bundling it directly yields an exe
 # that exits without ever binding :5100. The entry shim calls startServer()
-# unconditionally — must stay in lockstep with build-orchestrator.sh.
+# unconditionally - must stay in lockstep with build-orchestrator.sh.
 #
 # Use the LOCKFILE-PINNED binaries from node_modules, never `npx --yes`. On
 # Windows the .bin\*.cmd shims are the right entry point (unlike POSIX, where
 # esbuild's postinstall swaps bin/esbuild for a native binary and pnpm's wrapper
-# still node-launches it — see the comment in build-orchestrator.sh).
+# still node-launches it - see the comment in build-orchestrator.sh).
 $Bundle     = Join-Path $SeaDir "orchestrator.cjs"
 $EsbuildBin = Join-Path $RepoRoot "node_modules\.bin\esbuild.cmd"
 $PostjectBin = Join-Path $RepoRoot "node_modules\.bin\postject.cmd"
 foreach ($t in @(@{p=$EsbuildBin; n="esbuild"}, @{p=$PostjectBin; n="postject"})) {
   if (-not (Test-Path $t.p)) {
-    throw ("{0} not found at {1}. Run 'pnpm install' at the repo root — this build deliberately does NOT fetch it from the registry." -f $t.n, $t.p)
+    throw ("{0} not found at {1}. Run 'pnpm install' at the repo root - this build deliberately does NOT fetch it from the registry." -f $t.n, $t.p)
   }
 }
 Push-Location $RepoRoot
@@ -123,12 +123,12 @@ Copy-Item -Force $NodeBin $Out
 Assert-NativeOk "postject"
 
 # Prove the injection actually happened. The output path exists either way (it is
-# a copy of node.exe made one line above), so "the file is there" proves nothing —
+# a copy of node.exe made one line above), so "the file is there" proves nothing -
 # the blob makes it strictly larger than the interpreter it was copied from.
 $outSize  = (Get-Item $Out).Length
 $nodeSize = (Get-Item $NodeBin).Length
 if ($outSize -le $nodeSize) {
-  throw "postject left $Out the same size as node.exe ($outSize <= $nodeSize) — the SEA blob was not injected. This would ship a bare node.exe as the orchestrator."
+  throw "postject left $Out the same size as node.exe ($outSize <= $nodeSize) - the SEA blob was not injected. This would ship a bare node.exe as the orchestrator."
 }
 
 Write-Host ""

@@ -1,3 +1,4 @@
+import { basename, dirname, extname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseFfmpegFilters } from './exec.js';
 import { buildClip16kMonoArgs, buildExtract16kMonoArgs, buildExtractAudioArgs } from './extract.js';
@@ -223,15 +224,40 @@ describe('render args', () => {
 });
 
 describe('sidecarDestinationPath', () => {
+  // sidecarDestinationPath joins with node:path, so it returns a PLATFORM-NATIVE
+  // path: '/out/movie.srt' on POSIX, '\out\movie.srt' on Windows. That is correct
+  // — the caller writes the file and shows the path to the user, and on Windows a
+  // backslash path is the right answer. Asserting the POSIX spelling literally made
+  // these two the only tests in the repo that could not pass on Windows, which went
+  // unnoticed because the suite had only ever run on macOS. Build the expectation
+  // with the same join the implementation uses.
+  const expected = (name: string) => join(dirname('/out/movie.mp4'), name);
+
   it('returns a .srt path next to the output for srt-file', () => {
-    expect(sidecarDestinationPath('/out/movie.mp4', 'srt-file')).toBe('/out/movie.srt');
+    expect(sidecarDestinationPath('/out/movie.mp4', 'srt-file')).toBe(expected('movie.srt'));
   });
   it('returns a .vtt path for vtt-file', () => {
-    expect(sidecarDestinationPath('/out/movie.mp4', 'vtt-file')).toBe('/out/movie.vtt');
+    expect(sidecarDestinationPath('/out/movie.mp4', 'vtt-file')).toBe(expected('movie.vtt'));
   });
   it('returns undefined for non-file modes', () => {
     expect(sidecarDestinationPath('/out/movie.mp4', 'none')).toBeUndefined();
     expect(sidecarDestinationPath('/out/movie.mp4', 'burned-in')).toBeUndefined();
+  });
+
+  // The properties that must hold on EVERY platform, asserted without naming a
+  // separator: the sidecar sits beside the video, keeps its basename, and only the
+  // extension changes. A native Windows input is included because that is what the
+  // orchestrator actually passes there.
+  it.each([
+    ['/out/movie.mp4'],
+    ['D:\\projects\\out\\movie.mp4'],
+    ['/out/my movie (final).mkv'],
+  ])('keeps the directory and basename, changing only the extension: %s', (input) => {
+    const srt = sidecarDestinationPath(input, 'srt-file');
+    expect(srt).toBeDefined();
+    expect(dirname(srt!)).toBe(dirname(join(dirname(input), 'x')));
+    expect(basename(srt!)).toBe(`${basename(input, extname(input))}.srt`);
+    expect(extname(srt!)).toBe('.srt');
   });
 });
 

@@ -7,23 +7,34 @@ name = "videodubber-tts-worker"
 version = "0.1.0"
 description = "VideoDubber TTS worker — local/offline-first text-to-speech (Piper -> system TTS -> dev fallback)."
 readme = "README.md"
-requires-python = ">=3.10"
+# Pinned to CPython 3.12.x — the SAME interpreter the app bundles
+# (resources/python/cpython-3.12.13-*) and the same one the engine-pack venvs use
+# (UV_PYTHON_VERSION). A 3.13 venv is not a neutral choice here: the shipped
+# macOS workers were frozen from a Homebrew python@3.13 built on macOS 26, which
+# tagged every bundled dylib minos 26.0 and made the workers refuse to start on
+# the macOS 13.5 the app advertises. It also resolves a different dependency set
+# (e.g. libretranslate pins numpy<2 on <=3.12 and numpy==2.3.5 on >=3.13), so the
+# two OSes shipped two stacks under one version number. Fail loudly instead.
+requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "VideoDubber" }]
 
 # Hard dependencies. NOTE: piper-tts is intentionally NOT here — the Piper
 # *binary* is invoked via subprocess so the Python package is not required.
+# Mirrors requirements.txt, ceilings included — see the note there on why the
+# upper bounds exist (FastAPI no longer caps Starlette).
 dependencies = [
-    "fastapi>=0.110",
-    "uvicorn[standard]>=0.29",
-    "pydantic>=2.6",
+    "fastapi>=0.136,<0.142",
+    "starlette>=1.3.1,<2",
+    "uvicorn[standard]>=0.49,<0.54",
+    "pydantic>=2.13,<3",
 ]
 
 [project.optional-dependencies]
 # Optional helpers. None are required for the fallback path to work.
 dev = [
-    "pytest>=8.0",
-    "httpx>=0.27",          # required by fastapi.testclient
+    "pytest>=8.0,<10",
+    "httpx>=0.27,<1",       # required by fastapi.testclient
 ]
 # Optional: if you prefer to drive Piper through the Python package instead of
 # the binary you may install this, but the worker does not depend on it.

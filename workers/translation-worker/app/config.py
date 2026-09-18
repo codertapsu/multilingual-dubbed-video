@@ -15,8 +15,12 @@ ARGOS_PACKAGES_DIR
     models inside the user's app-data folder instead of the global home dir.
 
 ARGOS_DEVICE
-    Optional hint ("cpu"/"cuda") forwarded to ``argostranslate`` via
-    ``ARGOS_DEVICE`` if present. Defaults to unset (library default = CPU).
+    Optional hint ("cpu"/"cuda") forwarded to ``argostranslate``. Note the name
+    difference: the library reads ``ARGOS_DEVICE_TYPE`` (argostranslate 1.11.0,
+    settings.py:167), so we accept ``ARGOS_DEVICE`` as this worker's own input
+    name and EXPORT it under the library's name. We used to export it verbatim,
+    which made the knob a silent no-op. ``ARGOS_DEVICE_TYPE`` is also accepted
+    directly. Defaults to unset (library default = CPU).
 
 CORS_ALLOW_ORIGINS
     Comma-separated list of allowed origins. Defaults to a localhost allow-list.
@@ -69,6 +73,10 @@ class Settings:
         if self.argos_packages_dir:
             os.environ.setdefault("ARGOS_PACKAGES_DIR", self.argos_packages_dir)
         if self.argos_device:
+            # argostranslate reads ARGOS_DEVICE_TYPE, not ARGOS_DEVICE — see the
+            # module docstring. Keep the legacy name set too so anything else
+            # inspecting the environment still sees the operator's intent.
+            os.environ.setdefault("ARGOS_DEVICE_TYPE", self.argos_device)
             os.environ.setdefault("ARGOS_DEVICE", self.argos_device)
 
 
@@ -87,7 +95,9 @@ def get_settings() -> Settings:
         host=os.environ.get("TRANSLATION_WORKER_HOST", "127.0.0.1"),
         port=int(os.environ.get("TRANSLATION_WORKER_PORT", "5102")),
         argos_packages_dir=os.environ.get("ARGOS_PACKAGES_DIR") or None,
-        argos_device=os.environ.get("ARGOS_DEVICE") or None,
+        argos_device=(
+            os.environ.get("ARGOS_DEVICE") or os.environ.get("ARGOS_DEVICE_TYPE") or None
+        ),
         cors_allow_origins=cors,
         log_level=os.environ.get("TRANSLATION_WORKER_LOG_LEVEL", "INFO").upper(),
     )

@@ -3,7 +3,8 @@
 Priority order (highest first):
 
     1. PiperEngine    — invokes the Piper *binary* via subprocess (offline, best quality).
-    2. SystemEngine   — OS built-in TTS: macOS `say`, linux `espeak-ng`.
+    2. SystemEngine   — OS built-in TTS: macOS `say`, Linux `espeak-ng`,
+                        Windows SAPI (System.Speech, via PowerShell).
     3. FallbackEngine — silent (or soft sine) WAV sized to the segment window.
                         ALWAYS available, zero external dependencies.
 
@@ -22,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -34,6 +36,20 @@ logger = logging.getLogger("tts.engines")
 _FALLBACK_DEFAULT_MS = 1200
 # Hard cap on external-process runtime so a stuck binary cannot hang the worker.
 _SUBPROCESS_TIMEOUT_S = 120
+
+# Tighter cap for the one-off Windows voice enumeration. It sits on the /health
+# path (capabilities() -> SystemEngine.available()), and the orchestrator probes
+# health with a 3 s budget, so a wedged PowerShell must not hold a worker thread
+# for the full two minutes: report "no system voices" and move on.
+_SAPI_LIST_TIMEOUT_S = 10
+
+# Windows allocates a fresh console window for every console-subsystem child of a
+# process that has no console of its own — and the orchestrator has none (Tauri's
+# shell plugin spawns it with CREATE_NO_WINDOW). Without this flag each engine or
+# ffmpeg call pops a black CMD window that steals focus, on the one platform where
+# the user has already had to click through a SmartScreen warning. Zero elsewhere:
+# CREATE_NO_WINDOW does not exist off Windows.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
 
 
 @runtime_checkable
@@ -84,6 +100,7 @@ def _run_subprocess(
         stderr=subprocess.PIPE,
         timeout=timeout,
         check=True,
+        creationflags=_NO_WINDOW,
     )
 
 
@@ -221,16 +238,86 @@ _SAY_VOICE_RE = re.compile(
 )
 
 
+def parse_sapi_voices(listing: str) -> list[tuple[str, str]]:
+    """Parse the Windows voice listing into (voice_name, culture) pairs.
+
+    `_windows_voices` asks PowerShell for one voice per line as
+    "Microsoft Zira Desktop\ten-US". A voice name can contain spaces, so the
+    separator is a TAB, never whitespace.
+    """
+    voices: list[tuple[str, str]] = []
+    for line in listing.splitlines():
+        name, tab, culture = line.partition("\t")
+        if not tab:
+            continue
+        name, culture = name.strip(), culture.strip()
+        if name and culture:
+            voices.append((name, culture))
+    return voices
+
+
+def sapi_rate(speed: float) -> int:
+    """Map a speed multiplier to a SAPI rate (-10..10, 0 = normal).
+
+    SAPI's scale is roughly exponential and not documented as a ratio, so this
+    is an approximation in the same spirit as the `say -r` / espeak `-s`
+    mappings above: the real fit to the segment window happens downstream in
+    the alignment/ffmpeg stage.
+    """
+    return max(-10, min(10, round((speed - 1.0) * 10)))
+
+
+def _ps_quote(value: str) -> str:
+    """Quote a string as a PowerShell single-quoted literal."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def build_sapi_script(text_path: str, out_path: str, voice: str | None, rate: int) -> str:
+    """Build the PowerShell script that speaks a UTF-8 text file into a WAV.
+
+    The text is passed via a FILE read with an explicit UTF-8 encoding rather
+    than on the command line or stdin: Vietnamese is the flagship target
+    language and the console's default code page mangles its diacritics.
+    """
+    lines = [
+        "$ErrorActionPreference = 'Stop'",
+        "Add-Type -AssemblyName System.Speech",
+        "$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer",
+    ]
+    if voice:
+        lines.append(f"$synth.SelectVoice({_ps_quote(voice)})")
+    lines += [
+        f"$synth.Rate = {int(rate)}",
+        f"$synth.SetOutputToWaveFile({_ps_quote(out_path)})",
+        f"$text = [System.IO.File]::ReadAllText({_ps_quote(text_path)}, "
+        "[System.Text.Encoding]::UTF8)",
+        "$synth.Speak($text)",
+        "$synth.Dispose()",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 class SystemEngine:
     """OS built-in TTS.
 
-    * macOS: `say -o tmp.aiff` then convert to WAV with `afconvert` (or ffmpeg).
-    * Linux: `espeak-ng -w out.wav`.
+    * macOS:   `say -o tmp.aiff` then convert to WAV with `afconvert` (or ffmpeg).
+    * Linux:   `espeak-ng -w out.wav`.
+    * Windows: SAPI (`System.Speech.Synthesis.SpeechSynthesizer`) driven through
+      PowerShell — no new dependency, present on every supported Windows build.
+
+    Windows had NO branch here, so a Windows user whose Piper voice was missing
+    fell straight through to the silent fallback while macOS and Linux users got
+    intelligible speech for the same input: the worst case differed by OS. Note
+    what this does and does not buy: Windows ships no Vietnamese SAPI voice by
+    default, so for the flagship vi target `supports()` still returns False (by
+    design — see below) and the fallback still applies. It is a real safety net
+    for the languages Windows does ship, and it removes the asymmetry.
 
     Language support is checked before use: a system voice matching the target
-    language is selected (macOS `say -v ?`; espeak `-v <lang>`). If the OS has
-    no voice for the language, this engine reports itself as unsupported so the
-    request never gets read aloud in the wrong language.
+    language is selected (macOS `say -v ?`; Windows `GetInstalledVoices()`;
+    espeak `-v <lang>`). If the OS has no voice for the language, this engine
+    reports itself as unsupported so the request never gets read aloud in the
+    wrong language.
     """
 
     name = "system"
@@ -239,7 +326,10 @@ class SystemEngine:
         self._ffmpeg = settings.ffmpeg_path or shutil.which("ffmpeg")
         self._is_macos = sys.platform == "darwin"
         self._is_linux = sys.platform.startswith("linux")
+        self._is_windows = sys.platform == "win32"
         self._say_voices: list[tuple[str, str]] | None = None  # lazy, cached
+        self._sapi_voices: list[tuple[str, str]] | None = None  # lazy, cached
+        self._sapi_lock = threading.Lock()  # see _windows_voices
 
     # --- capability detection -------------------------------------------------
 
@@ -257,13 +347,24 @@ class SystemEngine:
             return None
         return shutil.which("espeak-ng") or shutil.which("espeak")
 
+    @property
+    def _powershell(self) -> str | None:
+        if not self._is_windows:
+            return None
+        return shutil.which("powershell") or shutil.which("pwsh")
+
     def available(self) -> bool:
         if self._is_macos:
             # `say` plus a way to get to WAV (afconvert ships with macOS; ffmpeg ok too).
             return bool(self._say and (self._afconvert or self._ffmpeg))
         if self._is_linux:
             return self._espeak is not None
-        # Other platforms (e.g. Windows) — no built-in path wired up here.
+        if self._is_windows:
+            # PowerShell alone is not enough — a Windows install can have the
+            # speech assembly present but zero installed voices, and reporting
+            # "system: true" there would be a lie in /health. The listing is
+            # cached, so this costs one PowerShell run per process.
+            return bool(self._powershell) and bool(self._windows_voices())
         return False
 
     # --- language support -------------------------------------------------------
@@ -281,12 +382,63 @@ class SystemEngine:
                     logger.warning("could not list `say` voices: %s", exc)
         return self._say_voices
 
+    def _windows_voices(self) -> list[tuple[str, str]]:
+        """Installed SAPI voices as (name, culture), cached after first query.
+
+        Locked, and published in a SINGLE assignment. Unlike `_macos_voices`
+        (whose `say -v ?` costs a millisecond), this enumeration spawns
+        PowerShell, and both /health and /voices reach it from FastAPI's
+        threadpool — i.e. genuinely in parallel. The "assign [] first, then fill
+        it in" shape would let a concurrent probe read the empty placeholder
+        while the listing is still running and conclude `system: false` on a
+        machine that does have voices, which is enough to push a segment onto
+        the silent fallback.
+        """
+        cached = self._sapi_voices
+        if cached is not None:
+            return cached
+        with self._sapi_lock:
+            # Double-checked: another thread may have finished the listing.
+            if self._sapi_voices is not None:
+                return self._sapi_voices
+            voices: list[tuple[str, str]] = []
+            shell = self._powershell
+            if shell:
+                script = (
+                    "Add-Type -AssemblyName System.Speech; "
+                    "(New-Object System.Speech.Synthesis.SpeechSynthesizer)"
+                    ".GetInstalledVoices() | ForEach-Object { "
+                    "$i = $_.VoiceInfo; \"$($i.Name)`t$($i.Culture.Name)\" }"
+                )
+                try:
+                    proc = _run_subprocess(
+                        [shell, "-NoProfile", "-NonInteractive", "-Command", script],
+                        timeout=_SAPI_LIST_TIMEOUT_S,
+                    )
+                    voices = parse_sapi_voices(proc.stdout.decode("utf-8", "replace"))
+                except (OSError, subprocess.SubprocessError) as exc:
+                    logger.warning("could not list SAPI voices: %s", exc)
+            self._sapi_voices = voices
+            return voices
+
+    def _installed_voices(self) -> list[tuple[str, str]]:
+        """(name, locale) pairs for whichever OS voice catalog applies."""
+        if self._is_macos:
+            return self._macos_voices()
+        if self._is_windows:
+            return self._windows_voices()
+        return []
+
     def voice_for_language(self, language: str) -> str | None:
-        """A macOS `say` voice name matching the base language subtag, if any."""
-        if not self._is_macos or not language:
+        """An OS voice name matching the base language subtag, if any.
+
+        macOS reports locales as "vi_VN" and Windows as "vi-VN"; both reduce to
+        the same prefix test.
+        """
+        if not language or not (self._is_macos or self._is_windows):
             return None
         prefix = language.lower()
-        for name, locale in self._macos_voices():
+        for name, locale in self._installed_voices():
             if locale.lower().replace("-", "_").startswith(prefix):
                 return name
         return None
@@ -301,7 +453,10 @@ class SystemEngine:
             return False
         if not language:
             return True
-        if self._is_macos:
+        if self._is_macos or self._is_windows:
+            # Windows in particular ships no Vietnamese voice: returning False
+            # here is what keeps selection moving on instead of reading vi text
+            # with an en-US voice.
             return self.voice_for_language(language) is not None
         # espeak-ng covers a very wide language set, including "vi"; trust the
         # `-v <lang>` selection we already pass in _synth_linux.
@@ -310,7 +465,12 @@ class SystemEngine:
     def voice_key(self, language: str, voice: str | None) -> str:
         """Stable identity of the audio this engine would produce (for caching)."""
         chosen = voice or self.voice_for_language(language) or "default"
-        flavor = "say" if self._is_macos else "espeak"
+        if self._is_macos:
+            flavor = "say"
+        elif self._is_windows:
+            flavor = "sapi"
+        else:
+            flavor = "espeak"
         return f"system:{flavor}:{chosen}:{language or 'any'}"
 
     # --- synthesis ------------------------------------------------------------
@@ -330,6 +490,8 @@ class SystemEngine:
             self._synth_macos(text, out_path, language, voice, speed)
         elif self._is_linux:
             self._synth_linux(text, out_path, language, voice, speed)
+        elif self._is_windows:
+            self._synth_windows(text, out_path, language, voice, speed)
         else:
             raise RuntimeError(f"SystemEngine unsupported on {platform.system()}")
         logger.info("system(%s) synthesized -> %s", sys.platform, out_path)
@@ -402,6 +564,49 @@ class SystemEngine:
             argv += ["-s", str(int(175 * speed))]
         argv += [text]
         _run_subprocess(argv)
+
+
+    def _synth_windows(
+        self, text: str, out_path: str, language: str, voice: str | None, speed: float
+    ) -> None:
+        shell = self._powershell
+        if not shell:
+            raise RuntimeError("Windows PowerShell not found")
+
+        # Same rule as macOS: never let SAPI fall back to the (usually en-US)
+        # default voice for another language.
+        chosen = voice or self.voice_for_language(language)
+        if not chosen and language and language != "en":
+            raise RuntimeError(f"Windows has no SAPI voice for language '{language}'")
+
+        base = Path(out_path)
+        text_path = base.with_suffix(".txt")
+        script_path = base.with_suffix(".ps1")
+        try:
+            text_path.write_text(text, encoding="utf-8")
+            # BOM: Windows PowerShell 5.1 reads a -File script as ANSI unless
+            # one is present, which would corrupt a non-ASCII voice name.
+            script_path.write_text(
+                build_sapi_script(str(text_path), out_path, chosen, sapi_rate(speed)),
+                encoding="utf-8-sig",
+            )
+            _run_subprocess(
+                [
+                    shell,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script_path),
+                ]
+            )
+        finally:
+            for tmp in (text_path, script_path):
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 class FallbackEngine:

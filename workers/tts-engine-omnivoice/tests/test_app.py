@@ -8,6 +8,9 @@ returns the same designed set for every language.
 
 from __future__ import annotations
 
+import threading
+import time
+
 import wave
 from pathlib import Path
 
@@ -277,3 +280,60 @@ def test_synth_keeps_loudest_when_all_weak(tmp_path: Path):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --- synth() serialization ----------------------------------------------------
+# `_seed()` pins the PROCESS-GLOBAL torch generator, and the route is a plain
+# `def` (FastAPI threadpool), so two overlapping requests used to interleave
+# their seeds on one shared model — re-introducing the cross-segment voice drift
+# the per-voice seed exists to remove. The class docstring claimed "sequential
+# synth"; nothing enforced it.
+
+
+class _OverlapDetectingModel:
+    """Records the maximum number of generate() calls in flight at once."""
+
+    def __init__(self, audio):
+        self._audio = audio
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self._guard = threading.Lock()
+
+    def generate(self, **_kwargs):
+        with self._guard:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            time.sleep(0.02)  # long enough for the other threads to pile in
+            return [self._audio]
+        finally:
+            with self._guard:
+                self.in_flight -= 1
+
+
+def test_synth_is_serialized_across_threads(tmp_path: Path):
+    import numpy as np
+
+    audio = (np.sin(np.linspace(0, 40, 2400)) * 0.5).astype(np.float32)
+    model = _OverlapDetectingModel(audio)
+    eng = OmniVoiceEngine()
+    eng._model = model
+
+    errors: list[BaseException] = []
+
+    def _run(index: int) -> None:
+        try:
+            eng.synth("hello", str(tmp_path / f"o{index}.wav"), None, "en-US", 0)
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_run, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, errors
+    assert model.max_in_flight == 1, "generate() ran concurrently on one shared model"
+    for i in range(4):
+        assert (tmp_path / f"o{i}.wav").is_file()

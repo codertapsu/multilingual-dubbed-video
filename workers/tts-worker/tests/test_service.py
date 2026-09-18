@@ -119,20 +119,6 @@ def test_cache_key_separates_engines_and_voices():
     assert say_key != piper_key
 
 
-def test_resynth_single(service, tmp_path):
-    seg = SegmentIn(id="seg_0005", text="redo me", startMs=0, endMs=600)
-    out = service.resynth_single(
-        language="en",
-        voice_id="fallback",
-        segment=seg,
-        output_dir=str(tmp_path / "single"),
-        speed=1.0,
-    )
-    assert out.segmentId == "seg_0005"
-    assert (tmp_path / "single" / "segment_0005.wav").is_file()
-    assert abs(out.durationMs - 600) <= 2
-
-
 def test_forced_piper_without_config_raises_piper_missing(service, tmp_path):
     with pytest.raises(TtsError) as ei:
         service.synthesize_segments(

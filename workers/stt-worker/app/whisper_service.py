@@ -4,6 +4,12 @@ Design goals
 ------------
 * **Lazy + cached:** a ``WhisperModel`` is only constructed on first use and is
   cached by ``(model, device, compute_type)`` so repeated requests reuse it.
+  The cache holds AT MOST ONE model: it used to be unbounded, so a user who
+  installed small + medium + large-v3-turbo from the setup wizard ended up with
+  all three resident in the sidecar for the process lifetime — several GB of RSS
+  held by a background process doing nothing, competing with the neural TTS pack
+  and ffmpeg during a dub. Switching models mid-session is rare enough that a
+  reload beats holding both.
 * **Resilient:** missing model / failed download raises :class:`AppError`
   ``STT_MODEL_MISSING`` with actionable remediation rather than crashing.
 * **Offline-friendly:** ``faster-whisper`` itself is imported lazily so this
@@ -16,10 +22,12 @@ Design goals
 
 from __future__ import annotations
 
+import gc
 import logging
 import math
 import os
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Any, List, Optional
@@ -37,8 +45,15 @@ from .schemas import Segment, TranscribeRequest, TranscribeResponse, Word
 logger = logging.getLogger("videodubber.stt.whisper")
 
 # Cache of loaded WhisperModel instances keyed by (model, device, compute_type).
+# Bounded to a single entry — see the module docstring.
 _MODEL_CACHE: dict[tuple[str, str, str], Any] = {}
 _CACHE_LOCK = threading.Lock()
+
+# Windows allocates a console window for every console-subsystem child of a
+# process that has no console of its own, and the orchestrator that launches this
+# worker has none. Without this flag the ffmpeg fallback below pops a black CMD
+# window that steals focus. Zero everywhere else.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
 
 # Curated size alias -> HuggingFace repo id, mirroring faster-whisper's internal
 # ``_MODELS`` table for the sizes the setup catalog offers. Duplicated here (not
@@ -147,6 +162,19 @@ def _load_model(model_name: str, settings: Settings) -> Any:
                 cause=exc,
             ) from exc
 
+        if _MODEL_CACHE:
+            # Bounded to one resident model: drop the previous one BEFORE
+            # allocating the next, so peak RSS is one model, not two. An
+            # in-flight transcription still holds its own reference and finishes
+            # normally; this only releases the cache's.
+            logger.info(
+                "Evicting cached Whisper model(s) %s to load '%s'.",
+                ", ".join(k[0] for k in _MODEL_CACHE),
+                model_name,
+            )
+            _MODEL_CACHE.clear()
+            gc.collect()
+
         logger.info(
             "Loading Whisper model name=%s device=%s compute_type=%s cache=%s",
             model_name,
@@ -213,6 +241,14 @@ def _hf_cache_dir() -> str:
     return str(Path("~/.cache/huggingface/hub").expanduser())
 
 
+def _model_repo_id(model_name: str) -> str:
+    """The HuggingFace repo id behind a model name or curated size alias."""
+    repo_id = _SYSTRAN_REPOS.get(model_name, None)
+    if repo_id is None:
+        repo_id = model_name if "/" in model_name else f"Systran/faster-whisper-{model_name}"
+    return repo_id
+
+
 def _model_repo_dir_name(model_name: str) -> str:
     """The on-disk snapshot dir name HF uses for a faster-whisper model.
 
@@ -221,10 +257,7 @@ def _model_repo_dir_name(model_name: str) -> str:
     aliases (``tiny``..``large-v3``) map onto the Systran repos; a raw
     ``owner/repo`` id maps directly.
     """
-    repo_id = _SYSTRAN_REPOS.get(model_name, None)
-    if repo_id is None:
-        repo_id = model_name if "/" in model_name else f"Systran/faster-whisper-{model_name}"
-    return "models--" + repo_id.replace("/", "--")
+    return "models--" + _model_repo_id(model_name).replace("/", "--")
 
 
 def is_model_cached(model_name: str) -> bool:
@@ -248,12 +281,60 @@ def is_model_cached(model_name: str) -> bool:
         return False
 
 
+def _download_model_weights(model_name: str, settings: Settings) -> None:
+    """Fetch a model's weights into the HF cache WITHOUT constructing a model.
+
+    Uses faster-whisper's own ``download_model`` so the repo id and the
+    ``allow_patterns`` stay in lockstep with what ``WhisperModel`` would fetch —
+    but resolves the repo id through :data:`_SYSTRAN_REPOS` first, because that
+    table carries the aliases (``large-v3-turbo``, the PhoWhisper builds) that
+    faster-whisper's own ``_MODELS`` does not.
+    """
+    try:
+        # Imported lazily, like everything else that touches the native dep.
+        from faster_whisper.utils import download_model  # type: ignore
+    except Exception as exc:  # ImportError or transitive native failure
+        raise AppError(
+            ERROR_STT_MODEL_MISSING,
+            "faster-whisper is not installed or failed to import.",
+            remediation=(
+                "Install dependencies in the STT worker venv: "
+                "`pip install -r requirements.txt`."
+            ),
+            cause=exc,
+        ) from exc
+
+    try:
+        download_model(
+            _model_repo_id(model_name),
+            cache_dir=settings.download_root or None,
+            local_files_only=settings.local_files_only,
+        )
+    except Exception as exc:
+        raise AppError(
+            ERROR_STT_MODEL_MISSING,
+            f"Whisper model '{model_name}' could not be downloaded.",
+            remediation=(
+                "Check the network connection and disk space, or pre-download "
+                "with `python -m app.download_model --model "
+                f"{model_name}`. If offline, ensure STT_MODEL_CACHE_DIR already "
+                "contains the model."
+            ),
+            cause=exc,
+        ) from exc
+
+
 def ensure_model(model_name: Optional[str] = None) -> tuple[str, bool]:
     """Ensure a Whisper model is downloaded + cached locally.
 
-    Constructs the faster-whisper ``WhisperModel`` (which triggers the
-    HuggingFace download into the cache) so a subsequent ``/transcribe`` runs
-    fully offline. Long-running on a cache miss; instant on a hit.
+    DOWNLOADS ONLY — it deliberately does not construct a ``WhisperModel``.
+    This used to call ``_load_model`` purely to trigger the download, which left
+    a fully-instantiated model resident in ``_MODEL_CACHE`` forever; the setup
+    wizard calls this once per model the user picks, so installing three sizes
+    pinned three models in RAM and made ``/health.loaded`` report ``true``
+    before a single transcription had run.
+
+    Long-running on a cache miss; instant on a hit.
 
     Returns
     -------
@@ -277,9 +358,9 @@ def ensure_model(model_name: Optional[str] = None) -> tuple[str, bool]:
         _hf_cache_dir(),
     )
 
-    # _load_model downloads-on-miss and caches the constructed model; it raises
-    # the structured STT_MODEL_MISSING AppError on any failure.
-    _load_model(name, settings)
+    if not already:
+        # Raises the structured STT_MODEL_MISSING AppError on any failure.
+        _download_model_weights(name, settings)
     return name, already
 
 
@@ -339,6 +420,7 @@ def _load_audio_samples(audio_path: str):
          "-f", "s16le", "-ac", "1", "-acodec", "pcm_s16le", "-ar", "16000", "-"],
         capture_output=True,
         check=False,
+        creationflags=_NO_WINDOW,
     )
     if proc.returncode != 0 or not proc.stdout:
         raise AppError(
@@ -404,6 +486,56 @@ def _build_words(raw_words: Optional[Any]) -> Optional[List[Word]]:
             )
         )
     return words or None
+
+
+# A forced-language decode is only worth flagging when the probe is reasonably
+# sure; whisper's language head is noisy on music, silence and very short clips.
+_LANGUAGE_PROBE_MIN_PROBABILITY = 0.6
+
+
+def language_mismatch(
+    forced: Optional[str],
+    probed: Optional[str],
+    probability: Optional[float],
+    threshold: float = _LANGUAGE_PROBE_MIN_PROBABILITY,
+) -> bool:
+    """True if the audio confidently sounds like a language we were NOT given.
+
+    Pure + separately tested: this is the predicate behind the single most
+    expensive silent failure in the product. The caller always forces a source
+    language today, and ``info.language`` echoes that forced value back, so the
+    only diagnostic the pipeline had was structurally incapable of disagreeing —
+    a Chinese video decoded as English yields confident, fluent, entirely
+    fabricated English, which then translates into fluent, entirely wrong
+    Vietnamese, and the run reports 100% success.
+    """
+    if not forced or not probed or probability is None:
+        return False
+    if probability < threshold:
+        return False
+    return forced.strip().lower() != probed.strip().lower()
+
+
+def _probe_language(model: Any, audio: Any, settings: Settings) -> tuple[Optional[str], Optional[float]]:
+    """Ask whisper what the audio ACTUALLY sounds like. Best-effort, never raises.
+
+    Only meaningful when the caller forced a language: with `language=None`
+    faster-whisper detects it anyway and reports it in ``info.language``. Costs
+    one encoder pass over the first window, which is negligible next to a full
+    transcription.
+    """
+    detect = getattr(model, "detect_language", None)
+    if not callable(detect):
+        return None, None
+    try:
+        try:
+            language, probability, _all = detect(audio, vad_filter=settings.vad_filter)
+        except TypeError:  # older faster-whisper without the vad_filter kwarg
+            language, probability, _all = detect(audio)
+    except Exception:  # noqa: BLE001 - a probe must never fail a transcription
+        logger.debug("Language probe failed; continuing.", exc_info=True)
+        return None, None
+    return (language or None), (float(probability) if probability is not None else None)
 
 
 def transcribe(request: TranscribeRequest) -> TranscribeResponse:
@@ -493,6 +625,25 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
             )
         )
 
+    # When a language is FORCED, `info.language` just echoes it back, so probe
+    # the audio separately and report what it really sounds like. The caller
+    # (orchestrator/UI) is what decides whether to stop; the worker's job is to
+    # make the disagreement visible at all.
+    probed_language: Optional[str] = None
+    probed_probability: Optional[float] = None
+    if whisper_language:
+        probed_language, probed_probability = _probe_language(model, audio, settings)
+        if language_mismatch(whisper_language, probed_language, probed_probability):
+            logger.warning(
+                "LANGUAGE MISMATCH: decoded as '%s' because the caller forced it, "
+                "but the audio sounds like '%s' (p=%.2f). A forced mismatch does "
+                "not error — it produces confident, fluent, WRONG text. Re-run "
+                "with the correct source language, or omit it to auto-detect.",
+                whisper_language,
+                probed_language,
+                probed_probability or 0.0,
+            )
+
     detected = getattr(info, "language", None) or whisper_language or "und"
     # Prefer the audio duration reported by whisper; fall back to last segment.
     duration_ms = _seconds_to_ms(getattr(info, "duration", None))
@@ -510,4 +661,6 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
         segments=segments,
         detectedLanguage=detected,
         durationMs=duration_ms,
+        probedLanguage=probed_language,
+        probedLanguageProbability=probed_probability,
     )

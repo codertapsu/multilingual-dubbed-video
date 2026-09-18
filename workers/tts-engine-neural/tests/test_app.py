@@ -7,6 +7,8 @@ variant is v3 (no VIENEU_VARIANT env), so /voices + silent fallback use v3.
 
 from __future__ import annotations
 
+import threading
+import time
 import wave
 from pathlib import Path
 
@@ -143,3 +145,59 @@ def test_segment_filename_is_traversal_safe(tmp_path: Path):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --- synth() serialization ----------------------------------------------------
+# `_pin_rng` seeds the PROCESS-GLOBAL random/numpy/torch generators and the route
+# is a plain `def` (FastAPI threadpool), so two overlapping requests used to
+# interleave their seeds on one shared ONNX session — non-deterministically
+# re-introducing the very voice drift `_pin_rng` exists to remove. The class
+# docstring said "sequential synth"; only the LOAD was locked.
+
+
+class _OverlapDetectingBackend:
+    """Stands in for the vieneu SDK; records concurrent infer() calls."""
+
+    def __init__(self) -> None:
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self._guard = threading.Lock()
+
+    def infer(self, text, voice=None):  # noqa: ARG002 - signature mirrors the SDK
+        with self._guard:
+            self.in_flight += 1
+            self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        try:
+            time.sleep(0.02)  # long enough for the other threads to pile in
+            return [0.0] * 480
+        finally:
+            with self._guard:
+                self.in_flight -= 1
+
+    def save(self, audio, out_path):  # noqa: ARG002
+        Path(out_path).write_bytes(b"RIFF")
+
+
+def test_synth_is_serialized_across_threads(tmp_path: Path):
+    backend = _OverlapDetectingBackend()
+    engine = VieNeuEngine(variant="v3")
+    engine._backend = backend  # bypass _ensure_loaded (no vieneu SDK in CI)
+
+    errors: list[BaseException] = []
+
+    def _run(index: int) -> None:
+        try:
+            engine.synth("xin chào", str(tmp_path / f"s{index}.wav"), None, 1.0)
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_run, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, errors
+    assert backend.max_in_flight == 1, "infer() ran concurrently on one ONNX session"
+    for i in range(4):
+        assert (tmp_path / f"s{i}.wav").is_file()

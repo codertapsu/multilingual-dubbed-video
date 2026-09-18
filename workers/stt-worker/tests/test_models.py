@@ -139,13 +139,22 @@ def test_ensure_model_reports_already_cached(monkeypatch, tmp_path: Path) -> Non
     _make_cached_model(cache, "models--Systran--faster-whisper-base")
 
     monkeypatch.setattr(whisper_service, "_hf_cache_dir", lambda: str(cache))
-    # Avoid touching faster-whisper: stub the heavy load step.
-    monkeypatch.setattr(whisper_service, "_load_model", lambda name, settings: object())
+    # Avoid touching faster-whisper OR the network: stub the download step. This
+    # MUST stay stubbed — ensure_model used to go through _load_model, and a test
+    # that forgets leaves a multi-GB model in the developer's HF cache.
+    downloads: list[str] = []
+    monkeypatch.setattr(
+        whisper_service,
+        "_download_model_weights",
+        lambda name, settings: downloads.append(name),
+    )
 
     name, already = whisper_service.ensure_model("base")
     assert name == "base"
     assert already is True
+    assert downloads == []  # a cache hit must not download at all
 
     name2, already2 = whisper_service.ensure_model("large-v3")
     assert name2 == "large-v3"
     assert already2 is False
+    assert downloads == ["large-v3"]

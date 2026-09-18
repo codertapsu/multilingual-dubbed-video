@@ -135,7 +135,16 @@ class EngineUnavailable(RuntimeError):
 
 
 class OmniVoiceEngine:
-    """Lazy OmniVoice synthesizer. Thread-safe load; sequential synth."""
+    """Lazy OmniVoice synthesizer. Thread-safe load; sequential synth.
+
+    "Sequential synth" is enforced by ``_synth_lock``, not merely asserted: the
+    route is a plain ``def`` (FastAPI threadpool), and ``_seed`` pins the
+    PROCESS-GLOBAL torch generator, so two overlapping requests would interleave
+    their seeds — polluting each other's sampling stream and reintroducing the
+    cross-segment voice drift the per-voice seed exists to remove — while also
+    calling ``generate()`` concurrently on one shared model. Mirrors the same fix
+    in the VieNeu pack.
+    """
 
     name = voices.ENGINE_NAME
 
@@ -144,6 +153,9 @@ class OmniVoiceEngine:
         self._torch = None  # the torch module (kept for seeding)
         self._device = "cpu"
         self._lock = threading.Lock()
+        # Distinct from _lock (which guards loading): serializes seeding +
+        # generation + write, which share global RNG state and one model.
+        self._synth_lock = threading.Lock()
         self._load_error: str | None = None
         self._model_id = (os.environ.get("OMNIVOICE_MODEL") or DEFAULT_MODEL).strip()
 
@@ -260,38 +272,41 @@ class OmniVoiceEngine:
         if duration_s is not None:
             gen_kwargs["duration"] = duration_s
 
-        # Re-roll a weak (near-silent) draw, keeping the loudest. Attempt 0 uses the
-        # voice's pinned seed (consistent speaker); retries perturb it (the attribute
-        # instruct still pins gender/pitch, so the voice stays put).
-        best: np.ndarray | None = None
-        best_rms = -1.0
-        saw_nonfinite = False
-        for attempt in range(SYNTH_ATTEMPTS):
-            self._seed(voice.seed + attempt * _RETRY_SEED_STRIDE)
-            audio = self._generate_once(gen_kwargs, np)
-            if audio.size == 0:
-                continue
-            if not np.all(np.isfinite(audio)):
-                saw_nonfinite = True
-                continue
-            rms = float(np.sqrt(np.mean(np.square(audio))))
-            peak = float(np.max(np.abs(audio)))
-            if rms > best_rms:
-                best, best_rms = audio, rms
-            if peak >= MIN_AUDIBLE_PEAK and rms >= MIN_AUDIBLE_RMS:
-                break  # audible enough — stop re-rolling
-            logger.warning(
-                "OmniVoice weak draw (attempt %d/%d): peak=%.3f rms=%.3f — re-rolling",
-                attempt + 1, SYNTH_ATTEMPTS, peak, rms,
-            )
+        # One synthesis at a time: _seed() pins the process-global torch RNG,
+        # so seeding and generating must be a single critical section.
+        with self._synth_lock:
+            # Re-roll a weak (near-silent) draw, keeping the loudest. Attempt 0 uses the
+            # voice's pinned seed (consistent speaker); retries perturb it (the attribute
+            # instruct still pins gender/pitch, so the voice stays put).
+            best: np.ndarray | None = None
+            best_rms = -1.0
+            saw_nonfinite = False
+            for attempt in range(SYNTH_ATTEMPTS):
+                self._seed(voice.seed + attempt * _RETRY_SEED_STRIDE)
+                audio = self._generate_once(gen_kwargs, np)
+                if audio.size == 0:
+                    continue
+                if not np.all(np.isfinite(audio)):
+                    saw_nonfinite = True
+                    continue
+                rms = float(np.sqrt(np.mean(np.square(audio))))
+                peak = float(np.max(np.abs(audio)))
+                if rms > best_rms:
+                    best, best_rms = audio, rms
+                if peak >= MIN_AUDIBLE_PEAK and rms >= MIN_AUDIBLE_RMS:
+                    break  # audible enough — stop re-rolling
+                logger.warning(
+                    "OmniVoice weak draw (attempt %d/%d): peak=%.3f rms=%.3f — re-rolling",
+                    attempt + 1, SYNTH_ATTEMPTS, peak, rms,
+                )
 
-        if best is None:
-            if saw_nonfinite:
-                raise RuntimeError("OmniVoice produced non-finite audio (NaN/Inf)")
-            raise RuntimeError("OmniVoice produced no audio")
-        if float(np.max(np.abs(best))) <= 1e-5:
-            raise RuntimeError("OmniVoice produced silent audio")
-        write_pcm16_wav(out_path, best, SAMPLE_RATE)
+            if best is None:
+                if saw_nonfinite:
+                    raise RuntimeError("OmniVoice produced non-finite audio (NaN/Inf)")
+                raise RuntimeError("OmniVoice produced no audio")
+            if float(np.max(np.abs(best))) <= 1e-5:
+                raise RuntimeError("OmniVoice produced silent audio")
+            write_pcm16_wav(out_path, best, SAMPLE_RATE)
 
     def _seed(self, seed: int) -> None:
         """Pin the diffusion sampler so a voice reproduces across segments."""

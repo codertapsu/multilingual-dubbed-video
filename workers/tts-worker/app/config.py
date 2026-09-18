@@ -52,6 +52,27 @@ def _resolve_concurrency() -> int:
     return max(1, min(os.cpu_count() or 4, 4))
 
 
+# Default LRU ceiling for the synthesized-audio cache. Every distinct segment of
+# every video ever dubbed leaves a WAV behind (the key includes the segment id),
+# so without a bound this grows monotonically inside the user's home directory —
+# hundreds of MB per feature-length run at 48 kHz. 4 GiB keeps a handful of
+# recent projects hot while staying well inside what a user notices.
+_DEFAULT_CACHE_MAX_BYTES = 4 * 1024 * 1024 * 1024
+
+
+def _resolve_cache_max_bytes() -> int:
+    """Byte ceiling for the TTS audio cache (TTS_CACHE_MAX_BYTES; 0 = unbounded)."""
+    raw = _env("TTS_CACHE_MAX_BYTES")
+    if raw:
+        try:
+            n = int(raw)
+            if n >= 0:
+                return n
+        except ValueError:
+            pass
+    return _DEFAULT_CACHE_MAX_BYTES
+
+
 def _default_piper_voices_dir() -> Path:
     """Default directory holding installed Piper voice models (*.onnx).
 
@@ -82,6 +103,8 @@ class Settings:
 
     # Caching
     cache_dir: Path
+    # Byte ceiling for cache_dir; 0 disables eviction.
+    cache_max_bytes: int
 
     # Audio defaults
     default_sample_rate: int
@@ -117,6 +140,7 @@ def load_settings() -> Settings:
         ),
         ffmpeg_path=_env("FFMPEG_PATH"),
         cache_dir=cache_dir,
+        cache_max_bytes=_resolve_cache_max_bytes(),
         default_sample_rate=int(_env("TTS_DEFAULT_SAMPLE_RATE", "22050") or "22050"),
         concurrency=_resolve_concurrency(),
     )

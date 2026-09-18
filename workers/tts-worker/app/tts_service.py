@@ -67,7 +67,7 @@ class TtsService:
     def __init__(self, settings: Settings, registry: EngineRegistry | None = None) -> None:
         self.settings = settings
         self.registry = registry or EngineRegistry(settings)
-        self.cache = AudioCache(settings.cache_dir)
+        self.cache = AudioCache(settings.cache_dir, settings.cache_max_bytes)
 
     # -- engine resolution -----------------------------------------------------
 
@@ -256,25 +256,10 @@ class TtsService:
         results = [out for out, _ in pairs]
         return SynthesisBatch(engine.name, fallback_count, results)
 
-    def resynth_single(
-        self,
-        *,
-        language: str,
-        voice_id: str | None,
-        segment: SegmentIn,
-        output_dir: str,
-        speed: float = 1.0,
-    ) -> SegmentOut:
-        """Re-synthesize one segment (used by the single-segment endpoint).
-
-        Reuses the same cache + naming logic as the batch path so a regenerated
-        clip lands at the expected `segment_NNNN.wav`.
-        """
-        batch = self.synthesize_segments(
-            language=language,
-            voice_id=voice_id,
-            segments=[segment],
-            output_dir=output_dir,
-            speed=speed,
-        )
-        return batch.segments[0]
+    # NOTE: there is deliberately no `resynth_single` here. One used to exist,
+    # documented as "used by the single-segment endpoint" — an endpoint that was
+    # never added, which sent readers looking for a route that does not exist.
+    # The orchestrator's per-segment regenerate (synthesizeSingleSegmentImpl)
+    # posts a one-element batch to /synthesize-segments, which already reuses the
+    # cache and the `segment_NNNN.wav` naming; add a route here if that overhead
+    # ever shows up in a measurement, not before.

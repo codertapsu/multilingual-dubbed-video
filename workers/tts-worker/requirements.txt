@@ -7,9 +7,17 @@
 # subprocess (see app/engines.py). Install the binary separately and point
 # PIPER_BINARY_PATH / PIPER_VOICE_MODEL_PATH at it. See README.md.
 
-fastapi>=0.110
-uvicorn[standard]>=0.29
-pydantic>=2.6
+# Upper bounds are deliberate. These floors used to be open `>=`, and FastAPI no
+# longer caps Starlette (0.136.3 declares a bare `starlette>=0.46.0`), so a
+# rebuild from scratch could silently adopt a new Starlette MAJOR — a different
+# HTTP stack in the same release, with no diff to show for it. Starlette is
+# therefore pinned EXPLICITLY here: it is the real HTTP layer, and <1.3.1 carries
+# GHSA-82w8-qh3p-5jfq / GHSA-jp82-jpqv-5vv3. Raise a ceiling deliberately, with a
+# rebuild + the worker test suite, never by accident.
+fastapi>=0.136,<0.142
+starlette>=1.3.1,<2
+uvicorn[standard]>=0.49,<0.54
+pydantic>=2.13,<3
 
 # Test-only (install with: pip install -r requirements.txt -r requirements-dev.txt)
 # kept here as a comment so the runtime image stays slim:

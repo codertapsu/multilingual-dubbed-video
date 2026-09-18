@@ -67,7 +67,18 @@ class EngineUnavailable(RuntimeError):
 
 
 class VieNeuEngine:
-    """Lazy VieNeu synthesizer (v2 or v3). Thread-safe load; sequential synth."""
+    """Lazy VieNeu synthesizer (v2 or v3). Thread-safe load; sequential synth.
+
+    "Sequential synth" was a claim, not a fact: only the LOAD was locked, while
+    ``/synthesize-segments`` is a plain ``def`` route, so FastAPI dispatches it
+    to the threadpool and two overlapping requests (the editor allows concurrent
+    actions on different segments) genuinely ran ``_infer`` at the same time on
+    one ONNX session. Worse, :func:`_pin_rng` seeds the PROCESS-GLOBAL
+    generators, so concurrent calls interleave their seeds and pollute each
+    other's sampling stream — reintroducing, non-deterministically, exactly the
+    cross-segment voice drift ``_pin_rng`` exists to remove. ``_synth_lock``
+    below makes the docstring true.
+    """
 
     name = voices.ENGINE_NAME
 
@@ -75,6 +86,9 @@ class VieNeuEngine:
         self._variant = variant or voices.current_variant()
         self._backend = None  # the loaded vieneu.Vieneu instance
         self._lock = threading.Lock()
+        # Distinct from _lock (which guards loading): serializes seeding +
+        # inference + save, which share global RNG state and one model session.
+        self._synth_lock = threading.Lock()
         self._load_error: str | None = None  # last warm-up failure, surfaced via /health
 
     @property
@@ -163,10 +177,14 @@ class VieNeuEngine:
 
         # Deterministic per-voice sampling: without this the SDK's temperature
         # sampling re-rolls the delivery on every call and the dub's voice
-        # audibly drifts between lines.
-        _pin_rng(f"{self._variant}:{voice.sdk_name}")
-        audio = self._infer(clean, voice)
-        _save_via_backend_or_pcm(self._backend, audio, out_path, self.sample_rate)
+        # audibly drifts between lines. The seed is process-global, so seeding
+        # and inference have to be ONE critical section — see the class
+        # docstring. The SDK exposes no per-call seed parameter, so serializing
+        # is the only correct answer today.
+        with self._synth_lock:
+            _pin_rng(f"{self._variant}:{voice.sdk_name}")
+            audio = self._infer(clean, voice)
+            _save_via_backend_or_pcm(self._backend, audio, out_path, self.sample_rate)
 
     def _infer(self, text: str, voice: "voices.NeuralVoice") -> object:
         """Run inference for the active variant. Falls back to the default voice

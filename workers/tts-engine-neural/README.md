@@ -14,8 +14,31 @@ pack. It gives Vietnamese dubbing a far more natural voice than Piper using
   is no system-binary prerequisite.
 - **48 kHz**, 10 named preset voices (no reference clip needed), En–Vi
   code-switching, Apache-2.0, ungated.
-- **Watermark**: output carries an imperceptible Resemble Perth watermark
-  (AI-audio disclosure) — pulled in with the SDK and kept on purpose.
+- **No watermark** (this used to claim otherwise — see below).
+
+## The AI-audio watermark: NOT applied
+
+This README used to state that "output carries an imperceptible Resemble Perth
+watermark (AI-audio disclosure)". It does not, and never did.
+
+`vieneu` 3.0.5 initializes its watermarker as `import perth;
+perth.PerthImplicitWatermarker()` inside a `try/except (ImportError,
+AttributeError)` that silently sets `self.watermarker = None`. Its metadata
+declares `perth>=0.2.0` — but on PyPI `perth` is an unrelated project with a
+single 2015 release ("Wrapper for `threading.local` with enhanced value
+accessor", 1.7 KB sdist). Resemble AI's watermarker is a DIFFERENT distribution,
+`resemble-perth`, which happens to install the same top-level `perth` module.
+So the resolver installs the 2015 package, the attribute lookup raises, the
+exception is swallowed, and nothing is ever watermarked. Upstream fixed this in
+vieneu 3.8.1 by moving to `resemble-perth` under an optional `watermark` extra.
+
+Making it real is not a one-line change: `resemble-perth` imports `torch`,
+`pydub`, `pyrubberband` and `audioread`, and this pack's whole premise is that
+it is torch-free on CPU. Adding torch would multiply the pack download for a
+disclosure feature. So the claim is removed rather than the code changed, and
+the pack ships unwatermarked until someone decides otherwise. The pinned
+requirement set lives in the orchestrator (`uvRequirements.ts`), and the same
+claim appears in `enginePackCatalog.ts` — both need the matching correction.
 
 ## How it fits the app
 

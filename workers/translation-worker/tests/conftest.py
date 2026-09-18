@@ -20,9 +20,18 @@ class FakeBackend:
 
     ``installed`` is the set of supported ``(from, to)`` base pairs. Translation
     is a trivial, reversible transform so assertions are easy: it upper-cases
-    the text and prefixes the target language, while leaving glossary sentinel
-    tokens untouched (mirroring how a real NMT engine should leave PUA tokens
-    alone).
+    the text and prefixes the target language, leaving the ASCII glossary
+    sentinels untouched.
+
+    Do NOT read that last clause as evidence that sentinels survive real
+    engines. This fake used to justify itself as "mirroring how a real NMT
+    engine should leave PUA tokens alone" — and the real engine did no such
+    thing: Argos deleted whole clauses around the old PUA sentinels while this
+    suite stayed green (see the incident note in :mod:`app.glossary`). The only
+    test that can settle that question is
+    ``tests/test_glossary_argos.py``, which runs the round trip through an
+    actually-installed Argos pair. ``DroppingBackend`` below covers the other
+    half: what the service must do when an engine loses a sentinel.
     """
 
     id = "fake"
@@ -102,3 +111,21 @@ def client(fake_backend: FakeBackend) -> TestClient:
     # raise_server_exceptions=False so our 500 handler renders the envelope
     # instead of TestClient re-raising the exception.
     return TestClient(create_app(), raise_server_exceptions=False)
+
+
+class DroppingBackend(FakeBackend):
+    """A backend that mangles sentinels, the way Argos mangled the PUA ones.
+
+    Everything containing a sentinel comes back as a short hallucinated clause
+    with the sentinel (and its surroundings) gone — which is exactly the shape
+    of the real failure this guards against.
+    """
+
+    id = "dropping"
+    display_name = "Dropping (test)"
+
+    def translate(self, text: str, from_lang: str, to_lang: str) -> str:
+        translated = super().translate(text, from_lang, to_lang)
+        if "XQZ" in translated:
+            return f"[{to_lang}] HALLUCINATED CLAUSE"
+        return translated

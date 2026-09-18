@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from app.glossary import _sentinel, apply_glossary_post, apply_glossary_pre
+from app.glossary import (
+    _sentinel,
+    apply_glossary_post,
+    apply_glossary_pre,
+    apply_target_terms,
+    missing_sentinels,
+)
 
 
 def _roundtrip(text: str, glossary: dict[str, str]) -> str:
@@ -49,3 +55,36 @@ def test_stray_sentinels_are_stripped() -> None:
     crafted = apply_glossary_pre("foo", glossary) + _sentinel(99)
     restored = apply_glossary_post(crafted, glossary)
     assert restored == "bar"  # index-0 -> "bar"; index-99 stray -> stripped
+
+
+def test_missing_sentinels_detects_a_dropped_term() -> None:
+    glossary = {"VideoDubber": "VideoDubber", "CPU": "CPU"}
+    protected = apply_glossary_pre("VideoDubber runs on your CPU.", glossary)
+    # The engine kept one sentinel and dropped the clause around the other.
+    mangled = protected.replace(_sentinel(0), "")
+    assert missing_sentinels(protected, mangled) == [0]
+    assert missing_sentinels(protected, protected) == []
+
+
+def test_missing_sentinels_counts_occurrences_not_presence() -> None:
+    # A term used twice that comes back once has still lost a clause.
+    glossary = {"CPU": "CPU"}
+    protected = apply_glossary_pre("the CPU and the CPU again", glossary)
+    dropped_one = protected.replace(_sentinel(0), "", 1)
+    assert missing_sentinels(protected, dropped_one) == [0]
+
+
+def test_apply_target_terms_rewrites_copied_through_terms() -> None:
+    # The fallback path: the engine copied the brand verbatim into the target
+    # text, so the user's preferred rendering can still be enforced there.
+    glossary = {"VideoDubber": "Trình lồng tiếng"}
+    assert (
+        apply_target_terms("VideoDubber chạy trên CPU của bạn.", glossary)
+        == "Trình lồng tiếng chạy trên CPU của bạn."
+    )
+
+
+def test_apply_target_terms_is_whole_word_and_longest_first() -> None:
+    glossary = {"New York": "New York City", "York": "Yorkshire"}
+    assert apply_target_terms("I love New York", glossary) == "I love New York City"
+    assert apply_target_terms("no match here", glossary) == "no match here"

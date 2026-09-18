@@ -83,13 +83,21 @@ async def _unhandled_handler(_: Request, exc: Exception) -> JSONResponse:
 
 # --- routes ------------------------------------------------------------------
 @app.get("/health", response_model=HealthResponse)
-async def health() -> HealthResponse:
-    """Liveness + engine capability flags."""
+def health() -> HealthResponse:
+    """Liveness + engine capability flags.
+
+    Plain `def`, like the two routes below, and for the same reason:
+    `registry.capabilities()` calls `SystemEngine.available()`, which on Windows
+    shells out to PowerShell once to enumerate the installed SAPI voices. As a
+    coroutine that subprocess ran ON the event loop, so the endpoint whose whole
+    job is to answer within the orchestrator's 3 s probe budget
+    (workerHttp.ts probeWorkerHealth) was itself the thing blocking the loop.
+    """
     return HealthResponse(status="ok", engines=registry.capabilities())
 
 
 @app.get("/voices", response_model=VoicesResponse)
-async def voices(
+def voices(
     language: str | None = Query(default=None, description="Filter by language code."),
 ) -> VoicesResponse:
     """List selectable voices for the available engines.
@@ -142,8 +150,20 @@ async def voices(
 
 
 @app.post("/synthesize-segments", response_model=SynthesizeResponse)
-async def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
-    """Synthesize one WAV per segment into req.outputDir."""
+def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
+    """Synthesize one WAV per segment into req.outputDir.
+
+    Declared `def`, NOT `async def`, on purpose. `service.synthesize_segments`
+    is fully synchronous — it runs an engine subprocess per segment, up to
+    TTS_CONCURRENCY at a time — so as a coroutine it pinned the event loop for
+    the entire batch and `GET /health` simply did not answer until the last
+    segment was written. The orchestrator probes health with a 3 s budget
+    (workerHttp.ts probeWorkerHealth) and its readiness gate uses the same
+    probe, so a worker that was busy dubbing was reported dead and a second run
+    was blocked behind it. A plain `def` hands the work to FastAPI's threadpool
+    instead, matching the MT worker and both neural engine packs (the STT
+    worker reaches the same place via `anyio.to_thread`).
+    """
     batch = service.synthesize_segments(
         language=req.language,
         voice_id=req.voiceId,

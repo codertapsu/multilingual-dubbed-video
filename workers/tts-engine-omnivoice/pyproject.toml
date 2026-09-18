@@ -18,8 +18,11 @@ dependencies = [
 # audio codec — so this pack is gated to darwin/arm64. omnivoice pulls transformers
 # + accelerate; torch/torchaudio are listed explicitly to pin the MPS build.
 omnivoice = [
-  "torch>=2.4",
-  "torchaudio>=2.4",
+  # torch floor raised from >=2.4: GHSA-rrmf-rvhw-rf47 affects everything below
+  # 2.13.0, and >=2.4 admitted torch 2.4.0 (23 OSV advisories). The pack venv's
+  # real pin lives in the orchestrator's uvRequirements.ts; this mirrors it.
+  "torch>=2.13",
+  "torchaudio>=2.13",
   "omnivoice>=0.1.5",
 ]
 dev = [

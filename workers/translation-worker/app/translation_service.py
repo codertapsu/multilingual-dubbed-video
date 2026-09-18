@@ -23,7 +23,12 @@ import logging
 import threading
 
 from .errors import AppErrorException
-from .glossary import apply_glossary_post, apply_glossary_pre
+from .glossary import (
+    apply_glossary_post,
+    apply_glossary_pre,
+    apply_target_terms,
+    missing_sentinels,
+)
 from .lang import to_argos_language
 from .providers import ArgosBackend, TranslationBackend
 from .schemas import (
@@ -233,15 +238,60 @@ def translate_segments(
 
     results: list[ResultSegment] = []
     for segment in segments:
-        # 1) PRE-protect glossary source terms with sentinels.
-        protected = apply_glossary_pre(segment.sourceText, glossary)
-
-        # 2) Translate this segment on its own (never merged with others).
-        translated = backend.translate(protected, from_lang, to_lang)
-
-        # 3) POST-restore sentinels to the desired target terms.
-        finalized = apply_glossary_post(translated, glossary)
-
-        results.append(ResultSegment(id=segment.id, translatedText=finalized))
+        results.append(
+            ResultSegment(
+                id=segment.id,
+                translatedText=_translate_one(
+                    backend, segment.sourceText, from_lang, to_lang, glossary
+                ),
+            )
+        )
 
     return TranslateResponse(segments=results)
+
+
+def _translate_one(
+    backend: TranslationBackend,
+    source_text: str,
+    from_lang: str,
+    to_lang: str,
+    glossary: dict[str, str] | None,
+) -> str:
+    """Translate one segment, protecting glossary terms and VERIFYING the result.
+
+    Sentinel protection is only trustworthy if the engine actually round-trips
+    the sentinels. It used to be assumed; the assumption was wrong and Argos
+    silently deleted whole clauses around the old PUA sentinels (see the
+    incident note in :mod:`app.glossary`). So the protected translation is
+    checked before it is accepted: if any sentinel did not come back, we throw
+    that output away, translate the *untouched* source, and enforce the glossary
+    on the target side instead. A weaker glossary beats a fluent mistranslation.
+    """
+    # 1) PRE-protect glossary source terms with sentinels.
+    protected = apply_glossary_pre(source_text, glossary)
+
+    # 2) Translate this segment on its own (never merged with others).
+    translated = backend.translate(protected, from_lang, to_lang)
+
+    if not glossary:
+        return apply_glossary_post(translated, None)
+
+    # 3) VERIFY the round trip before trusting it.
+    lost = missing_sentinels(protected, translated)
+    if not lost:
+        # 4a) POST-restore sentinels to the desired target terms.
+        return apply_glossary_post(translated, glossary)
+
+    logger.warning(
+        "Glossary: backend '%s' lost %d protected term(s) (%s) on %s->%s; "
+        "re-translating the unprotected source and enforcing the glossary on "
+        "the target text instead.",
+        getattr(backend, "id", "?"),
+        len(lost),
+        ", ".join(str(i) for i in lost),
+        from_lang,
+        to_lang,
+    )
+    # 4b) Fallback: plain translation + target-side enforcement.
+    plain = backend.translate(source_text, from_lang, to_lang)
+    return apply_target_terms(plain, glossary)

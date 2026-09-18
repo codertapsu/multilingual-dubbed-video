@@ -63,6 +63,13 @@ class TranscribeResponse(BaseModel):
     segments: List[Segment]
     detectedLanguage: str
     durationMs: int
+    #: What the audio actually SOUNDS like, probed independently of the forced
+    #: language (null when the caller let whisper auto-detect, in which case
+    #: `detectedLanguage` is already the honest answer). When this disagrees with
+    #: the project's source language the transcript is fluent nonsense — see
+    #: `whisper_service.language_mismatch`.
+    probedLanguage: Optional[str] = None
+    probedLanguageProbability: Optional[float] = None
 
 
 class HealthResponse(BaseModel):

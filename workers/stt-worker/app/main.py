@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -45,11 +47,31 @@ logger = logging.getLogger("videodubber.stt")
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Opt-in eager model load on startup.
+
+    Failures here are non-fatal: /health stays up and the structured error
+    surfaces on the first /transcribe call. (Was an ``@app.on_event("startup")``
+    hook, which FastAPI now deprecates.)
+    """
+    if os.environ.get("STT_WARMUP", "").lower() in ("1", "true", "yes"):
+        try:
+            from anyio import to_thread
+
+            await to_thread.run_sync(whisper_service.warm_up)
+            logger.info("STT warm-up complete; model preloaded.")
+        except Exception:  # noqa: BLE001 - best-effort warm-up
+            logger.warning("STT warm-up failed; will load lazily.", exc_info=True)
+    yield
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="VideoDubber STT Worker",
         version=__version__,
         summary="Local speech-to-text using faster-whisper.",
+        lifespan=_lifespan,
     )
 
     # CORS: allow localhost origins (orchestrator + Tauri webview in dev).
@@ -104,19 +126,6 @@ def create_app() -> FastAPI:
         model, already = await to_thread.run_sync(whisper_service.ensure_model, req.model)
         logger.info("Ensured Whisper model '%s' (alreadyCached=%s).", model, already)
         return EnsureModelResponse(ok=True, model=model, alreadyCached=already)
-
-    @app.on_event("startup")
-    async def _maybe_warm_up() -> None:
-        # Opt-in eager model load. Failures here are non-fatal: /health stays up
-        # and the structured error surfaces on the first /transcribe call.
-        if os.environ.get("STT_WARMUP", "").lower() in ("1", "true", "yes"):
-            try:
-                from anyio import to_thread
-
-                await to_thread.run_sync(whisper_service.warm_up)
-                logger.info("STT warm-up complete; model preloaded.")
-            except Exception:  # noqa: BLE001 - best-effort warm-up
-                logger.warning("STT warm-up failed; will load lazily.", exc_info=True)
 
     return app
 

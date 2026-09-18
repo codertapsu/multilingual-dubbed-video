@@ -7,24 +7,35 @@ name = "videodubber-stt-worker"
 version = "0.1.0"
 description = "VideoDubber STT worker: local speech-to-text FastAPI service using faster-whisper."
 readme = "README.md"
-requires-python = ">=3.9"
+# Pinned to CPython 3.12.x — the SAME interpreter the app bundles
+# (resources/python/cpython-3.12.13-*) and the same one the engine-pack venvs use
+# (UV_PYTHON_VERSION). A 3.13 venv is not a neutral choice here: the shipped
+# macOS workers were frozen from a Homebrew python@3.13 built on macOS 26, which
+# tagged every bundled dylib minos 26.0 and made the workers refuse to start on
+# the macOS 13.5 the app advertises. It also resolves a different dependency set
+# (e.g. libretranslate pins numpy<2 on <=3.12 and numpy==2.3.5 on >=3.13), so the
+# two OSes shipped two stacks under one version number. Fail loudly instead.
+requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "VideoDubber" }]
 keywords = ["speech-to-text", "whisper", "faster-whisper", "fastapi", "subtitles"]
 
+# Mirrors requirements.txt, ceilings included — see the note there on why the
+# upper bounds exist (FastAPI no longer caps Starlette).
 dependencies = [
-  "fastapi>=0.110",
-  "uvicorn[standard]>=0.29",
-  "faster-whisper>=1.0",
-  "pydantic>=2",
+  "fastapi>=0.136,<0.142",
+  "starlette>=1.3.1,<2",
+  "uvicorn[standard]>=0.49,<0.54",
+  "faster-whisper>=1.2.1,<1.3",
+  "pydantic>=2.13,<3",
 ]
 
 [project.optional-dependencies]
 # Dev / test extras. faster-whisper is intentionally NOT required to run the
 # unit tests: the whisper service is monkeypatched so tests work fully offline.
 dev = [
-  "pytest>=8",
-  "httpx>=0.27",
+  "pytest>=8,<10",
+  "httpx>=0.27,<1",
 ]
 
 [project.urls]

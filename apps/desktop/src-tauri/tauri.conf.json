@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob: asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:5100 http://127.0.0.1:5101 http://127.0.0.1:5102 http://127.0.0.1:5103 http://localhost:5100 http://localhost:5101 http://localhost:5102 http://localhost:5103 ws://127.0.0.1:5100 ws://localhost:5100 https://github.com https://objects.githubusercontent.com https://*.githubusercontent.com"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' blob: http://127.0.0.1:5100 http://localhost:5100; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:5100 http://127.0.0.1:5101 http://127.0.0.1:5102 http://127.0.0.1:5103 http://localhost:5100 http://localhost:5101 http://localhost:5102 http://localhost:5103 ws://127.0.0.1:5100 ws://localhost:5100; base-uri 'none'; form-action 'none'; object-src 'none'"
     }
   },
   "plugins": {
@@ -41,7 +41,16 @@
     "createUpdaterArtifacts": true,
     "macOS": {
       "entitlements": "./entitlements.plist",
-      "minimumSystemVersion": "13.5"
+      "minimumSystemVersion": "14.0"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
     },
     "externalBin": [
       "binaries/videodubber-orchestrator",

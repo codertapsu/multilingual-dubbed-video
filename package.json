@@ -1,6 +1,6 @@
 {
   "name": "videodubber",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "private": true,
   "description": "VideoDubber \u2014 a local/offline-first desktop app that dubs videos into another language.",
   "license": "MIT",

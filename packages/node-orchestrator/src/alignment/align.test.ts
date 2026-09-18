@@ -96,4 +96,44 @@ describe('alignSegments + summarizeAlignment', () => {
     expect(summary.timingConflicts).toBe(1);
     expect(summary.needsAtempo).toBeGreaterThanOrEqual(1);
   });
+
+  it('does not let the overflow budget spill a clip into the next line', () => {
+    // Regression: the gap-aware window already runs to the next line's start, so
+    // allowing another `allowedOverflowMs` on top accepted up to 1.5 s of
+    // literal overlap — two voices at once, reported as a harmless
+    // needs-review, so nothing downstream tried to shorten it.
+    const settings: AlignSettings = { maxSpeedRatio: 1, allowedOverflowMs: 1500 };
+    const inputs: AlignInputSegment[] = [
+      { segmentId: 'seg_0001', startMs: 0, endMs: 1000, audioPath: 'a', generatedDurationMs: 1800 },
+      { segmentId: 'seg_0002', startMs: 1000, endMs: 2000, audioPath: 'b', generatedDurationMs: 500 },
+    ];
+    const [first] = alignSegments(inputs, settings, 2000);
+    expect(first?.overflowMs).toBe(800);
+    expect(first?.status).toBe('timing-conflict');
+    expect(first?.note).toContain('into the next line');
+  });
+
+  it('still tolerates overflow into a real silence gap', () => {
+    // Nothing is spoken until 5000 ms, so the window runs to 5000 and a clip
+    // that fits inside it is simply `ok` — the gap does the work, no budget
+    // needed.
+    const settings: AlignSettings = { maxSpeedRatio: 1, allowedOverflowMs: 1500 };
+    const inputs: AlignInputSegment[] = [
+      { segmentId: 'seg_0001', startMs: 0, endMs: 1000, audioPath: 'a', generatedDurationMs: 1800 },
+      { segmentId: 'seg_0002', startMs: 5000, endMs: 6000, audioPath: 'b', generatedDurationMs: 500 },
+    ];
+    const [first] = alignSegments(inputs, settings, 6000);
+    expect(first?.overflowMs).toBe(0);
+    expect(first?.status).toBe('ok');
+  });
+
+  it('keeps the full budget for a trailing segment of unknown total duration', () => {
+    const settings: AlignSettings = { maxSpeedRatio: 1, allowedOverflowMs: 1500 };
+    const inputs: AlignInputSegment[] = [
+      { segmentId: 'seg_0001', startMs: 0, endMs: 1000, audioPath: 'a', generatedDurationMs: 1800 },
+    ];
+    const [only] = alignSegments(inputs, settings);
+    expect(only?.overflowMs).toBe(800);
+    expect(only?.status).toBe('needs-review');
+  });
 });

@@ -10,8 +10,18 @@
  *      `settings.maxSpeedRatio`. The required ratio is `generatedMs/availableMs`,
  *      capped at `maxSpeedRatio`. We never compress faster than the cap.
  *   3. After speed-up, if the segment still overflows but the overflow is within
- *      `settings.allowedOverflowMs`, we accept it (status `needs-review`).
+ *      the segment's overflow budget, we accept it (status `needs-review`).
  *   4. Otherwise the segment cannot fit -> status `timing-conflict`.
+ *
+ * THE OVERFLOW BUDGET IS NOT `settings.allowedOverflowMs` FLAT. When
+ * {@link alignSegments} made the window gap-aware (it already runs to the NEXT
+ * segment's start), the 1500 ms default budget started stacking on top of that
+ * slot: a clip could be accepted while running up to 1.5 s PAST the moment the
+ * next line begins speaking — two voices talking over each other, reported as a
+ * mere `needs-review`, so auto-fit and native-rate re-synthesis never tried to
+ * shorten it. The budget is therefore clamped to the free time that actually
+ * follows the window (`freeAfterMs`): tolerance for spilling into silence, none
+ * for spilling into the next speaker.
  *
  * `placedDurationMs` is the duration the segment actually occupies after any
  * atempo speed-up (`generatedMs / speedRatio`). When `speedRatio > 1` the
@@ -51,6 +61,12 @@ export function alignSegment(
   seg: AlignInputSegment,
   settings: AlignSettings,
   availableWindowMs?: number,
+  /**
+   * Free time AFTER the window before the next line starts (or the media ends).
+   * Caps how much overflow may be tolerated; omitted = the full
+   * `settings.allowedOverflowMs` (a lone segment with nothing after it).
+   */
+  freeAfterMs?: number,
 ): AlignedSegment {
   const startMs = roundMs(seg.startMs);
   const endMs = roundMs(seg.endMs);
@@ -101,6 +117,12 @@ export function alignSegment(
   const placedDurationMs = roundMs(generatedMs / speedRatio);
   const overflowMs = Math.max(0, placedDurationMs - availableMs);
 
+  // Overflow we may tolerate here: never more than the silence that follows.
+  const budgetMs = Math.max(
+    0,
+    Math.min(settings.allowedOverflowMs, freeAfterMs ?? settings.allowedOverflowMs),
+  );
+
   let status: AlignmentStatus;
   let note: string | undefined;
 
@@ -108,17 +130,22 @@ export function alignSegment(
     // Speed-up alone made it fit, but we flag for review since timing changed.
     status = 'needs-review';
     note = `Sped up to ${speedRatio.toFixed(3)}x to fit the window.`;
-  } else if (overflowMs <= Math.max(0, settings.allowedOverflowMs)) {
-    // Still overflows but within the tolerated budget.
+  } else if (overflowMs <= budgetMs) {
+    // Still overflows but within the tolerated budget (free silence follows).
     status = 'needs-review';
     note =
       speedRatio > 1
-        ? `Sped up to ${speedRatio.toFixed(3)}x; overflows by ${overflowMs}ms (within allowed ${settings.allowedOverflowMs}ms).`
-        : `Overflows by ${overflowMs}ms (within allowed ${settings.allowedOverflowMs}ms).`;
+        ? `Sped up to ${speedRatio.toFixed(3)}x; overflows by ${overflowMs}ms (within allowed ${budgetMs}ms).`
+        : `Overflows by ${overflowMs}ms (within allowed ${budgetMs}ms).`;
   } else {
-    // Cannot fit even at max speed within the overflow budget.
+    // Cannot fit even at max speed within the overflow budget. When the budget
+    // was clamped to 0 the overflow lands ON the next line, so say so — that is
+    // an overlap the user can hear, not just a long line.
     status = 'timing-conflict';
-    note = `Overflows by ${overflowMs}ms beyond allowed ${settings.allowedOverflowMs}ms even at ${speedRatio.toFixed(3)}x. Consider shortening the translation.`;
+    note =
+      budgetMs === 0
+        ? `Overflows by ${overflowMs}ms into the next line even at ${speedRatio.toFixed(3)}x. Consider shortening the translation.`
+        : `Overflows by ${overflowMs}ms beyond allowed ${budgetMs}ms even at ${speedRatio.toFixed(3)}x. Consider shortening the translation.`;
   }
 
   return {
@@ -153,15 +180,28 @@ export function alignSegments(
     const startMs = roundMs(s.startMs);
     const ownWindow = Math.max(0, roundMs(s.endMs) - startMs);
     const next = segments[i + 1];
-    let slot: number;
-    if (next) {
-      slot = roundMs(next.startMs) - startMs;
-    } else if (totalDurationMs != null) {
-      slot = roundMs(totalDurationMs) - startMs;
-    } else {
-      slot = ownWindow;
-    }
-    return alignSegment(s, settings, Math.max(ownWindow, slot));
+    // Where the clip must have stopped to stay out of the next line (or off the
+    // end of the media). Unknown for a trailing segment with no total duration.
+    const hardLimitMs = next
+      ? roundMs(next.startMs) - startMs
+      : totalDurationMs != null
+        ? roundMs(totalDurationMs) - startMs
+        : undefined;
+    const slot = hardLimitMs ?? ownWindow;
+    const availableMs = Math.max(ownWindow, slot);
+    // `availableMs` ALREADY spans every millisecond up to the next line's start
+    // (that is what makes the window gap-aware), so by construction there is no
+    // unclaimed time left between this clip and its successor. Spending
+    // `allowedOverflowMs` on top of it therefore does not buy silence — it buys
+    // the next line, which is how two dub voices ended up audibly talking over
+    // each other on dense dialogue. So: no overflow budget where a successor
+    // exists; `allowedOverflowMs` applies only past the LAST segment, where the
+    // only thing after the clip is the end of the media.
+    //
+    // Written as a literal 0 rather than `max(0, hardLimitMs - availableMs)`,
+    // which is provably always 0 here and read as if it sometimes were not.
+    const freeAfterMs = hardLimitMs === undefined ? undefined : 0;
+    return alignSegment(s, settings, availableMs, freeAfterMs);
   });
 }
 

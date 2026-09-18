@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 // Mock the ffmpeg/ffprobe shells so duckAndMix's two-pass logic is testable
 // without real binaries. The pure helpers (loudnormMeasurementsUsable,
@@ -89,10 +92,22 @@ describe('mix filtergraph (unchanged behavior sanity)', () => {
 });
 
 describe('duckAndMix two-pass loudnorm + silent fallback', () => {
+  // duckAndMix writes through writeAtomically (ffmpeg -> `<dest>.partial.wav`,
+  // renamed on success), so the fake ffmpeg has to actually produce the file it
+  // was told to write — that rename IS the behavior protecting resume from a
+  // truncated mix.
+  let dir: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'vd-mix-test-'));
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
   const base: DuckAndMixInput = {
     originalAudio: 'orig.wav',
     ttsTimeline: 'tts.wav',
-    output: 'out.wav',
+    get output(): string {
+      return join(dir, 'out.wav');
+    },
     duckingLevelDb: -15,
     ttsGainDb: 0,
     includeBackground: false,
@@ -102,11 +117,19 @@ describe('duckAndMix two-pass loudnorm + silent fallback', () => {
 
   afterEach(() => runFfmpegMock.mockReset());
 
+  /** Stand in for ffmpeg: emit the requested WAV, then report `stderr`. */
+  const fakeFfmpeg = (stderr: string) => async (args: string[]) => {
+    const out = args[args.length - 1] ?? '';
+    if (out.endsWith('.wav')) writeFileSync(out, 'RIFF', 'utf8');
+    return { stdout: '', stderr, exitCode: 0 };
+  };
+
   it('applies the measured second pass when the program loudness is usable', async () => {
-    runFfmpegMock.mockResolvedValue({
-      stdout: '',
-      stderr: JSON.stringify({ input_i: '-18', input_tp: '-2', input_lra: '7', input_thresh: '-28', target_offset: '0.5' }),
-    } as never);
+    runFfmpegMock.mockImplementation(
+      fakeFfmpeg(
+        JSON.stringify({ input_i: '-18', input_tp: '-2', input_lra: '7', input_thresh: '-28', target_offset: '0.5' }),
+      ) as never,
+    );
     await duckAndMix(base);
     expect(runFfmpegMock).toHaveBeenCalledTimes(2); // measure + apply
     expect(runFfmpegMock.mock.calls[1]![0].join(' ')).toContain('measured_I=-18');
@@ -114,15 +137,35 @@ describe('duckAndMix two-pass loudnorm + silent fallback', () => {
 
   it('falls back to single-pass (no measured values) when the program is silent', async () => {
     // ffmpeg-8.x silent analysis: I/TP=-inf, offset=inf -> unusable -> single pass.
-    runFfmpegMock.mockResolvedValue({
-      stdout: '',
-      stderr: '{ "input_i":"-inf","input_tp":"-inf","input_lra":"0.00","input_thresh":"-70.00","target_offset":"inf" }',
-    } as never);
+    runFfmpegMock.mockImplementation(
+      fakeFfmpeg('{ "input_i":"-inf","input_tp":"-inf","input_lra":"0.00","input_thresh":"-70.00","target_offset":"inf" }') as never,
+    );
     await duckAndMix(base);
     expect(runFfmpegMock).toHaveBeenCalledTimes(2);
     expect(runFfmpegMock.mock.calls[0]![0]).toContain('-f'); // pass 1 = `-f null` measure
     const apply = runFfmpegMock.mock.calls[1]![0].join(' ');
     expect(apply).toContain('loudnorm'); // single-pass dynamic loudnorm
     expect(apply).not.toContain('measured_I'); // NOT the two-pass apply
+  });
+
+  it('writes to <dest>.partial.wav and leaves nothing behind when ffmpeg fails', async () => {
+    // Regression: a cancelled/crashed mix used to leave a truncated, NON-EMPTY
+    // final_mix.wav that the pipeline's resume check accepted as a finished
+    // step — the next run skipped Mix Audio and shipped a half-length dub.
+    const dest = join(dir, 'fails.wav');
+    const seen: string[] = [];
+    runFfmpegMock.mockImplementation((async (args: string[]) => {
+      const out = args[args.length - 1] ?? '';
+      seen.push(out);
+      if (out.endsWith('.wav')) writeFileSync(out, 'TRUNCATED', 'utf8');
+      throw new Error('ffmpeg exited with code 255');
+    }) as never);
+
+    await expect(duckAndMix({ ...base, output: dest, twoPassLoudnorm: false })).rejects.toThrow(
+      'ffmpeg exited with code 255',
+    );
+    expect(seen).toEqual([join(dir, 'fails.partial.wav')]);
+    expect(existsSync(dest)).toBe(false);
+    expect(existsSync(join(dir, 'fails.partial.wav'))).toBe(false);
   });
 });

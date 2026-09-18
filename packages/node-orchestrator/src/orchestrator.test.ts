@@ -232,6 +232,32 @@ describe('run readiness gate', () => {
     await expect(gated.runPipeline(project.id)).resolves.toEqual({ started: true, queued: false });
     await gated.cancelJob(project.id); // clean up the scheduled background run
   });
+
+  it('refuses editor mutations while the pipeline is running', async () => {
+    // The editor rewrites the very artifacts stepTts/stepAlignment are writing
+    // (translated.json, synthesis_groups.json, translated.aligned.json), which
+    // produces audio that doesn't match the persisted text with no error
+    // anywhere. updateProjectSettings always refused; the editor paths did not.
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video));
+    const gated = gatedOrchestrator(async () => [
+      { phase: 'stt', providerId: 'faster-whisper', status: 'ready', ready: true, message: 'Ready.' },
+    ]);
+    await gated.runPipeline(project.id);
+    expect(gated.isRunning(project.id)).toBe(true);
+
+    await expect(
+      gated.saveTranslatedSegments(project.id, [{ id: 'seg_0001', translatedText: 'x' }]),
+    ).rejects.toMatchObject({ appError: { code: 'RUN_IN_PROGRESS' } });
+    await expect(gated.synthesizeSingleSegment(project.id, 'seg_0001', {})).rejects.toMatchObject({
+      appError: { code: 'RUN_IN_PROGRESS' },
+    });
+    await expect(gated.refitSegment(project.id, 'seg_0001')).rejects.toMatchObject({
+      appError: { code: 'RUN_IN_PROGRESS' },
+    });
+
+    await gated.cancelJob(project.id);
+  });
 });
 
 describe('ProviderRegistry resolution', () => {

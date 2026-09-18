@@ -119,6 +119,15 @@ export interface TranslationSegmentInput {
   startMs: number;
   /** Segment end time in ms (context, preserved). */
   endMs: number;
+  /**
+   * Diarization speaker id, when known (matches `TranscriptSegment.speakerId`).
+   *
+   * Context-capable providers put it in the prompt: WHO is speaking is what
+   * decides Vietnamese xưng hô (thầy/cô vs anh/chị vs em), and without it a
+   * batch of alternating lines reads as one voice talking to itself — the model
+   * picks a register per line instead of per relationship.
+   */
+  speakerId?: string;
 }
 
 /**

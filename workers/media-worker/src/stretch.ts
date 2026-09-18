@@ -124,7 +124,12 @@ async function probeRubberbandCli(): Promise<boolean> {
     let child: ReturnType<typeof spawn>;
     try {
       // argv array, no shell — same execution rules as exec.ts.
-      child = spawn(resolveRubberbandBinary(), ['--version'], { stdio: ['ignore', 'ignore', 'ignore'] });
+      // windowsHide: same reason as exec.ts — the orchestrator has no console,
+      // so a console-subsystem child without it pops a CMD window.
+      child = spawn(resolveRubberbandBinary(), ['--version'], {
+        stdio: ['ignore', 'ignore', 'ignore'],
+        windowsHide: true,
+      });
     } catch {
       resolve(false);
       return;
@@ -154,6 +159,7 @@ export function stretchWithRubberbandCli(input: string, output: string, ratio: n
   return new Promise<void>((resolvePromise, reject) => {
     const child = spawn(resolveRubberbandBinary(), buildRubberbandArgs(input, output, ratio), {
       stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true,
     });
     let stderr = '';
     child.stderr?.on('data', (d: Buffer) => {

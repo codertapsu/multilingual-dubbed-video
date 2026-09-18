@@ -9,6 +9,7 @@
  */
 
 import type { AudioExtractResult } from '@videodubber/shared';
+import { writeAtomically } from './atomic.js';
 import {
   assertInputReadable,
   assertOutputWritable,
@@ -51,7 +52,13 @@ export function buildExtract16kMonoArgs(inputPath: string, outputPath: string): 
   ];
 }
 
-/** Extract full-rate stereo 48k audio. Returns the measured result. */
+/**
+ * Extract full-rate stereo 48k audio. Returns the measured result.
+ *
+ * Written via {@link writeAtomically}: a kill mid-extraction must not leave a
+ * truncated `original.wav` behind, because the pipeline's resume check treats
+ * any non-empty artifact as a finished step (see atomic.ts).
+ */
 export async function extractAudio(
   inputPath: string,
   outputPath: string,
@@ -59,11 +66,20 @@ export async function extractAudio(
 ): Promise<AudioExtractResult> {
   assertInputReadable(inputPath);
   assertOutputWritable(outputPath);
-  await runFfmpeg(buildExtractAudioArgs(inputPath, outputPath), opts);
+  await writeAtomically(outputPath, (partial) =>
+    runFfmpeg(buildExtractAudioArgs(inputPath, partial), opts),
+  );
   return measure(outputPath);
 }
 
-/** Extract 16k mono PCM audio for STT. Returns the measured result. */
+/**
+ * Extract 16k mono PCM audio for STT. Returns the measured result.
+ *
+ * Atomic for the same reason as {@link extractAudio} — and it bites hardest
+ * here: a truncated `original_16k_mono.wav` that a resume accepts makes STT
+ * transcribe only part of the video, and every downstream artifact is then
+ * silently short with no error anywhere.
+ */
 export async function extract16kMono(
   inputPath: string,
   outputPath: string,
@@ -71,7 +87,9 @@ export async function extract16kMono(
 ): Promise<AudioExtractResult> {
   assertInputReadable(inputPath);
   assertOutputWritable(outputPath);
-  await runFfmpeg(buildExtract16kMonoArgs(inputPath, outputPath), opts);
+  await writeAtomically(outputPath, (partial) =>
+    runFfmpeg(buildExtract16kMonoArgs(inputPath, partial), opts),
+  );
   return measure(outputPath);
 }
 
@@ -125,7 +143,9 @@ export async function clip16kMono(
 ): Promise<AudioExtractResult> {
   assertInputReadable(inputPath);
   assertOutputWritable(outputPath);
-  await runFfmpeg(buildClip16kMonoArgs(inputPath, outputPath, startMs, endMs), opts);
+  await writeAtomically(outputPath, (partial) =>
+    runFfmpeg(buildClip16kMonoArgs(inputPath, partial, startMs, endMs), opts),
+  );
   return { audioPath: outputPath, sampleRate: 16000, channels: 1, durationMs: Math.max(0, endMs - startMs) };
 }
 

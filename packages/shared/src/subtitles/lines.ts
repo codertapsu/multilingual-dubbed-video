@@ -1,10 +1,20 @@
 /**
  * Subtitle line-wrapping.
  *
- * Wraps subtitle text into at most `maxLines` lines, each targeting at most
- * `maxCharsPerLine` characters, without splitting words. If the text cannot
- * fit, it is truncated gracefully (whole words kept) with a trailing ellipsis
- * on the final line.
+ * Wraps subtitle text into lines of at most `maxCharsPerLine` characters,
+ * without splitting words. What happens when the text needs MORE than
+ * `maxLines` lines is the caller's choice ({@link SubtitleOverflowPolicy}):
+ *
+ *   - `'truncate'` — keep `maxLines` lines and end with an ellipsis. This is a
+ *     DISPLAY cap (the editor's "this line is long" warning), never a way to
+ *     write a file.
+ *   - `'wrap'` — keep every word, using as many lines as the text needs.
+ *
+ * The distinction exists because the two-line truncation was silently applied
+ * to EXPORTED .srt/.vtt files: the default `srt-file` export dropped roughly
+ * 45% of a typical Vietnamese cue ("…" mid-sentence) while the dubbed audio
+ * spoke the full line, with no warning anywhere. Serialization must never
+ * discard text — see srt.ts / vtt.ts, which both wrap.
  */
 
 /** Default target characters per line (tuned for Vietnamese readability). */
@@ -13,31 +23,42 @@ export const DEFAULT_MAX_CHARS_PER_LINE = 42;
 export const DEFAULT_MAX_LINES = 2;
 
 /**
- * Word-wrap subtitle `text` into at most `maxLines` lines of at most
- * `maxCharsPerLine` characters each.
+ * What to do with text that does not fit in `maxLines` lines.
+ *
+ * `'truncate'` loses words and is only ever correct for on-screen display;
+ * `'wrap'` keeps all of them and is what every file writer must use.
+ */
+export type SubtitleOverflowPolicy = 'truncate' | 'wrap';
+
+/**
+ * Word-wrap subtitle `text` into lines of at most `maxCharsPerLine` characters.
  *
  * Rules:
  *  - Collapses runs of whitespace to single spaces.
  *  - Never splits a word across lines (words longer than the limit occupy
  *    their own line as-is).
- *  - If the content overflows `maxLines`, truncates whole words and appends an
- *    ellipsis (`…`) to the last line, keeping the line within the char budget.
+ *  - With `overflow: 'truncate'` (the default, for DISPLAY), content past
+ *    `maxLines` is dropped and the last line ends in an ellipsis (`…`).
+ *  - With `overflow: 'wrap'`, `maxLines` is ignored and every word is kept.
  *
  * @param text            The text to wrap.
  * @param maxCharsPerLine Target max characters per line (default 42).
- * @param maxLines        Max number of lines (default 2).
- * @returns An array of 0..maxLines line strings.
+ * @param maxLines        Max number of lines (default 2); ignored when wrapping.
+ * @param overflow        Overflow policy (default `'truncate'`).
+ * @returns An array of line strings.
  */
 export function splitSubtitleLines(
   text: string,
   maxCharsPerLine: number = DEFAULT_MAX_CHARS_PER_LINE,
   maxLines: number = DEFAULT_MAX_LINES,
+  overflow: SubtitleOverflowPolicy = 'truncate',
 ): string[] {
   const normalized = (text ?? '').replace(/\s+/g, ' ').trim();
   if (normalized === '') return [];
 
   const safeMaxChars = Math.max(1, Math.floor(maxCharsPerLine));
-  const safeMaxLines = Math.max(1, Math.floor(maxLines));
+  // 'wrap' keeps every word, so there is no line ceiling to break out at.
+  const safeMaxLines = overflow === 'wrap' ? Number.POSITIVE_INFINITY : Math.max(1, Math.floor(maxLines));
 
   const words = normalized.split(' ');
   const lines: string[] = [];
@@ -91,12 +112,14 @@ export function splitSubtitleLines(
 /**
  * Convenience wrapper that joins {@link splitSubtitleLines} with `\n`.
  *
- * @returns A single string with at most `maxLines` lines.
+ * @returns A single string: at most `maxLines` lines when truncating, as many
+ *          as the text needs when wrapping.
  */
 export function wrapSubtitleText(
   text: string,
   maxCharsPerLine: number = DEFAULT_MAX_CHARS_PER_LINE,
   maxLines: number = DEFAULT_MAX_LINES,
+  overflow: SubtitleOverflowPolicy = 'truncate',
 ): string {
-  return splitSubtitleLines(text, maxCharsPerLine, maxLines).join('\n');
+  return splitSubtitleLines(text, maxCharsPerLine, maxLines, overflow).join('\n');
 }

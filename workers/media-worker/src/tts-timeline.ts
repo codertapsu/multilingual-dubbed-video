@@ -26,6 +26,7 @@ import { mkdtempSync, rmSync, statfsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AppErrorException, type AlignedSegment, type TimeStretchEngine } from '@videodubber/shared';
+import { writeAtomically } from './atomic.js';
 import {
   assertInputReadable,
   assertOutputWritable,
@@ -38,6 +39,7 @@ import {
   detectStretchCapabilities,
   shouldUseRubberband,
   stretchWithRubberbandCli,
+  type StretchCapabilities,
 } from './stretch.js';
 
 /** Max real audio inputs to feed a single amix node before chunking. */
@@ -307,39 +309,80 @@ export interface BuildTtsTimelineInput {
 }
 
 /**
+ * What actually stretched this run's clips.
+ *
+ * Reported (and logged by the orchestrator) because the stretcher is INVISIBLE
+ * otherwise: Rubber Band is picked purely from runtime capability detection, and
+ * the shipped macOS ffmpeg has no `rubberband` filter and no CLI beside it — so
+ * every packaged macOS dub silently falls back to atempo, which smears speech
+ * above ~1.1x, while a developer with Homebrew's `rubberband` on PATH hears the
+ * good path. One line in pipeline.log makes that difference diagnosable instead
+ * of a mystery about "why do users' dubs sound worse than mine".
+ */
+export interface TimelineStretchSummary {
+  /** Clips that needed a tempo change at all. */
+  stretched: number;
+  /** Stretched by ffmpeg's in-graph `rubberband` filter. */
+  rubberbandFilter: number;
+  /** Pre-stretched by the standalone `rubberband` CLI. */
+  rubberbandCli: number;
+  /** Left to ffmpeg's `atempo` (the universal fallback). */
+  atempo: number;
+  /** Rubber Band capabilities detected on this machine. */
+  capabilities: StretchCapabilities;
+}
+
+/** Capabilities reported when nothing was probed (no clip needed stretching). */
+const NO_CAPABILITIES: StretchCapabilities = { ffmpegFilter: false, cli: false };
+
+/**
  * Resolve each clip's stretch mechanism from the engine policy + detected
  * capabilities. Prefers ffmpeg's `rubberband` filter (in-graph, zero-copy);
  * clips needing Rubber Band with only the CLI available are pre-stretched to
  * temp WAVs in `cliTmpDir`. A CLI failure silently falls back to atempo for
- * that clip. Mutates + returns `clips`.
+ * that clip. Mutates `clips` and reports what each one ended up using.
  */
 async function resolveStretchMechanisms(
   clips: TimelineClip[],
   engine: TimeStretchEngine | undefined,
   cliTmpDir: () => string,
-): Promise<TimelineClip[]> {
+): Promise<TimelineStretchSummary> {
+  const needsStretch = (c: TimelineClip): boolean =>
+    c.speedRatio !== undefined && Number.isFinite(c.speedRatio) && Math.abs(c.speedRatio - 1) >= 1e-3;
+  const stretched = clips.filter(needsStretch).length;
+
   const wantsRubberband = engine === 'auto' || engine === 'rubberband';
   if (!wantsRubberband || !clips.some((c) => shouldUseRubberband(c.speedRatio, engine, true))) {
-    return clips;
+    return { stretched, rubberbandFilter: 0, rubberbandCli: 0, atempo: stretched, capabilities: NO_CAPABILITIES };
   }
   const caps = await detectStretchCapabilities();
+  let rubberbandFilter = 0;
+  let rubberbandCli = 0;
   for (const [i, clip] of clips.entries()) {
     if (shouldUseRubberband(clip.speedRatio, engine, caps.ffmpegFilter)) {
       clip.stretchWith = 'rubberband';
+      rubberbandFilter += 1;
     } else if (shouldUseRubberband(clip.speedRatio, engine, caps.cli)) {
-      const stretched = join(cliTmpDir(), `stretched_${String(i).padStart(4, '0')}.wav`);
+      const stretchedPath = join(cliTmpDir(), `stretched_${String(i).padStart(4, '0')}.wav`);
       try {
-        await stretchWithRubberbandCli(clip.audioPath, stretched, clip.speedRatio!);
-        clip.audioPath = stretched;
+        await stretchWithRubberbandCli(clip.audioPath, stretchedPath, clip.speedRatio!);
+        clip.audioPath = stretchedPath;
         // The clip is now already at target tempo; adjust the tail-fade anchor.
         if (clip.durationMs !== undefined) clip.durationMs = Math.round(clip.durationMs / clip.speedRatio!);
         clip.speedRatio = undefined;
+        rubberbandCli += 1;
       } catch {
         // CLI failed for this clip — leave it to the in-graph atempo fallback.
       }
     }
   }
-  return clips;
+  return {
+    stretched,
+    rubberbandFilter,
+    rubberbandCli,
+    atempo: Math.max(0, stretched - rubberbandFilter - rubberbandCli),
+    capabilities: caps,
+  };
 }
 
 /**
@@ -353,7 +396,7 @@ async function resolveStretchMechanisms(
 export async function buildTtsTimeline(
   input: BuildTtsTimelineInput,
   opts: RunOptions = {},
-): Promise<{ outputPath: string; durationMs: number }> {
+): Promise<{ outputPath: string; durationMs: number; stretch: TimelineStretchSummary }> {
   const { totalDurationMs, outputPath } = input;
   assertOutputWritable(outputPath);
 
@@ -382,15 +425,19 @@ export async function buildTtsTimeline(
   };
 
   try {
-    await resolveStretchMechanisms(clips, input.timeStretchEngine, cliTmpDir);
+    const stretch = await resolveStretchMechanisms(clips, input.timeStretchEngine, cliTmpDir);
 
-    // Single-pass path: few enough inputs to mix at once.
+    // Single-pass path: few enough inputs to mix at once. Written atomically so
+    // an interrupted mix can't leave a truncated tts_full.wav that the pipeline's
+    // resume check would accept as a finished step (see atomic.ts).
     if (clips.length <= MAX_INPUTS_PER_MIX) {
-      await runFfmpeg(buildTimelineMixArgs(clips, totalDurationMs, outputPath), opts);
-      return { outputPath, durationMs: await probeDurationMs(outputPath) };
+      await writeAtomically(outputPath, (partial) =>
+        runFfmpeg(buildTimelineMixArgs(clips, totalDurationMs, partial), opts),
+      );
+      return { outputPath, durationMs: await probeDurationMs(outputPath), stretch };
     }
 
-    return await buildChunkedTimeline(clips, totalDurationMs, outputPath, opts);
+    return { ...(await buildChunkedTimeline(clips, totalDurationMs, outputPath, opts)), stretch };
   } finally {
     if (stretchTmpDir) rmSync(stretchTmpDir, { recursive: true, force: true });
   }
@@ -423,10 +470,11 @@ async function buildChunkedTimeline(
 
     // If the number of intermediates ALSO exceeds the limit, mix them in a
     // second level. One extra level supports MAX^2 segments which is ample.
+    // Only the FINAL mix needs the atomic write — the intermediates live in
+    // `tmpDir`, which is removed wholesale in the finally block.
     if (intermediates.length <= MAX_INPUTS_PER_MIX) {
-      await runFfmpeg(
-        buildTimelineMixArgs(intermediates, totalDurationMs, outputPath),
-        opts,
+      await writeAtomically(outputPath, (partial) =>
+        runFfmpeg(buildTimelineMixArgs(intermediates, totalDurationMs, partial), opts),
       );
     } else {
       const superChunks = chunkClips(intermediates);
@@ -439,7 +487,9 @@ async function buildChunkedTimeline(
         );
         level2.push({ audioPath: superOut, startMs: 0 });
       }
-      await runFfmpeg(buildTimelineMixArgs(level2, totalDurationMs, outputPath), opts);
+      await writeAtomically(outputPath, (partial) =>
+        runFfmpeg(buildTimelineMixArgs(level2, totalDurationMs, partial), opts),
+      );
     }
 
     return { outputPath, durationMs: await probeDurationMs(outputPath) };

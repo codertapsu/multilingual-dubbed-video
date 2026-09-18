@@ -162,7 +162,7 @@ describe('update notice', () => {
     // check_for_update reports available:false WITH notes to explain why the
     // host is too old. Rendering an Install button from those notes would hand
     // the user a way to replace a working app with one that cannot launch.
-    const tooOld = { available: false, notes: 'A newer version is available, but macOS 13.5 is required.' };
+    const tooOld = { available: false, notes: 'A newer version is available, but macOS 14.0 is required.' };
     expect(shared.updateNoticeFor(tooOld, { autoUpdate: false })).toEqual({ kind: 'none' });
     expect(shared.updateNoticeFor(tooOld, { autoUpdate: true })).toEqual({ kind: 'none' });
   });

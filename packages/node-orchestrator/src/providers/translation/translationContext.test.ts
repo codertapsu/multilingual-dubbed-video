@@ -169,6 +169,26 @@ describe('speech budgets (duration-aware, target-language units)', () => {
     expect(prompt).toContain('xưng hô');
   });
 
+  it('tags each line with its diarized speaker and explains the tag', () => {
+    // Who is speaking is what decides Vietnamese xưng hô. The STT step computes
+    // speakerIds (WhisperX diarization) and the prompt used to ignore them, so a
+    // two-person dialogue read as one voice talking to itself.
+    const prompt = buildTranslationPrompt('en', 'vi', [
+      { ...seg('seg_0001', 0, 1000, 'Good morning, teacher.'), speakerId: 'SPEAKER_00' },
+      { ...seg('seg_0002', 1000, 2000, 'Good morning.'), speakerId: 'SPEAKER_01' },
+    ]);
+    expect(prompt).toContain('seg_0001 (SPEAKER_00): Good morning, teacher.');
+    expect(prompt).toContain('seg_0002 (SPEAKER_01): Good morning.');
+    expect(prompt).toContain('is WHO SPEAKS that line');
+    expect(prompt).toContain('Never write the speaker tag into the translated text');
+  });
+
+  it('says nothing about speakers when the run was not diarized', () => {
+    const prompt = buildTranslationPrompt('en', 'vi', [seg('seg_0001', 0, 1000, 'Hello')]);
+    expect(prompt).toContain('seg_0001: Hello');
+    expect(prompt).not.toContain('WHO SPEAKS');
+  });
+
   it('hardens against source echoes + annotation leakage; insist mode adds the directive', () => {
     const prompt = buildTranslationPrompt('zh', 'vi', [seg('seg_0001', 0, 1000)]);
     expect(prompt).toContain('never return a line unchanged');

@@ -12,6 +12,7 @@ import type {
   TtsResult,
 } from '@videodubber/shared';
 import { PipelineRunner, planSttChunks, type RunnerDeps } from './runner.js';
+import type { PipelineMediaService } from '../media.js';
 import { ProjectStore } from '../workspace/projectStore.js';
 import { EventBusRegistry } from '../events.js';
 import { ProjectLogger } from '../logging.js';
@@ -141,6 +142,64 @@ describe('PipelineRunner end-to-end (mocked)', () => {
     const pipeline = await store.getPipeline(project.id);
     expect(pipeline.steps.every((s) => s.status === 'skipped')).toBe(true);
     expect(pipeline.status).toBe('completed');
+  });
+
+  it('hands the run signal to every media call, so a cancel reaches ffmpeg', async () => {
+    // Regression: POST /cancel aborted only the orchestrator's own await. The
+    // ffmpeg child kept running — a full render is minutes of pinned CPU — and
+    // kept writing the output file long after the UI said the run had stopped.
+    const { project, deps } = await buildProject();
+    const controller = new AbortController();
+    const base = deps.media as FakeMediaService;
+    const seen: (AbortSignal | undefined)[] = [];
+    const record = <T>(signal: AbortSignal | undefined, value: T): T => {
+      seen.push(signal);
+      return value;
+    };
+    const media: PipelineMediaService = {
+      probe: (p, signal) => record(signal, base.probe(p)),
+      extractAudio: (i, o, signal) => record(signal, base.extractAudio(i, o)),
+      extract16kMono: (i, o, signal) => record(signal, base.extract16kMono(i, o)),
+      clip16kMono: (i, o, st, en, signal) => record(signal, base.clip16kMono(i, o, st, en)),
+      buildTtsTimeline: (input, signal) => record(signal, base.buildTtsTimeline(input)),
+      duckAndMix: (input, signal) => record(signal, base.duckAndMix(input)),
+      renderFinalVideo: (input, signal) => record(signal, base.renderFinalVideo(input)),
+    };
+
+    await new PipelineRunner({ ...deps, media }).run(project, { signal: controller.signal });
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((signal) => signal === controller.signal)).toBe(true);
+  });
+
+  it('re-runs a step recorded as failed even when its artifact is on disk', async () => {
+    // Regression: a cancel/crash mid-step leaves the step `failed` AND a
+    // truncated artifact on disk. The resume branch only asked "does an output
+    // exist?", so the next run marked the step `skipped` and reported SUCCESS —
+    // the user got a dub that stops halfway with no error anywhere. Only a
+    // `completed` status plus an artifact is a safe skip.
+    const { project, deps } = await buildProject();
+    const runner = new PipelineRunner(deps);
+    await runner.run(project, { signal: new AbortController().signal });
+
+    // Simulate the interrupted run: extract-audio failed, its WAVs still exist.
+    const pipeline = await store.getPipeline(project.id);
+    await store.savePipeline({
+      ...pipeline,
+      status: 'failed',
+      steps: pipeline.steps.map((step) =>
+        step.id === 'extract-audio' ? { ...step, status: 'failed' as const, error: 'Cancelled' } : step,
+      ),
+    });
+
+    const media = deps.media as FakeMediaService;
+    media.calls.length = 0;
+    await runner.run(project, { signal: new AbortController().signal });
+
+    expect(media.calls.some((c) => c.startsWith('extract16kMono:'))).toBe(true);
+    const after = await store.getPipeline(project.id);
+    expect(after.steps.find((s) => s.id === 'extract-audio')?.status).toBe('completed');
+    expect(after.status).toBe('completed');
   });
 
   it('retryFromStep re-runs that step and downstream, re-skipping upstream', async () => {

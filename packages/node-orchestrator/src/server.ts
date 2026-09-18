@@ -9,9 +9,9 @@
  * server when this file is run directly.
  */
 import { randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { createReadStream, mkdirSync, writeFileSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { extname, resolve as resolvePath, sep } from 'node:path';
+import { extname, join, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
@@ -31,6 +31,7 @@ import {
   type TranslationDocContext,
   type UpdatePreferences,
 } from '@videodubber/shared';
+import { buildInfo } from './buildInfo.js';
 import { loadConfig, type OrchestratorConfig } from './config.js';
 import { CredentialsStore } from './credentials/credentialsStore.js';
 import { testCloudCredential } from './credentials/testConnection.js';
@@ -58,7 +59,7 @@ import { buildReadinessContext, checkProviderReadiness, describeProviderReadines
 import { getWorkerJson, postWorkerJson, probeWorkerHealth } from './providers/workerHttp.js';
 import { OllamaPullManager, listOllamaModels } from './providers/ollamaModels.js';
 import { computeRequiredResources, hasRequiredResources } from './setup/requiredResources.js';
-import type { PipelineMediaService } from './media.js';
+import { MEDIA_SERVICE_METHODS, type PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog, findPiperVoice, translatableLanguages } from './setup/catalog.js';
 import { listVoicesForLanguage } from './setup/voicesCatalog.js';
@@ -122,26 +123,47 @@ export interface CreateServerOptions {
  * A media service proxy that lazily resolves the real ffmpeg-backed service on
  * first use. This lets the server boot even if the media-worker package is not
  * yet built; the failure surfaces only when a media operation is attempted.
+ *
+ * The forwarders are GENERATED from {@link MEDIA_SERVICE_METHODS} rather than
+ * written out by hand. The hand-written version listed six methods and omitted
+ * `clip16kMono`, which is exactly what the runner's chunking gate tests
+ * (`typeof media.clip16kMono === 'function'`) — so chunked STT was dead in every
+ * shipped build while the injected fixture media service (which does implement
+ * it) kept every test green. Deriving the surface from the interface makes that
+ * class of omission a type error instead of a silent capability loss.
+ *
+ * @param load Injectable loader for the real service (test seam).
  */
-function createLazyMediaService(): PipelineMediaService {
+export function createLazyMediaService(
+  load: () => Promise<PipelineMediaService> = createFfmpegMediaService,
+): PipelineMediaService {
   let real: PipelineMediaService | undefined;
   let loading: Promise<PipelineMediaService> | undefined;
 
   const resolve = async (): Promise<PipelineMediaService> => {
     if (real) return real;
-    loading ??= createFfmpegMediaService();
+    loading ??= load();
     real = await loading;
     return real;
   };
 
-  return {
-    probe: async (p) => (await resolve()).probe(p),
-    extractAudio: async (i, o) => (await resolve()).extractAudio(i, o),
-    renderFinalVideo: async (input) => (await resolve()).renderFinalVideo(input),
-    extract16kMono: async (i, o) => (await resolve()).extract16kMono(i, o),
-    buildTtsTimeline: async (input) => (await resolve()).buildTtsTimeline(input),
-    duckAndMix: async (input) => (await resolve()).duckAndMix(input),
-  };
+  const proxy: Record<string, (...args: never[]) => Promise<unknown>> = {};
+  for (const name of MEDIA_SERVICE_METHODS) {
+    proxy[name] = async (...args: never[]): Promise<unknown> => {
+      const svc = await resolve();
+      const fn = svc[name] as ((...a: never[]) => Promise<unknown>) | undefined;
+      if (typeof fn !== 'function') {
+        // Loud rather than silent: a media-worker that cannot do this operation
+        // is a broken install, not a reason to quietly degrade the pipeline.
+        throw new AppErrorException('UNKNOWN', `The media worker does not provide "${name}".`, {
+          remediation: 'Rebuild the app (pnpm --filter @videodubber/media-worker build) or reinstall VideoDubber.',
+          docsRef: 'docs/ARCHITECTURE.md#media-worker',
+        });
+      }
+      return fn.apply(svc, args);
+    };
+  }
+  return proxy as unknown as PipelineMediaService;
 }
 
 /** Send a structured error response derived from a thrown value. */
@@ -325,7 +347,20 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   // ---- Health -------------------------------------------------------------
 
-  app.get('/health', async () => ({ status: 'ok' }));
+  // The version/commit stamp is what makes the "stale sidecar" release bug
+  // (docs/RELEASING.md) detectable at RUNTIME: the shell, a smoke script or a
+  // user's bug report can compare this to the app version instead of grepping
+  // strings out of a bundled binary. `startedAt` additionally reveals a sidecar
+  // that silently restarted mid-session.
+  const startedAt = new Date().toISOString();
+  app.get('/health', async () => ({
+    status: 'ok',
+    ...buildInfo(),
+    startedAt,
+    node: process.version,
+    platform: `${process.platform}-${process.arch}`,
+    pid: process.pid,
+  }));
 
   app.get('/workers/health', async (_req, reply) => {
     try {
@@ -1391,6 +1426,73 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 }
 
 /**
+ * Install the process-level lifecycle handlers: graceful shutdown on
+ * SIGTERM/SIGINT plus a last-resort crash log.
+ *
+ * WHY THIS LIVES IN `startServer` AND NOT IN THE `isMain()` BLOCK BELOW: the
+ * packaged orchestrator is a Node SEA whose entry (scripts/package/
+ * orchestrator-entry.mjs) imports `startServer` — `import.meta.url` is `{}`
+ * inside the bundle, so `isMain()` is ALWAYS false there and everything guarded
+ * by it is dead code in every shipped build. That meant the released app never
+ * ran `app.close()`, so the Fastify `onClose` hook (-> engineManager.stopAll())
+ * never fired and every llama.cpp / whisper.cpp / uv-env engine child was
+ * orphaned on quit, and an unhandled rejection killed the backend mid-dub with
+ * nothing written down anywhere.
+ *
+ * Idempotent: repeated calls (embedders, tests) install the handlers once.
+ */
+let lifecycleInstalled = false;
+export function installProcessLifecycle(app: FastifyInstance, config: OrchestratorConfig): void {
+  if (lifecycleInstalled) return;
+  lifecycleInstalled = true;
+
+  let closing = false;
+  const shutdown = (): void => {
+    if (closing) return;
+    closing = true;
+    void app.close().finally(() => process.exit(0));
+  };
+  for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+    process.once(sig, shutdown);
+  }
+
+  // Node terminates the process on an unhandled rejection, so without this a
+  // single stray rejection anywhere in the orchestrator killed the backend and
+  // the stack went to a stdout nobody captures (the shell drops the sidecar's
+  // output). Write it next to the user's other app state, then exit non-zero so
+  // the shell's restart path behaves exactly as before.
+  const fatal = (kind: 'uncaughtException' | 'unhandledRejection', err: unknown): void => {
+    const error = err instanceof Error ? err : new Error(String(err));
+    const record = {
+      kind,
+      at: new Date().toISOString(),
+      message: error.message,
+      stack: error.stack,
+      ...buildInfo(),
+      node: process.version,
+      platform: `${process.platform}-${process.arch}`,
+    };
+    try {
+      const dir = join(config.configDir, 'logs');
+      mkdirSync(dir, { recursive: true });
+      const file = join(dir, `crash-${record.at.replace(/[:.]/g, '-')}.json`);
+      writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+       
+      console.error(`[orchestrator] fatal ${kind} — crash report written to ${file}`);
+    } catch {
+      /* the crash report is best-effort; never mask the original failure */
+    }
+     
+    console.error(`[orchestrator] ${kind}:`, error);
+    // Nothing is transmitted anywhere: the report stays on the user's disk for
+    // them to attach to an issue if they choose.
+    process.exit(1);
+  };
+  process.on('uncaughtException', (err) => fatal('uncaughtException', err));
+  process.on('unhandledRejection', (reason) => fatal('unhandledRejection', reason));
+}
+
+/**
  * Start the server using environment configuration. Returns the running
  * instance. Exported so embedders can manage the lifecycle.
  */
@@ -1398,6 +1500,12 @@ export async function startServer(options: CreateServerOptions = {}): Promise<Fa
   const config = options.config ?? loadConfig();
   const app = await createServer({ ...options, config });
   await app.listen({ host: config.host, port: config.port });
+  installProcessLifecycle(app, config);
+  const build = buildInfo();
+   
+  console.log(
+    `[orchestrator] version ${build.version}${build.commit ? ` (${build.commit})` : ''} on node ${process.version}`,
+  );
    
   console.log(`[orchestrator] listening on http://${config.host}:${config.port}`);
    
@@ -1418,25 +1526,12 @@ function isMain(): boolean {
 }
 
 if (isMain()) {
-  startServer()
-    .then((app) => {
-      // Stop child engine servers cleanly on quit so heavy model processes
-      // (whisper.cpp / llama.cpp / the uv-env neural-TTS workers) are NOT orphaned.
-      // app.close() runs the onClose hook -> engineManager.stopAll(). A SIGKILL
-      // can't be intercepted, but dev's SIGTERM/Ctrl-C and tsx-watch's restart
-      // SIGTERM are handled here — exactly what was leaving orphaned multi-GB models
-      // across dev restarts (which then pressured RAM and OOM-killed the workers).
-      let closing = false;
-      for (const sig of ['SIGTERM', 'SIGINT'] as const) {
-        process.once(sig, () => {
-          if (closing) return;
-          closing = true;
-          void app.close().finally(() => process.exit(0));
-        });
-      }
-    })
-    .catch((err) => {
-      console.error('[orchestrator] failed to start:', err);
-      process.exitCode = 1;
-    });
+  // Shutdown/crash handling is installed by startServer() itself — see
+  // installProcessLifecycle(). It used to live HERE, which meant it never ran in
+  // the packaged SEA (isMain() is always false inside the bundle), so shipped
+  // builds orphaned every engine child on quit.
+  startServer().catch((err) => {
+    console.error('[orchestrator] failed to start:', err);
+    process.exitCode = 1;
+  });
 }

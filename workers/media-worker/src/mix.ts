@@ -15,6 +15,7 @@
  * The filtergraph builder is pure and unit-tested. Output is 48k stereo WAV.
  */
 
+import { writeAtomically } from './atomic.js';
 import {
   assertInputReadable,
   assertOutputWritable,
@@ -262,7 +263,15 @@ export function buildMixMeasureArgs(opts: DuckAndMixInput): string[] {
   ];
 }
 
-/** Duck (optional) and mix original + TTS into final_mix.wav. */
+/**
+ * Duck (optional) and mix original + TTS into final_mix.wav.
+ *
+ * The mix is written through {@link writeAtomically}: cancelling (or crashing)
+ * during this step used to leave a non-empty, HALF-LENGTH final_mix.wav, which
+ * the pipeline's `size > 0` resume check then accepted as a finished step — the
+ * user got a dub that stops halfway and a report of success. The measure pass
+ * writes nothing (`-f null`), so only the apply pass needs the partial.
+ */
 export async function duckAndMix(
   input: DuckAndMixInput,
   runOpts: RunOptions = {},
@@ -279,7 +288,9 @@ export async function duckAndMix(
     const measured = parseLoudnormJson(measureRes.stderr);
     if (measured && loudnormMeasurementsUsable(measured)) {
       // Pass 2: apply with measured values (linear/transparent).
-      await runFfmpeg(buildMixArgs(input, loudnormApplyFilter(measured)), runOpts);
+      await writeAtomically(input.output, (partial) =>
+        runFfmpeg(buildMixArgs({ ...input, output: partial }, loudnormApplyFilter(measured)), runOpts),
+      );
       return { output: input.output, durationMs: await probeDurationMs(input.output) };
     }
     // Measurement failed (unusual ffmpeg build) OR the program is (near-)silent
@@ -287,6 +298,8 @@ export async function duckAndMix(
     // the single-pass dynamic loudnorm below (no measured values, can't crash).
   }
 
-  await runFfmpeg(buildMixArgs(input), runOpts);
+  await writeAtomically(input.output, (partial) =>
+    runFfmpeg(buildMixArgs({ ...input, output: partial }), runOpts),
+  );
   return { output: input.output, durationMs: await probeDurationMs(input.output) };
 }

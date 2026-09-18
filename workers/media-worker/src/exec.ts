@@ -93,7 +93,12 @@ function run(
     }
 
     // shell:false (default) — args are passed verbatim, no shell parsing.
-    const child = spawn(bin, args, { cwd: opts.cwd, shell: false });
+    // windowsHide: the orchestrator itself is spawned with CREATE_NO_WINDOW, so
+    // it has NO console; every console-subsystem child (ffmpeg/ffprobe) it
+    // spawns without this flag gets a brand-new black CMD window that steals
+    // focus — one per probe/extract/mix/render, a dozen-plus per dub. No-op off
+    // Windows.
+    const child = spawn(bin, args, { cwd: opts.cwd, shell: false, windowsHide: true });
 
     let stdout = '';
     let stderr = '';

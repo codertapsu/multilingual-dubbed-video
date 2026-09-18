@@ -74,6 +74,12 @@ export interface PromptSegment {
   sourceText: string;
   startMs?: number;
   endMs?: number;
+  /**
+   * Diarization speaker id, when the STT step produced one. Rendered into the
+   * prompt so the model can keep a speaker's register/pronouns stable instead of
+   * re-deciding them line by line (see buildTranslationPrompt).
+   */
+  speakerId?: string;
 }
 
 /**
@@ -179,9 +185,14 @@ export function buildTranslationPrompt(
       // Collapse any internal line breaks so each segment stays on one line of
       // the numbered list the model reads.
       const oneLine = s.sourceText.replace(/\s*\r?\n\s*/g, ' ');
-      return `${s.id}: ${oneLine}${hint}`;
+      // Speaker tag (diarized runs only): the single most useful fact for
+      // Vietnamese address forms, and it was being dropped on the floor.
+      const who = s.speakerId ? ` (${s.speakerId})` : '';
+      return `${s.id}${who}: ${oneLine}${hint}`;
     })
     .join('\n');
+  // Only explain the tag when at least one line carries one.
+  const hasSpeakers = segments.some((s) => s.speakerId);
   return [
     `Translate the following subtitle segments from "${sourceLanguage}" to "${targetLanguage}".`,
     ...(opts?.insist
@@ -196,6 +207,11 @@ export function buildTranslationPrompt(
     '- Preserve names, numbers, and the tone of the original.',
     `- EVERY segment must be rendered in ${tName} — never return a line unchanged and never leave source-script characters in the output. Render names with the target language's convention (e.g. Chinese names into Sino-Vietnamese when translating into Vietnamese: 唐三藏 → Đường Tam Tạng). When the context lists a name as "target form (source form)", use ONLY the target form in the spoken line — never copy the parenthesized source form.`,
     '- Keep pronouns and terms of address consistent with the context and across ALL segments: pick the forms the speaker relationships call for (e.g. Vietnamese xưng hô — thầy/cô, anh/chị, em, bạn, con — not a generic default) and never switch mid-conversation.',
+    ...(hasSpeakers
+      ? [
+          '- A name in parentheses after a segment id is WHO SPEAKS that line. Use it to keep each speaker\'s register and self-reference stable across the whole video, and to address the other speakers consistently. Never write the speaker tag into the translated text.',
+        ]
+      : []),
     '- Use the same terminology for the same things across segments.',
     '- The "text" value must be ONLY the spoken translation. Never copy the bracketed timing hints, segment ids, or any annotation into it — no "(4 syllables)", no "[spoken window...]", no repeated copy of the line.',
     '- Respond with ONLY a JSON object of the form {"segments":[{"id":"seg_0001","text":"..."}]} — no prose, no markdown fences. One entry per input segment id; never merge or split segments.',

@@ -81,7 +81,10 @@ async function merge(ffmpeg: string, videoPath: string, audioPath: string, outPa
     const proc = spawn(
       ffmpeg,
       ['-y', '-i', videoPath, '-i', audioPath, '-c', 'copy', '-shortest', outPath],
-      { stdio: ['ignore', 'ignore', 'pipe'] },
+      // windowsHide: the orchestrator is spawned with CREATE_NO_WINDOW and so
+      // has no console of its own; a console-subsystem child without this flag
+      // pops a black CMD window in the user's face. No-op off Windows.
+      { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
     );
     let stderrTail = '';
     proc.stderr?.on('data', (d: Buffer) => {
@@ -130,7 +133,8 @@ async function verifyPlayable(
       ffprobePath,
       ['-v', 'error', '-show_entries', 'stream=codec_type', '-show_entries', 'format=duration',
        '-of', 'default=noprint_wrappers=1', filePath],
-      { stdio: ['ignore', 'pipe', 'ignore'] },
+      // windowsHide: see merge() above.
+      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true },
     );
     let out = '';
     proc.stdout?.on('data', (d: Buffer) => {

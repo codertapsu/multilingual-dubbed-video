@@ -12,7 +12,7 @@ import {
   type MediaInfo,
   type VideoStreamInfo,
 } from '@videodubber/shared';
-import { assertInputReadable, runFfprobe } from './exec.js';
+import { assertInputReadable, runFfprobe, type RunOptions } from './exec.js';
 
 /** Build the ffprobe argv array for a full format+streams JSON probe. */
 export function buildProbeArgs(inputPath: string): string[] {
@@ -130,9 +130,9 @@ export function ffprobeJsonToMediaInfo(json: FfprobeJson, inputPath: string): Me
 }
 
 /** Probe a media file and return its MediaInfo. */
-export async function probe(inputPath: string): Promise<MediaInfo> {
+export async function probe(inputPath: string, opts: RunOptions = {}): Promise<MediaInfo> {
   assertInputReadable(inputPath);
-  const { stdout } = await runFfprobe(buildProbeArgs(inputPath));
+  const { stdout } = await runFfprobe(buildProbeArgs(inputPath), opts);
 
   let json: FfprobeJson;
   try {
@@ -150,7 +150,7 @@ export async function probe(inputPath: string): Promise<MediaInfo> {
 }
 
 /** Quick helper: just the duration in ms (used after extraction/render). */
-export async function probeDurationMs(inputPath: string): Promise<number> {
-  const info = await probe(inputPath);
+export async function probeDurationMs(inputPath: string, opts: RunOptions = {}): Promise<number> {
+  const info = await probe(inputPath, opts);
   return info.durationMs;
 }

@@ -63,6 +63,7 @@ import {
 } from './grouping.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
+import { describeStretch } from '../media.js';
 import type { PipelineMediaService, SeparationService, TimelineSegmentInput } from '../media.js';
 import type { AlignmentService } from '../providers/alignment/whisperxProvider.js';
 import type { ProviderRegistry } from '../providers/registry.js';
@@ -327,8 +328,17 @@ export class PipelineRunner {
         }
 
         // Also skip if outputs exist but status wasn't recorded as completed
-        // (e.g. older project) — treat as resumable when not a forced retry.
-        if (!forceRun && stepState?.status !== 'completed' && (await this.outputsExist(stepId, paths))) {
+        // (e.g. an older project, written before the pipeline recorded status).
+        //
+        // NEVER for a step recorded `failed`/`running`: those are exactly the
+        // states a cancel or a crash leaves behind, and an artifact from an
+        // interrupted ffmpeg used to be enough to "skip" the step and report
+        // success — shipping a half-length dub. The media worker now writes
+        // artifacts atomically (media-worker/src/atomic.ts), so a present
+        // artifact really is a complete one; this is the second lock on the same
+        // door, for artifacts written by an older version of the app.
+        const interrupted = stepState?.status === 'failed' || stepState?.status === 'running';
+        if (!forceRun && !interrupted && stepState?.status !== 'completed' && (await this.outputsExist(stepId, paths))) {
           logger.info(`Skipping "${pipelineStepLabel(stepId)}" — outputs already present.`);
           state = await transition(this.deps, state, stepId, 'skipped');
           continue;
@@ -348,7 +358,7 @@ export class PipelineRunner {
           await this.executeStep(stepId, project, paths, options.signal, onProgress);
         } catch (err) {
           const appError = toAppError(err);
-          logger.error(`Step "${pipelineStepLabel(stepId)}" failed: ${appError.code} — ${appError.message}`);
+          logger.errorWithCause(`Step "${pipelineStepLabel(stepId)}" failed`, appError);
           state = await transition(this.deps, state, stepId, 'failed', { error: appError.message });
           bus.emit({ type: 'error', error: appError });
           // Reflect failure on the project record.
@@ -395,7 +405,7 @@ export class PipelineRunner {
         bus.emit({ type: 'error', error: appError });
         return;
       }
-      logger.error(`Pipeline failed: ${appError.message}`);
+      logger.errorWithCause('Pipeline failed', appError);
       bus.emit({ type: 'error', error: appError });
       await this.markProjectStatus(project, 'failed');
     }
@@ -521,7 +531,7 @@ export class PipelineRunner {
 
   private async stepProbe(project: Project, _paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
     throwIfCancelled(signal);
-    const info = await this.deps.media.probe(project.inputVideoPath);
+    const info = await this.deps.media.probe(project.inputVideoPath, signal);
     if (!info.hasAudio || info.audioStreams.length === 0) {
       throw new AppErrorException('NO_AUDIO_STREAM', 'The input video has no audio stream to dub.');
     }
@@ -535,10 +545,10 @@ export class PipelineRunner {
   private async stepExtractAudio(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
     throwIfCancelled(signal);
     this.deps.logger.info('Extracting full-rate audio (original.wav)...');
-    await this.deps.media.extractAudio(project.inputVideoPath, paths.originalWav);
+    await this.deps.media.extractAudio(project.inputVideoPath, paths.originalWav, signal);
     throwIfCancelled(signal);
     this.deps.logger.info('Extracting 16 kHz mono audio for STT (original_16k_mono.wav)...');
-    await this.deps.media.extract16kMono(project.inputVideoPath, paths.original16kMonoWav);
+    await this.deps.media.extract16kMono(project.inputVideoPath, paths.original16kMonoWav, signal);
   }
 
   private async stepStt(
@@ -675,7 +685,7 @@ export class PipelineRunner {
         );
       } else {
         const clipPath = paths.sttChunkWav(chunk.index);
-        await this.deps.media.clip16kMono!(paths.original16kMonoWav, clipPath, chunk.startMs, chunk.endMs);
+        await this.deps.media.clip16kMono!(paths.original16kMonoWav, clipPath, chunk.startMs, chunk.endMs, signal);
         const res = await provider.transcribe(
           { audioPath: clipPath, language: detectedLanguage, model, wordTimestamps: true },
           signal,
@@ -728,6 +738,9 @@ export class PipelineRunner {
           sourceText: s.sourceText,
           startMs: s.startMs,
           endMs: s.endMs,
+          // Carry diarized speaker ids into the prompt: who is speaking is what
+          // decides Vietnamese xưng hô, and it was computed and then dropped.
+          ...(s.speakerId ? { speakerId: s.speakerId } : {}),
         })),
         ...(documentContext ? { documentContext } : {}),
       },
@@ -829,7 +842,13 @@ export class PipelineRunner {
       {
         sourceLanguage: project.settings.sourceLanguage,
         targetLanguage: project.settings.targetLanguage,
-        segments: segments.map((s) => ({ id: s.id, sourceText: s.sourceText, startMs: s.startMs, endMs: s.endMs })),
+        segments: segments.map((s) => ({
+          id: s.id,
+          sourceText: s.sourceText,
+          startMs: s.startMs,
+          endMs: s.endMs,
+          ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+        })),
         draftById: new Map(segments.map((s) => [s.id, (s.translatedText ?? '').trim()])),
         ...(documentContext ? { documentContext } : {}),
         mode: 'refine',
@@ -1072,7 +1091,7 @@ export class PipelineRunner {
             // Bound each probe so one hung/locked ffprobe can't stall the whole
             // step on a long video; an unprobeable WAV is treated as 0ms below.
             const info = await Promise.race([
-              this.deps.media.probe(audioPath),
+              this.deps.media.probe(audioPath, signal),
               new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error('probe timeout')), PROBE_TIMEOUT_MS),
               ),
@@ -1318,7 +1337,7 @@ export class PipelineRunner {
         const input = inputById.get(g.id);
         if (!input) continue;
         try {
-          input.generatedDurationMs = (await this.deps.media.probe(input.audioPath)).durationMs;
+          input.generatedDurationMs = (await this.deps.media.probe(input.audioPath, signal)).durationMs;
         } catch {
           input.generatedDurationMs = 0;
         }
@@ -1392,7 +1411,7 @@ export class PipelineRunner {
           },
           signal,
         );
-        input.generatedDurationMs = (await this.deps.media.probe(input.audioPath)).durationMs;
+        input.generatedDurationMs = (await this.deps.media.probe(input.audioPath, signal)).durationMs;
         requestedSpeed.set(a.segmentId, speed);
       } catch (err) {
         if (signal.aborted) throw err;
@@ -1431,12 +1450,24 @@ export class PipelineRunner {
     }));
 
     this.deps.logger.info(`Building TTS timeline (${timelineSegments.length} clips, ${totalDurationMs}ms)...`);
-    await this.deps.media.buildTtsTimeline({
-      segments: timelineSegments,
-      totalDurationMs,
-      outputPath: paths.ttsFullWav,
-      timeStretchEngine: project.settings.timeStretchEngine ?? 'auto',
-    });
+    const timeline = await this.deps.media.buildTtsTimeline(
+      {
+        segments: timelineSegments,
+        totalDurationMs,
+        outputPath: paths.ttsFullWav,
+        timeStretchEngine: project.settings.timeStretchEngine ?? 'auto',
+      },
+      signal,
+    );
+
+    // Which stretcher actually ran. Rubber Band is picked from runtime
+    // capability detection, so the shipped macOS build (whose ffmpeg has no
+    // rubberband filter, with no CLI beside it) quietly uses atempo while a dev
+    // machine with Homebrew's rubberband on PATH does not — the single largest
+    // gap between what the maintainer hears and what users hear. Record it.
+    if (timeline.stretch) {
+      this.deps.logger.info(describeStretch(timeline.stretch));
+    }
 
     throwIfCancelled(signal);
 
@@ -1477,21 +1508,24 @@ export class PipelineRunner {
     }
 
     this.deps.logger.info(`Mixing TTS track (original audio: ${mode})...`);
-    await this.deps.media.duckAndMix({
-      originalAudio,
-      ttsTimeline: paths.ttsFullWav,
-      output: paths.finalMixWav,
-      duckingLevelDb,
-      ttsGainDb: project.settings.ttsGainDb,
-      includeBackground,
-      duck,
-      // With the original removed there is no bed at all — pure digital silence
-      // between lines reads as "broken audio". Lay a very quiet room tone under
-      // the dub (default on; settings.roomTone=false disables).
-      roomTone: !includeBackground && project.settings.roomTone !== false,
-      // Two-pass loudnorm gives a transparent, dialogue-anchored final mix.
-      twoPassLoudnorm: true,
-    });
+    await this.deps.media.duckAndMix(
+      {
+        originalAudio,
+        ttsTimeline: paths.ttsFullWav,
+        output: paths.finalMixWav,
+        duckingLevelDb,
+        ttsGainDb: project.settings.ttsGainDb,
+        includeBackground,
+        duck,
+        // With the original removed there is no bed at all — pure digital silence
+        // between lines reads as "broken audio". Lay a very quiet room tone under
+        // the dub (default on; settings.roomTone=false disables).
+        roomTone: !includeBackground && project.settings.roomTone !== false,
+        // Two-pass loudnorm gives a transparent, dialogue-anchored final mix.
+        twoPassLoudnorm: true,
+      },
+      signal,
+    );
     this.deps.logger.info('Audio mix complete (final_mix.wav).');
   }
 
@@ -1507,16 +1541,19 @@ export class PipelineRunner {
           : undefined;
 
     this.deps.logger.info(`Rendering final video (subtitle mode: ${mode})...`);
-    const result = await this.deps.media.renderFinalVideo({
-      inputVideoPath: project.inputVideoPath,
-      audioPath: paths.finalMixWav,
-      outputPath: paths.outputMp4,
-      subtitleExportMode: mode,
-      subtitlePath,
-      burnSubtitleStyle: project.settings.burnSubtitleStyle,
-      copyVideoStream: mode !== 'burned-in',
-      ...(project.settings.renderQuality ? { renderQuality: project.settings.renderQuality } : {}),
-    });
+    const result = await this.deps.media.renderFinalVideo(
+      {
+        inputVideoPath: project.inputVideoPath,
+        audioPath: paths.finalMixWav,
+        outputPath: paths.outputMp4,
+        subtitleExportMode: mode,
+        subtitlePath,
+        burnSubtitleStyle: project.settings.burnSubtitleStyle,
+        copyVideoStream: mode !== 'burned-in',
+        ...(project.settings.renderQuality ? { renderQuality: project.settings.renderQuality } : {}),
+      },
+      signal,
+    );
     this.deps.logger.info(
       `Render complete: ${result.outputPath} (${Math.round(result.durationMs / 1000)}s, ${result.sidecarSubtitlePaths.length} sidecar subtitle file(s)).`,
     );

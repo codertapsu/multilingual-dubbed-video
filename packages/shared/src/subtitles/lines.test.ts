@@ -83,6 +83,22 @@ describe('splitSubtitleLines', () => {
     expect(lines[0]).toBeDefined();
   });
 
+  it("overflow:'wrap' keeps every word and ignores maxLines", () => {
+    // The export path uses this policy: dropping words from a written subtitle
+    // file is never acceptable (the dub speaks the full line).
+    const text = 'one two three four five six seven eight nine ten eleven twelve';
+    const lines = splitSubtitleLines(text, 10, 2, 'wrap');
+    expect(lines.length).toBeGreaterThan(2);
+    expect(lines.join(' ')).toBe(text);
+    expect(lines.join(' ')).not.toContain('…');
+    for (const line of lines) expect(line.length).toBeLessThanOrEqual(10);
+  });
+
+  it("overflow:'wrap' keeps a word longer than the budget on its own line", () => {
+    const lines = splitSubtitleLines('supercalifragilisticexpialidocious tiny', 10, 2, 'wrap');
+    expect(lines).toEqual(['supercalifragilisticexpialidocious', 'tiny']);
+  });
+
   it('respects custom maxLines greater than 2', () => {
     const text = 'a b c d e f g h i j k l m n o p';
     const lines = splitSubtitleLines(text, 3, 4);

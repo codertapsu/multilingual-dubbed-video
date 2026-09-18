@@ -18,9 +18,11 @@ import type {
   RenderFinalVideoResult,
 } from '@videodubber/shared';
 
-import { extractAudio } from './extract.js';
+import { clip16kMono, extract16kMono, extractAudio } from './extract.js';
 import { probe } from './probe.js';
 import { renderFinalVideo } from './render.js';
+import { buildTtsTimeline, type BuildTtsTimelineInput, type TimelineStretchSummary } from './tts-timeline.js';
+import { duckAndMix, type DuckAndMixInput } from './mix.js';
 import { checkBinaryAvailable, type RunOptions } from './exec.js';
 
 /**
@@ -35,16 +37,51 @@ export class FfmpegMediaService implements MediaService {
   /** Optional log sink applied to every spawned ffmpeg/ffprobe process. */
   constructor(private readonly defaultRunOpts: RunOptions = {}) {}
 
-  probe(inputPath: string): Promise<MediaInfo> {
-    return probe(inputPath);
+  /**
+   * Merge the caller's per-call options (notably the run's AbortSignal) over the
+   * service-wide defaults. Every method takes them, because a cancel that does
+   * not reach the ffmpeg CHILD leaves it encoding in the background long after
+   * the UI says the run stopped.
+   */
+  private opts(callOpts?: RunOptions): RunOptions {
+    return callOpts ? { ...this.defaultRunOpts, ...callOpts } : this.defaultRunOpts;
   }
 
-  extractAudio(inputPath: string, outputPath: string): Promise<AudioExtractResult> {
-    return extractAudio(inputPath, outputPath, this.defaultRunOpts);
+  probe(inputPath: string, opts?: RunOptions): Promise<MediaInfo> {
+    return probe(inputPath, this.opts(opts));
   }
 
-  renderFinalVideo(input: RenderFinalVideoInput): Promise<RenderFinalVideoResult> {
-    return renderFinalVideo(input, this.defaultRunOpts);
+  extractAudio(inputPath: string, outputPath: string, opts?: RunOptions): Promise<AudioExtractResult> {
+    return extractAudio(inputPath, outputPath, this.opts(opts));
+  }
+
+  extract16kMono(inputPath: string, outputPath: string, opts?: RunOptions): Promise<AudioExtractResult> {
+    return extract16kMono(inputPath, outputPath, this.opts(opts));
+  }
+
+  clip16kMono(
+    inputPath: string,
+    outputPath: string,
+    startMs: number,
+    endMs: number,
+    opts?: RunOptions,
+  ): Promise<AudioExtractResult> {
+    return clip16kMono(inputPath, outputPath, startMs, endMs, this.opts(opts));
+  }
+
+  buildTtsTimeline(
+    input: BuildTtsTimelineInput,
+    opts?: RunOptions,
+  ): Promise<{ outputPath: string; durationMs: number; stretch: TimelineStretchSummary }> {
+    return buildTtsTimeline(input, this.opts(opts));
+  }
+
+  duckAndMix(input: DuckAndMixInput, opts?: RunOptions): Promise<{ output: string; durationMs: number }> {
+    return duckAndMix(input, this.opts(opts));
+  }
+
+  renderFinalVideo(input: RenderFinalVideoInput, opts?: RunOptions): Promise<RenderFinalVideoResult> {
+    return renderFinalVideo(input, this.opts(opts));
   }
 }
 
@@ -86,6 +123,8 @@ export {
   type LogCallback,
 } from './exec.js';
 
+export { partialPathFor, writeAtomically } from './atomic.js';
+
 export {
   probe,
   probeDurationMs,
@@ -105,6 +144,7 @@ export {
 
 export {
   buildTtsTimeline,
+  type TimelineStretchSummary,
   buildTimelineMixArgs,
   buildTimelineFilterComplex,
   alignedSegmentsToClips,

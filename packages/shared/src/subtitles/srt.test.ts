@@ -57,19 +57,35 @@ describe('segmentsToSrt', () => {
     expect(segmentsToSrt([{ startMs: 0, endMs: 1, text: '' }])).toBe('');
   });
 
-  it('word-wraps long text into <= 2 lines by default', () => {
-    const srt = segmentsToSrt([
-      {
-        startMs: 0,
-        endMs: 4000,
-        text:
-          'This is a very long subtitle line that definitely should be wrapped across two lines for readability',
-      },
-    ]);
-    // The cue body (after index + timing) should have at most 2 text lines.
+  it('word-wraps long text to the char budget WITHOUT losing any of it', () => {
+    // Regression: the writer used to truncate at 2 lines and append an ellipsis,
+    // so the default `srt-file` export shipped cues that stopped mid-sentence
+    // while the dub spoke the whole line. A file must never drop text.
+    const text =
+      'This is a very long subtitle line that definitely should be wrapped across two lines for readability';
+    const srt = segmentsToSrt([{ startMs: 0, endMs: 4000, text }]);
     const block = srt.trim().split(/\r?\n/);
     const textLines = block.slice(2); // skip index + timing
-    expect(textLines.length).toBeLessThanOrEqual(2);
+    expect(textLines.length).toBeGreaterThan(2);
+    expect(textLines.join(' ')).toBe(text);
+    expect(srt).not.toContain('…');
+    for (const line of textLines) expect(line.length).toBeLessThanOrEqual(42);
+  });
+
+  it('keeps every word of a long Vietnamese cue', () => {
+    const vi =
+      'Trong video hôm nay chúng ta sẽ cùng nhau tìm hiểu về cách mà các mô hình ngôn ngữ lớn hoạt động và tại sao chúng lại quan trọng đến vậy.';
+    const srt = segmentsToSrt([{ startMs: 0, endMs: 6000, text: vi }]);
+    const textLines = srt.trim().split(/\r?\n/).slice(2);
+    expect(textLines.join(' ')).toBe(vi);
+  });
+
+  it('still truncates when the caller explicitly asks for a display cap', () => {
+    const srt = segmentsToSrt(
+      [{ startMs: 0, endMs: 4000, text: 'one two three four five six seven eight nine ten eleven twelve' }],
+      { overflow: 'truncate', maxCharsPerLine: 10, maxLines: 2 },
+    );
+    expect(srt).toContain('…');
   });
 
   it('emits multiple physical lines verbatim when wrap=false', () => {

@@ -2,7 +2,12 @@
  * SubRip (.srt) serialization.
  */
 
-import { splitSubtitleLines, DEFAULT_MAX_CHARS_PER_LINE, DEFAULT_MAX_LINES } from './lines.js';
+import {
+  splitSubtitleLines,
+  DEFAULT_MAX_CHARS_PER_LINE,
+  DEFAULT_MAX_LINES,
+  type SubtitleOverflowPolicy,
+} from './lines.js';
 import { toSrtTimestamp } from './timestamps.js';
 
 /** A subtitle input segment for the SRT/VTT writers. */
@@ -27,8 +32,18 @@ export interface SubtitleWriteOptions {
   wrap?: boolean;
   /** Max characters per line when wrapping (default 42). */
   maxCharsPerLine?: number;
-  /** Max lines per cue when wrapping (default 2). */
+  /** Max lines per cue when wrapping (default 2, honored only when truncating). */
   maxLines?: number;
+  /**
+   * What to do with a cue longer than `maxLines` lines. Defaults to `'wrap'`:
+   * a subtitle FILE must never lose words.
+   *
+   * It used to default to truncation, so the shipped `srt-file` export (the
+   * product default) cut a typical cue off mid-sentence with an ellipsis while
+   * the dub spoke the whole line. Players clip a too-tall cue by themselves;
+   * only the writer can lose the text for good.
+   */
+  overflow?: SubtitleOverflowPolicy;
 }
 
 /** End-of-line for subtitle files (CRLF maximizes player compatibility). */
@@ -40,7 +55,7 @@ const EOL = '\r\n';
  */
 function renderLines(text: string, opts: Required<SubtitleWriteOptions>): string[] {
   if (opts.wrap) {
-    return splitSubtitleLines(text, opts.maxCharsPerLine, opts.maxLines);
+    return splitSubtitleLines(text, opts.maxCharsPerLine, opts.maxLines, opts.overflow);
   }
   const trimmed = (text ?? '').replace(/\r\n?/g, '\n').trim();
   if (trimmed === '') return [];
@@ -52,6 +67,7 @@ function resolveOptions(opts?: SubtitleWriteOptions): Required<SubtitleWriteOpti
     wrap: opts?.wrap ?? true,
     maxCharsPerLine: opts?.maxCharsPerLine ?? DEFAULT_MAX_CHARS_PER_LINE,
     maxLines: opts?.maxLines ?? DEFAULT_MAX_LINES,
+    overflow: opts?.overflow ?? 'wrap',
   };
 }
 

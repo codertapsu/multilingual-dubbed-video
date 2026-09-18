@@ -74,8 +74,37 @@ export class EngineInstaller {
 
     this.running.add(packId);
     const packDir = this.deps.store.packDir(packId);
+    // Keep the working copy until the new one is proven.
+    //
+    // Install used to `rm -rf` the pack dir before fetching the first byte, so a
+    // failed UPDATE of a working 2-4 GB pack (the Settings screen offers
+    // reinstall-as-update) left the user with nothing: a dropped connection and
+    // an hour of re-downloading, plus a full PyPI/torch re-resolve for uv-env
+    // packs. We move the old copy aside instead and restore it if anything goes
+    // wrong. It is moved, not built alongside, because a uv venv bakes its own
+    // absolute path into pyvenv.cfg and its console-script shebangs — building
+    // at `<packDir>.new` and renaming would produce a venv that cannot run.
+    //
+    // All of this runs INSIDE the try: `fsp.rename` throws EPERM/EBUSY on
+    // Windows whenever anything in the pack is still open (a running llama.cpp
+    // or a uv venv python), and when that happened outside the try the rejection
+    // escaped `install()` with no `error` event for the UI to show AND skipped
+    // the `finally`, so `running` kept the pack id forever — every later attempt
+    // answered "already in progress" until the app was restarted.
+    const backupDir = `${packDir}.old`;
+    let hadExisting = false;
+    /** True only once the OLD copy is safely at `backupDir`. */
+    let movedAside = false;
     try {
-      await fsp.rm(packDir, { recursive: true, force: true });
+      await fsp.rm(backupDir, { recursive: true, force: true }).catch(() => undefined);
+      hadExisting = await fsp
+        .stat(packDir)
+        .then((st) => st.isDirectory())
+        .catch(() => false);
+      if (hadExisting) {
+        await fsp.rename(packDir, backupDir);
+        movedAside = true;
+      }
       await fsp.mkdir(packDir, { recursive: true });
 
       for (const artifact of pack.artifacts) {
@@ -95,13 +124,36 @@ export class EngineInstaller {
         installedAt: this.nowIso(),
       };
       await this.deps.store.add(record);
+      // The new copy is verified and recorded — the old one can go now.
+      await fsp.rm(backupDir, { recursive: true, force: true }).catch(() => undefined);
       this.deps.bus.emit({ type: 'done', packId, installed: record });
     } catch (err) {
-      await fsp.rm(packDir, { recursive: true, force: true }).catch(() => undefined);
-      const error =
+      // Only ever delete `packDir` when we know it holds the HALF-BUILT new
+      // copy: either there was nothing there to begin with, or the old copy is
+      // safely at `backupDir`. If the move-aside itself failed, `packDir` still
+      // holds the user's working pack and removing it would cause exactly the
+      // data loss this whole dance exists to prevent.
+      if (!hadExisting || movedAside) {
+        await fsp.rm(packDir, { recursive: true, force: true }).catch(() => undefined);
+      }
+      // "Still in place" means the old copy survived — either restored from the
+      // backup, or never moved at all.
+      const restored = movedAside
+        ? await fsp
+            .rename(backupDir, packDir)
+            .then(() => true)
+            .catch(() => false)
+        : hadExisting;
+      const base =
         err instanceof AppErrorException
           ? err.appError
           : { code: 'ENGINE_PACK_FAILED' as const, message: `Failed to install "${packId}".`, cause: String(err) };
+      const error = restored
+        ? {
+            ...base,
+            message: `${base.message} Your previously installed version is still in place.`,
+          }
+        : base;
       this.deps.bus.emit({ type: 'error', packId, error });
     } finally {
       this.running.delete(packId);

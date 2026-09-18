@@ -45,6 +45,7 @@ import { getSystemProfile } from './system/systemProfile.js';
 import type { SetupStore } from './setup/setupStore.js';
 import type { EventBusRegistry} from './events.js';
 import { type ProjectEventBus } from './events.js';
+import { KeyedMutex } from './keyedMutex.js';
 import { ProjectLogger } from './logging.js';
 import type { PipelineMediaService, SeparationService } from './media.js';
 import type { AlignmentService } from './providers/alignment/whisperxProvider.js';
@@ -183,6 +184,17 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   private queueRetryTimer: ReturnType<typeof setTimeout> | undefined;
   /** In-flight editor actions per owner id, so the LAST one frees the lane. */
   private readonly editorLaneRefs = new Map<string, number>();
+  /**
+   * Serializes read-modify-write updates of a project's artifacts.
+   *
+   * The editor allows concurrent actions on different segments (by design — see
+   * withEditorLane), and every artifact update reads a whole JSON file, changes
+   * one entry and writes it back. Two "Regenerate" clicks therefore interleaved
+   * and one segment's alignment entry was silently dropped, leaving that clip in
+   * the mix with stale timing. Taken only around the leaf writers below, never
+   * around a region that calls one, so it can never wait on itself.
+   */
+  private readonly artifactLock = new KeyedMutex();
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -381,24 +393,29 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     projectId: string,
     edits: { id: string; translatedText: string }[],
   ): Promise<void> {
-    const paths = this.deps.store.paths(projectId);
-    const base =
-      (await this.tryReadSegments(paths.translatedJson)) ?? (await this.tryReadSegments(paths.sourceJson)) ?? [];
+    this.assertNotRunning(projectId, 'edit segments');
+    // Read-modify-write of translated.json + both sidecars: serialized per
+    // project so two concurrent edits can't lose one of them.
+    await this.artifactLock.run(projectId, async () => {
+      const paths = this.deps.store.paths(projectId);
+      const base =
+        (await this.tryReadSegments(paths.translatedJson)) ?? (await this.tryReadSegments(paths.sourceJson)) ?? [];
 
-    const editMap = new Map(edits.map((e) => [e.id, e.translatedText]));
-    const merged: TranscriptSegment[] = base.map((s) =>
-      editMap.has(s.id) ? { ...s, translatedText: editMap.get(s.id)! } : s,
-    );
+      const editMap = new Map(edits.map((e) => [e.id, e.translatedText]));
+      const merged: TranscriptSegment[] = base.map((s) =>
+        editMap.has(s.id) ? { ...s, translatedText: editMap.get(s.id)! } : s,
+      );
 
-    await fsp.writeFile(paths.translatedJson, `${JSON.stringify({ segments: merged }, null, 2)}\n`, 'utf8');
+      await fsp.writeFile(paths.translatedJson, `${JSON.stringify({ segments: merged }, null, 2)}\n`, 'utf8');
 
-    // Regenerate subtitle sidecars to keep them in sync with edits — REAPPLYING
-    // the persisted voice-sync cue overrides so a text edit doesn't revert the
-    // whole track to source-speech timing.
-    const overrides = await readCueOverrides(paths.cueTimingJson);
-    const cues = transcriptSegmentsToCues(applyCueOverrides(merged, overrides));
-    await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
-    await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
+      // Regenerate subtitle sidecars to keep them in sync with edits — REAPPLYING
+      // the persisted voice-sync cue overrides so a text edit doesn't revert the
+      // whole track to source-speech timing.
+      const overrides = await readCueOverrides(paths.cueTimingJson);
+      const cues = transcriptSegmentsToCues(applyCueOverrides(merged, overrides));
+      await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
+      await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
+    });
   }
 
   /**
@@ -410,6 +427,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     segmentId: string,
     opts: { text?: string; voiceId?: string; speed?: number },
   ): Promise<{ segment: TtsSegment; alignment: AlignedSegment }> {
+    this.assertNotRunning(projectId, 're-synthesize a segment');
     return this.withEditorLane(projectId, () =>
       this.synthesizeSingleSegmentImpl(projectId, segmentId, opts),
     );
@@ -529,7 +547,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
             allowedOverflowMs: project.settings.allowedOverflowMs,
           },
         );
-        await this.patchAlignedSegment(paths, memberAligned);
+        await this.patchAlignedSegment(projectId, paths, memberAligned);
       }
     }
 
@@ -553,7 +571,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       allowedOverflowMs: project.settings.allowedOverflowMs,
     });
 
-    await this.patchAlignedSegment(paths, alignment);
+    await this.patchAlignedSegment(projectId, paths, alignment);
 
     return { segment: ttsSegment, alignment };
   }
@@ -569,6 +587,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     projectId: string,
     segmentId: string,
   ): Promise<{ segment: TtsSegment; alignment: AlignedSegment; translatedText: string }> {
+    this.assertNotRunning(projectId, 'tighten a segment');
     // Same engine-ownership rule as synthesizeSingleSegment: this re-translates
     // (possibly on a heavy local LLM) before re-synthesizing.
     return this.withEditorLane(projectId, () => this.refitSegmentImpl(projectId, segmentId));
@@ -1172,17 +1191,48 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     }
   }
 
-  /** Update a single aligned segment within translated.aligned.json. */
-  private async patchAlignedSegment(paths: WorkspacePaths, alignment: AlignedSegment): Promise<void> {
-    const existing = (await this.tryReadAligned(paths.translatedAlignedJson)) ?? [];
-    const idx = existing.findIndex((a) => a.segmentId === alignment.segmentId);
-    if (idx >= 0) existing[idx] = alignment;
-    else existing.push(alignment);
-    await fsp.writeFile(paths.translatedAlignedJson, `${JSON.stringify(existing, null, 2)}\n`, 'utf8');
+  /**
+   * Update a single aligned segment within translated.aligned.json.
+   *
+   * Read-array -> splice -> write-whole-file, so it MUST hold the project's
+   * artifact lock: regenerating two different segments at once used to drop one
+   * of the two entries, and the losing clip was then mixed with stale timing.
+   */
+  private async patchAlignedSegment(
+    projectId: string,
+    paths: WorkspacePaths,
+    alignment: AlignedSegment,
+  ): Promise<void> {
+    await this.artifactLock.run(projectId, async () => {
+      const existing = (await this.tryReadAligned(paths.translatedAlignedJson)) ?? [];
+      const idx = existing.findIndex((a) => a.segmentId === alignment.segmentId);
+      if (idx >= 0) existing[idx] = alignment;
+      else existing.push(alignment);
+      await fsp.writeFile(paths.translatedAlignedJson, `${JSON.stringify(existing, null, 2)}\n`, 'utf8');
+    });
   }
 
   /** True if a project currently has an active run. */
   isRunning(projectId: string): boolean {
     return this.running.has(projectId);
+  }
+
+  /**
+   * Refuse an editor mutation while the pipeline owns the same artifacts.
+   *
+   * `updateProjectSettings` has always guarded this way, but the editor's write
+   * paths did not — they rewrite translated.json / synthesis_groups.json /
+   * translated.aligned.json, the very files a running `stepTts`/`stepAlignment`
+   * is writing, which produces audio that does not match the persisted text with
+   * no error anywhere. A paused (awaiting-review) project is NOT running — the
+   * run promise has settled — so review edits are unaffected.
+   */
+  private assertNotRunning(projectId: string, action: string): void {
+    if (this.running.has(projectId)) {
+      throw new AppErrorException(
+        'RUN_IN_PROGRESS',
+        `Cannot ${action} while the pipeline is running. Cancel the run first.`,
+      );
+    }
   }
 }

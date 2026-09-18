@@ -30,6 +30,7 @@ import {
   type SubtitleExportMode,
   type SubtitleStyle,
 } from '@videodubber/shared';
+import { writeAtomically } from './atomic.js';
 import {
   assertInputReadable,
   assertOutputWritable,
@@ -258,21 +259,27 @@ export async function renderFinalVideo(
     videoCodecArgs = sel.extraArgs;
   }
 
-  const args = buildRenderArgs({
-    inputVideoPath: input.inputVideoPath,
-    audioPath: input.audioPath,
-    outputPath: input.outputPath,
-    subtitleExportMode: input.subtitleExportMode,
-    subtitlePath: input.subtitlePath,
-    burnSubtitleStyle: input.burnSubtitleStyle,
-    // burned-in must re-encode; everything else may copy unless caller forbids.
-    copyVideoStream:
-      input.subtitleExportMode === 'burned-in' ? false : input.copyVideoStream,
-    ...(videoCodec ? { videoCodec } : {}),
-    ...(videoCodecArgs ? { videoCodecArgs } : {}),
+  // Atomic: a killed render (cancel, crash, disk full) leaves a non-empty mp4
+  // with no moov atom — unplayable, yet non-empty, which is all the pipeline's
+  // resume check looks at, so the next run would "skip" Render and hand the user
+  // a broken file as a success. The `.partial` keeps the `.mp4` extension so
+  // ffmpeg still infers the mp4 muxer from it.
+  await writeAtomically(input.outputPath, (partial) => {
+    const args = buildRenderArgs({
+      inputVideoPath: input.inputVideoPath,
+      audioPath: input.audioPath,
+      outputPath: partial,
+      subtitleExportMode: input.subtitleExportMode,
+      subtitlePath: input.subtitlePath,
+      burnSubtitleStyle: input.burnSubtitleStyle,
+      // burned-in must re-encode; everything else may copy unless caller forbids.
+      copyVideoStream:
+        input.subtitleExportMode === 'burned-in' ? false : input.copyVideoStream,
+      ...(videoCodec ? { videoCodec } : {}),
+      ...(videoCodecArgs ? { videoCodecArgs } : {}),
+    });
+    return runFfmpeg(args, runOpts);
   });
-
-  await runFfmpeg(args, runOpts);
 
   // Copy sidecar subtitle next to the output for srt-file / vtt-file modes.
   const sidecarSubtitlePaths: string[] = [];

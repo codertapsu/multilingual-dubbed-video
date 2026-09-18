@@ -44,6 +44,81 @@ export interface InstallerDeps {
    * stub Piper downloads without hitting the network.
    */
   fetchImpl?: typeof fetch;
+  /** Backoff sleep (defaults to a real timer). Injectable so retry tests are instant. */
+  sleepImpl?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Download attempts per file, and the backoff before each retry.
+ *
+ * A 64 MB voice from HuggingFace over a throttled or flaky link (the common
+ * case in Vietnam and much of Asia — the app's primary audience) used to restart
+ * from byte 0 on every drop, and one failure aborted the whole install run. Four
+ * attempts with resume covers the realistic transient cases without turning a
+ * genuinely dead URL into a two-minute wait.
+ */
+const DOWNLOAD_ATTEMPTS = 4;
+const DOWNLOAD_BACKOFF_MS = [1000, 3000, 8000];
+
+/**
+ * Download failures that retrying cannot fix (moved, forbidden, malformed).
+ *
+ * Tracked out-of-band instead of as a marker inside `AppError.cause`: `cause` is
+ * user-visible (the error banner) and is what goes into pipeline.log, so it has
+ * to hold the real reason. A first cut of this retry loop stuffed the literal
+ * string "permanent" in there, and a user whose voice URL 404'd was told the
+ * cause of the failure was "permanent".
+ */
+const permanentFailures = new WeakSet<AppErrorException>();
+
+/** Size of a file in bytes, or 0 when it does not exist. */
+async function fileSizeOrZero(filePath: string): Promise<number> {
+  return fsp
+    .stat(filePath)
+    .then((st) => (st.isFile() ? st.size : 0))
+    .catch(() => 0);
+}
+
+/** HTTP statuses worth retrying: rate limits, timeouts and server-side faults. */
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+/**
+ * Turn a failing status into something a user can act on. "(HTTP 429)" told
+ * nobody anything; a rate limit, a moved file and a blocked proxy need three
+ * different reactions.
+ */
+export function describeDownloadFailure(status: number): { message: string; remediation: string } {
+  if (status === 429) {
+    return {
+      message: 'the model server is rate-limiting this download',
+      remediation: 'Wait a minute and retry — Hugging Face limits how fast one address can download.',
+    };
+  }
+  if (status === 404 || status === 410) {
+    return {
+      message: 'the file is no longer at that address',
+      remediation: 'Update VideoDubber — this voice moved upstream and the new address ships with the app.',
+    };
+  }
+  if (status === 401 || status === 403) {
+    return {
+      message: 'the model server refused the request',
+      remediation:
+        'A proxy, firewall or VPN is likely blocking huggingface.co. Try another network, or install the voice manually into the models folder.',
+    };
+  }
+  if (status >= 500) {
+    return {
+      message: `the model server failed (HTTP ${status})`,
+      remediation: 'The server is having trouble. Retry in a few minutes.',
+    };
+  }
+  return {
+    message: `the download failed (HTTP ${status})`,
+    remediation: 'Check your network connection and retry.',
+  };
 }
 
 /** Response shape from the STT worker POST /models/ensure. */
@@ -70,6 +145,24 @@ function formatElapsed(ms: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+/**
+ * True when BOTH files exist and are non-empty.
+ *
+ * A Piper voice is only usable as a pair (`<id>.onnx` + `<id>.onnx.json`), and a
+ * zero-byte file is what an interrupted download leaves behind — so "present"
+ * has to mean both, non-empty, or the short-circuit would skip a broken voice.
+ */
+async function bothFilesPresent(...filePaths: string[]): Promise<boolean> {
+  for (const filePath of filePaths) {
+    const ok = await fsp
+      .stat(filePath)
+      .then((st) => st.isFile() && st.size > 0)
+      .catch(() => false);
+    if (!ok) return false;
+  }
+  return true;
 }
 
 /**
@@ -253,6 +346,21 @@ export class SetupInstaller {
     const onnxPath = path.join(piperDir, `${voiceId}.onnx`);
     const configPath = path.join(piperDir, `${voiceId}.onnx.json`);
 
+    // Already on disk? Then this step needs no network at all.
+    //
+    // It used to download unconditionally, which broke the app's own offline
+    // promise: in a BUNDLE_DEFAULT_MODELS build the shell seed-copies this exact
+    // voice into <models>/piper at launch, yet the wizard still reached for
+    // huggingface and failed the whole install with "Failed to reach voice
+    // download" — for a file sitting right there. `installAll` aborts on the
+    // first throw, so one unreachable voice discarded the rest of the run too.
+    if (await bothFilesPresent(onnxPath, configPath)) {
+      await this.deps.store.addPiperVoice(voiceId);
+      this.emitProgress(item, 100, `Voice "${voice.label}" already present.`);
+      this.deps.bus.emit({ type: 'item-done', item });
+      return;
+    }
+
     // The .onnx model is the large file — report percent for it. The small
     // .onnx.json config is fetched without per-byte progress.
     this.emitProgress(item, 0, `Downloading voice "${voice.label}"…`);
@@ -266,10 +374,19 @@ export class SetupInstaller {
   }
 
   /**
-   * Stream a remote file to disk. When `quiet` is false and the response has a
-   * Content-Length, percent progress is emitted as bytes arrive. The file is
-   * written to a temp path and renamed on success so a partial download never
-   * leaves a corrupt model in place.
+   * Stream a remote file to disk, with retry + RESUME.
+   *
+   * Bytes land in `<dest>.download` and are renamed only once the transfer is
+   * complete, so a partial never looks like an installed model. On a mid-stream
+   * failure the partial is KEPT and the next attempt asks for
+   * `Range: bytes=<size>-`, because the old behavior — one attempt, delete the
+   * partial, collapse every failure into "(HTTP nnn)" — restarted a 64 MB voice
+   * from zero on every hiccup and told the user nothing about why.
+   *
+   * A truncated-but-"ok" response (a proxy that cuts the connection after a 200)
+   * is caught by the content-length check before the rename, instead of being
+   * renamed into place as a valid-looking voice that fails much later as a
+   * broken dub.
    */
   private async downloadFile(
     url: string,
@@ -278,26 +395,81 @@ export class SetupInstaller {
     label: string,
     quiet = false,
   ): Promise<void> {
+    const tmpPath = `${destPath}.download`;
+    let lastError: AppErrorException | undefined;
+
+    for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
+      const resumeFrom = await fileSizeOrZero(tmpPath);
+      try {
+        await this.downloadAttempt(url, tmpPath, item, label, quiet, resumeFrom);
+        await fsp.rename(tmpPath, destPath);
+        return;
+      } catch (err) {
+        if (!(err instanceof AppErrorException)) throw err;
+        lastError = err;
+        // A permanent failure (moved/forbidden) is not worth four tries, and its
+        // partial will never be resumable against the new address.
+        if (permanentFailures.has(err)) {
+          await fsp.rm(tmpPath, { force: true }).catch(() => undefined);
+          throw err;
+        }
+        if (attempt === DOWNLOAD_ATTEMPTS) break;
+        const waitMs = DOWNLOAD_BACKOFF_MS[attempt - 1] ?? 8000;
+        this.emitProgress(item, null, `Retrying "${label}" (attempt ${attempt + 1} of ${DOWNLOAD_ATTEMPTS})…`);
+        await this.sleep(waitMs);
+      }
+    }
+    // The partial stays on disk on purpose: the user's own retry resumes it.
+    throw lastError ?? new AppErrorException('TTS_VOICE_MISSING', `Voice download failed for "${label}".`);
+  }
+
+  /** One transfer attempt, resuming from `resumeFrom` bytes when possible. */
+  private async downloadAttempt(
+    url: string,
+    tmpPath: string,
+    item: string,
+    label: string,
+    quiet: boolean,
+    resumeFrom: number,
+  ): Promise<void> {
     let response: Response;
     try {
-      response = await this.fetchImpl(url, { redirect: 'follow' });
+      response = await this.fetchImpl(url, {
+        redirect: 'follow',
+        ...(resumeFrom > 0 ? { headers: { Range: `bytes=${resumeFrom}-` } } : {}),
+      });
     } catch (err) {
-      throw new AppErrorException('TTS_VOICE_MISSING', `Failed to reach voice download for "${label}".`, {
+      throw new AppErrorException('TTS_VOICE_MISSING', `Failed to reach the download for "${label}".`, {
         cause: err instanceof Error ? err.message : String(err),
+        remediation: 'Check your network connection (or proxy/VPN) and retry.',
       });
     }
+
     if (!response.ok || !response.body) {
-      throw new AppErrorException('TTS_VOICE_MISSING', `Voice download failed for "${label}" (HTTP ${response.status}).`, {
+      const { message, remediation } = describeDownloadFailure(response.status);
+      const error = new AppErrorException('TTS_VOICE_MISSING', `Could not download "${label}" — ${message}.`, {
         cause: url,
+        remediation,
       });
+      if (!isRetryableStatus(response.status)) permanentFailures.add(error);
+      throw error;
+    }
+
+    // 206 = the server honored the range and is sending the REST of the file;
+    // anything else (notably a plain 200) means it is sending the whole file
+    // again, so the partial must be overwritten rather than appended to.
+    const resuming = resumeFrom > 0 && response.status === 206;
+    const startAt = resuming ? resumeFrom : 0;
+    if (resuming) {
+      this.emitProgress(item, null, `Resuming "${label}" at ${Math.round(startAt / 1_048_576)} MB…`);
     }
 
     const totalHeader = response.headers.get('content-length');
-    const total = totalHeader ? Number.parseInt(totalHeader, 10) : NaN;
+    const remaining = totalHeader ? Number.parseInt(totalHeader, 10) : NaN;
+    const total = Number.isFinite(remaining) && remaining > 0 ? remaining + startAt : NaN;
     const hasTotal = Number.isFinite(total) && total > 0;
 
-    const tmpPath = `${destPath}.download`;
-    let received = 0;
+    let received = startAt;
     let lastPercent = -1;
 
     // Wrap the web ReadableStream as a Node Readable.
@@ -312,8 +484,8 @@ export class SetupInstaller {
     // would put the source into flowing mode and risk losing chunks).
     const counter = new Transform({
       transform: (chunk: Buffer, _enc, done) => {
+        received += chunk.length;
         if (!quiet && hasTotal) {
-          received += chunk.length;
           const percent = Math.min(100, Math.floor((received / total) * 100));
           if (percent !== lastPercent) {
             lastPercent = percent;
@@ -325,16 +497,36 @@ export class SetupInstaller {
     });
 
     try {
-      await streamPipeline(nodeStream, counter, createWriteStream(tmpPath));
+      await streamPipeline(nodeStream, counter, createWriteStream(tmpPath, { flags: resuming ? 'a' : 'w' }));
     } catch (err) {
-      await fsp.rm(tmpPath, { force: true }).catch(() => {
-        /* best effort cleanup */
-      });
-      throw new AppErrorException('TTS_VOICE_MISSING', `Voice download interrupted for "${label}".`, {
+      // Keep the partial: the next attempt resumes from exactly here.
+      throw new AppErrorException('TTS_VOICE_MISSING', `The download for "${label}" was interrupted.`, {
         cause: err instanceof Error ? err.message : String(err),
+        remediation: 'It will resume automatically; if it keeps failing, check your network or proxy.',
       });
     }
-    await fsp.rename(tmpPath, destPath);
+
+    // Truncated-but-"ok": a proxy that cut the connection after a 200 leaves a
+    // short file that would otherwise be renamed into place as a valid voice.
+    if (hasTotal) {
+      const onDisk = await fileSizeOrZero(tmpPath);
+      if (onDisk < total) {
+        throw new AppErrorException(
+          'TTS_VOICE_MISSING',
+          `The download for "${label}" ended early (${onDisk} of ${total} bytes).`,
+          {
+            cause: url,
+            remediation: 'It will resume automatically; a proxy or VPN cutting connections is the usual cause.',
+          },
+        );
+      }
+    }
+  }
+
+  /** Backoff sleep (injected in tests so retries are instant). */
+  private sleep(ms: number): Promise<void> {
+    if (this.deps.sleepImpl) return this.deps.sleepImpl(ms);
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // ----- Event helpers -----------------------------------------------------

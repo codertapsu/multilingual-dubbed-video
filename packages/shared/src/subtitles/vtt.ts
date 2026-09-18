@@ -15,7 +15,7 @@ function renderLines(
   opts: Required<SubtitleWriteOptions>,
 ): string[] {
   if (opts.wrap) {
-    return splitSubtitleLines(text, opts.maxCharsPerLine, opts.maxLines);
+    return splitSubtitleLines(text, opts.maxCharsPerLine, opts.maxLines, opts.overflow);
   }
   const trimmed = (text ?? '').replace(/\r\n?/g, '\n').trim();
   if (trimmed === '') return [];
@@ -27,6 +27,8 @@ function resolveOptions(opts?: SubtitleWriteOptions): Required<SubtitleWriteOpti
     wrap: opts?.wrap ?? true,
     maxCharsPerLine: opts?.maxCharsPerLine ?? DEFAULT_MAX_CHARS_PER_LINE,
     maxLines: opts?.maxLines ?? DEFAULT_MAX_LINES,
+    // Never drop words from a written file — see SubtitleWriteOptions.overflow.
+    overflow: opts?.overflow ?? 'wrap',
   };
 }
 

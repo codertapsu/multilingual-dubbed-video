@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import type { AppError } from '@videodubber/shared';
 import type { LogEvent, LogLevel, ProjectEventBus } from './events.js';
 
 /** Logger bound to one project (file + SSE bus). */
@@ -59,6 +60,26 @@ export class ProjectLogger {
 
   error(message: string): void {
     this.log('error', message);
+  }
+
+  /**
+   * Log a failure WITH the field that actually explains it.
+   *
+   * `pipeline.log` is the only artifact that survives on a user's machine, and
+   * it used to record just `code — message` ("UNKNOWN — \"ffmpeg\" exited with
+   * code 1."). The ffmpeg stderr tail that names the real filter/codec problem,
+   * or a worker's Python traceback, lives in `AppError.cause` (exec.ts puts it
+   * there deliberately) and was dropped on the floor — so every bug report
+   * carried exactly the information the maintainer already had. Cause and
+   * remediation go on continuation lines so a log reader can still scan the
+   * first line of each entry.
+   */
+  errorWithCause(prefix: string, error: AppError): void {
+    const lines = [`${prefix}: ${error.code} — ${error.message}`];
+    if (error.cause) lines.push(`  cause: ${error.cause}`);
+    if (error.remediation) lines.push(`  remediation: ${error.remediation}`);
+    if (error.docsRef) lines.push(`  docs: ${error.docsRef}`);
+    this.error(lines.join('\n'));
   }
 
   /**

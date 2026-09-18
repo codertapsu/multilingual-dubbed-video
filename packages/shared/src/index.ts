@@ -156,6 +156,7 @@ export {
   DEFAULT_MAX_CHARS_PER_LINE,
   DEFAULT_MAX_LINES,
 } from './subtitles/lines.js';
+export type { SubtitleOverflowPolicy } from './subtitles/lines.js';
 export type { SubtitleCue, IndexedCue } from './subtitles/cues.js';
 export { transcriptSegmentsToCues } from './subtitles/cues.js';
 export { segmentsToSrt } from './subtitles/srt.js';

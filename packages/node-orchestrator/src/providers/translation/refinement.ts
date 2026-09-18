@@ -206,7 +206,13 @@ export async function reviewTranslations(
 
 /** Convert a TranslationInput's segments to the reviewer's PromptSegment shape. */
 export function toPromptSegments(input: TranslationInput): PromptSegment[] {
-  return input.segments.map((s) => ({ id: s.id, sourceText: s.sourceText, startMs: s.startMs, endMs: s.endMs }));
+  return input.segments.map((s) => ({
+    id: s.id,
+    sourceText: s.sourceText,
+    startMs: s.startMs,
+    endMs: s.endMs,
+    ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+  }));
 }
 
 /** Assemble a TranslationResult from a review outcome (provider convenience). */

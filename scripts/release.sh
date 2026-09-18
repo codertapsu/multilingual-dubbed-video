@@ -14,7 +14,7 @@
 # So this wrapper adds exactly two things and reimplements NOTHING:
 #
 #   1. one memorable entry point          pnpm release
-#   2. a preflight that fails in seconds  pnpm release -- --check
+#   2. a preflight that fails in seconds  pnpm release --check
 #
 # `--check` answers "could I cut a release right now?" WITHOUT building anything.
 # That matters more on macOS than anywhere else: the real path deep-signs every
@@ -50,11 +50,11 @@ usage() {
   cat <<'EOF'
 scripts/release.sh — cut a macOS release (or check whether you could).
 
-  pnpm release -- --check          preflight only: builds NOTHING, ~5 seconds
+  pnpm release --check          preflight only: builds NOTHING, ~5 seconds
   pnpm release                     build, deep-sign, notarize, staple
-  pnpm release -- --sidecars       ...rebuilding the bundled sidecars first
-  pnpm release -- --upload         ...and upload to the draft + merge latest.json
-  pnpm release -- --tag v0.9.1     override the tag (default: v<tauri.conf version>)
+  pnpm release --sidecars       ...rebuilding the bundled sidecars first
+  pnpm release --upload         ...and upload to the draft + merge latest.json
+  pnpm release --tag v0.9.1     override the tag (default: v<tauri.conf version>)
 
 Options:
   -c, --check       Run the preflight gates and report readiness. No build.
@@ -93,7 +93,7 @@ if [ "${UNAME_S}" != "Darwin" ]; then
   err "This is the macOS release script; this machine is '${UNAME_S}'."
   case "${UNAME_S}" in
     MINGW*|MSYS*|CYGWIN*)
-      err "On Windows run:   pnpm release -- -Check      (or: pwsh scripts\\release.ps1)" ;;
+      err "On Windows run:   pnpm release -Check      (or: pwsh scripts\\release.ps1)" ;;
     *)
       err "Releases are cut on two machines only:"
       err "  macOS   -> bash scripts/release.sh   (this script, on the Mac)"
@@ -356,7 +356,7 @@ if [ "${DO_CHECK}" = "1" ]; then
   ok "Ready to release ${TAG}."
   echo ""
   info "Next:  bash scripts/release.sh --sidecars --upload"
-  info "       (or: pnpm release -- --sidecars --upload)"
+  info "       (or: pnpm release --sidecars --upload)"
   info "Then finish the runbook in docs/RELEASING.md — the draft still needs the"
   info "Windows half uploaded and the release published by hand."
   exit 0

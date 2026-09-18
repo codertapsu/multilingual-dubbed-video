@@ -21,7 +21,7 @@
 
   So this adds exactly two things:
     1. one memorable entry point          pnpm release
-    2. a preflight that fails in seconds  pnpm release -- -Check
+    2. a preflight that fails in seconds  pnpm release -Check
 
   ABOUT SIGNING — READ THIS BEFORE "FIXING" IT. The Windows installer this
   produces is UNSIGNED, and that is a standing decision (2026-09-18,
@@ -49,12 +49,12 @@
   Release tag. Defaults to $env:RELEASE_TAG, else v<version from tauri.conf.json>.
 
 .EXAMPLE
-  pnpm release -- -Check
+  pnpm release -Check
   Preflight only: version consistency, the Python suites (strictly), a clean
   tree, the updater key, a GitHub token. Nothing is built.
 
 .EXAMPLE
-  pnpm release -- -Sidecars -Upload
+  pnpm release -Sidecars -Upload
   The full local Windows release: sidecars, Tauri build, upload to the draft,
   merge both windows-x86_64 and windows-x86_64-msi into latest.json.
 #>
@@ -63,8 +63,42 @@ param(
   [switch]$Check,
   [switch]$Sidecars,
   [switch]$Upload,
-  [string]$Tag
+  [string]$Tag,
+
+  # run.mjs forwards argv verbatim to `pwsh -File`, and package.json defines
+  # `release:check` as `node scripts/run.mjs release --check`. PowerShell's -File
+  # mode does not recognise a GNU long flag as a parameter NAME, so `--check`
+  # would bind POSITIONALLY — to $Tag, the only positional parameter here —
+  # leaving $Check false. `pnpm release:check` would then not preflight at all:
+  # it would attempt a FULL RELEASE tagged "--check". Swallow the remaining
+  # arguments and translate them, exactly as scripts/bootstrap.ps1 does.
+  [Parameter(ValueFromRemainingArguments = $true)]
+  [string[]]$Rest = @()
 )
+
+# --- Translate the GNU long flags ----------------------------------------------
+# Normalise the leading dashes before matching: ValueFromRemainingArguments can
+# hand a parameter-shaped token back as `--check`, `-check`, or with the dashes
+# already eaten, depending on host and version. Matching on the bare word means
+# every spelling works and none is silently ignored.
+$unknownArgs = @()
+foreach ($arg in $Rest) {
+  $flag = $arg.ToLowerInvariant().TrimStart('-')
+  if     ($flag -eq 'check')    { $Check    = $true }
+  elseif ($flag -eq 'sidecars') { $Sidecars = $true }
+  elseif ($flag -eq 'upload')   { $Upload   = $true }
+  elseif ($flag -eq 'help' -or $flag -eq 'h') {
+    Get-Help $PSCommandPath -Detailed
+    exit 0
+  }
+  else { $unknownArgs += $arg }
+}
+if ($unknownArgs.Count -gt 0) {
+  Write-Host "[release][error] unrecognised argument(s): $($unknownArgs -join ' ')" -ForegroundColor Red
+  Write-Host "[release][error] usage: pnpm release [--check] [--sidecars] [--upload]" -ForegroundColor Red
+  Write-Host "[release][error]        pwsh scripts\release.ps1 [-Check] [-Sidecars] [-Upload] [-Tag v1.2.3]" -ForegroundColor Red
+  exit 2
+}
 $ErrorActionPreference = 'Stop'
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -85,7 +119,7 @@ if (-not $IsWindows) {
   $here = if ($IsMacOS) { 'macOS' } elseif ($IsLinux) { 'Linux' } else { 'this platform' }
   Write-Err "This is the Windows release script; you are on $here."
   if ($IsMacOS) {
-    Write-Err "On macOS run:   pnpm release -- --check      (or: bash scripts/release.sh)"
+    Write-Err "On macOS run:   pnpm release --check      (or: bash scripts/release.sh)"
   } else {
     Write-Err "Releases are cut on two machines only:"
     Write-Err "  macOS   -> bash scripts/release.sh   (on the Mac)"
@@ -292,13 +326,13 @@ if ($Check) {
   Invoke-Preflight
   if ($script:ChecksFailed -gt 0) {
     Write-Err "NOT ready to release: $script:ChecksFailed blocking item(s) above."
-    Write-Err 'Nothing was built. Fix those, then re-run: pnpm release -- -Check'
+    Write-Err 'Nothing was built. Fix those, then re-run: pnpm release -Check'
     exit 1
   }
   Write-Ok "Ready to release $Tag."
   Write-Host ''
   Write-Info 'Next:  pwsh scripts\release.ps1 -Sidecars -Upload'
-  Write-Info '       (or: pnpm release -- -Sidecars -Upload)'
+  Write-Info '       (or: pnpm release -Sidecars -Upload)'
   Write-Info 'Then finish the runbook in docs/RELEASING.md - the draft still needs the'
   Write-Info 'macOS half uploaded and the release published by hand.'
   exit 0
@@ -315,7 +349,7 @@ $env:REQUIRE_ALL = '1'
 Invoke-Preflight -EnvironmentOnly
 if ($script:ChecksFailed -gt 0) {
   Write-Err "$script:ChecksFailed blocking item(s) above - stopping BEFORE the build."
-  Write-Err 'Full preflight (adds the version + pytest gates): pnpm release -- -Check'
+  Write-Err 'Full preflight (adds the version + pytest gates): pnpm release -Check'
   exit 1
 }
 

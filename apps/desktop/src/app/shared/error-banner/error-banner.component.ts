@@ -1,13 +1,27 @@
-import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input, output } from '@angular/core';
 
+import { IpcService } from '../../core/ipc/ipc.service';
 import type { AppError } from '../../core/models';
 import { TranslatePipe } from '../../core/i18n';
+
+/**
+ * Base for turning an error's `docsRef` into something a user can actually
+ * open. `docsRef` is a REPO-RELATIVE path with an anchor
+ * (e.g. "docs/TROUBLESHOOTING.md#python-not-found"), which the banner used to
+ * print as inert monospace text — a filename that does not exist on the machine
+ * of anyone running an installed .dmg/.exe, shown at the exact moment they are
+ * already stuck.
+ */
+const DOCS_BASE_URL =
+  'https://github.com/codertapsu/multilingual-dubbed-video/blob/main/';
 
 /**
  * Renders an {@link AppError} in a consistent, accessible banner:
  *   what failed (message) / why (cause) / how to fix (remediation) / docs link.
  *
- * Pure presentational: pass `error` in, listen for `dismiss`.
+ * Presentational apart from one thing: it opens the `docsRef` in the OS browser
+ * itself (via {@link IpcService.openExternal}), because making every one of its
+ * ~15 call sites forward a click would guarantee some of them forget.
  */
 @Component({
   selector: 'vd-error-banner',
@@ -43,10 +57,12 @@ import { TranslatePipe } from '../../core/i18n';
           </p>
         }
 
-        @if (err.docsRef) {
+        @if (err.docsRef; as ref) {
           <p class="error-docs">
             <span class="label">{{ 'error.docs' | translate }}</span>
-            <span class="mono">{{ err.docsRef }}</span>
+            <button type="button" class="docs-link mono" (click)="openDocs(ref)">
+              {{ ref }}
+            </button>
           </p>
         }
       </div>
@@ -92,13 +108,29 @@ import { TranslatePipe } from '../../core/i18n';
         font-weight: 650;
         color: var(--vd-text-muted);
       }
+      .docs-link {
+        background: none;
+        border: 0;
+        padding: 0;
+        font: inherit;
+        color: var(--vd-primary);
+        cursor: pointer;
+        text-decoration: underline;
+      }
     `,
   ],
 })
 export class ErrorBannerComponent {
+  private readonly ipc = inject(IpcService);
+
   /** The error to render. When null/undefined the banner renders nothing. */
   readonly error = input<AppError | null>(null);
 
   /** Emitted when the user dismisses the banner. */
   readonly dismiss = output<void>();
+
+  /** Open the referenced doc page on GitHub in the OS browser. */
+  protected openDocs(docsRef: string): void {
+    void this.ipc.openExternal(DOCS_BASE_URL + docsRef.replace(/^\/+/, ''));
+  }
 }

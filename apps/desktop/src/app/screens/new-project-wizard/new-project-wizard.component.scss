@@ -104,3 +104,9 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* The source-language caveat: amber, because picking the wrong one produces a
+   fluent, confident, completely wrong dub with no error anywhere. */
+.warn-text {
+  color: var(--vd-warning);
+}

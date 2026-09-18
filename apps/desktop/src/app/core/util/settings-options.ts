@@ -73,26 +73,43 @@ export function ttsEngineParam(
 /**
  * The earliest pipeline stage that must re-run when a given setting changes.
  * Settings not listed don't by themselves require a re-dub (e.g. processingMode).
+ *
+ * A key here must name the step that CONSUMES it, not the step whose output it
+ * resembles. `forcedAlignment` was mapped to 'alignment' because of the name,
+ * but the runner reads it (and `diarize`) inside the STT step — so the
+ * recommended "Re-dub from Align Timing" would reset alignment→render, leave
+ * the completed STT step untouched with its artifacts in place, and the
+ * WhisperX pass would never run: no speaker ids, unchanged word timings, and no
+ * warning, because the runner's "engine not installed" warning lives inside the
+ * skipped step too. `diarize`, `synthesisGrouping`, `roomTone` and
+ * `reviewBeforeSynthesis` were missing entirely, so changing one recommended no
+ * re-dub at all. None of the five is editable after creation in today's UI, so
+ * no user could reach it — this is the trap removed before the next setting is
+ * added to the editor.
  */
 export const SETTING_AFFECTS_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   sourceLanguage: 'stt',
   sttProviderId: 'stt',
   sttModel: 'stt',
+  forcedAlignment: 'stt',
+  diarize: 'stt',
   targetLanguage: 'translation',
   translationProviderId: 'translation',
   autoFitOverflow: 'translation',
   refineProviderId: 'refine',
+  reviewBeforeSynthesis: 'refine',
   syncSubtitlesToVoice: 'alignment',
   ttsProviderId: 'tts',
   ttsVoiceId: 'tts',
+  synthesisGrouping: 'tts',
   maxSpeedRatio: 'alignment',
   allowedOverflowMs: 'alignment',
   timeStretchEngine: 'alignment',
-  forcedAlignment: 'alignment',
   includeOriginalBackgroundAudio: 'audio-mix',
   duckOriginalAudio: 'audio-mix',
   duckingLevelDb: 'audio-mix',
   originalAudioMode: 'audio-mix',
+  roomTone: 'audio-mix',
   ttsGainDb: 'audio-mix',
   renderQuality: 'render',
   subtitleExportMode: 'render',

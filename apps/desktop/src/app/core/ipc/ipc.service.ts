@@ -693,10 +693,57 @@ export class IpcService {
     httpBody?: unknown,
   ): Promise<T> {
     if (this.tauri) {
-      return this.invoke<T>(command, tauriArgs);
+      await this.awaitBackend();
+      const result = await this.invoke<T>(command, tauriArgs);
+      // Every `call()` command proxies the orchestrator, so one succeeding IS
+      // first contact. Without this, a session whose boot probe timed out kept
+      // the app-wide "backend isn't running" notice up forever even though the
+      // Rust client was getting answers. (Deliberately not inside `invoke()`:
+      // that also serves native-only commands like the file picker, which say
+      // nothing about the orchestrator.)
+      this.backendSeen = true;
+      this._backendDown.set(false);
+      return result;
     }
     return this.http<T>(method, path, httpBody);
   }
+
+  /**
+   * Block the first desktop-shell command until the orchestrator answers.
+   *
+   * The boot-wait loop and the ONLY two writes to `_backendDown` live in
+   * {@link fetchWaitingForBackend}, which is reached solely from {@link http} —
+   * so in the packaged app, where every startup command (`setup_get_status`,
+   * `list_projects`, `get_workers_health`) takes the invoke branch, neither
+   * existed. Within ~3 s the first-run guard concluded "setup complete" against
+   * an unreachable backend, Home's own fetch failed, and the app-wide notice
+   * with the Restart button never appeared because nothing on that path ever
+   * set `_backendDown`.
+   *
+   * `orchestrator_client.rs` now mirrors the boot wait on the Rust side, so the
+   * PATIENCE is covered there too — but a Rust retry cannot set an Angular
+   * signal, and `_backendDown` is what puts the recovery banner on screen. That
+   * signal is the reason this probe stays.
+   *
+   * One cheap `GET /health` through the patient fetch fixes both at once, and
+   * leaves every command's semantics untouched (`open_output_folder`, for one,
+   * deliberately does something different from its REST path). It runs once per
+   * session: `backendSeen` is set by the first successful fetch — including the
+   * many endpoints that already go over HTTP in both modes, which usually get
+   * there first and make this a no-op.
+   */
+  private async awaitBackend(): Promise<void> {
+    if (this.backendSeen) return;
+    // Cached for the whole session, settled or not: a burst of startup calls
+    // must wait once between them, and if the wait ends in failure the notice
+    // is already up — later calls should fail fast through the Rust client
+    // (which clears the notice itself if the backend turns out to be alive).
+    this.backendProbe ??= this.http<unknown>('GET', '/health').catch(() => undefined);
+    await this.backendProbe;
+  }
+
+  /** The one-shot boot probe, shared by every command that races it. */
+  private backendProbe: Promise<unknown> | null = null;
 
   /** Tauri invoke wrapper with lazy module load. */
   private async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {

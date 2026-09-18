@@ -16,7 +16,8 @@
     "projects": "Projects",
     "new-project": "New project",
     "settings": "Settings",
-    "support": "♥ Support",
+    "help": "Help",
+    "support": "♥ Sponsor",
     "primary": "Primary",
     "home-aria": "VideoDubber home",
     "download": "Download"
@@ -29,7 +30,10 @@
     "backend-down-tauri": "Reopening usually fixes it.",
     "backend-down-dev": "Start the local services (scripts/dev.sh or scripts/dev.ps1), then reload.",
     "restart": "Quit & reopen",
-    "restarting": "Restarting…"
+    "restarting": "Restarting…",
+    "mode-desktop-tooltip": "Running inside the VideoDubber desktop app. Commands use native IPC.",
+    "mode-browser-tooltip": "Running in a browser dev session. Commands fall back to HTTP against the orchestrator (port 5100).",
+    "backend-down-help": "Get help"
   },
   "update": {
     "installing-title": "Updating to {{ version }}…",
@@ -50,7 +54,12 @@
   },
   "download": {
     "done": "Done",
-    "working": "Working…"
+    "working": "Working…",
+    "item": {
+      "whisper": "Speech recognition model ({{ ref }})",
+      "argos": "Translation pack ({{ ref }})",
+      "piper": "Voice"
+    }
   },
   "source-video": {
     "title": "Download a source video",
@@ -120,7 +129,10 @@
     "empty-title": "No projects yet",
     "empty-body": "Create your first dubbing project. Pick a video, choose source and target languages, and let the local pipeline do the rest.",
     "create-first": "+ Create your first project",
-    "open-aria": "Open project {{ name }}"
+    "open-aria": "Open project {{ name }}",
+    "models-missing-title": "The models have not been downloaded yet.",
+    "models-missing-body": "You skipped the first-run download, so VideoDubber will fetch what it needs the first time you dub a video. You can download everything now instead.",
+    "models-missing-cta": "Download in Settings"
   },
   "settings": {
     "title": "Settings",
@@ -350,6 +362,7 @@
     "s3-recommended": "Recommended",
     "s3-size": "≈ {{ size }} MB download",
     "s3-no-catalog": "Model catalog unavailable. The default model will be used once services are reachable.",
+    "s3-total": "Total download for these choices: ≈ {{ size }} MB.",
     "s3-voice": "Target voice (text-to-speech)",
     "s3-voice-loading": "Loading voices for {{ lang }}…",
     "s3-voice-download": "Download a Piper voice for {{ lang }}",
@@ -371,9 +384,12 @@
     "s4-log": "Activity log",
     "s4-no-activity": "No activity yet.",
     "s4-ready": "You're ready to create your first project.",
-    "s4-background": "Downloads continue in the background.",
+    "s4-background": "Keep this window open until the download finishes — closing it stops the download.",
     "s4-finish": "Finish & start dubbing ▶",
-    "s4-finishing": "Finishing…"
+    "s4-finishing": "Finishing…",
+    "skip": "Skip for now — I'll download later",
+    "skipping": "Skipping…",
+    "skip-hint": "Skipping is safe: when you create your first project, VideoDubber downloads exactly what that project needs before it starts."
   },
   "editor": {
     "title": "Editor",
@@ -421,6 +437,7 @@
     "ctx-title": "Cast & translation context",
     "ctx-unsaved": "unsaved",
     "ctx-intro": "Used by context-aware translation (cloud LLMs, Gemma 3 chat, Argos + Gemma repair) to keep pronouns, terms of address, and terminology consistent. Fix something once — e.g. “student → teacher: gọi ‘thầy’, xưng ‘em’” — then Save & re-translate to apply it everywhere.",
+    "ctx-ignored": "The translation engine this project uses (Argos) translates one sentence at a time and cannot read any of this. Switch to an AI translation engine above to make the character sheet take effect.",
     "synopsis": "Synopsis",
     "synopsis-ph": "What is this video about, and who is talking to whom?",
     "pronouns": "Pronouns & terms of address",
@@ -566,7 +583,26 @@
     "start": "Start dubbing ▶",
     "pull-title": "Download the local translation model on demand, then start",
     "pulling": "Pulling… {{ percent }}%",
-    "pull-start": "Pull “{{ model }}” & start ▶"
+    "pull-start": "Pull “{{ model }}” & start ▶",
+    "video-path-hint": "Use Browse to pick a file, or paste an absolute path.",
+    "video-path-hint-browser": "Running in the browser: paste an absolute path the orchestrator can read (the native file picker is desktop-only).",
+    "source-language-warn": "Make sure this is the language actually spoken in the video. If it is wrong, the transcription will invent text that sounds fluent, and the dub will be confidently wrong with no error shown.",
+    "preflight-and-more": "{{ message }} (and {{ more }} more engine problem(s))",
+    "pull-failed": "Could not download the model \"{{ model }}\".",
+    "provider-hint": {
+      "engine-pack-missing": " — needs an engine pack (Settings → Engines)",
+      "cloud-key-missing": " — needs an API key",
+      "daemon-unreachable": " — service not running",
+      "model-missing": " — needs a model",
+      "worker-loading": " — service starting…",
+      "unavailable": " — unavailable"
+    },
+    "cloud-phase": {
+      "stt": "speech-to-text (uploads the audio track)",
+      "translation": "translation (sends the transcript text)",
+      "refine": "review & refine (sends the transcript and the translations)",
+      "tts": "text-to-speech (sends the translated text)"
+    }
   },
   "status": {
     "created": "Created",
@@ -663,7 +699,10 @@
     "remove-engine-fallback": "this engine pack",
     "remove-key-body": "Remove the saved {{ service }} API key? Cloud features for this provider stop working until you add a key again.",
     "remove": "Remove",
-    "clear-storage-body": "This removes {{ packs }} engine pack(s) and all downloaded models and caches{{ size }}. Your projects are kept. VideoDubber re-downloads what it needs on demand."
+    "clear-storage-body": "This removes {{ packs }} engine pack(s) and all downloaded models and caches{{ size }}. Your projects are kept. VideoDubber re-downloads what it needs on demand.",
+    "discard-edits-title": "Discard your edits?",
+    "discard-edits-body": "You have changes that have not been saved. If you leave this screen now they are lost.",
+    "discard-edits-confirm": "Leave and discard"
   },
   "misc": {
     "show-in-finder": "Show in Finder",
@@ -676,7 +715,9 @@
     "untitled-project": "Untitled project",
     "phase-stt": "Speech-to-text",
     "phase-translation": "Translation",
-    "phase-tts": "Text-to-speech"
+    "phase-tts": "Text-to-speech",
+    "needs-nvidia-driver": "Needs NVIDIA driver {{ required }} or newer — this machine has {{ found }}. Update the driver, or use the Vulkan build instead.",
+    "needs-ram": "Needs about {{ gb }} GB RAM — may run slowly on this machine"
   },
   "ducking-hint": {
     "subtle": "Subtle (−6 dB) — background stays prominent",
@@ -711,5 +752,30 @@
     "hard-cap": "Capped at {{ cap }}: past that, the shared transcription/translation/speech services process work one request at a time anyway.",
     "heavy-engines": "Projects that use a downloadable engine (whisper.cpp, TranslateGemma/Gemma, LibreTranslate, vocal separation, forced alignment) always run one at a time, on any computer — those engines take over the machine and stop each other when they overlap.",
     "manual": "Set manually to {{ n }} simultaneous dub(s) (this computer's recommendation is {{ recommended }})."
+  },
+  "help": {
+    "title": "Help & diagnostics",
+    "subtitle": "Check that VideoDubber is set up correctly on this machine, and collect everything needed for a bug report.",
+    "selfcheck": "Check my setup",
+    "selfcheck-hint": "Runs the same checks as the first-run wizard: the built-in services, ffmpeg, disk space and network access.",
+    "selfcheck-ok": "Everything needed is in place.",
+    "selfcheck-warn": "Something needs attention — see the list below.",
+    "selfcheck-unavailable": "The self-check could not run, which usually means the backend is not running yet. Try again in a moment.",
+    "recheck": "Check again",
+    "checking": "Checking…",
+    "services": "Services",
+    "services-hint": "The parts that do the work. If one is down, dubbing stops at the step that needs it.",
+    "services-unavailable": "Service status is unavailable — the backend did not answer.",
+    "report": "Report a problem",
+    "report-hint": "Copy the diagnostics below into your report. It describes this machine and what went wrong; it is never sent anywhere on its own.",
+    "version": "Version",
+    "version-unknown": "unknown",
+    "data-folder": "Data folder",
+    "copy-diagnostics": "Copy diagnostics",
+    "copied": "Copied",
+    "open-troubleshooting": "Open the troubleshooting guide",
+    "report-issue": "Report a problem on GitHub",
+    "privacy": "Your home folder is replaced with ~ and any API keys are removed before copying. Nothing leaves this machine until you paste it somewhere yourself.",
+    "copy-manual": "Copying to the clipboard was blocked. Select this text and copy it manually:"
   }
 }

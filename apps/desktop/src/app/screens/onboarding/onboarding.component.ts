@@ -78,6 +78,15 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   // -------- step 3: catalog + choices --------
   protected readonly catalog = signal<SetupCatalog | null>(null);
   protected readonly catalogLoading = signal(false);
+  /**
+   * The Whisper model THIS machine should use, from `GET /system`'s
+   * hardware-aware recommendation. Empty until it resolves (or if it fails),
+   * in which case the catalog's static `recommended` flag is used instead.
+   *
+   * Every model stays listed and selectable regardless — the recommendation is
+   * a measured hint about fit, never a restriction.
+   */
+  protected readonly recommendedModelId = signal<string>('');
   protected readonly languages = signal<CommonLanguage[]>([
     ...FALLBACK_COMMON_LANGUAGES,
   ]);
@@ -97,6 +106,8 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   // -------- step 4: install --------
   protected readonly installing = signal(false);
   protected readonly completing = signal(false);
+  /** True while "Skip for now" is finishing setup without a download. */
+  protected readonly skipping = signal(false);
 
   /** Once the install stream ends or errors, it's no longer in flight — so the
    *  Retry button enables on error (and Finish enables on done). */
@@ -108,6 +119,18 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   protected readonly selectedVoice = computed(
     () => this.voices().find((v) => v.id === this.selectedVoiceId()) ?? null,
   );
+
+  /**
+   * Approximate megabytes this wizard is about to download, so the cost of the
+   * chosen model is visible BEFORE the download starts rather than discovered
+   * as a stalled progress bar. Argos packs aren't in the catalog with sizes, so
+   * this is the model + the voice: the two the user actually chooses here.
+   */
+  protected readonly totalDownloadMb = computed(() => {
+    const model = this.whisperModels().find((m) => m.id === this.whisperModel());
+    const voice = this.fetchPiperVoice() ? this.selectedVoice() : null;
+    return (model?.approxSizeMb ?? 0) + (voice?.approxSizeMb ?? 0);
+  });
 
   /** Whether the chosen Argos pair appears in the catalog's available list. */
   protected readonly argosPairAvailable = computed(() => {
@@ -195,16 +218,27 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   private async loadCatalog(): Promise<void> {
     this.catalogLoading.set(true);
     try {
-      const cat = await this.ipc.setupGetCatalog();
+      // The recommendation is per-MACHINE (GET /system), the catalog's
+      // `recommended` flag is a static property of the table. Prefer the
+      // measured one; a failed probe just falls back to the flag.
+      const [cat, system] = await Promise.all([
+        this.ipc.setupGetCatalog(),
+        this.ipc.getSystemProfile().catch(() => null),
+      ]);
       this.catalog.set(cat);
       if (cat.languages.length > 0) {
         this.languages.set(cat.languages);
       }
       if (cat.whisperModels.length > 0) {
         this.whisperModels.set(cat.whisperModels);
-        const recommended =
-          cat.whisperModels.find((m) => m.recommended) ?? cat.whisperModels[0];
-        this.whisperModel.set(recommended.id);
+        const forThisMachine = system?.recommendation.whisperModel;
+        const offered = forThisMachine
+          ? cat.whisperModels.find((m) => m.id === forThisMachine)
+          : undefined;
+        if (offered) this.recommendedModelId.set(offered.id);
+        const preselect =
+          offered ?? cat.whisperModels.find((m) => m.recommended) ?? cat.whisperModels[0];
+        this.whisperModel.set(preselect.id);
       }
     } catch {
       // Offline / orchestrator not up yet: keep fallback languages; the user
@@ -304,12 +338,37 @@ export class OnboardingComponent implements OnInit, OnDestroy {
     await this.startInstall();
   }
 
-  /** Finish: mark first-run complete, then navigate to Home. */
+  /**
+   * Make the wizard's model choice the default for new projects.
+   *
+   * WHY: the wizard downloaded the model and then threw the choice away. The
+   * New Project wizard defaults to `sttModel: 'small'` and only overrides it
+   * from `providerDefaults`, and `computeRequiredResources` then treats `small`
+   * as a missing REQUIRED resource — so choosing `large-v3-turbo` here meant
+   * downloading 1.6 GB that was never used, followed by a surprise, blocking
+   * 484 MB download the first time the user created a project. The Settings
+   * screen already persists exactly this field the same way.
+   *
+   * Deliberately best-effort: a preferences write that fails must not strand the
+   * user in the wizard they are trying to leave. The worst case is the old
+   * behaviour (the New Project wizard falls back to `small`), which is exactly
+   * what happens today anyway.
+   */
+  private async persistModelChoice(): Promise<void> {
+    const sttModel = this.whisperModel();
+    if (!sttModel) return;
+    await this.ipc
+      .saveAppPreferences({ providerDefaults: { sttModel } })
+      .catch(() => undefined);
+  }
+
+  /** Finish: persist the model choice, mark first-run complete, go Home. */
   protected async finish(): Promise<void> {
     if (this.completing()) return;
     this.completing.set(true);
     this.error.set(null);
     try {
+      await this.persistModelChoice();
       await this.ipc.setupComplete();
       this.setupEvents.disconnect();
       // Invalidate the cached first-run status so the guard sees the new state
@@ -320,6 +379,40 @@ export class OnboardingComponent implements OnInit, OnDestroy {
       this.error.set(toAppError(err));
     } finally {
       this.completing.set(false);
+    }
+  }
+
+  /**
+   * "Skip for now — I'll download later": complete setup WITHOUT a successful
+   * download and land on Home.
+   *
+   * WHY this exists: Finish was gated on the SSE `done` event and step 4 offered
+   * only Retry, so a user who is offline, behind a blocked mirror, rate-limited
+   * or out of disk could never complete setup — and because `setup_complete` is
+   * written nowhere else, `firstRunGuard` bounced them back to this same screen
+   * at every launch, making the Projects list the one screen in the app they
+   * could never reach.
+   *
+   * Skipping is safe: creating a project runs `ensure-resources`, which
+   * downloads exactly what that project needs before the run can start. The
+   * models are deferred, not lost — and Home shows a standing reminder.
+   */
+  protected async skipSetup(): Promise<void> {
+    if (this.skipping() || this.completing()) return;
+    this.skipping.set(true);
+    this.error.set(null);
+    try {
+      // Persist the choice anyway: when they do download later, from Settings
+      // or from their first project, it should be the model they picked here.
+      await this.persistModelChoice();
+      await this.ipc.setupComplete();
+      this.setupEvents.disconnect();
+      this.firstRun.invalidate();
+      await this.router.navigate(['/']);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.skipping.set(false);
     }
   }
 

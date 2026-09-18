@@ -16,6 +16,7 @@
     "projects": "Dự án",
     "new-project": "Dự án mới",
     "settings": "Cài đặt",
+    "help": "Trợ giúp",
     "support": "♥ Ủng hộ",
     "primary": "Điều hướng chính",
     "home-aria": "Trang chủ VideoDubber",
@@ -29,7 +30,10 @@
     "backend-down-tauri": "Mở lại ứng dụng thường sẽ khắc phục được.",
     "backend-down-dev": "Hãy khởi động các dịch vụ cục bộ (scripts/dev.sh hoặc scripts/dev.ps1), rồi tải lại.",
     "restart": "Thoát và mở lại",
-    "restarting": "Đang khởi động lại…"
+    "restarting": "Đang khởi động lại…",
+    "mode-desktop-tooltip": "Đang chạy trong ứng dụng VideoDubber trên máy. Lệnh gọi qua IPC nội bộ.",
+    "mode-browser-tooltip": "Đang chạy trong phiên dev trên trình duyệt. Lệnh gọi qua HTTP tới bộ điều phối (cổng 5100).",
+    "backend-down-help": "Nhận trợ giúp"
   },
   "update": {
     "installing-title": "Đang cập nhật lên {{ version }}…",
@@ -50,7 +54,12 @@
   },
   "download": {
     "done": "Xong",
-    "working": "Đang chạy…"
+    "working": "Đang chạy…",
+    "item": {
+      "whisper": "Mô hình nhận dạng giọng nói ({{ ref }})",
+      "argos": "Gói dịch ({{ ref }})",
+      "piper": "Giọng đọc"
+    }
   },
   "source-video": {
     "title": "Tải video nguồn",
@@ -120,7 +129,10 @@
     "empty-title": "Chưa có dự án nào",
     "empty-body": "Tạo dự án lồng tiếng đầu tiên của bạn: chọn video, chọn ngôn ngữ nguồn và đích, phần còn lại cứ để ứng dụng lo.",
     "create-first": "+ Tạo dự án đầu tiên",
-    "open-aria": "Mở dự án {{ name }}"
+    "open-aria": "Mở dự án {{ name }}",
+    "models-missing-title": "Các mô hình vẫn chưa được tải về.",
+    "models-missing-body": "Bạn đã bỏ qua bước tải ở lần chạy đầu, nên VideoDubber sẽ tải những gì cần khi bạn lồng tiếng video đầu tiên. Bạn cũng có thể tải trước ngay bây giờ.",
+    "models-missing-cta": "Tải trong Cài đặt"
   },
   "settings": {
     "title": "Cài đặt",
@@ -350,6 +362,7 @@
     "s3-recommended": "Khuyến nghị",
     "s3-size": "≈ {{ size }} MB cần tải",
     "s3-no-catalog": "Không có danh mục mô hình. Mô hình mặc định sẽ được dùng khi các dịch vụ sẵn sàng.",
+    "s3-total": "Tổng dung lượng cần tải với lựa chọn này: ≈ {{ size }} MB.",
     "s3-voice": "Giọng đọc đích (chuyển văn bản thành giọng nói)",
     "s3-voice-loading": "Đang tải giọng đọc cho {{ lang }}…",
     "s3-voice-download": "Tải giọng Piper cho {{ lang }}",
@@ -371,9 +384,12 @@
     "s4-log": "Nhật ký hoạt động",
     "s4-no-activity": "Chưa có hoạt động nào.",
     "s4-ready": "Bạn đã sẵn sàng tạo dự án đầu tiên.",
-    "s4-background": "Quá trình tải vẫn tiếp tục ở chế độ nền.",
+    "s4-background": "Hãy giữ cửa sổ này mở cho đến khi tải xong — đóng lại là quá trình tải dừng.",
     "s4-finish": "Hoàn tất & bắt đầu lồng tiếng ▶",
-    "s4-finishing": "Đang hoàn tất…"
+    "s4-finishing": "Đang hoàn tất…",
+    "skip": "Bỏ qua — để sau tôi tải",
+    "skipping": "Đang bỏ qua…",
+    "skip-hint": "Bỏ qua vẫn an toàn: khi bạn tạo dự án đầu tiên, VideoDubber sẽ tải đúng những gì dự án đó cần trước khi chạy."
   },
   "editor": {
     "title": "Chỉnh sửa",
@@ -421,6 +437,7 @@
     "ctx-title": "Nhân vật & ngữ cảnh dịch",
     "ctx-unsaved": "chưa lưu",
     "ctx-intro": "Được dùng bởi các engine dịch có ngữ cảnh (LLM đám mây, Gemma 3 chat, Argos + Gemma repair) để giữ đại từ, cách xưng hô và thuật ngữ nhất quán. Sửa một lần — ví dụ “học sinh → giáo viên: gọi ‘thầy’, xưng ‘em’” — rồi bấm Lưu & dịch lại để áp dụng ở mọi nơi.",
+    "ctx-ignored": "Engine dịch mà dự án này đang dùng (Argos) dịch từng câu một và không đọc được những mục ở đây. Hãy đổi sang một engine dịch AI ở phía trên để bảng nhân vật có tác dụng.",
     "synopsis": "Tóm tắt nội dung",
     "synopsis-ph": "Video này nói về điều gì, và ai đang nói với ai?",
     "pronouns": "Đại từ & cách xưng hô",
@@ -566,7 +583,26 @@
     "start": "Bắt đầu lồng tiếng ▶",
     "pull-title": "Tải mô hình dịch cục bộ khi cần, rồi bắt đầu",
     "pulling": "Đang tải… {{ percent }}%",
-    "pull-start": "Tải “{{ model }}” & bắt đầu ▶"
+    "pull-start": "Tải “{{ model }}” & bắt đầu ▶",
+    "video-path-hint": "Bấm Chọn tệp, hoặc dán đường dẫn tuyệt đối vào ô trên.",
+    "video-path-hint-browser": "Đang chạy trên trình duyệt: hãy dán đường dẫn tuyệt đối mà bộ điều phối đọc được (hộp thoại chọn tệp chỉ có trên ứng dụng máy tính).",
+    "source-language-warn": "Hãy chắc chắn đây đúng là ngôn ngữ được nói trong video. Nếu chọn sai, phần nhận dạng sẽ bịa ra lời thoại nghe rất trôi chảy, và bản lồng tiếng sẽ sai hoàn toàn mà không báo lỗi gì.",
+    "preflight-and-more": "{{ message }} (và {{ more }} vấn đề engine khác)",
+    "pull-failed": "Không tải được mô hình \"{{ model }}\".",
+    "provider-hint": {
+      "engine-pack-missing": " — cần cài gói engine (Cài đặt → Engine)",
+      "cloud-key-missing": " — cần khoá API",
+      "daemon-unreachable": " — dịch vụ chưa chạy",
+      "model-missing": " — cần tải mô hình",
+      "worker-loading": " — dịch vụ đang khởi động…",
+      "unavailable": " — không dùng được"
+    },
+    "cloud-phase": {
+      "stt": "nhận dạng giọng nói (tải lên phần âm thanh)",
+      "translation": "dịch thuật (gửi đi nội dung lời thoại)",
+      "refine": "rà soát & tinh chỉnh (gửi đi lời thoại và bản dịch)",
+      "tts": "tổng hợp giọng nói (gửi đi nội dung đã dịch)"
+    }
   },
   "status": {
     "created": "Đã tạo",
@@ -663,7 +699,10 @@
     "remove-engine-fallback": "gói engine này",
     "remove-key-body": "Xoá khoá API {{ service }} đã lưu? Các tính năng đám mây của nhà cung cấp này sẽ ngừng hoạt động cho tới khi bạn thêm khoá mới.",
     "remove": "Xoá",
-    "clear-storage-body": "Thao tác này sẽ xoá {{ packs }} gói engine cùng toàn bộ mô hình đã tải và bộ nhớ đệm{{ size }}. Các dự án của bạn được giữ nguyên. VideoDubber sẽ tải lại những gì cần khi dùng đến."
+    "clear-storage-body": "Thao tác này sẽ xoá {{ packs }} gói engine cùng toàn bộ mô hình đã tải và bộ nhớ đệm{{ size }}. Các dự án của bạn được giữ nguyên. VideoDubber sẽ tải lại những gì cần khi dùng đến.",
+    "discard-edits-title": "Bỏ các chỉnh sửa?",
+    "discard-edits-body": "Bạn có những thay đổi chưa lưu. Rời khỏi màn hình này bây giờ là mất hết.",
+    "discard-edits-confirm": "Rời đi và bỏ"
   },
   "misc": {
     "show-in-finder": "Hiện trong Finder",
@@ -676,7 +715,9 @@
     "untitled-project": "Dự án chưa đặt tên",
     "phase-stt": "Nhận dạng giọng nói",
     "phase-translation": "Dịch thuật",
-    "phase-tts": "Tổng hợp giọng nói"
+    "phase-tts": "Tổng hợp giọng nói",
+    "needs-nvidia-driver": "Cần driver NVIDIA {{ required }} trở lên — máy này đang dùng {{ found }}. Hãy cập nhật driver, hoặc chọn bản Vulkan.",
+    "needs-ram": "Cần khoảng {{ gb }} GB RAM — chạy trên máy này có thể chậm"
   },
   "ducking-hint": {
     "subtle": "Nhẹ (−6 dB) — tiếng nền vẫn nghe rõ",
@@ -711,5 +752,30 @@
     "hard-cap": "Giới hạn ở {{ cap }}: vượt quá mức đó, các dịch vụ nhận dạng/dịch/tổng hợp giọng dùng chung cũng chỉ xử lý từng yêu cầu một.",
     "heavy-engines": "Dự án dùng engine tải thêm (whisper.cpp, TranslateGemma/Gemma, LibreTranslate, tách giọng, căn thời gian) luôn chạy một dự án mỗi lần trên mọi máy — những engine này chiếm trọn máy và cản nhau khi chạy chồng.",
     "manual": "Bạn đã đặt thủ công {{ n }} dự án cùng lúc (mức khuyến nghị cho máy này là {{ recommended }})."
+  },
+  "help": {
+    "title": "Trợ giúp & chẩn đoán",
+    "subtitle": "Kiểm tra xem VideoDubber đã được cài đặt đúng trên máy này chưa, và gom đủ thông tin để báo lỗi.",
+    "selfcheck": "Kiểm tra máy của tôi",
+    "selfcheck-hint": "Chạy đúng những kiểm tra như ở lần thiết lập đầu tiên: các dịch vụ đi kèm, ffmpeg, dung lượng ổ đĩa và kết nối mạng.",
+    "selfcheck-ok": "Mọi thứ cần thiết đều đã sẵn sàng.",
+    "selfcheck-warn": "Có mục cần xử lý — xem danh sách bên dưới.",
+    "selfcheck-unavailable": "Không chạy được phần kiểm tra, thường là do dịch vụ nền chưa khởi động xong. Hãy thử lại sau giây lát.",
+    "recheck": "Kiểm tra lại",
+    "checking": "Đang kiểm tra…",
+    "services": "Dịch vụ",
+    "services-hint": "Đây là những thành phần trực tiếp xử lý. Nếu một cái ngừng chạy, việc lồng tiếng sẽ dừng ngay ở bước cần nó.",
+    "services-unavailable": "Không xem được trạng thái dịch vụ — dịch vụ nền không phản hồi.",
+    "report": "Báo lỗi",
+    "report-hint": "Hãy sao chép phần chẩn đoán bên dưới vào báo cáo của bạn. Nó mô tả máy này và lỗi đã xảy ra; bản thân nó không tự gửi đi đâu cả.",
+    "version": "Phiên bản",
+    "version-unknown": "không rõ",
+    "data-folder": "Thư mục dữ liệu",
+    "copy-diagnostics": "Sao chép thông tin chẩn đoán",
+    "copied": "Đã sao chép",
+    "open-troubleshooting": "Mở hướng dẫn xử lý sự cố",
+    "report-issue": "Báo lỗi trên GitHub",
+    "privacy": "Đường dẫn thư mục cá nhân được thay bằng ~ và mọi khoá API đều bị xoá trước khi sao chép. Không có gì rời khỏi máy này cho tới khi chính bạn dán nó đi đâu đó.",
+    "copy-manual": "Trình duyệt chặn thao tác sao chép. Hãy bôi đen đoạn dưới đây và tự sao chép:"
   }
 }

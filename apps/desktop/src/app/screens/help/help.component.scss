@@ -1,0 +1,91 @@
+:host {
+  display: block;
+}
+
+.summary-badge {
+  align-self: flex-start;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+/* ----- Self-check + service list (mirrors the onboarding wizard's step 2, so
+   the two screens that render preflight results look like the same thing) ----- */
+.check-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-2);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vd-sp-3);
+  padding: var(--vd-sp-3);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius-sm);
+}
+.check-row[data-status='fail'] {
+  border-color: var(--vd-danger);
+  background: var(--vd-danger-bg);
+}
+.check-row[data-status='warn'] {
+  border-color: var(--vd-warning);
+  background: var(--vd-warning-bg);
+}
+.check-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: #fff;
+  background: var(--vd-text-muted);
+  margin-top: 1px;
+}
+.check-row[data-status='ok'] .check-icon {
+  background: var(--vd-success);
+}
+.check-row[data-status='warn'] .check-icon {
+  background: var(--vd-warning);
+}
+.check-row[data-status='fail'] .check-icon {
+  background: var(--vd-danger);
+}
+.check-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.check-label {
+  font-weight: 600;
+}
+.check-remedy {
+  font-size: 0.85rem;
+  margin-top: 2px;
+}
+.check-remedy .label {
+  font-weight: 650;
+  color: var(--vd-text-muted);
+}
+
+.about-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--vd-sp-2) var(--vd-sp-5);
+  margin: 0;
+}
+.about-grid dt {
+  font-weight: 600;
+  color: var(--vd-text-muted);
+}
+.about-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,123 @@
+<section class="page stack">
+  <header>
+    <h1>{{ 'help.title' | translate }}</h1>
+    <p class="muted">{{ 'help.subtitle' | translate }}</p>
+  </header>
+
+  <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
+
+  <!-- ===================== Check my setup ===================== -->
+  <div class="card stack">
+    <div class="row row-between">
+      <h2>{{ 'help.selfcheck' | translate }}</h2>
+      <button type="button" class="btn btn-sm" (click)="runPreflight()" [disabled]="preflightLoading()">
+        {{ (preflightLoading() ? 'help.checking' : 'help.recheck') | translate }}
+      </button>
+    </div>
+    <p class="hint">{{ 'help.selfcheck-hint' | translate }}</p>
+
+    @if (preflight(); as pf) {
+      <div
+        class="badge summary-badge"
+        [class.badge-completed]="pf.ok"
+        [class.badge-warning]="!pf.ok"
+        role="status"
+      >
+        {{ (pf.ok ? 'help.selfcheck-ok' : 'help.selfcheck-warn') | translate }}
+      </div>
+      <ul class="check-list" role="list">
+        @for (check of pf.checks; track check.id) {
+          <li class="check-row" [attr.data-status]="check.status">
+            <span class="check-icon" aria-hidden="true">
+              @switch (check.status) {
+                @case ('ok') { ✓ }
+                @case ('warn') { ! }
+                @case ('fail') { ✕ }
+              }
+            </span>
+            <span class="check-body">
+              <span class="check-label">{{ check.label }}</span>
+              @if (check.detail) {
+                <span class="hint">{{ check.detail }}</span>
+              }
+              @if (check.remediation) {
+                <span class="check-remedy">
+                  <span class="label">{{ 'onboarding.s2-how-to-fix' | translate }}</span>
+                  {{ check.remediation }}
+                </span>
+              }
+            </span>
+          </li>
+        }
+      </ul>
+    } @else if (preflightLoading()) {
+      <p class="muted">{{ 'help.checking' | translate }}</p>
+    } @else {
+      <p class="muted">{{ 'help.selfcheck-unavailable' | translate }}</p>
+    }
+  </div>
+
+  <!-- ===================== Services ===================== -->
+  <div class="card stack">
+    <h2>{{ 'help.services' | translate }}</h2>
+    <p class="hint">{{ 'help.services-hint' | translate }}</p>
+    @if (serviceRows().length > 0) {
+      <ul class="check-list" role="list">
+        @for (row of serviceRows(); track row.name) {
+          <li class="check-row">
+            <span class="check-icon" aria-hidden="true">{{ row.available ? '✓' : '✕' }}</span>
+            <span class="check-body">
+              <span class="check-label mono">{{ row.name }}</span>
+              @if (row.detail) {
+                <span class="hint">{{ row.detail }}</span>
+              }
+            </span>
+            <span class="badge" [class.badge-completed]="row.available" [class.badge-failed]="!row.available">
+              {{ (row.available ? 'status.completed' : 'status.failed') | translate }}
+            </span>
+          </li>
+        }
+      </ul>
+    } @else {
+      <p class="muted">{{ 'help.services-unavailable' | translate }}</p>
+    }
+  </div>
+
+  <!-- ===================== Report a problem ===================== -->
+  <div class="card stack">
+    <h2>{{ 'help.report' | translate }}</h2>
+    <p class="hint">{{ 'help.report-hint' | translate }}</p>
+    <dl class="about-grid">
+      <dt>{{ 'help.version' | translate }}</dt>
+      <dd class="mono">{{ appVersion() ?? ('help.version-unknown' | translate) }}</dd>
+      @if (storage(); as st) {
+        <dt>{{ 'help.data-folder' | translate }}</dt>
+        <dd class="mono">{{ st.root }}</dd>
+      }
+    </dl>
+    <div class="row">
+      <button type="button" class="btn btn-primary" (click)="copyDiagnostics()">
+        {{ (copied() ? 'help.copied' : 'help.copy-diagnostics') | translate }}
+      </button>
+      <button type="button" class="btn" (click)="openTroubleshooting()">
+        {{ 'help.open-troubleshooting' | translate }}
+      </button>
+      <button type="button" class="btn" (click)="openIssueTracker()">
+        {{ 'help.report-issue' | translate }}
+      </button>
+    </div>
+    @if (manualCopy(); as diag) {
+      <label class="manual-copy">
+        <span class="hint">{{ 'help.copy-manual' | translate }}</span>
+        <textarea
+          id="help-diagnostics"
+          rows="10"
+          readonly
+          [value]="diag"
+          (focus)="selectAll($event)"
+        ></textarea>
+      </label>
+    }
+    <p class="hint">{{ 'help.privacy' | translate }}</p>
+  </div>
+</section>

@@ -1,6 +1,7 @@
 import type { Routes } from '@angular/router';
 
 import { firstRunGuard, onboardingGuard } from './core/guards/first-run.guard';
+import { unsavedChangesGuard } from './core/guards/unsaved-changes.guard';
 
 /**
  * Application routes. Every screen is a lazily-loaded standalone component so
@@ -57,6 +58,9 @@ export const APP_ROUTES: Routes = [
   {
     path: 'project/:id/editor',
     title: 'VideoDubber — Editor',
+    // Transcript edits live in a draft buffer until Save, and leaving the screen
+    // threw them away without a word. The guard asks first.
+    canDeactivate: [unsavedChangesGuard],
     loadComponent: () =>
       import('./screens/editor/editor.component').then((m) => m.EditorComponent),
   },
@@ -75,8 +79,18 @@ export const APP_ROUTES: Routes = [
       ),
   },
   {
+    // The end-user entry point for "it didn't work": a re-runnable self-check,
+    // the service health rows and a copyable diagnostics bundle. Added because
+    // the only route that sounded like help was /support — a donation page —
+    // which is the worst possible screen to land on after a failed first dub.
+    path: 'help',
+    title: 'VideoDubber — Help',
+    loadComponent: () =>
+      import('./screens/help/help.component').then((m) => m.HelpComponent),
+  },
+  {
     path: 'support',
-    title: 'VideoDubber — Support',
+    title: 'VideoDubber — Sponsor',
     loadComponent: () =>
       import('./screens/support/support.component').then(
         (m) => m.SupportComponent,

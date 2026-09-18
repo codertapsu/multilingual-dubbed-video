@@ -162,18 +162,27 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   /** Whether the WhisperX (alignment + diarization) feature is offered at all. */
   protected readonly whisperxOffered = computed(() => this.offeredPacks().has('alignment-whisperx'));
 
-  /** Phases currently routed to a cloud provider (drives the privacy note). */
+  /**
+   * Phases currently routed to a cloud provider (drives the privacy note).
+   *
+   * Each phase resolves to a translated sentence naming WHAT leaves the
+   * machine. This is the app's only data-egress disclosure, and it shipped as
+   * English literals interpolated into an otherwise-translated warning — the
+   * one string a user must understand before their audio is uploaded.
+   */
   protected readonly cloudPhases = computed(() => {
     const provs = this.providers();
     const s = this.settings();
     if (!provs) return [] as string[];
     const find = (list: ProviderInfo[], id: string) => list.find((p) => p.id === id);
+    const t = (key: string) => this.translate.instant(key);
     const phases: string[] = [];
-    if (find(provs.stt, s.sttProviderId)?.isLocal === false) phases.push('speech-to-text (uploads the audio track)');
-    if (find(provs.translation, s.translationProviderId)?.isLocal === false) phases.push('translation (sends the transcript text)');
+    if (find(provs.stt, s.sttProviderId)?.isLocal === false) phases.push(t('wizard.cloud-phase.stt'));
+    if (find(provs.translation, s.translationProviderId)?.isLocal === false)
+      phases.push(t('wizard.cloud-phase.translation'));
     if (s.refineProviderId && find(provs.translation, s.refineProviderId)?.isLocal === false)
-      phases.push('review & refine (sends the transcript + translations)');
-    if (find(provs.tts, s.ttsProviderId)?.isLocal === false) phases.push('text-to-speech (sends the translated text)');
+      phases.push(t('wizard.cloud-phase.refine'));
+    if (find(provs.tts, s.ttsProviderId)?.isLocal === false) phases.push(t('wizard.cloud-phase.tts'));
     return phases;
   });
 
@@ -322,10 +331,11 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   }
 
   /**
-   * Prefer VieNeu v2 for Vietnamese dubbing — but only when its engine pack is
-   * already installed, so a first-run user isn't forced into a download to dub
-   * Vietnamese (Piper stays the safe out-of-box default; they can install v2 to
-   * upgrade). Only nudges when the user hasn't otherwise chosen a TTS engine.
+   * Prefer a VieNeu neural engine for Vietnamese dubbing — but only when its
+   * engine pack is already installed, so a first-run user isn't forced into a
+   * download to dub Vietnamese (Piper stays the safe out-of-box default; they
+   * can install VieNeu to upgrade). Only nudges when the user hasn't otherwise
+   * chosen a TTS engine.
    */
   private applyVietnameseNeuralDefault(): void {
     const provs = this.providers();
@@ -333,8 +343,9 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     if (!provs) return;
     if ((s.targetLanguage.split('-')[0] ?? '').toLowerCase() !== 'vi') return;
     if (s.ttsProviderId !== 'piper-local') return; // respect an explicit choice
-    if (provs.tts.find((p) => p.id === 'neural-tts-v2')?.available) {
-      this.patchSettings('ttsProviderId', 'neural-tts-v2');
+    const engine = preferredVietnameseNeuralEngine(provs.tts);
+    if (engine) {
+      this.patchSettings('ttsProviderId', engine);
       this.syncProcessingMode();
     }
   }
@@ -486,7 +497,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   /** Target language changed — re-patch and reload the per-language voices. */
   protected setTargetLanguage(code: LanguageCode): void {
     this.patchSettings('targetLanguage', code);
-    // Switching to Vietnamese prefers VieNeu v2 (if its pack is installed).
+    // Switching to Vietnamese prefers a VieNeu engine (if its pack is installed).
     this.applyVietnameseNeuralDefault();
     if (this.showVoicePicker()) void this.loadVoicesForTarget();
   }
@@ -576,22 +587,30 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     return this.languages().find((l) => l.code === code)?.label ?? code;
   }
 
-  /** Why an unavailable provider can't be picked (shown after its name). */
+  /**
+   * Why an unavailable provider can't be picked (shown after its name).
+   *
+   * These were English template literals appended to every `<option>` in the
+   * four engine `<select>`s — so the one sentence that explains why a user
+   * cannot choose an engine was unreadable to the default (Vietnamese)
+   * audience. Resolved here rather than returned as a key because the value is
+   * concatenated into the option's text, not piped.
+   */
   protected providerHint(p: ProviderInfo): string {
     if (p.available) return '';
     switch (p.readinessStatus) {
       case 'engine-pack-missing':
-        return ' — needs engine pack (Settings → Engines)';
+        return this.translate.instant('wizard.provider-hint.engine-pack-missing');
       case 'cloud-key-missing':
-        return ' — needs API key';
+        return this.translate.instant('wizard.provider-hint.cloud-key-missing');
       case 'daemon-unreachable':
-        return ' — service not running';
+        return this.translate.instant('wizard.provider-hint.daemon-unreachable');
       case 'model-missing':
-        return ' — needs a model';
+        return this.translate.instant('wizard.provider-hint.model-missing');
       case 'worker-loading':
-        return ' — service starting…';
+        return this.translate.instant('wizard.provider-hint.worker-loading');
       default:
-        return ' — unavailable';
+        return this.translate.instant('wizard.provider-hint.unavailable');
     }
   }
 
@@ -685,7 +704,13 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
         const more = problems.length - 1;
         this.error.set({
           code: 'ENGINE_UNAVAILABLE',
-          message: more > 0 ? `${first.message} (and ${more} more provider issue${more > 1 ? 's' : ''})` : first.message,
+          message:
+            more > 0
+              ? this.translate.instant('wizard.preflight-and-more', {
+                  message: first.message,
+                  more,
+                })
+              : first.message,
           ...(first.remediation ? { remediation: first.remediation } : {}),
         });
         this.preflightProblems.set(problems);
@@ -717,7 +742,11 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
         this.ollamaPullPercent.set(st.percent);
         if (st.status === 'done') break;
         if (st.status === 'error') {
-          this.error.set({ code: 'ENGINE_UNAVAILABLE', message: `Pulling "${model}" failed.`, ...(st.error ? { remediation: st.error } : {}) });
+          this.error.set({
+            code: 'ENGINE_UNAVAILABLE',
+            message: this.translate.instant('wizard.pull-failed', { model }),
+            ...(st.error ? { remediation: st.error } : {}),
+          });
           return;
         }
       }
@@ -761,6 +790,33 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
         .join(', ') || '—'
     );
   }
+}
+
+/**
+ * VieNeu engine ids, best-first: v3 (`neural-tts`) is the shipped Apache-2.0
+ * engine and is registered unconditionally; v2 is the legacy pack.
+ *
+ * This list used to be just `['neural-tts-v2']`, and `tts-neural-v2` is in the
+ * orchestrator's DISABLED_PACK_IDS — so its provider is never registered and
+ * the auto-default could never fire. A user who followed the docs and installed
+ * the neural Vietnamese voice still got Piper, silently, and the per-voice RNG
+ * pinning that only applies to VieNeu never took effect. Order matters: v3 must
+ * be checked first so a machine with BOTH installed gets the newer engine.
+ */
+const VIETNAMESE_NEURAL_ENGINE_IDS = ['neural-tts', 'neural-tts-v2'] as const;
+
+/**
+ * The best available VieNeu engine for Vietnamese, or null when none is
+ * installed. Pure so the preference order can be reasoned about (and tested)
+ * without a component.
+ */
+export function preferredVietnameseNeuralEngine(
+  tts: readonly ProviderInfo[],
+): string | null {
+  for (const id of VIETNAMESE_NEURAL_ENGINE_IDS) {
+    if (tts.find((p) => p.id === id)?.available) return id;
+  }
+  return null;
 }
 
 /** Best-effort project name from a file path (basename without extension). */

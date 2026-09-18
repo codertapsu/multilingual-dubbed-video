@@ -59,12 +59,7 @@
           </div>
         </div>
         <p id="videoPathHint" class="hint">
-          @if (inTauri) {
-            Use Browse to pick a file, or paste an absolute path.
-          } @else {
-            Running in the browser: paste an absolute path the orchestrator can
-            read (the native picker is desktop-only).
-          }
+          {{ (inTauri ? 'wizard.video-path-hint' : 'wizard.video-path-hint-browser') | translate }}
         </p>
       </fieldset>
 
@@ -98,6 +93,17 @@
             </select>
           </div>
         </div>
+        <!--
+          The single most expensive mistake available on this screen. The source
+          language is FORCED into Whisper — it is never auto-detected and a
+          mismatch never errors — so transcribing Chinese audio as English
+          produces confident, fluent, entirely invented English, which is then
+          translated into fluent, entirely wrong Vietnamese and read aloud over
+          the video. The run reports 100% success. Say so before they start.
+        -->
+        <p class="hint warn-text" role="note">
+          {{ 'wizard.source-language-warn' | translate }}
+        </p>
       </fieldset>
 
       <fieldset>

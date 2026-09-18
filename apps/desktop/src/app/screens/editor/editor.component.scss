@@ -233,3 +233,11 @@
     margin: 0;
   }
 }
+
+/* "This engine ignores the character sheet" notice. Full-width and wrapping —
+   it is a sentence, not a pill. */
+.ctx-ignored {
+  align-self: flex-start;
+  white-space: normal;
+  line-height: 1.4;
+}

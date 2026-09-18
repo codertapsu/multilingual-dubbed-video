@@ -102,6 +102,10 @@ export class ProjectStore {
  * envelope shape and otherwise falls back to UNKNOWN.
  */
 export function toAppError(err: unknown): AppError {
+  return recordError(normalizeAppError(err));
+}
+
+function normalizeAppError(err: unknown): AppError {
   if (isAppError(err)) return err;
   if (err instanceof Error) {
     return { code: 'UNKNOWN', message: err.message, cause: err.stack };
@@ -110,6 +114,33 @@ export function toAppError(err: unknown): AppError {
     return { code: 'UNKNOWN', message: err };
   }
   return { code: 'UNKNOWN', message: 'An unexpected error occurred.' };
+}
+
+/** How many past failures the Help screen's diagnostics bundle can report. */
+const RECENT_ERROR_LIMIT = 20;
+
+const recent: string[] = [];
+
+/**
+ * Remember every error the user was shown, for the Help screen's "Copy
+ * diagnostics".
+ *
+ * This funnel is the only thing in the app that sees all of them: worker
+ * stdout/stderr is discarded by the shell, the Python workers configure no file
+ * handler, and the SSE log buffer is cleared on every new stream — so when a
+ * user reports "it failed", there is otherwise literally no artifact to look
+ * at. In memory only: it dies with the window and never reaches disk or the
+ * network unless the user pastes it somewhere.
+ */
+function recordError(error: AppError): AppError {
+  recent.push(`${new Date().toISOString()} ${error.code}: ${error.message}`);
+  if (recent.length > RECENT_ERROR_LIMIT) recent.splice(0, recent.length - RECENT_ERROR_LIMIT);
+  return error;
+}
+
+/** The errors surfaced in this session, oldest first. */
+export function recentErrors(): readonly string[] {
+  return [...recent];
 }
 
 function isAppError(value: unknown): value is AppError {

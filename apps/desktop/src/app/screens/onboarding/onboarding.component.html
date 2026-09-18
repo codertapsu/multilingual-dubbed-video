@@ -187,7 +187,10 @@
                 <span class="radio-body">
                   <span class="radio-title">
                     {{ 'whisper.' + model.id | translate }}
-                    @if (model.recommended) {
+                    <!-- "Recommended" means MEASURED fit for this machine when
+                         GET /system answered, and the catalog's static flag only
+                         as a fallback. Every model stays selectable either way. -->
+                    @if (recommendedModelId() ? recommendedModelId() === model.id : model.recommended) {
                       <span class="badge badge-completed">{{ 'onboarding.s3-recommended' | translate }}</span>
                     }
                   </span>
@@ -196,6 +199,9 @@
               </label>
             }
           </div>
+          <p class="hint">
+            {{ 'onboarding.s3-total' | translate: { size: totalDownloadMb() } }}
+          </p>
         } @else {
           <p class="muted">
             {{ 'onboarding.s3-no-catalog' | translate }}
@@ -251,15 +257,33 @@
 
       <div class="row row-between">
         <button type="button" class="btn" (click)="back()">{{ 'onboarding.back' | translate }}</button>
-        <button
-          type="button"
-          class="btn btn-primary"
-          (click)="startInstall()"
-          [disabled]="!step3Valid() || installing()"
-        >
-          {{ (installing() ? 'onboarding.s3-starting' : 'onboarding.s3-download') | translate }}
-        </button>
+        <div class="row">
+          <!--
+            The escape hatch. Without it the ONLY way out of this wizard was a
+            successful download, and `setup_complete` is written nowhere else —
+            so an offline or rate-limited user was returned here at every
+            launch, with the Projects list permanently unreachable. Creating a
+            project runs ensure-resources, so deferring the download is safe.
+          -->
+          <button
+            type="button"
+            class="btn btn-ghost"
+            (click)="skipSetup()"
+            [disabled]="skipping() || installing()"
+          >
+            {{ (skipping() ? 'onboarding.skipping' : 'onboarding.skip') | translate }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            (click)="startInstall()"
+            [disabled]="!step3Valid() || installing()"
+          >
+            {{ (installing() ? 'onboarding.s3-starting' : 'onboarding.s3-download') | translate }}
+          </button>
+        </div>
       </div>
+      <p class="hint">{{ 'onboarding.skip-hint' | translate }}</p>
     </div>
   }
 
@@ -325,17 +349,37 @@
           @if (installDone()) {
             {{ 'onboarding.s4-ready' | translate }}
           } @else {
+            <!-- Was "Downloads continue in the background." — they do not: Finish
+                 is gated on the SSE `done` event and closing the window shuts the
+                 sidecars down with it. Say what is actually true. -->
             {{ 'onboarding.s4-background' | translate }}
           }
         </span>
-        <button
-          type="button"
-          class="btn btn-primary"
-          (click)="finish()"
-          [disabled]="!installDone() || completing()"
-        >
-          {{ (completing() ? 'onboarding.s4-finishing' : 'onboarding.s4-finish') | translate }}
-        </button>
+        <div class="row">
+          <!-- Only once the transfer has STOPPED (failed or stalled) — that is the
+               dead end this button exists for. Offering it mid-download let the
+               user disconnect the SSE while the orchestrator kept downloading:
+               the progress UI vanished, and Home then asserted "models not
+               downloaded yet" over an install that was still running. -->
+          @if (!installDone() && !installing()) {
+            <button
+              type="button"
+              class="btn btn-ghost"
+              (click)="skipSetup()"
+              [disabled]="skipping() || completing()"
+            >
+              {{ (skipping() ? 'onboarding.skipping' : 'onboarding.skip') | translate }}
+            </button>
+          }
+          <button
+            type="button"
+            class="btn btn-primary"
+            (click)="finish()"
+            [disabled]="!installDone() || completing()"
+          >
+            {{ (completing() ? 'onboarding.s4-finishing' : 'onboarding.s4-finish') | translate }}
+          </button>
+        </div>
       </div>
     </div>
   }

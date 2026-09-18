@@ -14,6 +14,7 @@ import { Router, RouterLink } from '@angular/router';
 import { splitSubtitleLines } from '@videodubber/shared';
 
 import { environment } from '../../core/environment';
+import type { HasUnsavedChanges } from '../../core/guards/unsaved-changes.guard';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
@@ -87,6 +88,17 @@ function looksUntranslatedText(sourceText: string, text: string): boolean {
 }
 
 /**
+ * Translation engines that ignore the translation-context sheet.
+ *
+ * Argos and LibreTranslate are sentence-level statistical MT: they take one
+ * sentence and return one sentence, with nowhere to put a synopsis, a pronoun
+ * guide, a cast list or a glossary. Everything else the app offers is an LLM,
+ * which does read them. Argos is the default engine, so without this list the
+ * whole card is a form that does nothing for most users.
+ */
+const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libretranslate'];
+
+/**
  * EditorComponent (route "project/:id/editor").
  *
  * Side-by-side review/edit of transcript segments: read-only source text and
@@ -111,8 +123,19 @@ function looksUntranslatedText(sourceText: string, text: string): boolean {
   templateUrl: './editor.component.html',
   styleUrl: './editor.component.scss',
 })
-export class EditorComponent implements OnInit {
+export class EditorComponent implements OnInit, HasUnsavedChanges {
   readonly id = input.required<string>();
+
+  /**
+   * Route guard hook: true when leaving would discard typing.
+   *
+   * Covers both editable buffers — the per-segment translation drafts and the
+   * translation-context sheet (synopsis / pronouns / cast / glossary) — because
+   * both are held in memory until their own explicit Save.
+   */
+  hasUnsavedChanges(): boolean {
+    return this.dirty() || this.ctxDirty();
+  }
 
   private readonly ipc = inject(IpcService);
   private readonly store = inject(ProjectStore);
@@ -181,6 +204,22 @@ export class EditorComponent implements OnInit {
 
   /** Show the per-segment voice override whenever the engine exposes voices. */
   protected readonly showVoicePicker = computed(() => this.availableVoices().length > 0);
+
+  /**
+   * True when the project's translation engine cannot read the context sheet.
+   *
+   * The synopsis, pronoun guide, cast and glossary are delivered as prompt
+   * context, which only an LLM translator consumes — the local statistical
+   * engines below take a sentence in and give a sentence back. On the DEFAULT
+   * engine (argos) the whole card was therefore a form that silently did
+   * nothing: a user could sit and type a pronoun map for a long video and see
+   * no change on the next re-translate, with no warning anywhere. Say so.
+   */
+  protected readonly contextIgnoredByEngine = computed(() =>
+    CONTEXT_BLIND_TRANSLATION_PROVIDERS.includes(
+      this.projectSettings()?.translationProviderId ?? '',
+    ),
+  );
 
   /** Label for the project's default voice (shown as the "Default" option). */
   protected readonly defaultVoiceLabel = computed(() => {

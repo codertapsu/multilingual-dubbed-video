@@ -24,6 +24,17 @@
     (dismiss)="store.clearError()"
   />
 
+  <!-- Standing reminder for anyone who skipped the first-run download. Not
+       dismissible: it IS the state of the install, and it clears itself as soon
+       as a model is on disk. -->
+  @if (modelsMissing()) {
+    <div class="card models-missing" role="status">
+      <strong>{{ 'home.models-missing-title' | translate }}</strong>
+      <p class="hint">{{ 'home.models-missing-body' | translate }}</p>
+      <a routerLink="/settings" class="btn btn-sm">{{ 'home.models-missing-cta' | translate }}</a>
+    </div>
+  }
+
   <!-- Capacity summary: only surfaces once dubbing is actually happening, so
        the limit is explained at the first moment it costs the user something. -->
   @if (queue(); as q) {

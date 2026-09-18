@@ -1,5 +1,15 @@
-import { ChangeDetectionStrategy, Component, HostListener, inject } from '@angular/core';
+import type { ElementRef } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  HostListener,
+  computed,
+  effect,
+  inject,
+  viewChild,
+} from '@angular/core';
 
+import { TranslateService } from '../../core/i18n';
 import { ConfirmService } from './confirm.service';
 
 /**
@@ -7,6 +17,12 @@ import { ConfirmService } from './confirm.service';
  * a modal overlay whenever {@link ConfirmService.confirm} has an open request.
  * Cancel via the Cancel button, the backdrop, or the Escape key; confirm via the
  * primary button. Purely driven by the service — no inputs.
+ *
+ * Focus is MOVED into the card on open, trapped inside it while it is open and
+ * restored to whatever opened it on close. Without that, `aria-modal` is a lie:
+ * a keyboard or screen-reader user stayed on the page behind the overlay and
+ * could tab into (and activate) the very button they were being asked to
+ * confirm — every caller here guards a destructive action.
  */
 @Component({
   selector: 'vd-confirm-dialog',
@@ -16,6 +32,7 @@ import { ConfirmService } from './confirm.service';
     @if (confirm.request(); as req) {
       <div class="confirm-overlay" role="presentation" (click)="onCancel()">
         <div
+          #card
           class="confirm-card"
           role="alertdialog"
           aria-modal="true"
@@ -25,8 +42,8 @@ import { ConfirmService } from './confirm.service';
           <h3 class="confirm-title">{{ req.title }}</h3>
           <p class="confirm-message">{{ req.message }}</p>
           <div class="confirm-actions">
-            <button type="button" class="btn btn-ghost" (click)="onCancel()" autofocus>
-              {{ req.cancelLabel ?? 'Cancel' }}
+            <button type="button" class="btn btn-ghost" (click)="onCancel()">
+              {{ req.cancelLabel ?? defaultCancelLabel() }}
             </button>
             <button
               type="button"
@@ -35,7 +52,7 @@ import { ConfirmService } from './confirm.service';
               [class.btn-primary]="req.danger === false"
               (click)="onConfirm()"
             >
-              {{ req.confirmLabel ?? 'Confirm' }}
+              {{ req.confirmLabel ?? defaultConfirmLabel() }}
             </button>
           </div>
         </div>
@@ -87,6 +104,46 @@ import { ConfirmService } from './confirm.service';
 })
 export class ConfirmDialogComponent {
   protected readonly confirm = inject(ConfirmService);
+  private readonly translate = inject(TranslateService);
+
+  private readonly card = viewChild<ElementRef<HTMLElement>>('card');
+
+  /**
+   * Button labels when a caller passes none. These used to be the English
+   * literals 'Cancel' / 'Confirm', and NO caller passes `cancelLabel`, so the
+   * Cancel button of every destructive dialog in the app was English for the
+   * default (Vietnamese) audience.
+   */
+  protected readonly defaultCancelLabel = computed(() =>
+    this.translate.instant('common.cancel'),
+  );
+  protected readonly defaultConfirmLabel = computed(() =>
+    this.translate.instant('common.confirm'),
+  );
+
+  /** Whatever had focus when the dialog opened, so we can hand it back. */
+  private returnFocusTo: HTMLElement | null = null;
+
+  /**
+   * Move focus into the card on open and back to the opener on close.
+   *
+   * Deferred by a macrotask: the request signal is written from a click
+   * handler, so the card does not exist in the DOM until change detection has
+   * run. Restoring focus matters as much as taking it — without it the user is
+   * dumped at the top of the document after every confirmation.
+   */
+  private readonly _manageFocus = effect(() => {
+    const open = this.confirm.request() !== null;
+    if (open) {
+      const active = typeof document === 'undefined' ? null : document.activeElement;
+      this.returnFocusTo = active instanceof HTMLElement ? active : null;
+      setTimeout(() => this.focusable()[0]?.focus());
+    } else {
+      const previous = this.returnFocusTo;
+      this.returnFocusTo = null;
+      previous?.focus();
+    }
+  });
 
   onConfirm(): void {
     this.confirm.resolve(true);
@@ -100,5 +157,41 @@ export class ConfirmDialogComponent {
   @HostListener('document:keydown.escape')
   onEscape(): void {
     if (this.confirm.request()) this.confirm.resolve(false);
+  }
+
+  /**
+   * Keep Tab inside the card. The dialog renders over the whole app, so without
+   * this the next Tab leaves the "modal" and lands on the page behind it.
+   */
+  @HostListener('document:keydown.tab', ['$event'])
+  @HostListener('document:keydown.shift.tab', ['$event'])
+  onTab(event: Event): void {
+    if (!this.confirm.request()) return;
+    const items = this.focusable();
+    if (items.length === 0) return;
+    const first = items[0]!;
+    const last = items[items.length - 1]!;
+    const active = document.activeElement;
+    const back = (event as KeyboardEvent).shiftKey;
+    // "Focus is not in the card" has to be handled in BOTH directions, not just
+    // backwards: focus lands on <body> whenever the element that opened the
+    // dialog is itself removed by the same click (the project row that opens
+    // "Delete project?" is), and from <body> a forward Tab matched neither
+    // branch and walked straight into the page behind the overlay.
+    const outside = !this.card()?.nativeElement.contains(active);
+    if (back && (outside || active === first)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!back && (outside || active === last)) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  /** The dialog's tabbable controls, in DOM order (just the two buttons today). */
+  private focusable(): HTMLElement[] {
+    const host = this.card()?.nativeElement;
+    if (!host) return [];
+    return Array.from(host.querySelectorAll<HTMLElement>('button:not([disabled])'));
   }
 }

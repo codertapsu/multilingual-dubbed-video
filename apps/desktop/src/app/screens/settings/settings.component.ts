@@ -404,15 +404,22 @@ export class SettingsComponent implements OnInit, OnDestroy {
    * RAM wording would send that user to buy hardware for something a driver
    * update fixes — and the crash itself carries no hint of a driver, so this
    * badge is the only place they can learn it.
+   *
+   * All three branches go through {@link TranslateService}: the first two were
+   * English template literals while the third already used a key, so the same
+   * function rendered two languages depending on which branch you hit.
    */
   protected engineFitHint(pack: EnginePackInfo): string {
     const driver = outdatedNvidiaDriver(pack, this.system()?.profile.gpus ?? []);
     if (driver) {
-      return `Needs NVIDIA driver ${pack.minNvidiaDriver} or newer — this machine has ${driver}. Update the driver, or use the Vulkan build instead.`;
+      return this.translate.instant('misc.needs-nvidia-driver', {
+        required: pack.minNvidiaDriver ?? '',
+        found: driver,
+      });
     }
     const gb = pack.minRamMb ? Math.round(pack.minRamMb / 1024) : 0;
     return gb > 0
-      ? `Needs ~${gb} GB RAM — may run slowly on this machine`
+      ? this.translate.instant('misc.needs-ram', { gb })
       : this.translate.instant('misc.heavy-for-machine');
   }
 
@@ -474,7 +481,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected async installEngine(packId: string): Promise<void> {
     this.error.set(null);
     this.ensureEngineEvents();
-    this.engineProgress.update((m) => ({ ...m, [packId]: { percent: 0, message: 'Starting…' } }));
+    this.engineProgress.update((m) => ({
+      ...m,
+      [packId]: { percent: 0, message: this.translate.instant('common.working') },
+    }));
     try {
       await this.ipc.installEngine(packId);
     } catch (err) {

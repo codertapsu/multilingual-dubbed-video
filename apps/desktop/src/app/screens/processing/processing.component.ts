@@ -213,6 +213,10 @@ export class ProcessingComponent implements OnInit, OnDestroy {
 
   protected async retry(stepId: PipelineStepId): Promise<void> {
     this.actionError.set(null);
+    // Drop the failure that prompted the retry: `connect()` below no-ops while
+    // the stream for this project is still open, so without this the old error
+    // banner stays up over the successful re-run.
+    this.events.clearError();
     try {
       await this.ipc.retryPipelineStep(this.id(), stepId);
       // Re-open the stream so we observe the re-run from this step.
@@ -231,6 +235,7 @@ export class ProcessingComponent implements OnInit, OnDestroy {
     if (this.continuing()) return;
     this.continuing.set(true);
     this.actionError.set(null);
+    this.events.clearError();
     try {
       await this.ipc.retryPipelineStep(this.id(), 'tts');
     } catch (err) {

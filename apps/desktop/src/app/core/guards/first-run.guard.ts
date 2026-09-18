@@ -41,9 +41,30 @@ export class FirstRunService {
   async resolve(): Promise<SetupStatus | null> {
     if (this.cached) return this.cached;
 
-    const maxAttempts = 5;
-    const delayMs = 600;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // ~45 s of patience, not the ~3 s (5 x 600 ms) this used to allow.
+    //
+    // The budget has to match how long the ORCHESTRATOR takes to listen on a
+    // cold first launch, not how long a navigation should feel. It was shorter
+    // than the 5 s the app's own updater path already waits for that same
+    // process (lib.rs), and on the one launch where the wizard matters most —
+    // a freshly installed bundle, Gatekeeper scanning it on macOS or Defender
+    // scanning the ~100 MB SEA on Windows — the guard lost the race, failed
+    // open, and dropped the user on an empty Projects screen. /welcome has no
+    // other entry point in the whole UI, so the wizard was simply gone.
+    //
+    // Budgeted by the CLOCK, not by an attempt count. `setupGetStatus()` is NOT
+    // cheap to fail any more: both transports below it now wait out a cold boot
+    // themselves — `fetchWaitingForBackend` in ipc.service.ts and, in the
+    // packaged app, `send_with_boot_wait` in orchestrator_client.rs — each for
+    // up to 60 s per call, and the Rust one re-arms that budget on every call
+    // until the backend answers once. A first cut of this fix used
+    // `maxAttempts = 45`, which multiplied rather than bounded: a machine where
+    // the backend never starts would have sat on a blank window for ~45 MINUTES
+    // before failing open. A deadline keeps the worst case at one in-flight
+    // attempt past ~45 s no matter what each attempt costs.
+    const deadline = Date.now() + 45_000;
+    const delayMs = 700;
+    for (;;) {
       try {
         const status = await this.ipc.setupGetStatus();
         this.cached = status;
@@ -51,12 +72,10 @@ export class FirstRunService {
         return status;
       } catch {
         this._servicesReachable.set(false);
-        if (attempt < maxAttempts) {
-          await sleep(delayMs);
-        }
+        if (Date.now() >= deadline) return null;
+        await sleep(delayMs);
       }
     }
-    return null;
   }
 }
 

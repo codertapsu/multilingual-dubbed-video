@@ -80,6 +80,20 @@ export class PipelineEventsService {
     };
   }
 
+  /**
+   * Forget the last failure so a re-run starts from a clean slate.
+   *
+   * {@link connect} resets `error`/`done` — but it EARLY-RETURNS when the stream
+   * for that project is already open, which is exactly the state the Processing
+   * screen is in when the user clicks "Retry step". The retry therefore left the
+   * previous step's error banner sitting over a run that was succeeding, and the
+   * only way to clear it was to leave the screen.
+   */
+  clearError(): void {
+    this._error.set(null);
+    this._done.set(false);
+  }
+
   /** Close the stream and clear the active project. Signals retain last values. */
   disconnect(): void {
     if (this.source) {

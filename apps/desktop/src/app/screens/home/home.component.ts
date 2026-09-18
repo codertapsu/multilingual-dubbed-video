@@ -48,9 +48,21 @@ export class HomeComponent implements OnInit, OnDestroy {
   protected readonly queue = signal<QueueState | null>(null);
   private queueTimer: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * True when no speech-recognition model is installed.
+   *
+   * The onboarding wizard can now be SKIPPED (offline, blocked mirror, out of
+   * disk), which is safe — creating a project downloads what it needs — but a
+   * user who skipped had nothing anywhere telling them the download is still
+   * outstanding. This is that standing reminder; it disappears on its own the
+   * moment a model lands, from Settings or from their first project.
+   */
+  protected readonly modelsMissing = signal(false);
+
   ngOnInit(): void {
     void this.store.refreshProjects();
     void this.refreshQueue();
+    void this.refreshSetupStatus();
     this.queueTimer = setInterval(() => void this.refreshQueue(), QUEUE_POLL_MS);
   }
 
@@ -69,6 +81,18 @@ export class HomeComponent implements OnInit, OnDestroy {
       return;
     }
     if (this.activeKey() !== before) void this.store.refreshProjects();
+  }
+
+  /** Check whether any Whisper model is on disk. Best-effort: an unreachable
+   *  backend must not produce a scary banner of its own (the shell already has
+   *  one for that case), so a failure leaves the reminder hidden. */
+  private async refreshSetupStatus(): Promise<void> {
+    try {
+      const status = await this.ipc.setupGetStatus();
+      this.modelsMissing.set(status.installed.whisperModels.length === 0);
+    } catch {
+      this.modelsMissing.set(false);
+    }
   }
 
   /** Identity of the running+queued set, to detect transitions cheaply. */

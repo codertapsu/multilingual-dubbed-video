@@ -1,10 +1,10 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 
 import { IpcService } from './core/ipc/ipc.service';
 import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.component';
 import { UpdateNoticeComponent } from './shared/update-notice/update-notice.component';
-import { TranslatePipe } from './core/i18n';
+import { TranslatePipe, TranslateService } from './core/i18n';
 
 /**
  * Root shell: a slim top nav + a routed outlet. The whole app lives inside a
@@ -34,10 +34,14 @@ import { TranslatePipe } from './core/i18n';
         <a routerLink="/new" routerLinkActive="active">{{ 'nav.new-project' | translate }}</a>
         <a routerLink="/download" routerLinkActive="active">{{ 'nav.download' | translate }}</a>
         <a routerLink="/settings" routerLinkActive="active">{{ 'nav.settings' | translate }}</a>
+        <!-- Help sits BEFORE the sponsor link: a stuck user scans the nav for
+             somewhere to go, and until this existed the nearest thing was a
+             donation page. -->
+        <a routerLink="/help" routerLinkActive="active">{{ 'nav.help' | translate }}</a>
         <a routerLink="/support" routerLinkActive="active">{{ 'nav.support' | translate }}</a>
       </nav>
 
-      <span class="mode-tag" [class.local]="!ipc.inTauri" [title]="modeTooltip">
+      <span class="mode-tag" [class.local]="!ipc.inTauri" [title]="modeTooltip()">
         {{ (ipc.inTauri ? 'shell.mode-desktop' : 'shell.mode-browser') | translate }}
       </span>
     </header>
@@ -64,11 +68,16 @@ import { TranslatePipe } from './core/i18n';
             }
           </span>
         </div>
-        @if (ipc.inTauri) {
-          <button type="button" class="btn" (click)="restart()" [disabled]="restarting()">
-            {{ (restarting() ? 'shell.restarting' : 'shell.restart') | translate }}
-          </button>
-        }
+        <div class="row">
+          <!-- The one moment a diagnostic is worth most is the one where no
+               screen can load one, so point at Help from here too. -->
+          <a routerLink="/help" class="btn">{{ 'shell.backend-down-help' | translate }}</a>
+          @if (ipc.inTauri) {
+            <button type="button" class="btn" (click)="restart()" [disabled]="restarting()">
+              {{ (restarting() ? 'shell.restarting' : 'shell.restart') | translate }}
+            </button>
+          }
+        </div>
       </div>
     }
 
@@ -93,6 +102,11 @@ import { TranslatePipe } from './core/i18n';
       .backend-down span {
         opacity: 0.85;
         margin-left: var(--vd-sp-2);
+      }
+      /* The Help link renders as a button here; keep the global anchor
+         hover-underline off it so the two controls match. */
+      .backend-down a.btn:hover {
+        text-decoration: none;
       }
 
       .topnav {
@@ -174,8 +188,19 @@ export class AppComponent {
   }
 
   protected readonly ipc = inject(IpcService);
+  private readonly translate = inject(TranslateService);
 
-  protected readonly modeTooltip = this.ipc.inTauri
-    ? 'Running inside the Tauri desktop shell. Commands use native IPC.'
-    : 'Running in a browser dev session. Commands fall back to HTTP against the orchestrator (port 5100).';
+  /**
+   * `computed`, not a plain field: `TranslateService.instant` reads the active
+   * locale signal, so resolving it once at construction would freeze the
+   * tooltip in whatever language was active at bootstrap. AppComponent is the
+   * root and is never re-created, so a Settings language switch would have left
+   * this one string behind for the rest of the session — which is exactly the
+   * bug the app-wide switch was written to avoid.
+   */
+  protected readonly modeTooltip = computed(() =>
+    this.translate.instant(
+      this.ipc.inTauri ? 'shell.mode-desktop-tooltip' : 'shell.mode-browser-tooltip',
+    ),
+  );
 }

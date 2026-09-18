@@ -1,7 +1,7 @@
-import { ChangeDetectionStrategy, Component, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
 
 import type { SetupItemProgress } from '../../core/ipc/setup-events.service';
-import { TranslatePipe } from '../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 
 /**
  * DownloadProgressListComponent — renders a list of in-flight downloads (from
@@ -83,12 +83,20 @@ import { TranslatePipe } from '../../core/i18n';
   ],
 })
 export class DownloadProgressListComponent {
+  private readonly translate = inject(TranslateService);
+
   /** In-flight download items (e.g. `setupEvents.items()`). */
   readonly items = input.required<readonly SetupItemProgress[]>();
 
   /**
    * Human label for a setup item id, which is keyed by a raw id
    * (e.g. "whisper:small", "argos:en->vi", "piper:vi_VN-…").
+   *
+   * Resolved through {@link TranslateService} rather than returned as a key for
+   * the template's pipe: the row also needs the raw id interpolated, and these
+   * labels shipped as English template literals — the first-run download screen
+   * is the very first thing a Vietnamese user sees, and it read
+   * "Speech recognition model (small)" to them.
    */
   protected friendlyItem(item: string): string {
     const sep = item.indexOf(':');
@@ -97,11 +105,13 @@ export class DownloadProgressListComponent {
     const rest = item.slice(sep + 1);
     switch (kind) {
       case 'whisper':
-        return `Speech recognition model (${rest})`;
+        return this.translate.instant('download.item.whisper', { ref: rest });
       case 'argos':
-        return `Translation pack (${rest.replace('->', ' → ')})`;
+        return this.translate.instant('download.item.argos', {
+          ref: rest.replace('->', ' → '),
+        });
       case 'piper':
-        return 'Voice';
+        return this.translate.instant('download.item.piper');
       default:
         return item;
     }

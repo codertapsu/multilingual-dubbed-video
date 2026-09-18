@@ -331,6 +331,16 @@
         {{ 'editor.ctx-intro' | translate }}
       </p>
 
+      <!-- Argos is the DEFAULT translation engine and reads none of this: it is
+           sentence-level statistical MT with nowhere to put a synopsis or a
+           glossary. Without this notice the whole card is a form that silently
+           does nothing for most users. -->
+      @if (contextIgnoredByEngine()) {
+        <div class="badge badge-warning ctx-ignored" role="note">
+          {{ 'editor.ctx-ignored' | translate }}
+        </div>
+      }
+
       <label class="ctx-field">
         <span class="label">{{ 'editor.synopsis' | translate }}</span>
         <textarea

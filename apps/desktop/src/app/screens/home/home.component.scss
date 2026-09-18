@@ -67,3 +67,21 @@
   gap: var(--vd-sp-3);
   flex-shrink: 0;
 }
+
+/* The "you skipped the model download" reminder. Amber rather than red: the app
+   works, the first project will just have to fetch what it needs first. */
+.models-missing {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--vd-sp-2);
+  border-color: var(--vd-warning);
+  background: var(--vd-warning-bg);
+}
+.models-missing .hint {
+  margin: 0;
+}
+/* The CTA is an anchor styled as a button; suppress the global hover underline. */
+.models-missing a.btn:hover {
+  text-decoration: none;
+}

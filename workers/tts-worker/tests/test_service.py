@@ -155,14 +155,26 @@ def test_auto_select_never_speaks_the_wrong_language(service, tmp_path, monkeypa
     assert chosen.name == "system"
 
 
-def test_output_not_writable_raises(service):
+def test_output_not_writable_raises(service, tmp_path):
+    # A directory cannot be created BENEATH A REGULAR FILE on any OS: POSIX
+    # raises NotADirectoryError, Windows ERROR_DIRECTORY/ERROR_PATH_NOT_FOUND,
+    # and both surface as OSError, which _ensure_output_dir turns into
+    # OUTPUT_NOT_WRITABLE.
+    #
+    # This used to hardcode "/dev/null/cannot/create/here", which relies on
+    # /dev/null being a file — true on POSIX, meaningless on Windows, where the
+    # path is just \dev\null\cannot\create\here on the current drive and mkdir
+    # happily creates every level of it. The test then failed with DID NOT RAISE
+    # against a guard that was working correctly.
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("regular file", encoding="utf-8")
+
     with pytest.raises(TtsError) as ei:
         service.synthesize_segments(
             language="en",
             voice_id="fallback",
             segments=[SegmentIn(id="seg_0001", text="hi", startMs=0, endMs=500)],
-            # A path under an existing file is not creatable as a directory.
-            output_dir="/dev/null/cannot/create/here",
+            output_dir=str(blocker / "cannot" / "create" / "here"),
             speed=1.0,
         )
     assert ei.value.code == "OUTPUT_NOT_WRITABLE"

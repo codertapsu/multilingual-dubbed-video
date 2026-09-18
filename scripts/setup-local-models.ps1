@@ -92,7 +92,17 @@ if (-not (Get-Command $PythonBin -ErrorAction SilentlyContinue)) {
 }
 Write-Ok ("Using python: {0}" -f (& $PythonBin --version 2>&1))
 
-$Workers = @('stt-worker', 'translation-worker', 'tts-worker')
+# The three FastAPI workers, plus the two engine-pack source packages.
+#
+# The engine packages were left out until 2026-09 because their real runtime deps
+# are installed into uv venvs on the user's machine, not here - but they each ship
+# a pytest suite, and `scripts\test-workers.ps1 -RequireAll` (the gate `pnpm
+# release` runs) counts a suite it cannot execute as a FAILURE. So a machine set up
+# by this script could not pass its own release gate: the two suites only ever ran
+# where someone had created a venv by hand. Their dev venvs are light - fastapi +
+# uvicorn + pytest, since the neural/torch stacks live in optional extras that only
+# the uv venvs install.
+$Workers = @('stt-worker', 'translation-worker', 'tts-worker', 'tts-engine-neural', 'tts-engine-omnivoice')
 
 function Get-WorkerPython {
     param([string]$Dir)
@@ -146,8 +156,41 @@ function New-WorkerVenv {
             Write-Warn "${Dir}: install manually later with:"
             Write-Warn "    `"$vpy`" -m pip install -r `"$req`""
         }
+        # pytest lives in requirements-dev.txt, deliberately kept out of the runtime
+        # set so the frozen sidecars stay slim. Without it the worker's suite cannot
+        # run at all, which `test-workers -RequireAll` reports as a failed suite - so
+        # a dev machine needs it even though a release build must not have it.
+        $reqDev = Join-Path $wdir 'requirements-dev.txt'
+        if (Test-Path $reqDev) {
+            Write-Info "${Dir}: pip install -r requirements-dev.txt (test deps)"
+            & $vpy -m pip install -r $reqDev 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "${Dir}: test dependencies installed."
+            } else {
+                Write-Warn "${Dir}: test deps failed; 'pnpm test:workers' will skip this suite."
+            }
+        }
+    } elseif (Test-Path (Join-Path $wdir 'pyproject.toml')) {
+        # The engine-pack sources (vd_tts_engine, vd_omnivoice) carry no
+        # requirements.txt: their runtime closure is installed into a uv venv on the
+        # user's machine. An editable install of the package plus its `dev` extra is
+        # what their unit tests need, and it also makes `from vd_tts_engine import ...`
+        # resolve without a PYTHONPATH dance.
+        Write-Info "${Dir}: pip install -e '.[dev]' (editable + test deps)"
+        Push-Location $wdir
+        try {
+            & $vpy -m pip install -e '.[dev]' 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "${Dir}: package installed editable with test deps."
+            } else {
+                Write-Warn "${Dir}: editable install failed; 'pnpm test:workers' will skip this suite."
+                Write-Warn "    retry with: cd `"$wdir`"; `"$vpy`" -m pip install -e '.[dev]'"
+            }
+        } finally {
+            Pop-Location
+        }
     } else {
-        Write-Warn "${Dir}: no requirements.txt found at $req; skipping deps."
+        Write-Warn "${Dir}: no requirements.txt or pyproject.toml at $wdir; skipping deps."
     }
 }
 

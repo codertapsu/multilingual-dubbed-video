@@ -280,17 +280,56 @@ async function checkPnpm(): Promise<CheckResult> {
   };
 }
 
+/**
+ * Python must be 3.12 SPECIFICALLY — not ">= 3.12".
+ *
+ * The repo bundles CPython 3.12.13 (apps/desktop/src-tauri/resources/python/) and the
+ * engine-pack venvs are built against it. A venv from a newer interpreter is exactly how
+ * v0.8.1 shipped macOS workers whose extension modules were stamped `minos 26.0` and which
+ * dyld then refused on every older Mac — the full autopsy is in
+ * scripts/package/build-workers.sh.
+ *
+ * This check used to report ANY interpreter as OK, so a machine running 3.14 — the one
+ * version most likely to break a worker build — got a green row. Reporting a wrong-version
+ * interpreter as fine is worse than not checking: it is the doctor actively vouching for the
+ * thing that will fail later. scripts/bootstrap.sh resolves a real 3.12 for the same reason;
+ * these two must not disagree.
+ */
 async function checkPython(): Promise<CheckResult> {
+  const WANTED = '3.12';
   const res = await run(PYTHON_PATH, ['--version']);
-  if (!res.spawnError && res.code === 0) {
-    const detail = (res.stdout.trim() || res.stderr.trim()) || 'installed';
-    return { name: 'Python', status: 'ok', detail, criticality: 'optional' };
+
+  if (res.spawnError || res.code !== 0) {
+    return {
+      name: 'Python',
+      status: 'missing',
+      detail: `'${PYTHON_PATH}' not found`,
+      remediation:
+        `Install Python ${WANTED} (macOS: brew install python@${WANTED} · ` +
+        `Windows: winget install --id Python.Python.${WANTED} -e), or set PYTHON_PATH.`,
+      docs: 'docs/LOCAL_SETUP.md',
+      criticality: 'optional',
+    };
   }
+
+  // `python --version` writes to stdout on 3.4+, but older builds and some shims use stderr.
+  const raw = (res.stdout.trim() || res.stderr.trim()) || 'installed';
+  const version = /(\d+)\.(\d+)\.?(\d+)?/.exec(raw);
+  const series = version ? `${version[1]}.${version[2]}` : null;
+
+  if (series === WANTED) {
+    return { name: 'Python', status: 'ok', detail: raw, criticality: 'optional' };
+  }
+
   return {
     name: 'Python',
-    status: 'missing',
-    detail: `'${PYTHON_PATH}' not found`,
-    remediation: 'Install Python 3.10+ or set PYTHON_PATH. Needed for the 3 workers.',
+    status: 'warn',
+    detail: `${raw} — the workers need ${WANTED}.x`,
+    remediation:
+      `'${PYTHON_PATH}' is ${series ?? 'an unknown version'}. The bundled runtime and every ` +
+      `engine-pack venv are CPython ${WANTED}; building worker venvs from another series ` +
+      `produces sidecars that fail to load on other machines. Install ${WANTED} and point ` +
+      `PYTHON_PATH at it (pnpm bootstrap resolves one for you).`,
     docs: 'docs/LOCAL_SETUP.md',
     criticality: 'optional',
   };

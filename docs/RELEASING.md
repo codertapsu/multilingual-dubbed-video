@@ -1,244 +1,365 @@
 # Releasing VideoDubber
 
-End-to-end runbook for cutting a signed, auto-updatable release. Releases are built
-**locally by default** on the maintainer's own machines; CI
-([`.github/workflows/release.yml`](../.github/workflows/release.yml)) is **opt-in
-per OS** via the `RELEASE_CI_*` repo variables. This doc is the human checklist for
-both paths.
+A release is **two machines building in parallel into one GitHub draft**, then one
+human review, then one publish.
 
-> Audience: maintainers. For the architecture of *what* is being shipped, read
-> [`PRODUCTION.md`](PRODUCTION.md) first. For how updates reach users, read
-> [`AUTOUPDATE.md`](AUTOUPDATE.md).
+- The **Mac** (Apple Silicon) builds, deep-signs, notarizes and uploads the macOS
+  half: 3 assets.
+- The **Windows desktop** (`D:\development\projects\multilingual-dubbed-video`)
+  builds and uploads the Windows half: 4 assets.
+- Both push to the **same draft release** `vX.Y.Z`, and each merges **its own**
+  platform entry into the shared `latest.json` without disturbing the other's.
+- Nothing reaches a user until the draft is **published** — which is also what
+  creates the git tag.
+
+Everything is built **locally**. There is no CI build path in use; see
+[CI — opt-in, effectively dead](#ci--opt-in-effectively-dead).
+
+> Audience: maintainers. For *what* is being shipped, read [`PRODUCTION.md`](PRODUCTION.md).
+> For how updates reach users, read [`AUTOUPDATE.md`](AUTOUPDATE.md).
 
 ---
 
-## Cut a release — step by step
+## The whole release on one page
 
-Every installer is built **locally** — macOS on the Mac, Windows on the Windows
-desktop (`D:\development\projects\multilingual-dubbed-video`) — uploaded to one
-GitHub **draft**, verified, and then published. CI is off
-(`RELEASE_CI_MACOS` / `RELEASE_CI_WINDOWS` = `false`).
+Read left to right, top to bottom. The **SYNC** rows are the only places the two
+machines have to wait for each other; everything between them runs independently
+and in either order.
 
-This sequence is the one used to ship **v0.4.0**, corrected afterwards against
-the scripts themselves. Follow it in order — several steps exist only because
-their absence shipped a broken release (see [Hard-won gotchas](#hard-won-gotchas)).
+| | On the **Mac** | On the **Windows desktop** |
+|---|---|---|
+| **SYNC 1 — one machine only** | `pnpm release:version 0.10.0` → review → `pnpm release:version 0.10.0 --yes`<br>`pnpm check`<br>`git commit -am "chore(release): 0.10.0"` && `git push origin main` | *(wait)* |
+| **Both machines get the commit** | `git pull origin main`<br>`pnpm install --frozen-lockfile` | `git pull origin main`<br>`pnpm install --frozen-lockfile` |
+| **Preflight — seconds, builds nothing** | `pnpm release:check` | `pnpm release:check` |
+| **Build + sign + upload** *(~25 min each, in parallel)* | export the four `APPLE_*` vars, then<br>`pnpm release --sidecars --upload` | `pnpm release -Sidecars -Upload` |
+| **SYNC 2 — after BOTH finish** | `pnpm release:status` → must exit 0 *(read-only; runs on either machine)* | *(done; nothing left to do here)* |
+| **Write the notes** | edit the draft body on GitHub **under** the download table, or write `notes.md` | |
+| **Publish — one machine only** | `pnpm release:publish` → review the dry run → `pnpm release:publish --yes --notes-file notes.md` | |
+| **After publish** | verify the endpoint, update a real machine, then `node scripts/package/prune-releases.mjs --apply` | |
 
-> Honest caveat from that release: gate 6.4 (assets newer than the last fix) was
-> knowingly waived for macOS — the Mac artifacts predate `7e73f6f`, a
-> Windows-only compile fix with no effect on macOS behaviour. Waiving a gate is
-> fine when you can say exactly why; skipping one silently is not.
-
-> **First time on a machine?** Do the one-time setup first: [macOS](#one-time-setup)
-> (Developer ID + the updater key) and [Windows](WINDOWS.md#part-a--one-time-machine-setup-install-these-once)
-> (pwsh 7, Node 24, Python 3.12, Rust+MSVC, the updater key copied over, a GitHub
-> token). Once per machine.
-
-Steps 3 (macOS) and 4 (Windows) are independent — run them in either order, on
-either machine first; each preserves the other's `latest.json` entry.
-
-### 0. Pick the version
-
-Semver `X.Y.Z`; the current one is in `apps/desktop/src-tauri/tauri.conf.json`.
-Replace every `X.Y.Z` / `vX.Y.Z` below.
-
-### 1. Bump the version + verify + push
-
-The Tauri **app version** is what the updater compares against `latest.json`. Set
-the same value in all four manifests, then refresh the lockfile so the build
-doesn't dirty the tree mid-release:
-
-* `package.json` → `version`
-* `apps/desktop/package.json` → `version`
-* `apps/desktop/src-tauri/tauri.conf.json` → `version`
-* `apps/desktop/src-tauri/Cargo.toml` → `[package].version`
+Flag syntax, both machines:
 
 ```bash
-# edit the four version fields to X.Y.Z (review each — don't blind-sed)
-(cd apps/desktop/src-tauri && cargo check)      # rewrites Cargo.lock to X.Y.Z
+pnpm release --sidecars --upload     # macOS: POSIX spellings
+pnpm release -Sidecars -Upload       # Windows: PowerShell spellings
+```
 
-pnpm build                # packages/** + media-worker -> dist/; the desktop app and
-                          # orchestrator typecheck against EACH OTHER's dist/, and those
-                          # dirs are gitignored — skip this and you typecheck stale output
-pnpm -r --if-present typecheck
-pnpm -r --if-present test
-pnpm lint                 # root script (eslint .). NOTE: `pnpm -r ... lint` matches NOTHING —
-                          # -r excludes the workspace root, where the only lint script lives
-(cd apps/desktop/src-tauri && cargo test)   # min_macos_matches_config — the ONLY guard on
-                          # the updater's OS gate; no other gate runs cargo test
+> **Never write `pnpm <task> -- <flag>`.** pnpm 11 forwards the literal `--` to
+> the script as its own argument, and the script exits 2 on an unknown option
+> (measured: `pnpm release -- --check` hands the script `["--", "--check"]`). There is
+> no separator — `pnpm release --check`, `pnpm release -Check`.
+>
+> `scripts/release.sh` accepts the PowerShell spellings too, so a single
+> package.json entry can pass one flag both twins understand. Write the native
+> spelling for the machine you are on anyway; it is what the `--help` says.
 
-git commit -am "chore(release): X.Y.Z"
+---
+
+## SYNC 1 — bump the version, on one machine
+
+The Tauri **app version** is what the updater compares against `latest.json`, and
+it lives in five places that must agree:
+
+```
+package.json
+apps/desktop/package.json
+apps/desktop/src-tauri/tauri.conf.json
+apps/desktop/src-tauri/Cargo.toml
+apps/desktop/src-tauri/Cargo.lock      (the videodubber-desktop entry)
+```
+
+```bash
+pnpm release:version 0.10.0          # DRY RUN by default: prints the table, writes nothing
+pnpm release:version 0.10.0 --yes    # actually writes all five
+pnpm release:version minor --yes     # or compute the next version from the current one
+```
+
+It takes `X.Y.Z` or `major` / `minor` / `patch`. Flags: `--yes`, `--allow-dirty`
+(bump on top of other uncommitted changes), `--allow-downgrade`, `--help`. It
+snapshots all five files, writes, re-runs the full consistency check, and
+**restores every snapshot if any step fails** — so a partially-bumped tree is not
+a state you can end up in. `Cargo.lock` is updated through
+`cargo update --workspace --offline`, not hand-edited. It does not commit, tag or
+build.
+
+Then prove the tree is releasable and push:
+
+```bash
+pnpm check        # lint + typecheck + tests + check-versions + check-tasks
+git commit -am "chore(release): 0.10.0"
 git push origin main
 ```
 
-**Do NOT create the git tag by hand.** Publishing the release (step 7) creates
-`vX.Y.Z` from `main` automatically. Tagging early pins the tag to a commit that
-later fixes would leave behind.
+`pnpm check` runs `node scripts/check-versions.mjs`, the smoke alarm that catches
+a half-done bump; `release:version` is the fire prevention. Running the writes
+through `check-versions.mjs --set` is deliberate — it already knows each file's
+shape and verifies every write by reading it back.
 
-Make sure BOTH machines are on this commit (`git pull`) before building, so the
-installers match. If you push a fix mid-release, **every** platform built before
-that fix must be rebuilt — check asset upload times against the commit time.
+**Do NOT create the git tag by hand.** Publishing creates `vX.Y.Z` from `main`
+automatically. A hand-made tag pins to a commit that later fixes leave behind.
 
-### 2. Cross-check platform-conditional Rust (only if `src-tauri/src` changed)
+**Both machines must then be on this commit** before building. If you push a fix
+mid-release, **every platform built before that fix must be rebuilt** — nothing
+checks this for you, so compare each asset's upload time on the draft against the
+commit time yourself before publishing.
 
-`cargo check` on the Mac compiles the `cfg(target_os = "macos")` branches only, so
+### If `src-tauri/src` changed: cross-check the platform-conditional Rust
+
+`cargo check` on the Mac compiles only the `cfg(target_os = "macos")` branches, so
 a symbol referenced from shared code but defined under a macOS `cfg` builds here
-and fails on Windows. This has broken a Windows release build:
+and fails the Windows build ~20 minutes into someone else's afternoon. A full
+`cargo check --target x86_64-pc-windows-msvc` is not possible from macOS (`ring`'s
+C build needs the Windows SDK headers); extract the `cfg`-gated items and their
+call sites into a standalone file and `rustc --emit=metadata` it for both targets.
 
-```bash
-rustup target add x86_64-pc-windows-msvc   # once
-```
+The rule that avoids the whole class: a `cfg`-gated function returns the
+platform-specific **data** (e.g. `Option<String>` explaining why), and never makes
+shared code name a platform-specific symbol.
 
-A full `cargo check --target x86_64-pc-windows-msvc` is **not** possible from
-macOS (`ring`'s C build needs the Windows SDK headers). Instead, extract the
-`cfg`-gated items and their call sites into a standalone file and compile that
-for both targets:
+---
 
-```bash
-rustc --target x86_64-pc-windows-msvc --emit=metadata --crate-type bin probe.rs -o /tmp/p.rmeta
-rustc --target aarch64-apple-darwin    --emit=metadata --crate-type bin probe.rs -o /tmp/p2.rmeta
-```
+## Preflight — `pnpm release:check`
 
-Rule of thumb that avoids the whole class: a `cfg`-gated function should return
-the platform-specific *data* (e.g. `Option<String>` describing why), never force
-shared code to name a platform-specific symbol.
+Runs on either machine, builds nothing, takes seconds. It exists because the
+expensive failures are all discovered *after* a 20-minute build otherwise — a
+missing `APPLE_TEAM_ID` is found by Apple's notary service, and a missing updater
+key is found by `tauri build` at the end.
 
-### 3. Build + upload macOS — on the Mac
+It gates on: the toolchain (`node`, `pnpm`, `cargo`, `xcrun`; on Windows also WiX,
+which is a warning), version consistency across the four manifests, the Python
+worker suites run **strictly** (`REQUIRE_ALL=1` — without it they report "skipped"
+and exit 0 on a box with no venvs, i.e. a green gate that ran nothing), a clean git
+tree, the updater signing key, the Developer ID identity **in the keychain**, the
+notary credentials, and a GitHub token.
+
+Escape hatch: `ALLOW_DIRTY=1` downgrades the dirty-tree gate to a warning. Use it
+for a deliberate local experiment, never for a release you intend to ship — a
+dirty build corresponds to no commit, so "which build is this?" has no answer
+afterwards.
+
+`pnpm release --sidecars --upload` re-runs the environment half of this preflight
+before it builds, so a missing credential still stops you in seconds.
+
+---
+
+## macOS — on the Mac
 
 ```bash
 export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
 export APPLE_ID="<apple-id-email>"
-export APPLE_PASSWORD="<app-specific-password>"      # appleid.apple.com → App-Specific Passwords
+export APPLE_PASSWORD="<app-specific-password>"   # appleid.apple.com -> App-Specific Passwords
 export APPLE_TEAM_ID="<TEAMID>"
-export RELEASE_TAG=vX.Y.Z
 
 pnpm install --frozen-lockfile
-SIDECARS=1 UPLOAD=1 bash scripts/package/release-macos.sh
+pnpm release --sidecars --upload
 ```
 
 `TAURI_SIGNING_PRIVATE_KEY` is loaded from `~/.tauri/videodubber.key`
-automatically; the key has an **empty password**, which the script also exports.
+automatically; that key has an **empty password**, which the script also exports so
+the build does not stop to prompt.
 
-**`SIDECARS=1` rebuilds the orchestrator (Node SEA), the four PyInstaller
-sidecars, static ffmpeg/ffprobe, uv, bundled CPython and `resources/engine-src`
-(~25 min) — and it is the only thing that runs the release bundle assertion**
+Other flags (`scripts/release.sh --help`): `--check`, `--sidecars`, `--upload`,
+`--tag v0.10.1`, `--help`.
+
+What `pnpm release` hands off to (`scripts/package/release-macos.sh`):
+
+1. `check-versions.mjs` + the Python worker suites.
+2. `--sidecars` → `pnpm package:sidecars`.
+3. `tauri build` with the **notary creds withheld** (`env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID`).
+4. `macos-sign-notarize.sh` — deep-sign every Mach-O, notarize, staple.
+5. **Regenerate** the updater archive from the repaired app, and sign it.
+6. `--upload` → upload the `.dmg` + updater archive + `.sig` to the `vX.Y.Z` draft,
+   then merge the `darwin-aarch64` entry into `latest.json`.
+
+### `--sidecars`: when you may skip it, and what it costs when you shouldn't
+
+`--sidecars` rebuilds the orchestrator (Node SEA), the four PyInstaller sidecars,
+static ffmpeg/ffprobe, uv, bundled CPython and `resources/engine-src` — about 25
+minutes — **and it is the only thing that runs the release bundle assertion**
 (portable ffmpeg, `minimumSystemVersion` not below any bundled binary's `minos`,
 uv + CPython present).
 
-**Omit it ONLY when the change is confined to `src-tauri/src` (the Rust shell)
-or `apps/desktop/src` (the Angular UI).** Everything else the app runs is a
-SIDECAR built by that step — the Node orchestrator included. Skipping it then
-re-bundles the STALE sidecar binaries and produces an installer that looks
-correct and does not contain your change. That has happened: a fix to the
-orchestrator's engine launch args was "released" twice before anyone noticed the
-shipped binary never had it.
+**Skip it only when the change is confined to `src-tauri/src` (the Rust shell) or
+`apps/desktop/src` (the Angular UI).** Everything else the app runs is a sidecar —
+the Node orchestrator included. Skipping it then re-bundles the **stale** sidecar
+binaries into an installer that looks completely correct and does not contain your
+change. That has shipped twice: a fix to the orchestrator's engine launch args was
+"released" two releases running before anyone noticed the binary never had it.
 
-For an orchestrator-only change you can rebuild just that sidecar instead of
-paying the full ~25 minutes:
+For an orchestrator-only change, rebuild just that sidecar instead of paying the
+full 25 minutes:
 
 ```bash
-bash scripts/package/build-orchestrator.sh   # ~1 min
-UPLOAD=1 RELEASE_TAG=vX.Y.Z bash scripts/package/release-macos.sh
+bash scripts/package/build-orchestrator.sh          # ~1 min
+UPLOAD=1 RELEASE_TAG=v0.10.0 bash scripts/package/release-macos.sh
 ```
 
-Either way, **verify the change reached the assembled app before notarizing** —
-grep the bundled binary for a string your change introduced:
+Either way, **verify the change is in the assembled app before notarizing**:
 
 ```bash
 APP=$(find apps/desktop/src-tauri/target -path '*/release/bundle/macos/VideoDubber.app' | head -1)
 strings "$APP/Contents/MacOS/videodubber-orchestrator" | grep -c "<a string from your change>"
 ```
 
-Zero means the sidecar is stale — stop and rebuild it rather than spending a
-notarization cycle on an artifact that cannot work.
+Zero means the sidecar is stale — stop, rather than spend a notarization cycle on
+an artifact that cannot work.
 
-The script then: runs `tauri build` with the notary creds withheld (so Tauri does
-not self-notarize), deep-signs every Mach-O, notarizes, staples, **regenerates**
-the signed updater archive from the repaired app, uploads the `.dmg` + updater
-artifacts to the `vX.Y.Z` draft, and merges the `darwin-aarch64` entry into
-`latest.json`.
+> This does **not** work for an Angular change: Tauri **brotli-compresses** the
+> embedded frontend, so a shipped UI string is never greppable and zero hits looks
+> identical to a stale build. Decompress the staged asset instead
+> (`zlib.brotliDecompressSync` over
+> `target/release/build/videodubber-desktop-*/out/tauri-codegen-assets/*`).
 
-> **Expect TWO `Accepted` lines, not one.** The first submission notarizes the
-> DMG built from the freshly signed app; the ticket it issues for the nested
-> `.app` is stapled to the bundle, and the DMG is rebuilt around the stapled app
-> so first launch works offline. Those rebuilt bytes have a cdhash Apple has
-> never seen, so `stapler` fails with *"Record not found" / Error 65* — that log
-> line is **expected** — and the script resubmits and staples.
+### Why the deep-sign + notarize dance
 
-### 4. Build + upload Windows — on the Windows desktop
+`tauri build` will try to notarize the app itself if `APPLE_ID` / `APPLE_PASSWORD` /
+`APPLE_TEAM_ID` are in its environment — and **Tauri's signing does not reach the
+bundled PyInstaller worker `.so` files**, so that in-build notarization fails with
+"not signed with a valid Developer ID certificate". So the build runs with the
+notary creds withheld (Tauri signs the shell only) and `macos-sign-notarize.sh`
+deep-signs **every** Mach-O, then notarizes and staples. Entitlements live in
+`apps/desktop/src-tauri/entitlements.plist`.
 
-```powershell
-git pull origin main
-pnpm install --frozen-lockfile
-pwsh scripts\package\release-windows.ps1 -Sidecars -Upload
-```
+The updater archive is **always regenerated from the repaired, notarized app** —
+the `.app.tar.gz` that `tauri build` emitted is from the PRE-repair app and must
+not ship.
 
-The signing key loads from `%USERPROFILE%\.tauri\videodubber.key`; the tag
-defaults to `v<version from tauri.conf.json>`. `-Sidecars` follows the same rule
-as macOS. This builds a **static** libass ffmpeg (`FFMPEG_PATH`/`FFPROBE_PATH`
-are ignored by the build — only `FFMPEG_BIN`/`FFPROBE_BIN` override, and a
-non-portable binary is rejected), produces the NSIS `-setup.exe` **and** the
-`.msi`, uploads both pairs, and merges **both** `windows-x86_64` and
-`windows-x86_64-msi` into `latest.json`.
+> **Expect TWO `Accepted` lines, not one.** The first submission notarizes the DMG
+> built from the freshly signed app; the ticket it issues for the nested `.app` is
+> stapled to the bundle, and the DMG is rebuilt around the stapled app so first
+> launch works offline. Those rebuilt bytes have a cdhash Apple has never seen, so
+> `stapler` fails with *"Record not found" / Error 65* — **that log line is
+> expected** — and the script resubmits and staples.
 
-> **Both Windows installers ship, on purpose.** `tauri-plugin-updater` resolves
-> the manifest key as `[{os}-{arch}-{installer}, {os}-{arch}]`, so a machine
-> installed from the `.msi` looks for `windows-x86_64-msi` first. Without it,
-> those users fall back to the NSIS `.exe`, which uninstalls the MSI through an
-> elevated `msiexec` prompt mid-update or leaves two parallel installs. v0.1.0 +
-> v0.2.0 have 26 MSI downloads, so this population is real.
->
-> Building the `.msi` needs the **WiX toolset** (Tauri fetches it on first use).
-> If the build fails there, drop `"msi"` from `bundle.targets` and re-run — the
-> MSI merge step is conditional and degrades to NSIS-only.
+Full cert creation, verification and troubleshooting: [`APPLE_SIGNING.md`](APPLE_SIGNING.md).
 
-The installer is unsigned → first launch shows SmartScreen: **More info → Run
-anyway**.
+### Spot-check the built app (optional, ~30 seconds)
 
-### 5. Verify the built artifacts — on the Mac
-
-Before trusting the upload, check the app you just built. Each of these caught a
-real shipped defect:
+Each of these caught a real shipped defect:
 
 ```bash
 APP=$(find apps/desktop/src-tauri/target -path '*/release/bundle/macos/VideoDubber.app' | head -1)
 
-# 1. ffmpeg/ffprobe must have NO non-system libraries (v0.3.0 shipped Homebrew-linked
-#    binaries that worked only on the build machine — every dub failed elsewhere).
+# 1. ffmpeg/ffprobe must link NOTHING outside /usr/lib + /System/Library.
+#    v0.3.0 shipped Homebrew-linked binaries that worked only on the build machine.
 for b in ffmpeg ffprobe; do
   otool -L "$APP/Contents/MacOS/$b" | tail -n +2 | awk '{print $1}' \
     | grep -v -E '^(/usr/lib/|/System/Library/)' && echo "NOT PORTABLE" || echo "$b portable OK"
 done
 
-# 2. The .app itself must carry a stapled ticket (offline first launch).
+# 2. A stapled ticket, so first launch works offline.
 xcrun stapler validate "$APP"
 spctl -a -vv "$APP"            # expect: source=Notarized Developer ID
 
-# 3. The declared floor must match reality.
+# 3. The declared floor matches reality.
 plutil -p "$APP/Contents/Info.plist" | grep -E "LSMinimumSystemVersion|CFBundleShortVersion"
 ```
 
-If the release contains Rust changes, confirm they are actually in the shipped
-binary (a stale build is silent otherwise):
+---
 
-```bash
-strings "$APP/Contents/MacOS/videodubber-desktop" | grep -c "<a string from your change>"
+## Windows — on the Windows desktop
+
+```powershell
+git pull origin main
+pnpm install --frozen-lockfile
+pnpm release -Sidecars -Upload
 ```
 
-### 6. Verify the UPLOADED payloads — the last gate
+First time on this machine? Do [`WINDOWS.md` Part A](WINDOWS.md#part-a--one-time-machine-setup-install-these-once)
+first: pwsh 7, Node 24, Python 3.12 + the worker venvs, Rust/MSVC, a GitHub token,
+and — the one most often missed — `~\.tauri\videodubber.key` **copied from the
+Mac** (it is a secret: AirDrop/USB, not chat). Without it the build emits no `.sig`
+files and the auto-updater can never install the release.
 
-Verify the signatures against the **bytes GitHub is serving**, not the local
-files: this catches a wrong key *and* a corrupted upload. A bad signature means
-every client rejects the update.
+Flags mirror macOS: `-Check`, `-Sidecars`, `-Upload`, `-Tag v0.10.1`. `-Sidecars`
+follows exactly the same rule as macOS above.
+
+`scripts/package/release-windows.ps1` builds a **static** libass ffmpeg,
+produces the NSIS `-setup.exe` **and** the `.msi`, uploads both pairs, and merges
+**both** `windows-x86_64` and `windows-x86_64-msi` into `latest.json`.
+
+> **ffmpeg: do not set `FFMPEG_PATH`.** The sidecar build downloads a static
+> BtbN `win64-gpl` build, which is the one to ship. A shared build (gyan.dev's
+> `ffmpeg-release-full-shared`, e.g. the one in `D:\ffmpeg`) **cannot be bundled**
+> — the app ships `ffmpeg.exe` alone, and a shared build needs its `av*.dll`s next
+> to it. `fetch-ffmpeg.ps1` detects and rejects shared builds. Only `FFMPEG_BIN` /
+> `FFPROBE_BIN` stage a local binary at build time; `FFMPEG_PATH`/`FFPROBE_PATH`
+> are **runtime** vars and are deliberately ignored by every build script. That
+> separation is why v0.3.0's bug cannot recur.
+
+> **Both Windows installers ship, on purpose** — see
+> [the `latest.json` platform keys](#platform-keys-and-why-there-are-three).
+> Building the `.msi` needs the **WiX toolset** (Tauri fetches it on first use). A
+> missing `.msi` is a warning, not a failure: the run degrades to NSIS-only and the
+> `windows-x86_64-msi` merge is skipped. If WiX fails outright you can drop `"msi"`
+> from `bundle.targets` and re-run, but you are then stranding the MSI population.
+
+The installer is **unsigned by standing decision** — see
+[Windows code signing — deliberately not configured](#windows-code-signing--deliberately-not-configured).
+First launch shows SmartScreen: **More info → Run anyway**.
+
+---
+
+## SYNC 2 — is the draft complete?
+
+Run on either machine, after **both** builds have finished:
+
+```bash
+pnpm release:status
+```
+
+**Read-only — it performs GETs and nothing else.** It lists the canonical assets
+grouped by the **machine** that produces them (3 from the Mac, 4 from Windows,
+`latest.json` shared), marks each present or `[MISSING]`, and then checks
+`latest.json` itself: that its `version` matches the tag, that all three platform
+keys are there, and that none of their URLs is dangling. **Exit 0 means READY TO
+PUBLISH.** Anything else lists what is outstanding — usually one machine has not
+finished, or has uploaded installers without merging its manifest entry.
+
+```bash
+pnpm release:status                    # the tag from tauri.conf.json
+node scripts/release-status.mjs --tag v0.8.1     # audit an older release
+node scripts/release-status.mjs --json           # machine-readable
+```
+
+Flags: `--tag`, `--repo`, `--json`, `--help`. Auth is `GH_TOKEN` or the token
+`git credential` holds — the same two places `release-upload.sh` looks, so if
+uploading works, this works.
+
+> An unpublished draft's web URL contains `untagged-<sha>` even when its
+> `tag_name` is already correct — the git tag only exists once you publish.
+> `release:status` says so explicitly; it is not the broken-tag bug.
+
+### The canonical asset set — exactly 8
+
+Confirmed against the live v0.9.0 draft and every published release back to
+v0.7.0:
+
+| Asset | From | Notes |
+|---|---|---|
+| `latest.json` | **shared** | merged by whichever machine finishes each half |
+| `VideoDubber_<ver>_aarch64.app.tar.gz` | Mac | the updater payload |
+| `VideoDubber_<ver>_aarch64.app.tar.gz.sig` | Mac | |
+| `VideoDubber_<ver>_aarch64.dmg` | Mac | the macOS **installer** — **no `.sig`, and that is correct** |
+| `VideoDubber_<ver>_x64-setup.exe` | Windows | NSIS installer |
+| `VideoDubber_<ver>_x64-setup.exe.sig` | Windows | |
+| `VideoDubber_<ver>_x64_en-US.msi` | Windows | |
+| `VideoDubber_<ver>_x64_en-US.msi.sig` | Windows | |
+
+The `.dmg` has no signature because the updater never installs it — it installs the
+`.app.tar.gz`. Only the three updater payloads are signed.
+
+### Optionally: verify the signatures against the bytes GitHub is serving
+
+The strongest check there is — it catches a wrong key *and* a corrupted upload, and
+a bad signature means every client rejects the update. Draft assets are not public,
+so fetch them through the API with a token:
 
 ```bash
 brew install minisign     # once
 cd "$(mktemp -d)"
 python3 -c "import base64,json;open('vd.pub','w').write(base64.b64decode(json.load(open('$OLDPWD/apps/desktop/src-tauri/tauri.conf.json'))['plugins']['updater']['pubkey']).decode())"
-```
 
-Draft assets are not public, so download them through the API with a token:
-
-```bash
 TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')
 REPO=codertapsu/multilingual-dubbed-video; REL=<RELEASE_ID>
 ASSETS=$(curl -sL -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/$REPO/releases/$REL/assets?per_page=100")
@@ -246,7 +367,7 @@ get() { id=$(printf '%s' "$ASSETS" | N="$1" python3 -c "import json,os,sys;print
         curl -sL -H "Authorization: Bearer $TOKEN" -H "Accept: application/octet-stream" \
              "https://api.github.com/repos/$REPO/releases/assets/$id"; }
 
-for f in VideoDubber_X.Y.Z_aarch64.app.tar.gz VideoDubber_X.Y.Z_x64-setup.exe VideoDubber_X.Y.Z_x64_en-US.msi; do
+for f in VideoDubber_0.10.0_aarch64.app.tar.gz VideoDubber_0.10.0_x64-setup.exe VideoDubber_0.10.0_x64_en-US.msi; do
   get "$f" > "$f"
   get "$f.sig" | python3 -c "import base64,sys;sys.stdout.write(base64.b64decode(sys.stdin.read().strip()).decode())" > "$f.msig"
   minisign -V -p vd.pub -x "$f.msig" -m "$f"   # expect: Signature and comment signature verified
@@ -254,59 +375,52 @@ for f in VideoDubber_X.Y.Z_aarch64.app.tar.gz VideoDubber_X.Y.Z_x64-setup.exe Vi
 done
 ```
 
-Note the env var must PREFIX the command (`N="$1" python3 …`); putting it after
-passes it as an argument and the lookup silently fails.
+The env var must **prefix** the command (`N="$1" python3 …`); after it, it is just
+an argument and the lookup silently fails.
 
-Also confirm on the draft:
+---
 
-1. **8 assets when the MSI built** — `.dmg`, `.app.tar.gz` (+`.sig`),
-   `-setup.exe` (+`.sig`), `.msi` (+`.sig`), `latest.json`. **6** if you took
-   step 4's escape hatch and dropped the `msi` target.
-2. **`latest.json`** has `"version": "X.Y.Z"`, always `darwin-aarch64` +
-   `windows-x86_64`, plus `windows-x86_64-msi` **iff** the `.msi` shipped.
-3. **Tag is `vX.Y.Z`**, not `untagged-<sha>` (else every URL 404s after publish;
-   `merge-latest-json.mjs --fix-tag` repairs it automatically).
-4. **Every asset's upload time is after** the last fix commit.
+## Write the notes, then publish
 
-### 6.5 Set the release notes
+`merge-latest-json.mjs` defaults `notes` to `VideoDubber X.Y.Z`, and **that string
+is what the in-app update dialog shows users**. Write something better.
 
-`merge-latest-json.mjs` defaults `notes` to `VideoDubber X.Y.Z`, and that string
-is what the **in-app update dialog shows users**. Write something better before
-publishing: edit the draft body on GitHub, and re-run the merge once with
-`--notes` so the manifest matches.
+The draft body is seeded automatically from
+[`scripts/package/release-body-header.md`](../scripts/package/release-body-header.md)
+(`{{VERSION}}` and `{{MIN_MACOS}}` substituted at upload time) — a bilingual
+download table. **Write the changelog underneath it; never replace it.** It matters
+because the assets list shows `…_aarch64.app.tar.gz` — the updater payload, not an
+installer — next to the `.dmg` at a similar size, and a Mac user who picks it gets a
+loose `.app` in `~/Downloads` that is signed, opens fine, and is never installed or
+updatable. That failure looks exactly like success.
 
 ```bash
-node scripts/package/merge-latest-json.mjs --tag vX.Y.Z --platform darwin-aarch64 \
-  --artifact <path-to>/VideoDubber_X.Y.Z_aarch64.app.tar.gz \
-  --notes "What changed in X.Y.Z…"
+pnpm release:publish                              # DRY RUN: says what it would do
+pnpm release:publish --yes --notes-file notes.md  # append notes + publish
 ```
 
-### 7. Publish
+`release:publish` re-runs `release-status.mjs` first and **refuses to publish
+anything it reports as incomplete** — that refusal is the whole point; publishing
+itself is one `PATCH`. Notes are **appended under** the download table, never
+replacing it (`composeBody()`).
 
-The GitHub UI works (**Publish release**, with *Set as the latest release*
-checked), or via the API:
+Flags: `--tag`, `--repo`, `--notes-file PATH`, `--notes "…"`, `--prerelease`
+(publish without GitHub marking it "Latest"), `--yes`. **Without `--yes` nothing
+is written.**
 
-```bash
-TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')
-REPO=codertapsu/multilingual-dubbed-video
-RELEASE_ID=$(curl -sL -H "Authorization: Bearer $TOKEN" "https://api.github.com/repos/$REPO/releases?per_page=100" \
-  | python3 -c "import json,sys;print(next(r['id'] for r in json.load(sys.stdin) if r['tag_name']=='vX.Y.Z'))")
+Also update the manifest's own `notes` if you want the in-app dialog to say
+something better than the default — `merge-latest-json.mjs --notes` (below) is
+what writes it, and it is a separate string from the release body.
 
-curl -sL -X PATCH -H "Authorization: Bearer $TOKEN" \
-  -d '{"draft":false,"prerelease":false,"make_latest":"true"}' \
-  "https://api.github.com/repos/$REPO/releases/$RELEASE_ID"
-```
+> **Publishing creates the `vX.Y.Z` tag from `main`'s HEAD *at publish time*** — not
+> from the commit the installers were built from. Do not push to `main` between the
+> last platform build and publishing, or the tag points at code that was never
+> built. If `main` did advance: publish first and move the tag afterwards, or
+> rebuild.
 
-`make_latest` is the **string** `"true"`, not a boolean — the API rejects the
-boolean form.
+---
 
-> **Publishing creates the `vX.Y.Z` tag from `main`'s HEAD *at publish time*** —
-> not from the commit the installers were built from (`ensure_release` sends no
-> `target_commitish`). Do not push to `main` between the last platform build and
-> Publish, or the tag will point at code that was never built. If `main` did
-> advance, either publish first and move the tag afterwards, or rebuild.
-
-### 8. Verify what users actually receive
+## After publishing
 
 ```bash
 # GitHub's 'latest' must be the new tag
@@ -316,9 +430,9 @@ curl -sL https://api.github.com/repos/codertapsu/multilingual-dubbed-video/relea
 curl -sL "https://github.com/codertapsu/multilingual-dubbed-video/releases/latest/download/latest.json"
 
 # Every payload URL must be publicly reachable
-for f in VideoDubber_X.Y.Z_aarch64.app.tar.gz VideoDubber_X.Y.Z_x64-setup.exe VideoDubber_X.Y.Z_x64_en-US.msi; do
+for f in VideoDubber_0.10.0_aarch64.app.tar.gz VideoDubber_0.10.0_x64-setup.exe VideoDubber_0.10.0_x64_en-US.msi; do
   curl -sIL -o /dev/null -w "%{http_code} $f\n" -r 0-0 \
-    "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/vX.Y.Z/$f"
+    "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/v0.10.0/$f"
 done     # expect 206 for each
 ```
 
@@ -326,422 +440,259 @@ Then do the check no amount of manifest inspection replaces: **update a real
 machine** from the previous version via Settings → Check for updates. Prioritise
 **Windows**, which exercises the pre-install sidecar teardown.
 
-> **Running the upload helpers by hand?** `release-upload.{sh,ps1}` default
-> `RELEASE_TAG` to **`v0.1.0`**, not to the current version — a bare
-> `bash scripts/package/release-upload.sh upload <file>` uploads into the v0.1.0
-> release. Always export `RELEASE_TAG=vX.Y.Z` first. (The release wrappers set it
-> for you; this only bites manual recovery.)
+### Prune old releases
 
-### 8.5 Prune old releases — keep only the two newest
-
-Every release carries 0.6-1.9 GB of installers, and old ones serve no purpose:
-the updater always reads `releases/latest/download/latest.json`, so a client on
-ANY version updates straight to the newest — it never consults the release it is
-currently running. Leaving them up just accumulates gigabytes and offers users a
-download that is worse than the current one.
-
-Do this AFTER publishing (step 7) and AFTER confirming the endpoint serves the
-new version (step 8) — never before, or you delete the fallback while the new
-release is still unproven.
+Only **after** the endpoint is confirmed serving the new version — the previous
+release is your only rollback target, so pruning early destroys it.
 
 ```bash
-node scripts/package/prune-releases.mjs            # dry run: shows what goes
-node scripts/package/prune-releases.mjs --apply    # keeps the 2 newest
+node scripts/package/prune-releases.mjs                  # dry run: shows what goes
+node scripts/package/prune-releases.mjs --apply          # keeps the 2 newest published
+node scripts/package/prune-releases.mjs --keep 3 --apply
 ```
 
-The script is deliberately conservative:
+Each release carries 0.6–1.9 GB of installers and old ones serve no purpose: the
+updater always reads `releases/latest/download/latest.json`, so a client on *any*
+version updates straight to the newest and never consults the release it is
+currently running. The script is deliberately conservative — dry run by default,
+never touches drafts, never touches whatever GitHub resolves as `latest` even if
+the date ordering disagrees, and **keeps git tags** (pass `--tags` to drop those
+too, if you really want the history gone). A pruned version's download URLs 404
+afterwards; existing installs and auto-update are unaffected.
 
-- **Dry run by default** — deleting a release is irreversible.
-- **Never touches drafts** — a draft is usually the next release being
-  assembled.
-- **Never touches whatever GitHub resolves as `latest`**, even if the date
-  ordering disagrees; deleting that breaks auto-update for everyone.
-- **Keeps git tags.** The release holds the binaries; the tag is how you check
-  out or diff the source a shipped build came from, and it costs nothing. Pass
-  `--tags` only if you really want the history gone too.
+### Rollback, if the release turns out bad
 
-> A pruned version's installer URLs 404 afterwards. That affects anyone holding
-> a direct link to an old download — not existing installs, which keep working,
-> and not auto-update, which resolves `latest`.
-
-### 9. Rollback — if the release turns out bad
-
-> **Prune AFTER the release is proven, not before** (step 8.5) — the previous
-> release is your only rollback target. If you have already pruned and the new
-> release turns out bad, there is nothing to fall back to.
-
-Do **not** delete the release first. Mark it a **pre-release**: the endpoint
-resolves to the newest *published, non-prerelease* release, so it falls back to
-the previous version immediately, and the bad build stays available for
-diagnosis.
+Do **not** delete it. Mark it a **pre-release** — the endpoint resolves to the
+newest *published, non-prerelease* release, so it falls back to the previous
+version immediately and the bad build stays available for diagnosis:
 
 ```bash
 curl -sL -X PATCH -H "Authorization: Bearer $TOKEN" -d '{"prerelease":true}' \
   "https://api.github.com/repos/codertapsu/multilingual-dubbed-video/releases/<RELEASE_ID>"
-curl -sL "https://github.com/codertapsu/multilingual-dubbed-video/releases/latest/download/latest.json"
 ```
 
-Note the endpoint is CDN-cached for a short window — re-check with a cache-buster
-before concluding it did not work. Clients on the bad version are **not**
-downgraded (the updater only moves forward); they stay put until a newer release
-is published.
+The endpoint is CDN-cached briefly — re-check with a cache-buster before concluding
+it did not work. Clients already on the bad version are **not** downgraded (the
+updater only moves forward); they stay put until a newer release is published.
 
 ---
 
-## Hard-won gotchas
+## What can go wrong
 
-Each of these cost a release or a rebuild.
+These four are the ones that have actually happened here. Each has a cheap guard.
+
+**A stale sidecar ships without your change.** You skipped `--sidecars` for a change
+that lives in the orchestrator or a Python worker. The installer builds, signs,
+notarizes and installs perfectly — and behaves like the previous version. Nothing
+in the pipeline notices, because every artifact is valid.
+→ *Guard:* `--sidecars` unless the change is purely `src-tauri/src` or
+`apps/desktop/src`, and `strings` the bundled binary for a string your change
+introduced before notarizing (brotli caveat for UI changes above).
+
+**A half-done version bump uploads into the previous release.** Only some manifests
+were bumped, so the artifact filenames and the tag derived from
+`tauri.conf.json` disagree with what you think you are shipping — and a bare
+`release-upload.sh` run defaults its tag to `v<version from tauri.conf.json>`,
+which is the *old* version if that file is the one you missed. Assets land in the
+wrong release, quietly.
+→ *Guard:* `pnpm release:version` writes all five at once; `check-versions.mjs`
+runs inside `pnpm check`, `pnpm release:check` and both release scripts.
+
+**`latest.json` is missing a platform, so those users silently get no update.** The
+manifest is merged one platform at a time from two machines. If the Windows half
+never ran, or its MSI merge was skipped, `check()` errors for that platform's users
+— and it is invisible from the Mac, where everything looks complete.
+→ *Guard:* `pnpm release:status` lists the platform keys; `release:publish` refuses
+on an incomplete draft.
+
+**Publishing before the second machine finished.** The draft looks plausible with
+four or five assets on it. Publishing makes it `latest` immediately, so every user
+who checks for updates in the next few minutes sees a manifest pointing at assets
+that may not exist yet.
+→ *Guard:* SYNC 2. `release:status` exits 0 only on the full 8-asset set, and
+`release:publish` will not act without it.
+
+Plus the smaller ones that have each cost a rebuild:
 
 | Gotcha | Why it bites | Guard |
 |---|---|---|
-| A **runtime** env var steering the **build** | `.env` sets `FFMPEG_PATH` for dev; `fetch-ffmpeg.*` treated it as "stage this binary", so v0.3.0 shipped Homebrew-linked ffmpeg that ran only on the build machine | build-time staging is `FFMPEG_BIN`/`FFPROBE_BIN` only; `assert_portable` + the release gate reject non-portable binaries |
-| **Drafts are invisible to the updater** | The endpoint is `releases/latest/…`, i.e. newest *published, non-prerelease* | nothing reaches users until step 7 |
-| **A one-sided `latest.json`** | Publishing with only one platform merged makes `check()` error for the other platform's users | step 6.2 |
-| **Raising `minimumSystemVersion`** | The updater has no OS gate: it replaces a working app, then the OS refuses to launch it | `unsupported_host_reason()` withholds the offer; a unit test keeps it in sync with `tauri.conf.json` |
+| A **runtime** env var steering the **build** | `.env` sets `FFMPEG_PATH` for dev; `fetch-ffmpeg.*` once read it as "stage this binary", so v0.3.0 shipped Homebrew-linked ffmpeg that ran only on the build machine | build-time staging is `FFMPEG_BIN`/`FFPROBE_BIN` only; `assert_portable` + the release bundle assertion reject non-portable binaries |
+| **Raising `minimumSystemVersion`** | The updater has no OS gate: it replaces a working app, then the OS refuses to launch it | `unsupported_host_reason()` withholds the offer; `cargo test`'s `min_macos_matches_config` keeps it in sync with `tauri.conf.json` |
 | **Sidecars survive the updater's exit** | On Windows they hold `.exe`/`.dll` open, so NSIS fails with "Error opening file for writing" | `on_before_exit` → `sidecar::shutdown_all()` on both update paths |
-| **`cfg`-gated symbols in shared code** | Builds on macOS, `E0425` on Windows | step 2 |
+| **`cfg`-gated symbols in shared code** | Builds on macOS, `E0425` on Windows | the cross-check above |
 | **Rebuilding the DMG invalidates its ticket** | New cdhash ⇒ `stapler` Error 65 | the script resubmits automatically; two `Accepted` lines are normal |
-| **Assets built before a mid-release fix** | Silent — the installer looks fine | step 6.4 compares upload time to commit time |
-| **A spec/config that PARSES but means something else** | `excludes=["pytest" "av"]` — a missing comma made Python concatenate them into `"pytestav"`, excluding neither, and PyAV shipped anyway. `compile()` proved nothing | read the value back (`ast.literal_eval`) and assert the entries you expect are present |
-| **`PATCH`ing a draft release without `tag_name`** | The API resets the tag to `untagged-<sha>` — the same state `--fix-tag` exists to repair. Setting the release *body* is the usual trigger, and it silently undoes a correct tag | always send `tag_name` alongside `body`/`name`; re-check the tag after any PATCH, or re-run `merge-latest-json.mjs --fix-tag` |
-| **`strings` on the main binary to verify a UI change** | Tauri **brotli-compresses** the embedded frontend, so a shipped Angular string is never greppable — zero hits looks identical to a stale build | decompress the staged asset instead: `zlib.brotliDecompressSync` over `target/release/build/videodubber-desktop-*/out/tauri-codegen-assets/*` |
-| **Skipping `-Sidecars` for a non-shell change** | The orchestrator and the Python workers ARE sidecars; without that step the build re-bundles stale binaries and ships an installer missing the fix entirely | step 3's rule, plus grepping the bundled binary for a string the change introduced |
+| **A spec/config that PARSES but means something else** | `excludes=["pytest" "av"]` — a missing comma concatenated them into `"pytestav"`, excluding neither, and PyAV shipped anyway. `compile()` proved nothing | read the value back (`ast.literal_eval`) and assert the entries you expect |
+| **`PATCH`ing a draft without `tag_name`** | The API resets the tag to `untagged-<sha>`, and every URL in `latest.json` then 404s after publish. Setting the release *body* is the usual trigger | always send `tag_name` alongside `body`/`name`; `merge-latest-json.mjs --fix-tag` repairs it |
+| **Drafts are invisible to the updater** | The endpoint is `releases/latest/…` — newest *published, non-prerelease* | nothing reaches users until publish; that is the design, not a bug |
 
 ---
 
-The rest of this doc is reference: one-time setup, per-OS detail, signing
-internals, and how `latest.json` drives the updater.
+## Reference
 
----
+### How `latest.json` drives the updater
 
-## One-time setup
+`bundle.createUpdaterArtifacts: true` makes Tauri emit, per platform, an update
+archive plus a detached `.sig` signed with `TAURI_SIGNING_PRIVATE_KEY`. The
+installed app fetches `latest.json` from the configured endpoint, compares
+`version` to its own, downloads the matching platform entry, and **verifies the
+signature with the embedded pubkey** before installing. Full flow:
+[`AUTOUPDATE.md`](AUTOUPDATE.md).
 
-### 1. Generate the auto-updater signing key
+The live v0.9.0 manifest, trimmed:
 
-The Tauri updater verifies every update with a keypair. Generate it **once** and
-keep the private key secret forever:
-
-```bash
-pnpm tauri signer generate -w ~/.tauri/videodubber.key
-# (equivalently: pnpm --filter videodubber-desktop tauri signer generate ...)
+```jsonc
+{
+  "version": "0.9.0",
+  "notes": "Download source videos from Bilibili and Douyin…",   // what the update dialog SHOWS
+  "pub_date": "2026-08-06T04:16:30.844Z",
+  "platforms": {
+    // macOS (Apple Silicon) — the .app.tar.gz, NOT the .dmg
+    "darwin-aarch64":     { "signature": "…", "url": ".../v0.9.0/VideoDubber_0.9.0_aarch64.app.tar.gz" },
+    // Windows installed from the NSIS setup.exe
+    "windows-x86_64":     { "signature": "…", "url": ".../v0.9.0/VideoDubber_0.9.0_x64-setup.exe" },
+    // Windows installed from the .msi — looked up FIRST by those clients
+    "windows-x86_64-msi": { "signature": "…", "url": ".../v0.9.0/VideoDubber_0.9.0_x64_en-US.msi" }
+  }
+}
 ```
 
-This prints a **public key** and writes a password-protected **private key**.
+### Merge semantics
 
-* Put the **public key** in `apps/desktop/src-tauri/tauri.conf.json` at
-  `plugins.updater.pubkey` (replacing the `REPLACE_WITH_TAURI_UPDATER_PUBKEY`
-  placeholder). This is committed.
-* Store the **private key** + its password as GitHub secrets (next step). **Never
-  commit the private key.**
+`merge-latest-json.mjs` writes **one platform per invocation** and preserves
+everything else, which is what lets two machines share one manifest:
 
-> Losing the private key means existing installs can no longer verify updates —
-> you'd have to ship a new pubkey via a fresh manual install. Back it up securely.
+1. Finds the release for `--tag` (drafts included). `--fix-tag` repairs a stray
+   `untagged-<sha>` draft tag first.
+2. Downloads the release's current `latest.json` and **merges** into it — other
+   platforms' entries survive.
+3. Sets `platforms[--platform] = { signature: <contents of <artifact>.sig>, url: … }`.
+4. Sets `version` (tag minus the `v`), `pub_date`, and `notes` (`--notes` wins;
+   otherwise existing notes survive).
+5. Replaces the asset. Idempotent — re-running is safe.
 
-### 2. Set the updater endpoint
+```bash
+node scripts/package/merge-latest-json.mjs --tag v0.10.0 --platform darwin-aarch64 \
+  --artifact <path>/VideoDubber_0.10.0_aarch64.app.tar.gz --notes "What changed…"
+```
 
-In `tauri.conf.json`, `plugins.updater.endpoints` must point at your repo's
-`latest.json`:
+Flags: `--repo`, `--tag`, `--platform`, `--artifact`, `--sig`, `--notes`,
+`--fix-tag`, `--dry-run`.
+
+It does **not** validate `--platform` — it writes whatever string you pass, which
+is how `release-windows.ps1` adds the third key. Do not read "no Linux key" as a
+guard.
+
+### Platform keys, and why there are three
+
+`tauri-plugin-updater` resolves the manifest key as
+`[{os}-{arch}-{installer}, {os}-{arch}]`. A machine installed from the `.msi`
+therefore looks for **`windows-x86_64-msi` first**. Without that key those users
+fall back to the NSIS `.exe`, which mid-update either uninstalls the MSI through an
+elevated `msiexec` prompt or leaves two parallel installs. v0.1.0 + v0.2.0 alone
+have 26 MSI downloads, so this population is real — that is the entire reason the
+`.msi` is built, signed, uploaded and given its own key.
+
+| Key | Payload |
+|---|---|
+| `darwin-aarch64` | the notarize-repaired `.app.tar.gz` |
+| `windows-x86_64` | the NSIS `-setup.exe` |
+| `windows-x86_64-msi` | the `.msi` |
+
+### The updater signing key
+
+Generated **once**, kept secret forever:
+
+```bash
+pnpm --filter videodubber-desktop exec tauri signer generate -w ~/.tauri/videodubber.key
+```
+
+The **public** key lives in `tauri.conf.json` at `plugins.updater.pubkey` and is
+committed. The **private** key is on the Mac at `~/.tauri/videodubber.key` and
+copied to `~\.tauri\videodubber.key` on the Windows box. It has an **empty
+password**, which the release scripts export so builds do not prompt.
+
+> Losing it means existing installs can no longer verify updates — every user would
+> need a fresh manual install carrying a new pubkey. Back it up securely.
+
+The endpoint, already configured:
 
 ```
 https://github.com/codertapsu/multilingual-dubbed-video/releases/latest/download/latest.json
 ```
 
-(This is already set to the real repo slug.) `releases/latest/download/...`
-always resolves to the newest **published** (non-draft, non-prerelease) release.
+### Windows code signing — deliberately not configured
 
-### 3. Configure GitHub secrets
+**Every Windows artifact this project has ever published is unsigned.**
+`tauri.conf.json`'s `bundle.windows` block carries only `webviewInstallMode` and
+`nsis.installMode` — **none** of the signing fields (`certificateThumbprint`,
+`signCommand`, `digestAlgorithm`, `timestampUrl`). `tauri build` has nothing to
+sign with, and `release-windows.ps1` never signs anything: a repo-wide grep for
+`signtool` / `osslsigncode` finds nothing outside the (dead) CI workflow.
 
-Settings → Secrets and variables → Actions. Required / optional:
+**DECIDED 2026-09-18: Windows builds stay unsigned.** A standing choice, not an
+omission and not a pending task — do not re-open it at release time. Accepted
+consequences:
 
-| Secret | Required | Purpose |
-|---|---|---|
-| `TAURI_SIGNING_PRIVATE_KEY` | ✅ | Contents of `~/.tauri/videodubber.key`. Signs `latest.json`. |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | see note | Password for that key. **The committed key was generated with an *empty* password** — GitHub can't store an empty secret, so instead hardcode `TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''` in `release.yml` (or regenerate the key *with* a password and set both this secret and the new pubkey). |
-| `APPLE_CERTIFICATE` | macOS | base64 of your Developer ID Application `.p12`. |
-| `APPLE_CERTIFICATE_PASSWORD` | macOS | Password for the `.p12`. |
-| `APPLE_SIGNING_IDENTITY` | macOS | e.g. `Developer ID Application: Name (TEAMID)`. |
-| `APPLE_ID` | macOS | Apple ID email for notarization. |
-| `APPLE_PASSWORD` | macOS | App-specific password for notarization. |
-| `APPLE_TEAM_ID` | macOS | 10-char Apple Team ID. |
-| `KEYCHAIN_PASSWORD` | macOS | Throwaway password for the CI temp keychain. |
-| `WINDOWS_CERTIFICATE` | Windows (opt) | base64 of your Authenticode `.pfx`. |
-| `WINDOWS_CERTIFICATE_PASSWORD` | Windows (opt) | Password for the `.pfx`. |
+* Every hand-downloaded install and update shows the full-screen "Windows protected
+  your PC — Unknown publisher" panel whose default button is *Don't run*, with *Run
+  anyway* behind *More info*. This is the single largest install-funnel loss.
+  `README.md` and `docs/USER_GUIDE.md` both tell users exactly what they will see
+  and which link to click; keep that wording accurate — it is the only mitigation
+  there is.
+* In-app auto-updates are **not** affected: those are verified by the updater's own
+  minisign signature, which is configured and working.
+* Some corporate/managed Windows images block unsigned installers outright, with no
+  "Run anyway". Those users cannot install VideoDubber at all.
 
-`GITHUB_TOKEN` is automatic; the workflow declares `contents: write`.
+If it is ever revisited, a certificate has to be bought — a maintainer decision, not
+a code change. Two notes for whoever makes it: Azure Artifact Signing (ex-Trusted
+Signing) restricts *individual* sign-up to the USA and Canada; and "EV clears
+SmartScreen reputation instantly" has not been true since the 2023 FIPS key-storage
+change made OV and EV equally hardware-bound — reputation accrues across releases
+signed by the **same identity**, so keep the identity stable. Wire it in as
+`bundle.windows.signCommand` (Tauri 2 supports a `%1` placeholder, which is how
+cloud signing tools integrate) so `tauri build` signs the NSIS exe, the MSI **and**
+the sidecar exes, and make `release-windows.ps1` fail when signing is configured but
+produced no signature — mirroring the existing `.sig` hard-fail.
 
-> To export the macOS cert: in Keychain Access, export the *Developer ID
-> Application* identity (cert + private key) as a `.p12`, then
-> `base64 -i cert.p12 | pbcopy`. The app-specific password is created at
-> <https://appleid.apple.com> → Sign-In and Security → App-Specific Passwords.
+### Linux and Intel macOS produce nothing
 
----
+Not "not yet": `release-macos.sh` hardcodes `aarch64`, `bundle.targets` contains no
+Linux package type (a Linux `tauri build` exits 0 having bundled nothing), there is
+no `release-linux.sh`, and nothing merges a Linux entry into `latest.json` — so even
+a hand-built `.AppImage` would never be offered as an update. Ship Apple Silicon +
+Windows, and say so in the README rather than advertising files that have never
+existed.
 
-## First release (v0.1.0) — historical note
+### Running the helpers by hand (recovery)
 
-> This documents how the *first* release (v0.1.0) was cut, when auto-update was
-> still **off** (`createUpdaterArtifacts: false`) and no signing secrets were
-> needed. Since **v0.2.0** auto-update is **on** and releases are signed — follow
-> [Cut a release](#cut-a-release--step-by-step) at the top instead. Kept for context.
-
-v0.1.0 shipped with the repo references set, engine-pack URLs pinned +
-checksummed, a static portable ffmpeg on all platforms, and auto-update **off** —
-so **no secrets were required**:
-
-1. **Build locally + upload** — releases are cut on your own machines (no CI), so
-   the 10x-billed macOS runners stay idle. On each machine build the
-   self-contained installer and upload it to the shared **draft** release with
-   `scripts/package/release-upload.{sh,ps1}`. Full per-OS steps:
-   [Local-first release](#local-first-release-build-locally).
-2. **Review the draft release**, then **Publish** it. Users can now download from
-   the Releases page.
-
-> **Why local, not CI?** GitHub's hosted macOS runners bill at 10x (and the DMG
-> step is flaky on them). The Release workflow is kept **intact but gated
-> per-OS**, so each platform builds either locally or in CI independently — see
-> [Per-OS: local build vs CI](#per-os-local-build-vs-ci) below. By default
-> **every OS builds locally**; opt an OS into CI by setting its `RELEASE_CI_*`
-> variable to `true`.
-
-> **Optional polish (any time):**
-> - **Apple notarization / Windows Authenticode** (the secret tables in *One-time
->   setup*). Without them the macOS `.dmg` / Windows installer are unsigned —
->   Gatekeeper / SmartScreen show a first-launch warning (right-click → **Open** on
->   macOS, or `xattr -dr com.apple.quarantine /Applications/VideoDubber.app`).
-> - **Auto-update** (a later release): set `createUpdaterArtifacts: true` in
->   `tauri.conf.json`, set `includeUpdaterJson: true` in `release.yml`, and add the
->   `TAURI_SIGNING_PRIVATE_KEY` secret (contents of `~/.tauri/videodubber.key`). That
->   key has an **empty password**, so set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''`
->   directly in `release.yml` (GitHub can't store an empty secret). The pubkey is
->   already committed; regenerate the pair with `pnpm tauri signer generate` if you
->   don't have the private key, or if you'd prefer a password-protected key (safe
->   pre-launch — no installs exist yet; just re-commit the new pubkey).
-
-### Engine-pack assets — nothing to host
-
-**No engine pack is self-hosted.** Every native pack points at an upstream
-ggml-org release, and the Python packs have no URLs at all, so there is no
-one-time asset step here.
-
-*(This section used to describe building and hosting a `whisper-cpp-metal`
-binary. That pack id is not in `ENGINE_PACKS`, and the `SELF_HOSTED_BASE`
-constant it referenced no longer exists anywhere in the tree.)*
-
-What **does** need maintenance is the seven GGUF model packs, which pin community
-requants on HuggingFace by URL + sha256: if an uploader deletes or re-quantizes
-one, every install of that pack fails at once. The re-pin procedure is
-[`ENGINE_PACKS.md` §3](ENGINE_PACKS.md#3-re-pinning-a-model-pack-whose-upstream-vanished).
-
----
-
-## Per-OS: local build vs CI
-
-Every target OS has **two** ways to produce a release build, chosen
-independently:
-
-- **Local** — run the steps below on that machine and upload with
-  `release-upload` (zero Actions minutes).
-- **CI** — let `release.yml` build it on a `v*` tag push.
-
-CI is gated **per OS** by repo variables (Settings → Secrets and variables →
-Actions → Variables). The `setup` job reads them and builds the matrix; a
-disabled OS is omitted, so it provisions **no runner**:
-
-| Variable | Current | Meaning |
-|---|---|---|
-| `RELEASE_CI_MACOS` | `false` | macOS (arm64) built **locally** on the Mac |
-| `RELEASE_CI_WINDOWS` | `false` | Windows built **locally** on the Windows desktop |
-| `RELEASE_CI_LINUX` | `false` | Linux not built |
-
-**The project now builds ALL release artifacts locally** — macOS on the Mac,
-Windows on the Windows desktop (`D:\development\projects\multilingual-dubbed-video`)
-— and uploads them to GitHub with the release scripts below. `RELEASE_CI_WINDOWS`
-was set back to `false` after v0.2.0 (the last CI-built Windows release); CI is
-kept only as an escape hatch. Set a variable to `true` to build that OS in **CI**
-on the next `v*` tag push. **Careful:** a manual **workflow_dispatch** run builds
-every OS regardless of the variables — don't trigger one unless you mean to. The
-entries + defaults live in `scripts/ci/resolve-release-matrix.py` (runnable
-locally to preview the matrix). When CI builds an OS, it uploads to the same
-draft the local steps target.
-
-## Local-first release (build locally)
-
-Build any OS on your own machine and upload straight to the GitHub release.
-
-Both machines follow the same shape: bundle the self-contained sidecars, run
-`tauri build`, then upload with the release script for that OS
-(`release-macos.sh` / `release-windows.ps1`). The upload helper **creates the
-tag's draft on first use** and **replaces** same-named assets on re-upload, so
-both machines push to the *same* draft and re-runs are idempotent. Auth is the
-GitHub token from `git credential` (no `gh` needed); override target with
-`GH_REPO` / `RELEASE_TAG` (default: `v<version from tauri.conf.json>`).
-
-> Build the tag you're releasing: `git checkout vX.Y.Z` (or just build current
-> `main` — the installer contents are what matter; the tag is bookkeeping).
-
-### macOS (`.dmg`) — on your Mac
-
-Set your Developer ID env once (the cert lives in your login keychain from the
-signing setup — see [`APPLE_SIGNING.md`](APPLE_SIGNING.md)):
+The release scripts call these for you; this is for repairing a half-finished
+release.
 
 ```bash
-export APPLE_SIGNING_IDENTITY="Developer ID Application: <Name> (<TEAMID>)"
-export APPLE_ID="<apple-id-email>"
-export APPLE_PASSWORD="<app-specific-password>"   # appleid.apple.com -> App-Specific Passwords
-export APPLE_TEAM_ID="<TEAMID>"
+export RELEASE_TAG=v0.10.0    # override; defaults to v<version from tauri.conf.json>
+bash scripts/package/release-upload.sh ensure                  # create/find the draft, print its id
+bash scripts/package/release-upload.sh upload <file> [file…]   # ensure + upload, replacing same-named assets
 ```
 
-Then build + sign + notarize + upload with the one-command wrapper:
+Auth is `GH_TOKEN`, else the OAuth token `git credential` already holds (no `gh`
+CLI needed). Override the repo with `GH_REPO`. Because uploads **replace**
+same-named assets, re-cutting a draft needs no deletion and no tag move — rebuild
+and re-run the release script.
+
+> Older runbooks warned that `release-upload` defaulted its tag to `v0.1.0`. It no
+> longer does — the default is `v<version from tauri.conf.json>`. Exporting
+> `RELEASE_TAG` explicitly is still the safe habit.
+
+Doing the macOS steps entirely by hand? You **must** keep the notary creds out of
+the `tauri build` environment:
 
 ```bash
-pnpm install --frozen-lockfile
-export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/videodubber.key)"   # updater .sig signing
-SIDECARS=1 UPLOAD=1 bash scripts/package/release-macos.sh
+env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID pnpm app:build
+bash scripts/package/macos-sign-notarize.sh
 ```
 
-`release-macos.sh` runs `tauri build` with the notary creds **withheld** (so
-`tauri build` signs the shell but does NOT try to notarize — its signing can't
-reach the bundled PyInstaller worker `.so` files, which makes an in-build
-notarization fail), then `macos-sign-notarize.sh` deep-signs **every** Mach-O +
-notarizes + staples. It then **regenerates the auto-update archive from the
-repaired app** (`VideoDubber_<ver>_aarch64.app.tar.gz` + `.sig` — the archive
-`tauri build` emitted is from the PRE-repair app and must not ship), and with
-`UPLOAD=1` uploads the `.dmg` + updater artifacts to the tag's draft and merges
-the `darwin-aarch64` entry into the release's `latest.json`
-(`merge-latest-json.mjs` — preserves the windows entry if it's already there).
-
-> **Why the deep-sign pass (and how to troubleshoot it):** see
-> [`APPLE_SIGNING.md`](APPLE_SIGNING.md) — why `tauri build` alone isn't
-> notarizable, what the deep-sign step covers, and how to debug signing /
-> notarization failures.
-
-> **Doing the steps by hand?** You MUST keep the notary creds out of the
-> `tauri build` environment, or it notarizes itself and fails:
-> ```bash
-> env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID pnpm app:build
-> bash scripts/package/macos-sign-notarize.sh
-> bash scripts/package/release-upload.sh upload \
->   apps/desktop/src-tauri/target/release/bundle/dmg/VideoDubber_*_aarch64.dmg
-> ```
-
-Verify it's self-contained first (should print `portable` — no `/opt/homebrew`):
-
-```bash
-otool -L apps/desktop/src-tauri/target/release/bundle/macos/VideoDubber.app/Contents/MacOS/ffmpeg \
-  | grep -E '/opt/|/usr/local|homebrew' && echo "NON-PORTABLE" || echo "portable"
-```
-
-> Want an **unsigned** `.dmg` instead? Skip `macos-sign-notarize.sh`, run
-> `pnpm dmg:instructions <dmg>` so the Gatekeeper unlock ships inside the image,
-> then upload the `tauri build` output from `.../bundle/dmg/`. Notarization is the
-> better experience (plain double-click), so prefer it when you can.
-
-### Windows (`.exe`) — on your Windows desktop
-
-Project checkout: `D:\development\projects\multilingual-dubbed-video`.
-
-**One-time machine setup** (mirrors what the CI runner had):
-
-1. **PowerShell 7** (`pwsh`) — the build scripts use PS7-only parameters; do not
-   run them in Windows PowerShell 5.1.
-2. **Node 24** + `corepack enable` (pnpm 11.9 needs `node:sqlite` → Node ≥ 22.12;
-   CI pinned 24).
-3. **Rust stable (MSVC)** — `rustup` with the `x86_64-pc-windows-msvc` target +
-   Visual Studio Build Tools (C++).
-4. **Python 3.12** on PATH, then create the three worker venvs once:
-   `pwsh scripts/setup-local-models.ps1` (model downloads are skippable —
-   the venvs are what the sidecar build needs).
-5. **Updater signing key** — copy `~/.tauri/videodubber.key` from the Mac to
-   `~\.tauri\videodubber.key` on the Windows box (it is a **secret**: transfer
-   it privately — AirDrop/USB, not chat/email). Without it the build emits no
-   `.sig` files and the auto-updater can never install the release.
-6. **GitHub token** — sign in once so `git credential` has a token (or set
-   `$env:GH_TOKEN`).
-7. **FFmpeg: do NOT set `FFMPEG_PATH`.** The sidecar build auto-downloads a
-   **static** libass-enabled build (BtbN `win64-gpl` .zip) — that is the one to
-   ship. A locally installed ffmpeg like gyan.dev's
-   `ffmpeg-release-full-shared` (e.g. in `D:\ffmpeg`) **cannot be bundled**: the
-   app ships `ffmpeg.exe` alone as a sidecar, and a *shared* build needs its
-   `av*.dll`s next to it — fine for desktop use, broken inside the installed
-   app. `fetch-ffmpeg.ps1` now detects and rejects shared builds. If you must
-   stage a local copy (offline builds), use a **static single-file** build
-   (BtbN `win64-gpl`, or gyan's non-shared `ffmpeg-release-full.7z`).
-
-**Per release** — one command:
-
-```powershell
-pnpm install --frozen-lockfile
-pwsh scripts/package/release-windows.ps1 -Sidecars -Upload
-```
-
-`release-windows.ps1` loads the signing key (env var or `~\.tauri\videodubber.key`),
-builds the sidecars (`build-sidecars.ps1`), runs `tauri build` — `bundle.targets`
-is `["app","dmg","nsis","msi"]`, so Windows produces **both** the NSIS
-`-setup.exe` and (when WiX succeeds) the `.msi`, each with an updater `.sig` —
-uploads both pairs to the tag's draft (`release-upload.ps1`), and merges **both**
-the `windows-x86_64` and `windows-x86_64-msi` entries into the release's
-`latest.json` (`merge-latest-json.mjs` — preserves the mac entry if it's already
-there). Both installers ship because the updater looks up
-`{os}-{arch}-{installer}` before `{os}-{arch}`, so MSI-installed users need their
-own key (see [step 4](#4-build--upload-windows--on-the-windows-desktop)). The installer is unsigned (no
-Authenticode cert), so first-run shows SmartScreen: **More info → Run anyway**.
-
-### Publish
-
-Both machines upload to the same draft (found by tag) — order doesn't matter;
-whichever merges `latest.json` second preserves the other's platform entry.
-Before publishing, check on the draft:
-
-1. Assets: mac `.dmg` + `VideoDubber_<ver>_aarch64.app.tar.gz(.sig)`, Windows
-   `-setup.exe(.sig)`, and `latest.json`.
-2. `latest.json` contains **both** `darwin-aarch64` and `windows-x86_64` entries
-   and `version` matches the tag.
-3. The draft's tag is the real `vX.Y.Z` (the merge script's `--fix-tag` repairs
-   a stray `untagged-<sha>` draft) — otherwise every download URL in
-   `latest.json` 404s after publish.
-4. **The release body opens with the download table.** `release-upload.sh` /
-   `.ps1` seed a new draft's body from
-   [`scripts/package/release-body-header.md`](../scripts/package/release-body-header.md)
-   (`{{VERSION}}` and `{{MIN_MACOS}}` substituted at upload time), so this is
-   normally automatic — confirm it is actually there, and **write the changelog
-   underneath it rather than replacing it**.
-
-   It matters because the assets list shows `…_aarch64.app.tar.gz` — the updater
-   payload, not an installer — next to the `.dmg` at a similar size, and a Mac user
-   who picks it gets a loose `.app` in `~/Downloads` that is signed, opens fine, and
-   is never installed or updatable. That failure looks like success, which is why
-   the page has to say which file to click before it says what changed.
-
-Then **Publish** on the Releases page — publishing is what makes
-`releases/latest/download/latest.json` (the updater endpoint) point at this
-version. Assets can still be added after publishing if needed.
-
-> **Intel (x86_64) macOS and Linux produce nothing.** This is not "not yet in the
-> two-machine flow" — `release-macos.sh` hardcodes `aarch64`, `bundle.targets`
-> contains no Linux package type (so a Linux `tauri build` exits 0 having bundled
-> nothing), there is no `release-linux.sh`, and nothing ever merges a Linux entry
-> into `latest.json` — so even a hand-built `.AppImage` would not be offered as an
-> update. (`merge-latest-json.mjs` itself does *not* validate `--platform`: it
-> writes whatever string you pass, which is how `release-windows.ps1` adds the
-> third key `windows-x86_64-msi`. Do not read "no Linux key" as a guard.) The
-> manual CI
-> workflow is not a rescue either: its Intel-mac job targets the retired
-> `macos-13` runner image. Ship Apple Silicon + Windows, and say so in the README
-> rather than advertising files that have never existed.
-
-> **Re-cutting a draft:** the upload helper overwrites same-named assets in
-> place, so you do NOT need to delete the draft or move the tag between
-> iterations — just rebuild and re-run the release script.
-
----
-
-## Per-release steps (reference)
-
-The ordered runbook is **[Cut a release — step by step](#cut-a-release--step-by-step)**
-at the top. This section keeps two extra reference details.
-
-### Sanity-build before releasing (optional)
-
-Catch packaging breakage before you build the real release:
+### Sanity-build before a release (optional)
 
 ```bash
 pnpm package:sidecars     # orchestrator + workers + piper + ffmpeg for your host
@@ -751,150 +702,42 @@ pnpm app:build            # a local installer under apps/desktop/src-tauri/targe
 Verify it launches, the first-run wizard appears, and a tiny dub completes (needs
 the worker venvs — `scripts/setup-local-models.sh`).
 
-> **ffmpeg for a local sanity build.** `package:sidecars` always downloads a
-> **static** libass ffmpeg. `FFMPEG_PATH`/`FFPROBE_PATH` are the orchestrator's
-> **runtime** vars and are deliberately ignored by every build script — that
-> separation is exactly why v0.3.0's bug cannot recur. To stage a local binary
-> anyway, set `FFMPEG_BIN`+`FFPROBE_BIN`; it must be a **static** build, or
-> `assert_portable` (macOS/Linux) and the shared-build check (Windows) reject
-> it.
+### CI — opt-in, effectively dead
 
-### CI fallback (normally off)
+`.github/workflows/release.yml` still exists and still builds on a `v*` tag push,
+but **every OS is opted out**: `RELEASE_CI_MACOS` / `RELEASE_CI_WINDOWS` /
+`RELEASE_CI_LINUX` are all `false`, so a tag push builds nothing. Releases have been
+local-only since 2026-07-04 (GitHub's hosted macOS runners bill at 10x and the DMG
+step is flaky on them). CI is kept only as an escape hatch: set a variable to `true`
+to build that OS in CI on the next tag push, and it uploads to the same draft the
+local flow targets. The matrix logic lives in
+`scripts/ci/resolve-release-matrix.py` (runnable locally to preview it).
 
-`RELEASE_CI_MACOS` / `RELEASE_CI_WINDOWS` are `false`, so pushing a `v*` tag builds
-nothing — releases are local (§[Cut a release](#cut-a-release--step-by-step)). To
-build an OS in **CI** instead, set its variable to `true` before the tag push; CI
-then uploads to the same draft the local steps target. A manual
-**workflow_dispatch** run builds **every** OS regardless of the variables, so don't
-trigger one unintentionally.
+**Careful:** a manual **workflow_dispatch** run builds **every** OS regardless of
+the variables — and its Intel-mac job still names the retired `macos-13` runner
+image, so it would fail there. Do not trigger one unintentionally.
 
----
+The `WINDOWS_CERTIFICATE` / `APPLE_CERTIFICATE` / `KEYCHAIN_PASSWORD` repo secrets
+are consumed **only** by that workflow. In the local flow this project actually
+uses, setting them does nothing.
 
-## Code signing & notarization details
+### Engine packs — nothing to host
 
-### macOS (notarytool)
+No engine pack is self-hosted: every native pack points at an upstream ggml-org
+release and the Python packs have no URLs at all. What does need maintenance is the
+seven GGUF model packs, which pin community requants on HuggingFace by URL +
+sha256 — if an uploader deletes or re-quantizes one, every install of that pack
+fails at once. Re-pin procedure:
+[`ENGINE_PACKS.md` §3](ENGINE_PACKS.md#3-re-pinning-a-model-pack-whose-upstream-vanished).
 
-`tauri build` (via tauri-action) signs the `.app`/`.dmg` with
-`APPLE_SIGNING_IDENTITY`, then submits to Apple's notary service using
-`APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` and staples the ticket. Without
-this, Gatekeeper blocks the app on other Macs ("can't be opened because Apple
-cannot check it for malicious software").
-
-* The CI imports the `.p12` into a temporary keychain before `tauri build`.
-* **Nested binaries:** Tauri does NOT deep-sign Mach-O shipped under
-  `bundle.resources` (our bundled CPython + PyInstaller workers), so a dedicated
-  CI step signs them (hardened runtime + timestamp + entitlements) **before**
-  `tauri-action` bundles + notarizes. Entitlements live in
-  `apps/desktop/src-tauri/entitlements.plist` (`bundle.macOS.entitlements`).
-* Universal vs. per-arch: we build **per-arch** so each `.dmg` is native. In
-  practice only **arm64** is ever built — `release-macos.sh` hardcodes `aarch64`,
-  and no published release has carried an `_x64.dmg`. The CI matrix still names
-  the retired `macos-13` runner image for the Intel job, so a manual
-  `workflow_dispatch` (which forces every OS on) would fail on it; the successor
-  label is `macos-15-intel`, available until August 2027.
-
-> **Full step-by-step (cert creation, the 7 secrets, the nested-binary fix,
-> verification, troubleshooting):** see **[`APPLE_SIGNING.md`](APPLE_SIGNING.md)**.
-
-### Windows code signing — deliberately not configured
-
-**Every Windows artifact this project has ever published is unsigned.**
-`tauri.conf.json` *does* have a `bundle.windows` block — but it carries only
-`webviewInstallMode` and `nsis.installMode`, and **none** of the signing fields
-(`certificateThumbprint`, `signCommand`, `digestAlgorithm`, `timestampUrl`). So
-`tauri build` has nothing to sign with, and `release-windows.ps1` never signs
-anything either: a repo-wide grep for `signtool` / `osslsigncode` finds nothing
-outside the CI workflow.
-
-The `WINDOWS_CERTIFICATE` / `WINDOWS_CERTIFICATE_PASSWORD` secrets listed in the CI
-table above are consumed **only** by `.github/workflows/release.yml`, and that path
-is off by default (`RELEASE_CI_WINDOWS` defaults to `false`). In the local-only flow
-this repo actually uses, setting them does nothing. This section used to say
-"if `WINDOWS_CERTIFICATE` is set, the `-setup.exe` is Authenticode-signed" — in the
-local flow that is false, and it is why the gap went unnoticed.
-
-**What the user sees:** the full-screen "Windows protected your PC — Unknown
-publisher" panel whose default button is *Don't run*, with *Run anyway* hidden
-behind a *More info* link. This is the single largest install-funnel loss, and it
-recurs on every hand-downloaded update (though not on updates the app installs
-itself).
-
-**DECIDED 2026-09-18: Windows builds stay unsigned.** This is a standing choice,
-not an omission or a pending task — do not re-open it at release time. The
-practical consequences, accepted knowingly:
-
-* Every hand-downloaded install and every hand-downloaded update shows the
-  SmartScreen panel. Both `README.md` and `docs/USER_GUIDE.md` tell users exactly
-  what they will see and which link to click; keep that wording accurate, because
-  it is the only mitigation there is.
-* In-app auto-updates are **not** affected — those are verified by the updater's
-  own minisign signature, which is configured and working.
-* Some corporate/managed Windows images block unsigned installers outright, with
-  no "Run anyway". Those users cannot install VideoDubber at all.
-
-**If that is ever revisited**, a certificate has to be bought — a maintainer
-decision, not a code change. Two notes for whoever makes it:
-
-* Azure Artifact Signing (ex-Trusted Signing) restricts *individual* sign-up to the
-  USA and Canada, so it may not be available to this maintainer.
-* "EV clears SmartScreen reputation instantly" has not been true since the 2023 FIPS
-  key-storage change made OV and EV equally hardware-bound. Reputation accrues
-  across releases signed by the **same identity**, so the warning fades over several
-  releases rather than disappearing on day one. Keep the identity stable.
-
-Should one ever be bought, wire it in as `bundle.windows.signCommand` (Tauri 2
-supports a custom sign command with a `%1` binary placeholder, which is how cloud
-signing tools integrate) so `tauri build` signs the NSIS exe, the MSI **and** the
-sidecar exes — and make `release-windows.ps1` fail the build when signing is
-configured but produced no signature, mirroring the existing `.sig` hard-fail.
-
-### Linux
-
-Not applicable today — no Linux artifact is produced (`bundle.targets` contains no
-Linux package type, and there is no `release-linux.sh`). If Linux ships, note that
-`.deb` and `.AppImage` are not code-signed in the OS sense; integrity would come
-from the updater signature on the AppImage and the HTTPS GitHub download.
-
----
-
-## How `latest.json` drives the updater
-
-`bundle.createUpdaterArtifacts: true` makes Tauri emit, per platform, an update
-archive + a detached `.sig` signed with `TAURI_SIGNING_PRIVATE_KEY`.
-`merge-latest-json.mjs` assembles these into a single `latest.json`, one platform
-per invocation (tauri-action does it only for an OS opted into CI). The real
-v0.4.0 manifest:
-
-```jsonc
-{
-  "version": "0.4.0",
-  "notes": "…release notes…",
-  "pub_date": "2026-08-01T17:02:24.039Z",
-  "platforms": {
-    // macOS (Apple Silicon) — the .app.tar.gz, NOT the .dmg
-    "darwin-aarch64":     { "signature": "…", "url": ".../v0.4.0/VideoDubber_0.4.0_aarch64.app.tar.gz" },
-    // Windows installed from the NSIS setup.exe
-    "windows-x86_64":     { "signature": "…", "url": ".../v0.4.0/VideoDubber_0.4.0_x64-setup.exe" },
-    // Windows installed from the .msi — looked up FIRST by those clients
-    "windows-x86_64-msi": { "signature": "…", "url": ".../v0.4.0/VideoDubber_0.4.0_x64_en-US.msi" }
-  }
-}
-```
-
-The installed app fetches this from the configured endpoint, compares `version`
-to its own, downloads the matching platform archive, and **verifies the signature
-with the embedded pubkey** before installing. Full flow + the in-app
-auto/manual setting: [`AUTOUPDATE.md`](AUTOUPDATE.md).
-
----
-
-## Troubleshooting releases
+### Troubleshooting
 
 | Symptom | Likely cause / fix |
 |---|---|
-| `latest.json` missing from the release | `bundle.createUpdaterArtifacts` not `true`, or `TAURI_SIGNING_PRIVATE_KEY` unset → no updater artifacts emitted. |
-| Update found but install fails with a signature error | App's `plugins.updater.pubkey` doesn't match the private key that signed `latest.json`. Regenerate consistently. |
-| macOS "app is damaged / can't be opened" | Notarization failed or wasn't run (missing `APPLE_*` secrets). Check the notarytool log in the job. |
-| PyInstaller worker crashes on launch in the bundle | Missing hidden import/data file — add it to the worker's `.spec` `hiddenimports`/`datas` and re-release. Run the frozen binary directly to see the traceback. |
-| ffmpeg burned-in subtitles fail in the bundle | The fetched ffmpeg lacks libass. `fetch-ffmpeg` verifies the `subtitles` filter; ensure a `-gpl`/full build is used. |
-| Sidecar "not found" at runtime | The binary wasn't named `<base>-<target-triple>` for the build host — see `apps/desktop/src-tauri/binaries/README.md`. |
+| `latest.json` missing from the release | `bundle.createUpdaterArtifacts` not `true`, or `TAURI_SIGNING_PRIVATE_KEY` unset → no updater artifacts emitted |
+| Update found, install fails with a signature error | The app's `plugins.updater.pubkey` does not match the private key that signed the payload. Regenerate consistently |
+| Every `latest.json` URL 404s after publish | The draft's tag was reset to `untagged-<sha>` by a `PATCH` without `tag_name`. Re-run the merge with `--fix-tag` |
+| macOS "app is damaged / can't be opened" | Notarization failed or was skipped. Check the notarytool log; `xcrun stapler validate` the `.app` |
+| PyInstaller worker crashes on launch in the bundle | Missing hidden import/data file — add it to the worker's `.spec` `hiddenimports`/`datas` and re-release. Run the frozen binary directly to see the traceback |
+| ffmpeg burned-in subtitles fail in the bundle | The fetched ffmpeg lacks libass. `fetch-ffmpeg` verifies the `subtitles` filter; ensure a `-gpl`/full build is used |
+| Sidecar "not found" at runtime | The binary was not named `<base>-<target-triple>` for the build host — see `apps/desktop/src-tauri/binaries/README.md` |

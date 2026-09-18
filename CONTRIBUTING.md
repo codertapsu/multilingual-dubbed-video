@@ -51,6 +51,11 @@ Five numbered phases, the same on both OSes:
 
 It is **idempotent**: re-running it is a no-op plus a fresh prerequisite table.
 
+**Only phase 1 never installs.** It is easy to read the sentence above as "bootstrap just
+checks things" — it does not. Phases 2-4 install workspace dependencies, build the
+libraries, create a `.venv` for **each of the five Python suites** and download roughly
+**1.5-2 GB of models**. Budget **20+ minutes** on a first run, on a real connection.
+
 **Flags** (each is also an environment variable, which is how the same behavior is
 driven on both OSes and in CI):
 
@@ -59,7 +64,7 @@ driven on both OSes and in CI):
 | `--skip-deps` | `-SkipDeps` | `SKIP_DEPS=1` | Don't run `pnpm install`. |
 | `--skip-build` | `-SkipBuild` | `SKIP_BUILD=1` | Don't run `pnpm build`. |
 | `--skip-python` | `-SkipPython` | `SKIP_PYTHON=1` | No venvs, no model downloads. |
-| `--skip-models` | `-SkipModels` | `SKIP_MODELS=1` | Venvs yes, ~700 MB of models no. |
+| `--skip-models` | `-SkipModels` | `SKIP_MODELS=1` | Venvs yes, ~1.5-2 GB of models no. |
 | `--strict` | `-Strict` | `STRICT=1` | Treat **optional** prerequisites as errors. |
 | `--help` | `-Help` | — | The flag list. |
 
@@ -145,17 +150,88 @@ task; that split is gone — **use the `pnpm` name on every OS.**
 | `pnpm test` | The TypeScript suites (`pnpm -r test`): shared, media-worker, orchestrator, and the desktop app's i18n check. | Does **not** reach Python — see [Tests](#5-tests). |
 | `pnpm test:workers` | The Python suites (pytest) for the three workers plus the two TTS engine packs. | `ONLY=stt-worker`, `REQUIRE_ALL=1`. On Windows: `-Only`, `-RequireAll`. Suites without a venv are **skipped**, not failed, unless you pass `REQUIRE_ALL`. |
 | `pnpm test:all` | `pnpm test && pnpm test:workers`. | What you want before opening a PR. |
-| `pnpm check` | `lint` → `typecheck` → `test:all` → `check-versions.mjs` → `check-tasks.mjs`. | The full gate. `check-versions` asserts the five places carrying the app version agree; `check-tasks` asserts every dispatched task has **both** shell twins, so adding a one-sided task fails on any machine instead of only on the OS that is missing it. |
+| `pnpm check` | `lint` → `typecheck` → `test:all` → `check-versions.mjs` → `check-tasks.mjs`. | The full gate. `check-versions` asserts the **four** version manifests agree — `package.json`, `apps/desktop/package.json`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json` — and reports a stale `Cargo.lock` entry as a *warning*, since cargo owns that file and regenerates it on the next build (`--set X.Y.Z` bumps all four in one reviewable command); `check-tasks` asserts every dispatched task has **both** shell twins, so adding a one-sided task fails on any machine instead of only on the OS that is missing it. |
 
 ### Packaging & release (maintainers)
 
 | Command | What it does | Notes |
 |---|---|---|
-| `pnpm package:sidecars` | Stages everything bundled into an installer: the orchestrator (Node SEA), the frozen Python workers, `vd-piper`, `vd-uv` + a portable CPython, a libass FFmpeg, and the engine-pack source. | Required before `pnpm app:build`. |
+| `pnpm package:sidecars` | Stages everything bundled into an installer: the orchestrator (Node SEA), the frozen Python workers, `vd-piper`, `vd-uv` + a portable CPython, a libass FFmpeg, and the engine-pack source. | Required before `pnpm app:build` — and before `cargo check`/`cargo test`, which fail on a fresh clone without it (`build.rs` copies the sidecars; `generate_context!` needs `apps/desktop/dist`). Needs `rustc` on PATH even though it compiles no Rust: it derives the target triple from `rustc -Vv`. |
 | `pnpm app:build` | `tauri build` → the installer/bundle for this OS. | Needs Rust **and** generated app icons. |
-| `pnpm release` | The front door to cutting this OS's release. A thin wrapper that reimplements nothing: macOS delegates to `release-macos.sh` (build → deep-sign → notarize → staple → updater archive → upload), Windows to `release-windows.ps1`. | Flags: `--sidecars` / `--upload` / `--tag v0.9.1` on macOS, `-Sidecars` / `-Upload` / `-Tag` on Windows — e.g. `pnpm release --sidecars --upload` (no `--` separator — see §1). Read [`docs/RELEASING.md`](docs/RELEASING.md) first. |
-| `pnpm release:check` | The preflight: "could I cut a release right now?" Checks the credentials and gates in seconds and **builds nothing**. | Worth running every time. On macOS the real path ships the bundle to Apple's notary service, so discovering a missing `APPLE_TEAM_ID` afterwards costs ~20 minutes. |
+| `pnpm release:check` | The preflight: "could I cut a release right now?" Version consistency, the Python suites run strictly (`test-workers -RequireAll`), a clean git tree, the updater signing key, a GitHub token. **Builds nothing**, takes seconds. | Worth running every time. On macOS the real path ships the bundle to Apple's notary service, so discovering a missing `APPLE_TEAM_ID` afterwards costs ~20 minutes. `ALLOW_DIRTY=1` downgrades the clean-tree gate to a warning. |
+| `pnpm release` | The front door to cutting **this OS's half** of a release. A thin wrapper that reimplements nothing: macOS delegates to `release-macos.sh` (build → deep-sign → notarize → staple → updater archive → upload), Windows to `release-windows.ps1`. | Flags: `--sidecars` / `--upload` / `--tag v0.9.1` on macOS, `-Sidecars` / `-Upload` / `-Tag` on Windows — e.g. `pnpm release --sidecars --upload` (no `--` separator — see §1). Read [`docs/RELEASING.md`](docs/RELEASING.md) first. |
+| `pnpm release:version` | Starts a release cycle: bumps the version in the four manifests **and** `Cargo.lock` in one reviewable command (`node scripts/release-version.mjs`). | `pnpm release:version 0.10.0` or `minor`/`patch`. **Dry run** until `--yes`. Refuses on a dirty tree; restores every file if any step fails. It does not commit, tag, build, or touch GitHub. Replaces five hand-edits made under release pressure — the expensive half-bump is `tauri.conf.json`, because `release-upload` derives the draft tag from it, so a stale one uploads this release's installers onto the **previous** release without erroring. |
+| `pnpm release:status` | "Where is this release up to, and what is still missing?" (`node scripts/release-status.mjs`). Lists the 8 assets per machine with sizes, checks `latest.json` for all three platform keys at the right version, and prints a verdict. | **Read-only** — GETs only. Exit 0 = complete, so it can gate a script. Neither release machine can see the other's progress; this is how you find out. `--tag`, `--repo`, `--json`. An `untagged-…` URL on a draft is normal and it says so. |
+| `pnpm release:publish` | Publishes the finished draft (`node scripts/release-publish.mjs`): re-runs the status check, **refuses to publish anything incomplete**, then appends your notes and flips the draft. | **Dry run unless `--yes`.** `--notes-file PATH` / `--notes "..."`, `--tag`, `--repo`, `--prerelease`. Notes go **under** the seeded download table, never over it, and re-running replaces the changelog rather than stacking a second copy. |
 | `pnpm desktop:rebuild` | `scripts/clean-build.mjs` — a fully clean rebuild of the desktop app. Removes generated artifacts, then reinstalls, rebuilds sidecars and bundles. | Keeps `node_modules`, the cargo cache and the worker venvs (removing them costs 10–30 min for no correctness gain). `DEEP=1` wipes the venvs too. |
+
+Three more release scripts have no `pnpm` name: the first two are called for you by
+`pnpm release`, and the third is a cleanup you run occasionally. They are the moving
+parts, and worth knowing when something goes wrong mid-release:
+
+| Script | What it does |
+|---|---|
+| `scripts/package/release-upload.{sh,ps1}` | **Ensures** the `vX.Y.Z` **draft** release exists (creating it on demand, seeded with the bilingual download table from `release-body-header.md`) and **uploads** assets to it. GitHub REST via `curl`; the token is `$GH_TOKEN`, else whatever `git credential fill` has for `github.com`. |
+| `scripts/package/merge-latest-json.mjs` | Merges **one** platform's entry into the release's `latest.json`, preserving every other platform's. `--platform darwin-aarch64 \| windows-x86_64 \| windows-x86_64-msi`. `--fix-tag` repairs a stray `untagged-<sha>` draft tag. |
+| `scripts/package/prune-releases.mjs` | Keeps the N newest **published** releases (default 2). **Dry run by default** — `--apply` to actually delete. Never touches drafts, never touches the release the updater resolves to, and keeps git tags unless you pass `--tags`. |
+
+#### How a release is actually cut
+
+There is **no CI build** — since 2026-07-04 a release is two local builds, **in
+parallel, on two machines**, converging on one GitHub draft:
+
+```
+Mac (arm64)                              Windows box
+pnpm release --sidecars --upload         pnpm release -Sidecars -Upload
+  build -> deep-sign -> notarize                build -> verify -> upload
+  -> staple -> updater archive
+        |                                          |
+        +----------->  draft release vX.Y.Z  <-----+
+                       (created on demand by
+                        release-upload, by
+                        whichever gets there first)
+```
+
+Each machine merges only **its own** `latest.json` entry, so neither clobbers the
+other: `darwin-aarch64` from the Mac, `windows-x86_64` **and** `windows-x86_64-msi`
+from Windows (MSI-installed users need their own updater target, or an update drags
+them through an elevated `msiexec` uninstall).
+
+A complete draft has exactly **8 assets** — 3 from the Mac, 4 from Windows, plus the
+shared `latest.json`:
+
+```
+latest.json
+VideoDubber_<ver>_aarch64.app.tar.gz  + .sig     macOS updater payload
+VideoDubber_<ver>_aarch64.dmg                    macOS installer  (no .sig -- correct)
+VideoDubber_<ver>_x64-setup.exe       + .sig     Windows NSIS installer
+VideoDubber_<ver>_x64_en-US.msi       + .sig     Windows MSI
+```
+
+The `.dmg` having no `.sig` is not an oversight: the updater installs the
+`.app.tar.gz`, which is the file the signature covers. The Windows installers are
+**unsigned** by a standing decision — there is no Authenticode certificate and none is
+planned.
+
+So the whole cycle is five commands:
+
+```bash
+pnpm release:version 0.9.1 --yes     # once, on either machine; commit and push
+pnpm release --sidecars --upload     # the Mac      \ in parallel
+pnpm release -Sidecars -Upload       # the Windows box /
+pnpm release:status                  # read-only: is the other machine done?
+pnpm release:publish --notes-file NOTES.md --yes
+```
+
+`release:publish` is deliberately not just "click the button in a script". It re-runs
+`release:status` and **refuses** anything incomplete, because publishing cannot be taken
+back — clients resolve `releases/latest` the moment you publish, and a `latest.json`
+missing `windows-x86_64` looks perfectly fine in the asset list while silently stranding
+every Windows user on the version they have.
+
+The full runbook, including what to verify afterwards and how to roll back, is
+[`docs/RELEASING.md`](docs/RELEASING.md); the Windows half end to end is
+[`docs/WINDOWS.md`](docs/WINDOWS.md#part-e--build-release-and-publish).
 
 ### Odds and ends
 
@@ -210,12 +286,26 @@ pnpm test:workers      # Python: pytest across the workers and TTS engine packs
 pnpm test:all          # both
 ```
 
-Rust, for the desktop shell:
+Rust, for the desktop shell — **after `pnpm package:sidecars`**, not before:
 
 ```bash
+pnpm package:sidecars              # once; see below for why
 cd apps/desktop/src-tauri
-cargo test
+cargo check
+cargo test                         # 16 tests
 ```
+
+> **`cargo check` fails on a fresh clone**, and the error does not say why. `build.rs`
+> copies the five `externalBin` sidecars, and `generate_context!` needs the built Angular
+> output in `apps/desktop/dist` — all of it gitignored, all of it produced by
+> `pnpm package:sidecars`. On Windows, wrap both calls in an explicit `$LASTEXITCODE`
+> check: `$ErrorActionPreference = 'Stop'` does not trap a native program's exit code, so
+> a failed `cargo check` otherwise falls straight through into `cargo test`.
+
+On Windows, run the Python suites the way the release gate does — `pwsh
+scripts\test-workers.ps1 -RequireAll`. Without `-RequireAll` a suite with no venv is
+reported as *skipped* and the run exits 0, which reads green having run nothing. All
+**five** suites need a venv, and `setup-local-models` creates all five.
 
 > **Why `pnpm test` is not enough.** `pnpm -r test` only visits pnpm workspace packages,
 > and the Python workers are not pnpm packages, so for a long time roughly a hundred
@@ -276,9 +366,28 @@ shipped a bare `node.exe` as the orchestrator.
   marker-sensitive across that boundary, so a bug you hit on 3.13 may be one no user
   can hit. **Avoid 3.14** — several ML wheels are not published for it, which forces
   slow or failing source builds.
-- **On Windows, use `pwsh` 7 — not "Windows PowerShell 5.1".** 5.1 mishandles these
-  scripts (a native command's redirected stderr becomes a terminating
-  `NativeCommandError`, among other things). `winget install --id Microsoft.PowerShell -e`.
+- **On Windows, use `pwsh` 7 — not "Windows PowerShell 5.1".** This is not a
+  preference. `scripts/bootstrap.ps1`, `scripts/release.ps1` and
+  `scripts/package/release-windows.ps1` carry `#requires -Version 7.0` and **hard-fail**
+  in 5.1 before running a line; `scripts/run.mjs` only *warns* when it finds 5.1, so
+  `pnpm bootstrap` there prints a warning and then dies on the `#requires` anyway. (5.1
+  also mishandles these scripts in general — a native command's redirected stderr becomes
+  a terminating `NativeCommandError`.) `winget install --id Microsoft.PowerShell -e`.
+- **Every `.ps1` in this repo must be pure ASCII.** PowerShell decodes a BOM-less `.ps1`
+  in the host's **ANSI codepage**, so a UTF-8 em dash arrives as three Windows-1252
+  characters and, inside a quoted string, takes the parser with it. 123 of them across 15
+  scripts once made five scripts unparseable on Windows while every one of them was fine
+  on macOS. `pnpm check` enforces it (`scripts/check-tasks.mjs`); write `-` and `...`.
+- **On Windows, enable long paths once, elevated.** `pnpm install` alone builds nested
+  `node_modules` chains around 256 characters *relative* to the repo root, against a
+  260-character `MAX_PATH`, and the failures look like random missing files.
+  `bootstrap.ps1` only advises this when the checkout path is >= 60 characters, which the
+  usual `D:\development\projects\multilingual-dubbed-video` (49) never trips. See
+  [`docs/WINDOWS.md`](docs/WINDOWS.md).
+- **Node must be >= 24.15.0 on the Node 24 line.** The root `package.json` says
+  `engines.node >= 22.12.0`, which is looser than what actually runs: Angular 22 declares
+  `node: ^22.22.3 || ^24.15.0 || >=26.0.0`, and below that the UI build fails with an
+  engine error that names Angular, not this repo.
 - **Do not put `FFMPEG_PATH` in `.env` on the Windows build box.** The release build
   reads `.env` too, and a *shared* ffmpeg build (the gyan.dev `…-shared` archive most
   people have at `D:\ffmpeg`) cannot be bundled — the sidecar ships `ffmpeg.exe` alone,
@@ -309,10 +418,23 @@ More symptoms and fixes: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
    does four gets postponed.
 4. Run `pnpm check` (and `cargo test` if you touched `src-tauri/`). Add or update tests
    for anything you fixed — a bug without a regression test comes back.
-5. If you touched a script, touch **both halves of the pair** and verify each parses:
-   `bash -n scripts/foo.sh`, and for PowerShell either `pwsh -NoProfile -Command
-   '[System.Management.Automation.Language.Parser]::ParseFile(...)'` or say plainly in
-   the PR that you could not parse-check it.
+5. If you touched a script, touch **both halves of the pair** and verify each parses.
+   `bash -n scripts/foo.sh` for the bash half. For PowerShell, parse it **before** you
+   run it — parsing a script you have already run proves nothing — and parse the whole
+   tree, because `scripts/package/` holds more `.ps1` files than `scripts/` does:
+
+   ```powershell
+   Get-ChildItem -Path .\scripts -Filter *.ps1 -Recurse | ForEach-Object {
+     $tokens = $null; $errors = $null
+     [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+     if ($errors) { Write-Host "PARSE FAIL: $($_.FullName)" -ForegroundColor Red; $errors | ForEach-Object { Write-Host "  $_" } }
+   }
+   ```
+
+   `ParseFile` takes **two `[ref]` arguments** after the path, and does **not** resolve a
+   relative path against PowerShell's current location — hence `$_.FullName`. If you have
+   no Windows machine, run `node scripts/check-tasks.mjs` (twins exist + ASCII) and say
+   plainly in the PR that you could not parse-check it.
 6. If you changed behavior a user can see, update the docs in the same PR. A doc that
    describes last month's behavior is worse than no doc.
 7. Write the commit message so it explains **why**, and open the PR.

@@ -1,7 +1,7 @@
 {
   "name": "videodubber-desktop",
   "version": "0.9.0",
-  "description": "VideoDubber desktop UI (Angular 18 standalone) running inside a Tauri 2 shell.",
+  "description": "VideoDubber desktop UI (Angular 22 standalone) running inside a Tauri 2 shell.",
   "type": "module",
   "private": true,
   "scripts": {
@@ -13,25 +13,23 @@
     "tauri": "tauri"
   },
   "dependencies": {
-    "@angular/animations": "22.0.2",
-    "@angular/common": "22.0.2",
-    "@angular/compiler": "22.0.2",
-    "@angular/core": "22.0.2",
-    "@angular/forms": "22.0.2",
-    "@angular/platform-browser": "22.0.2",
-    "@angular/platform-browser-dynamic": "22.0.2",
-    "@angular/router": "22.0.2",
+    "@angular/common": "22.1.6",
+    "@angular/compiler": "22.1.6",
+    "@angular/core": "22.1.6",
+    "@angular/forms": "22.1.6",
+    "@angular/platform-browser": "22.1.6",
+    "@angular/router": "22.1.6",
     "@tauri-apps/api": "2.11.1",
     "@videodubber/shared": "workspace:*",
     "rxjs": "7.8.2",
     "tslib": "2.8.1",
-    "zone.js": "0.16.2"
+    "zone.js": "0.16.3"
   },
   "devDependencies": {
-    "@angular-devkit/build-angular": "22.0.4",
-    "@angular/cli": "22.0.4",
-    "@angular/compiler-cli": "22.0.2",
-    "@tauri-apps/cli": "2.11.3",
+    "@angular/build": "22.1.8",
+    "@angular/cli": "22.1.8",
+    "@angular/compiler-cli": "22.1.6",
+    "@tauri-apps/cli": "2.11.4",
     "typescript": "6.0.3"
   }
 }

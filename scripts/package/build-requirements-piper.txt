@@ -1,0 +1,14 @@
+# scripts/package/build-requirements-piper.txt — the vd-piper build venv only.
+#
+# piper-tts is deliberately absent from workers/tts-worker/requirements.txt: the
+# TTS worker shells out to the piper BINARY, it does not import the package. It is
+# needed only to freeze that binary into the vd-piper sidecar, which gets its own
+# throwaway venv — so piper's onnxruntime/sympy never reach the TTS worker's
+# one-dir tree the way they did when both were built from the shared dev venv.
+#
+# The old `piper-tts>=1.4` floor in build-workers.{sh,ps1} resolved to 1.8.0 on a
+# fresh venv — four minors past what the constraint's author was looking at —
+# silently, in the venv that freezes a GPL CLI. This is the version that froze
+# 0.9.0; bumping it is a reviewed commit.
+-r build-requirements.txt
+piper-tts==1.4.2

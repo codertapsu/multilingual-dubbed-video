@@ -1,0 +1,17 @@
+# scripts/package/build-requirements.txt — the FREEZING toolchain, pinned.
+#
+# These packages are not worker runtime dependencies; they exist only inside the
+# throwaway build venv that scripts/package/build-workers.{sh,ps1} creates to run
+# PyInstaller. They are pinned here — and NOT installed with `--upgrade` — for one
+# reason: PyInstaller decides what ends up inside a ~200 MB one-dir worker tree
+# (hook behaviour, bootloader, which dynamic libs get collected, the macOS
+# `_internal/` layout that macos-sign-notarize.sh hand-repairs). Until 2026-09 both
+# scripts ran `pip install --quiet --upgrade pyinstaller`, so the most
+# behaviour-defining component of a release was "whatever PyPI served that
+# morning", with no diff to review and no record of which version froze which
+# release.
+#
+# This is the version that froze 0.9.0 (read out of the maintainer's worker
+# venvs). Bumping it is a reviewed commit, not a side effect of running a build.
+pyinstaller==6.21.0
+

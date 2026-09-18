@@ -89,8 +89,11 @@ rm -rf "${DEST}/.temp" "${DEST}/.lock" 2>/dev/null || true
 for _root in "${DEST}"/cpython-*; do
   [ -d "${_root}" ] || continue
   rm -f "${_root}/bin/python" "${_root}/bin/python3" 2>/dev/null || true
+  # .so as well as .dylib: this branch also runs on Linux, where the shared libs
+  # are libtcl*.so / libtk*.so and the dylib-only globs left them behind.
   rm -rf "${_root}"/lib/tcl* "${_root}"/lib/tk* "${_root}"/lib/itcl* \
          "${_root}"/lib/libtcl*.dylib "${_root}"/lib/libtk*.dylib \
+         "${_root}"/lib/libtcl*.so* "${_root}"/lib/libtk*.so* \
          "${_root}"/lib/python3.*/tkinter "${_root}"/lib/python3.*/idlelib 2>/dev/null || true
 done
 

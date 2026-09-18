@@ -57,24 +57,11 @@ if [[ "${SKIP_ORCH:-0}" != "1" ]]; then
   bash "${SCRIPT_DIR}/build-orchestrator.sh"
 fi
 
-if [[ "${SKIP_WORKERS:-0}" != "1" ]]; then
-  echo ""; echo "### Python workers #########################################"
-  bash "${SCRIPT_DIR}/build-workers.sh"
-fi
-
-# `resources/workers` is a DECLARED Tauri resource (the one-dir stt/translation/tts
-# trees land here). It MUST exist at `tauri build` time even if SKIP_WORKERS was set,
-# or the bundle step aborts on the missing declared resource. Guarantee it.
-WORKERS_RES="${REPO_ROOT}/apps/desktop/src-tauri/resources/workers"
-mkdir -p "${WORKERS_RES}"
-[[ -n "$(ls -A "${WORKERS_RES}" 2>/dev/null)" ]] || \
-  echo "One-dir Python worker trees (vd-stt/translation/tts-worker) are staged here at build time." > "${WORKERS_RES}/README.txt"
-
-if [[ "${SKIP_FFMPEG:-0}" != "1" ]]; then
-  echo ""; echo "### FFmpeg / ffprobe #######################################"
-  bash "${SCRIPT_DIR}/fetch-ffmpeg.sh"
-fi
-
+# uv + the standalone CPython are staged BEFORE the workers on purpose: since
+# 2026-09 build-workers.sh freezes from a throwaway venv that `uv venv --python
+# <bundled cpython>` creates, instead of the maintainer's dev venv (which is how
+# v0.8.1 shipped macOS-26-only workers). If these two ran after the workers, a
+# clean checkout would silently take build-workers' dev-venv fallback.
 if [[ "${SKIP_UV:-0}" != "1" ]]; then
   echo ""; echo "### uv (engine-pack Python env manager) ####################"
   # Non-fatal: a missing uv only disables the optional Python engine packs;
@@ -98,6 +85,24 @@ PY_RES="${REPO_ROOT}/apps/desktop/src-tauri/resources/python"
 mkdir -p "${PY_RES}"
 if ! find "${PY_RES}" -maxdepth 1 -name 'cpython-*' | grep -q .; then
   echo "Bundled CPython for uv is staged here by fetch-python at build time. If absent, the app downloads CPython on first engine-pack install." > "${PY_RES}/README.txt"
+fi
+
+if [[ "${SKIP_WORKERS:-0}" != "1" ]]; then
+  echo ""; echo "### Python workers #########################################"
+  bash "${SCRIPT_DIR}/build-workers.sh"
+fi
+
+# `resources/workers` is a DECLARED Tauri resource (the one-dir stt/translation/tts
+# trees land here). It MUST exist at `tauri build` time even if SKIP_WORKERS was set,
+# or the bundle step aborts on the missing declared resource. Guarantee it.
+WORKERS_RES="${REPO_ROOT}/apps/desktop/src-tauri/resources/workers"
+mkdir -p "${WORKERS_RES}"
+[[ -n "$(ls -A "${WORKERS_RES}" 2>/dev/null)" ]] || \
+  echo "One-dir Python worker trees (vd-stt/translation/tts-worker) are staged here at build time." > "${WORKERS_RES}/README.txt"
+
+if [[ "${SKIP_FFMPEG:-0}" != "1" ]]; then
+  echo ""; echo "### FFmpeg / ffprobe #######################################"
+  bash "${SCRIPT_DIR}/fetch-ffmpeg.sh"
 fi
 
 if [[ "${SKIP_ENGINE_SRC:-0}" != "1" ]]; then
@@ -185,24 +190,91 @@ if [[ "${ASSERT_BUNDLE:-1}" == "1" ]]; then
   [[ "${SKIP_UV:-0}" == "1" ]]     || need "uv binary"        "${BIN_DIR}/vd-uv-${TRIPLE}${EXE_SUFFIX}"
   [[ "${SKIP_PYTHON:-0}" == "1" ]] || need "bundled CPython"  "${PY_RES}/cpython-"*
 
+  # The orchestrator was never asserted here at all. build-orchestrator copies the
+  # node binary to the output path BEFORE postject injects the SEA blob, so the
+  # file exists even when the injection fails — and a bare node starts a REPL
+  # instead of binding :5100, passing every "is the file there" check on the way
+  # to a bricked installer. Compare it against the node it was copied from.
+  # Ask the BINARY whether the blob is in it, rather than comparing it against a
+  # node binary. Two reasons a size comparison is wrong here: build-orchestrator
+  # runs `codesign --remove-signature` on macOS between the copy and the injection
+  # (measured on 0.9.0, that leaves only a 984 KB margin on a 121 MB file), and the
+  # node this gate would compare against is whatever is on PATH *now* — under nvm
+  # that is routinely a different version from the NODE_BIN that built the sidecar,
+  # so the check could fail open or closed for reasons unrelated to postject.
+  # The NODE_SEA Mach-O segment exists iff postject wrote the blob; a bare node
+  # reports zero matches. Non-Mach-O hosts keep the size comparison (nothing is
+  # stripped there, so growth is sound) — but this script's release path is macOS.
+  if [[ "${SKIP_ORCH:-0}" != "1" ]]; then
+    _orch="${BIN_DIR}/videodubber-orchestrator-${TRIPLE}${EXE_SUFFIX}"
+    if [[ ! -f "${_orch}" ]]; then
+      echo "::error:: missing orchestrator sidecar (${_orch})"; miss=1
+    elif [[ "${TRIPLE}" == *apple-darwin* ]] && command -v otool >/dev/null 2>&1; then
+      if ! otool -l "${_orch}" 2>/dev/null | grep -q 'segname NODE_SEA'; then
+        echo "::error:: ${_orch} has no NODE_SEA segment — the SEA blob was not injected"
+        echo "::error::   (it would start a Node REPL, not the orchestrator)"
+        miss=1
+      fi
+    else
+      _node="${NODE_BIN:-$(command -v node || true)}"
+      if [[ -n "${_node}" ]] && [[ -f "${_node}" ]] \
+         && [[ "$(wc -c < "${_orch}" | tr -d ' ')" -le "$(wc -c < "${_node}" | tr -d ' ')" ]]; then
+        echo "::error:: ${_orch} is no larger than the node binary — the SEA blob was not injected"
+        echo "::error::   (it would start a Node REPL, not the orchestrator)"
+        miss=1
+      fi
+    fi
+  fi
+
   # The declared macOS floor must not be BELOW what the bundled binaries need.
   # Tauri's default LSMinimumSystemVersion is 10.13, but our Node SEA
   # orchestrator is built for 13.5 — so the installer happily ran on a Mac where
   # the backend could never start, with no diagnosable error. Compare the
   # declared value against the highest `minos` we actually ship.
+  # Scan EVERY Mach-O we ship, not just the externalBin sidecars. The PyInstaller
+  # workers are onedir bundles under resources/workers/, and the binary that
+  # actually gates startup is not their launcher (minos 11.0) but the CPython
+  # extension modules it dlopen()s — _internal/python3.*/lib-dynload/*.so, whose
+  # minos comes from whatever interpreter the build venv was created with. A
+  # Homebrew python@3.13 on a macOS 26 box stamps minos 26.0 onto all of them, so
+  # every worker dies at `import zlib` on any older Mac while the launcher itself
+  # looks fine. Scanning only "${BIN_DIR}"/* is what let that ship.
   if command -v otool >/dev/null 2>&1 && [[ "${TRIPLE}" == *apple-darwin* ]]; then
     declared="$(node -p "require('${REPO_ROOT}/apps/desktop/src-tauri/tauri.conf.json').bundle?.macOS?.minimumSystemVersion ?? '10.13'")"
-    highest="0"
-    for _f in "${BIN_DIR}"/*-"${TRIPLE}"; do
+    highest="0"; highest_file=""
+    RES_DIR="${REPO_ROOT}/apps/desktop/src-tauri/resources"
+    while IFS= read -r _f; do
       [[ -f "${_f}" ]] || continue
+      # Cheap pre-filter: only ask otool about actual Mach-O files.
+      case "$(file -b "${_f}" 2>/dev/null)" in *Mach-O*) ;; *) continue ;; esac
       _m="$(otool -l "${_f}" 2>/dev/null | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')"
       [[ -n "${_m}" ]] || continue
       # Numeric compare on major.minor (sort -V handles the ordering).
-      highest="$(printf '%s\n%s\n' "${highest}" "${_m}" | sort -V | tail -1)"
-    done
+      if [[ "$(printf '%s\n%s\n' "${highest}" "${_m}" | sort -V | tail -1)" == "${_m}" ]] \
+         && [[ "${_m}" != "${highest}" ]]; then
+        highest="${_m}"; highest_file="${_f}"
+      fi
+    done < <(
+      find "${BIN_DIR}" -maxdepth 1 -type f -name "*-${TRIPLE}" 2>/dev/null
+      # resources/: the PyInstaller workers (+ their bundled dylibs/.so) and the
+      # standalone CPython staged for uv. Both end up inside the .app.
+      find "${RES_DIR}/workers" "${RES_DIR}/python" \
+           -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.so' \) 2>/dev/null
+    )
     if [[ "${highest}" != "0" ]] && [[ "$(printf '%s\n%s\n' "${declared}" "${highest}" | sort -V | tail -1)" != "${declared}" ]]; then
-      echo "::error:: tauri.conf.json declares macOS ${declared}, but a bundled binary requires macOS ${highest}."
-      echo "::error:: The app would install and then fail to start. Raise bundle.macOS.minimumSystemVersion to ${highest} (and update README.md)."
+      echo "::error:: tauri.conf.json declares macOS ${declared}, but a bundled binary requires macOS ${highest}:"
+      echo "::error::   ${highest_file#"${REPO_ROOT}/"}"
+      echo "::error:: The app would install and then fail to start on every Mac below ${highest}."
+      echo "::error:: If this is a resources/workers/** file, the build venv used the wrong"
+      echo "::error:: interpreter: rebuild it from the bundled standalone CPython"
+      echo "::error:: (${PY_RES#"${REPO_ROOT}/"}/cpython-*) rather than a Homebrew python."
+      echo "::error:: build-workers.{sh,ps1} do that by default since 2026-09 — check for the"
+      echo "::error:: 'falling back to the DEV venvs' warning earlier in this build's log."
+      echo "::error:: If the offender is a WHEEL (numpy / onnxruntime / av .so at minos 14.0),"
+      echo "::error:: no build flag fixes it: those projects publish macosx_14_0_arm64 only, and"
+      echo "::error:: capping them with WHEEL_PYTHON_PLATFORM=macos was measured to fail (av has"
+      echo "::error:: no wheel at or below 12.0 and its source build breaks)."
+      echo "::error:: Otherwise raise bundle.macOS.minimumSystemVersion to ${highest} (and update README.md)."
       miss=1
     fi
   fi

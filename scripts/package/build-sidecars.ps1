@@ -69,25 +69,16 @@ New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 if (-not $SkipOrchestrator) {
   Write-Host "`n### Orchestrator ###########################################"
   & (Join-Path $ScriptDir "build-orchestrator.ps1") -TargetTriple $Triple
+  # A sub-script that `exit`s non-zero does NOT abort the caller, it only sets
+  # $LASTEXITCODE — so without this a failed orchestrator build would fall through
+  # to the bundle step and ship whatever was in binaries/ from last time.
+  if ($LASTEXITCODE -ne 0) { throw "build-orchestrator.ps1 failed ($LASTEXITCODE)" }
 }
-if (-not $SkipWorkers) {
-  Write-Host "`n### Python workers #########################################"
-  & (Join-Path $ScriptDir "build-workers.ps1") -TargetTriple $Triple
-}
-
-# `resources/workers` is a DECLARED Tauri resource (one-dir stt/translation/tts
-# trees). It MUST exist at `tauri build` time even if SkipWorkers was set, or the
-# bundle step aborts on the missing declared resource. Guarantee it.
-$WorkersRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\workers"
-New-Item -ItemType Directory -Force -Path $WorkersRes | Out-Null
-if (-not (Get-ChildItem -Path $WorkersRes -ErrorAction SilentlyContinue)) {
-  Set-Content -Path (Join-Path $WorkersRes "README.txt") -Value "One-dir Python worker trees (vd-stt/translation/tts-worker) are staged here at build time."
-}
-if (-not $SkipFfmpeg) {
-  Write-Host "`n### FFmpeg / ffprobe #######################################"
-  & (Join-Path $ScriptDir "fetch-ffmpeg.ps1") -TargetTriple $Triple
-}
-
+# uv + the standalone CPython are staged BEFORE the workers on purpose: since
+# 2026-09 build-workers.ps1 freezes from a throwaway venv that `uv venv --python
+# <bundled cpython>` creates, instead of the maintainer's dev venv. If these two
+# ran after the workers, a clean checkout would silently take build-workers'
+# dev-venv fallback -- which applies no requirements.txt at all.
 if (-not $SkipUv) {
   Write-Host "`n### uv (engine-pack Python env manager) ####################"
   # Non-fatal: a missing uv only disables the optional Python engine packs.
@@ -111,6 +102,25 @@ $PyRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\python"
 New-Item -ItemType Directory -Force -Path $PyRes | Out-Null
 if (-not (Get-ChildItem -Path $PyRes -Filter "cpython-*" -ErrorAction SilentlyContinue)) {
   Set-Content -Path (Join-Path $PyRes "README.txt") -Value "Bundled CPython for uv is staged here by fetch-python at build time. If absent, the app downloads CPython on first engine-pack install."
+}
+
+if (-not $SkipWorkers) {
+  Write-Host "`n### Python workers #########################################"
+  & (Join-Path $ScriptDir "build-workers.ps1") -TargetTriple $Triple
+  if ($LASTEXITCODE -ne 0) { throw "build-workers.ps1 failed ($LASTEXITCODE)" }
+}
+
+# `resources/workers` is a DECLARED Tauri resource (one-dir stt/translation/tts
+# trees). It MUST exist at `tauri build` time even if SkipWorkers was set, or the
+# bundle step aborts on the missing declared resource. Guarantee it.
+$WorkersRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\workers"
+New-Item -ItemType Directory -Force -Path $WorkersRes | Out-Null
+if (-not (Get-ChildItem -Path $WorkersRes -ErrorAction SilentlyContinue)) {
+  Set-Content -Path (Join-Path $WorkersRes "README.txt") -Value "One-dir Python worker trees (vd-stt/translation/tts-worker) are staged here at build time."
+}
+if (-not $SkipFfmpeg) {
+  Write-Host "`n### FFmpeg / ffprobe #######################################"
+  & (Join-Path $ScriptDir "fetch-ffmpeg.ps1") -TargetTriple $Triple
 }
 
 if (-not $SkipEngineSrc) {
@@ -195,6 +205,23 @@ if ($env:ASSERT_BUNDLE -ne '0') {
           if (-not (Test-Path (Join-Path $DmRes "piper\$($p[1]).onnx")))      { $missing += "Piper voice $($p[1])";  Write-Host "::error:: missing bundled Piper voice $($p[1])" }
           if (-not (Test-Path (Join-Path $DmRes "piper\$($p[1]).onnx.json"))) { $missing += "Piper config $($p[1])"; Write-Host "::error:: missing bundled Piper config $($p[1])" }
         }
+      }
+    }
+  }
+  # The orchestrator was never asserted at all. build-orchestrator.ps1 copies
+  # node.exe to the output path BEFORE postject injects the blob, so the file
+  # exists even when the injection fails — and a bare node.exe starts a REPL
+  # instead of binding :5100, passing every "is the file there" check on the way
+  # to a bricked installer. Compare it against the node.exe it was copied from.
+  if (-not $SkipOrchestrator) {
+    $orch = Join-Path $BinDir "videodubber-orchestrator-$Triple.exe"
+    if (-not (Test-Path $orch)) {
+      $missing += 'orchestrator sidecar'; Write-Host "::error:: missing orchestrator sidecar ($orch)"
+    } else {
+      $nodeExe = if ($env:NODE_BIN) { $env:NODE_BIN } else { (Get-Command node -ErrorAction SilentlyContinue).Source }
+      if ($nodeExe -and (Get-Item $orch).Length -le (Get-Item $nodeExe).Length) {
+        $missing += 'orchestrator SEA blob'
+        Write-Host "::error:: $orch is no larger than node.exe - the SEA blob was not injected (it would start a Node REPL, not the orchestrator)"
       }
     }
   }

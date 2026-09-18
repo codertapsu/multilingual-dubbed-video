@@ -15,7 +15,10 @@
 #   FASTER_WHISPER_MODEL      whisper model to pre-cache (default: small)
 #   ARGOS_FROM / ARGOS_TO     language pair to install (default: en -> vi)
 #   PIPER_VOICE               Piper voice id to download (default: vi_VN-vais1000-medium)
-#   MODELS_DIR                where Piper voices land (default: ~/VideoDubber/models/piper)
+#   MODELS_DIR                where Piper voices land (default: $PIPER_VOICES_DIR)
+#   VIDEODUBBER_DEV_HOME      root for ALL dev model caches (default: ~/VideoDubber-dev)
+#                             — must match scripts/dev.sh, which is what the
+#                             workers read at run time
 #
 # This script:
 #   1. Creates a .venv per worker and pip installs its requirements.txt.
@@ -37,7 +40,26 @@ FASTER_WHISPER_MODEL="${FASTER_WHISPER_MODEL:-small}"
 ARGOS_FROM="${ARGOS_FROM:-en}"
 ARGOS_TO="${ARGOS_TO:-vi}"
 PIPER_VOICE="${PIPER_VOICE:-vi_VN-vais1000-medium}"
-MODELS_DIR="${MODELS_DIR:-${HOME}/VideoDubber/models/piper}"
+
+# --- Where the models land ---------------------------------------------------
+# These MUST be the same directories scripts/dev.sh points the workers at, or
+# README Quick start steps 2 and 4 do not connect: this script used to download
+# into ~/VideoDubber (the INSTALLED app's home) and into the default HF /
+# ~/.local/share/argos-translate caches, while dev.sh exports
+# STT_MODEL_CACHE_DIR / HF_HOME / PIPER_VOICES_DIR / ARGOS_PACKAGES_DIR under
+# ~/VideoDubber-dev. The first dub then re-downloaded the whisper model (the whole
+# point of the pre-cache), reported the Argos pair as not installed, and fell back
+# from Piper to system TTS with the voice sitting one directory away.
+#
+# Same defaults and the same precedence as dev.sh: an already-set value always wins.
+VIDEODUBBER_DEV_HOME="${VIDEODUBBER_DEV_HOME:-${HOME}/VideoDubber-dev}"
+export VIDEODUBBER_MODELS_DIR="${VIDEODUBBER_MODELS_DIR:-${VIDEODUBBER_DEV_HOME}/models}"
+export STT_MODEL_CACHE_DIR="${STT_MODEL_CACHE_DIR:-${VIDEODUBBER_MODELS_DIR}/huggingface}"
+export HF_HOME="${HF_HOME:-${VIDEODUBBER_MODELS_DIR}/huggingface}"
+export PIPER_VOICES_DIR="${PIPER_VOICES_DIR:-${VIDEODUBBER_MODELS_DIR}/piper}"
+export ARGOS_PACKAGES_DIR="${ARGOS_PACKAGES_DIR:-${VIDEODUBBER_MODELS_DIR}/argos}"
+MODELS_DIR="${MODELS_DIR:-${PIPER_VOICES_DIR}}"
+mkdir -p "${STT_MODEL_CACHE_DIR}" "${PIPER_VOICES_DIR}" "${ARGOS_PACKAGES_DIR}" 2>/dev/null || true
 
 c_reset="\033[0m"; c_red="\033[31m"; c_grn="\033[32m"; c_yel="\033[33m"; c_blu="\033[34m"; c_bold="\033[1m"
 info()  { printf "${c_blu}[setup]${c_reset} %s\n" "$*"; }
@@ -126,13 +148,20 @@ if [[ "${SKIP_MODELS:-0}" != "1" && "${SKIP_WHISPER:-0}" != "1" ]]; then
   STT_PY="$(worker_py stt-worker)"
   info "Downloading model into the faster-whisper / HuggingFace cache..."
   # WhisperModel(...) downloads and caches the model on first construction.
+  info "  cache: ${STT_MODEL_CACHE_DIR}"
   if "${STT_PY}" - "${FASTER_WHISPER_MODEL}" <<'PYEOF'
+import os
 import sys
 model = sys.argv[1]
 try:
     from faster_whisper import WhisperModel
-    # int8 on CPU mirrors what the STT worker uses at runtime.
-    WhisperModel(model, device="cpu", compute_type="int8")
+    # int8 on CPU mirrors what the STT worker uses at runtime. download_root is
+    # passed EXPLICITLY: HF_HOME alone is honoured inconsistently across
+    # huggingface_hub versions, and the worker resolves the same var at runtime
+    # (workers/stt-worker/app/config.py `_resolve_cache_dir`), so the two must
+    # agree or the pre-cache is wasted.
+    WhisperModel(model, device="cpu", compute_type="int8",
+                 download_root=os.environ.get("STT_MODEL_CACHE_DIR") or None)
     print(f"[setup] faster-whisper model '{model}' cached successfully.")
 except ModuleNotFoundError:
     print("[setup][warn] faster-whisper not installed in this venv.")
@@ -157,6 +186,7 @@ fi
 # ----------------------------------------------------------------------------
 if [[ "${SKIP_MODELS:-0}" != "1" && "${SKIP_ARGOS:-0}" != "1" ]]; then
   step "Step 3/4: Install Argos Translate package ${ARGOS_FROM} -> ${ARGOS_TO} (network)"
+  info "  packages: ${ARGOS_PACKAGES_DIR}"
   TR_PY="$(worker_py translation-worker)"
   if "${TR_PY}" - "${ARGOS_FROM}" "${ARGOS_TO}" <<'PYEOF'
 import sys

@@ -32,7 +32,12 @@ OSES = {
         {"os": "windows-latest", "label": "windows-x64", "rust-target": "x86_64-pc-windows-msvc", "tauri-args": ""},
     ],
     "linux": [
-        {"os": "ubuntu-22.04", "label": "linux-x64", "rust-target": "x86_64-unknown-linux-gnu", "tauri-args": ""},
+        # ubuntu-24.04, not 22.04: GitHub began deprecating the Ubuntu 22 images on
+        # 2026-09-17 with brownout windows that intentionally fail jobs, and they go
+        # fully unsupported on 2027-04-17 (actions/runner-images#14254). Note this
+        # also raises the glibc floor a Linux build would inherit from 2.35 to 2.39
+        # — a deliberate choice to revisit if Linux bundles are ever shipped.
+        {"os": "ubuntu-24.04", "label": "linux-x64", "rust-target": "x86_64-unknown-linux-gnu", "tauri-args": ""},
     ],
 }
 

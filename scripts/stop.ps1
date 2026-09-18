@@ -45,6 +45,23 @@ function Write-Info { param($m) Write-Host "[stop] $m" -ForegroundColor Cyan }
 function Write-Ok   { param($m) Write-Host "[stop] $m" -ForegroundColor Green }
 
 $any = $false
+
+# 1. The supervisor first, from the pidfile start.ps1 writes. stop.ps1 never read
+# it, so `.dev-logs\stack.pid` was orphaned on every stop and a stale pid file sat
+# there implying a running stack. stop.sh has always TERMed the supervisor's
+# process group and removed the file; this is the Windows equivalent.
+$PidFile = Join-Path $RootDir '.dev-logs\stack.pid'
+if (Test-Path $PidFile) {
+    $supervisor = (Get-Content $PidFile -Raw).Trim()
+    if ($supervisor -match '^\d+$' -and (Get-Process -Id ([int]$supervisor) -ErrorAction SilentlyContinue)) {
+        $any = $true
+        Write-Info "Supervisor PID $supervisor (from stack.pid) -> stopping (tree)"
+        taskkill /PID $supervisor /T /F 2>$null | Out-Null
+    }
+    Remove-Item -Force $PidFile -ErrorAction SilentlyContinue
+}
+
+# 2. Then sweep the ports, which also catches a stack started any other way.
 foreach ($port in $Ports) {
     try {
         $conns = Get-NetTCPConnection -State Listen -LocalPort ([int]$port) -ErrorAction SilentlyContinue

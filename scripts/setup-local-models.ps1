@@ -31,15 +31,21 @@
 
 .NOTES
     Tunables via env: PYTHON_PATH, FASTER_WHISPER_MODEL, ARGOS_FROM, ARGOS_TO,
-    PIPER_VOICE, MODELS_DIR.
+    PIPER_VOICE, MODELS_DIR, VIDEODUBBER_DEV_HOME (root for all dev model caches;
+    must match scripts\dev.ps1, which is what the workers read at run time).
+    The SKIP_* env vars documented in README.md work here as well as the switches.
 #>
 [CmdletBinding()]
 param(
-    [switch]$SkipVenvs,
-    [switch]$SkipModels,
-    [switch]$SkipWhisper,
-    [switch]$SkipArgos,
-    [switch]$SkipPiper
+    # Accept BOTH the switch and the env-var form. README.md documents
+    # SKIP_VENVS/SKIP_MODELS/... as env vars (which is all setup-local-models.sh
+    # has ever supported), and this script used to ignore them silently — so a
+    # Windows contributor following the README got a full re-run every time.
+    [switch]$SkipVenvs   = ($env:SKIP_VENVS -eq '1'),
+    [switch]$SkipModels  = ($env:SKIP_MODELS -eq '1'),
+    [switch]$SkipWhisper = ($env:SKIP_WHISPER -eq '1'),
+    [switch]$SkipArgos   = ($env:SKIP_ARGOS -eq '1'),
+    [switch]$SkipPiper   = ($env:SKIP_PIPER -eq '1')
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,7 +59,25 @@ $FasterWhisperModel  = if ($env:FASTER_WHISPER_MODEL) { $env:FASTER_WHISPER_MODE
 $ArgosFrom           = if ($env:ARGOS_FROM)           { $env:ARGOS_FROM }           else { 'en' }
 $ArgosTo             = if ($env:ARGOS_TO)             { $env:ARGOS_TO }             else { 'vi' }
 $PiperVoice          = if ($env:PIPER_VOICE)          { $env:PIPER_VOICE }          else { 'vi_VN-vais1000-medium' }
-$ModelsDir           = if ($env:MODELS_DIR)           { $env:MODELS_DIR }           else { Join-Path $env:USERPROFILE 'VideoDubber\models\piper' }
+
+# --- Where the models land ---------------------------------------------------
+# These MUST be the same directories scripts\dev.ps1 points the workers at, or
+# README Quick start steps 2 and 4 do not connect: this script used to download
+# into %USERPROFILE%\VideoDubber (the INSTALLED app's home) and into the default
+# HuggingFace / argos-translate caches. Same defaults and the same precedence as
+# dev.ps1 — an already-set value always wins.
+$DevHome = if ($env:VIDEODUBBER_DEV_HOME) { $env:VIDEODUBBER_DEV_HOME }
+           else { Join-Path $env:USERPROFILE 'VideoDubber-dev' }
+$env:VIDEODUBBER_DEV_HOME = $DevHome
+if (-not $env:VIDEODUBBER_MODELS_DIR) { $env:VIDEODUBBER_MODELS_DIR = Join-Path $DevHome 'models' }
+if (-not $env:STT_MODEL_CACHE_DIR)    { $env:STT_MODEL_CACHE_DIR    = Join-Path $env:VIDEODUBBER_MODELS_DIR 'huggingface' }
+if (-not $env:HF_HOME)                { $env:HF_HOME                = Join-Path $env:VIDEODUBBER_MODELS_DIR 'huggingface' }
+if (-not $env:PIPER_VOICES_DIR)       { $env:PIPER_VOICES_DIR       = Join-Path $env:VIDEODUBBER_MODELS_DIR 'piper' }
+if (-not $env:ARGOS_PACKAGES_DIR)     { $env:ARGOS_PACKAGES_DIR     = Join-Path $env:VIDEODUBBER_MODELS_DIR 'argos' }
+$ModelsDir = if ($env:MODELS_DIR) { $env:MODELS_DIR } else { $env:PIPER_VOICES_DIR }
+foreach ($d in @($env:STT_MODEL_CACHE_DIR, $env:PIPER_VOICES_DIR, $env:ARGOS_PACKAGES_DIR)) {
+    New-Item -ItemType Directory -Force -Path $d -ErrorAction SilentlyContinue | Out-Null
+}
 
 function Write-Info { param($m) Write-Host "[setup] $m" -ForegroundColor Cyan }
 function Write-Ok   { param($m) Write-Host "[setup] $m" -ForegroundColor Green }
@@ -140,12 +164,19 @@ if (-not $SkipVenvs) {
 if (-not $SkipModels -and -not $SkipWhisper) {
     Write-Step "Step 2/4: Pre-cache faster-whisper model '$FasterWhisperModel' (network)"
     $sttPy = Get-WorkerPython -Dir 'stt-worker'
+    Write-Info "  cache: $env:STT_MODEL_CACHE_DIR"
     $py = @"
+import os
 import sys
 model = "$FasterWhisperModel"
 try:
     from faster_whisper import WhisperModel
-    WhisperModel(model, device="cpu", compute_type="int8")
+    # download_root is passed EXPLICITLY: HF_HOME alone is honoured
+    # inconsistently across huggingface_hub versions, and the worker resolves
+    # STT_MODEL_CACHE_DIR at runtime (workers/stt-worker/app/config.py), so the
+    # two must agree or the pre-cache is wasted.
+    WhisperModel(model, device="cpu", compute_type="int8",
+                 download_root=os.environ.get("STT_MODEL_CACHE_DIR") or None)
     print(f"[setup] faster-whisper model '{model}' cached successfully.")
 except ModuleNotFoundError:
     print("[setup][warn] faster-whisper not installed in this venv.")

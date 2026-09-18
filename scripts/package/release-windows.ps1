@@ -24,8 +24,12 @@
        is ["app","dmg","nsis","msi"], so Windows produces the NSIS -setup.exe AND
        the .msi (WiX). Both ship: the updater looks up {os}-{arch}-{installer}
        before {os}-{arch}, so MSI-installed users need their own manifest key.
-    3. Verifies the required artifacts: -setup.exe + its .sig. (An MSI is uploaded
-       too if you re-enable the msi target and it builds; otherwise skipped.)
+    3. Verifies the required artifacts: -setup.exe + its .sig. The .msi is built
+       and uploaded too whenever the WiX toolset is present (the msi target has
+       been enabled since bundle.targets gained it) - v0.1.0+v0.2.0 alone have 26
+       MSI downloads, and an MSI-installed user whose manifest key is missing hits
+       an elevated msiexec uninstall mid-update. A missing .msi is a warning, not
+       a failure, so WiX is effectively a prerequisite on this machine.
     4. (-Upload) uploads them to the vX.Y.Z DRAFT (release-upload.ps1) and merges
        the windows-x86_64 entry into latest.json (merge-latest-json.mjs,
        preserving the mac entry if the Mac already merged its side).
@@ -78,6 +82,18 @@ $conf = Get-Content 'apps/desktop/src-tauri/tauri.conf.json' -Raw | ConvertFrom-
 $Version = $conf.version
 if (-not $Tag) { $Tag = if ($env:RELEASE_TAG) { $env:RELEASE_TAG } else { "v$Version" } }
 Write-Host "==> Windows local release: version $Version, tag $Tag"
+
+# --- pre-flight gates ----------------------------------------------------------
+# Both are cheap (< 2 s) and both catch a class of mistake that is invisible once
+# the artifacts exist: a half-done version bump across the four manifests, and a
+# red Python worker suite that PyInstaller would freeze and ship regardless.
+Write-Host '==> check version consistency across the manifests'
+& node (Join-Path $RepoRoot 'scripts/check-versions.mjs')
+if ($LASTEXITCODE -ne 0) { throw "check-versions.mjs failed ($LASTEXITCODE)" }
+
+Write-Host '==> run the Python worker test suites'
+& pwsh (Join-Path $RepoRoot 'scripts/test-workers.ps1')
+if ($LASTEXITCODE -ne 0) { throw "test-workers.ps1 failed ($LASTEXITCODE)" }
 
 if ($Sidecars) {
   Write-Host "==> build sidecars (orchestrator + workers + piper + static ffmpeg + uv + python)"

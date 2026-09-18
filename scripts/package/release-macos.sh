@@ -55,6 +55,16 @@ fi
 
 cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
 
+# --- pre-flight gates --------------------------------------------------------
+# Both are cheap (< 2 s) and both catch a class of mistake that is invisible once
+# the artifacts exist: a half-done version bump across the four manifests, and a
+# red Python worker suite that PyInstaller would freeze and ship regardless.
+echo "==> check version consistency across the manifests"
+node scripts/check-versions.mjs
+
+echo "==> run the Python worker test suites"
+bash scripts/test-workers.sh
+
 if [ "${SIDECARS:-}" = "1" ]; then
   echo "==> build sidecars (orchestrator + workers + piper + uv + static ffmpeg)"
   pnpm package:sidecars

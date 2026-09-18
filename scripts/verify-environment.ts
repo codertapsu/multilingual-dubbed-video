@@ -20,10 +20,11 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,8 +79,76 @@ const FASTER_WHISPER_MODEL = ENV.FASTER_WHISPER_MODEL ?? 'small';
 const PIPER_BINARY_PATH = ENV.PIPER_BINARY_PATH;
 const PIPER_VOICE_MODEL_PATH = ENV.PIPER_VOICE_MODEL_PATH;
 
-/** Minimum Node major version the toolchain targets (ES2022 / global fetch). */
-const MIN_NODE_MAJOR = 18;
+/**
+ * The Node range the repo actually requires — read from the root package.json
+ * rather than hardcoded here.
+ *
+ * This used to be `const MIN_NODE_MAJOR = 18`, which made `pnpm verify` — the one
+ * command whose entire job is "tell me whether my environment is right" — print
+ * OK on Node 18 and 20, while @angular/cli 22 refuses anything below 22.22.3 and
+ * package.json says >=22.12.0. A contributor who followed docs/LOCAL_SETUP.md
+ * literally installed Node 20, was told everything was fine, and then hit an
+ * Angular engine error with no reason to connect it to the doc they had just
+ * followed. Reading the manifest means this check can never disagree with the
+ * manifest again; keeping the range ITSELF honest (it should mirror the Angular
+ * CLI's `^22.22.3 || ^24.15.0 || >=26.0.0`) is a package.json change.
+ */
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const NODE_RANGE: string = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')) as {
+      engines?: { node?: string };
+    };
+    return pkg.engines?.node ?? '';
+  } catch {
+    return '';
+  }
+})();
+
+/**
+ * Minimal semver-range check: enough for the `>=X.Y.Z` / `^X.Y.Z || ^A.B.C` forms
+ * package.json and the Angular CLI use. Deliberately dependency-free — `pnpm
+ * verify` has to run BEFORE `pnpm install` on a fresh clone, so it cannot import
+ * `semver`.
+ */
+export function satisfiesNodeRange(version: string, range: string): boolean {
+  if (!range.trim()) return true; // no declared range => nothing to enforce
+  const num = (v: string): number[] =>
+    v.split('.').map((p) => Number.parseInt(p, 10) || 0);
+  const cmp = (a: number[], b: number[]): number =>
+    (a[0] ?? 0) - (b[0] ?? 0) || (a[1] ?? 0) - (b[1] ?? 0) || (a[2] ?? 0) - (b[2] ?? 0);
+  const have = num(version);
+  return range.split('||').some((clause) =>
+    clause
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .every((term) => {
+        const m = /^(>=|<=|>|<|\^|~|=)?\s*v?(\d+(?:\.\d+){0,2})$/.exec(term);
+        if (!m) return true; // unrecognised term: don't invent a failure
+        const [, op = '=', want] = m;
+        const w = num(want);
+        switch (op) {
+          case '>=':
+            return cmp(have, w) >= 0;
+          case '>':
+            return cmp(have, w) > 0;
+          case '<=':
+            return cmp(have, w) <= 0;
+          case '<':
+            return cmp(have, w) < 0;
+          case '^':
+            return cmp(have, w) >= 0 && (have[0] ?? 0) === (w[0] ?? 0);
+          case '~':
+            return (
+              cmp(have, w) >= 0 && (have[0] ?? 0) === (w[0] ?? 0) && (have[1] ?? 0) === (w[1] ?? 0)
+            );
+          default:
+            return cmp(have, w) === 0;
+        }
+      }),
+  );
+}
 
 /** Short timeout for any HTTP health probe (ms). */
 const HEALTH_TIMEOUT_MS = 1500;
@@ -178,20 +247,19 @@ async function fetchJson(
 
 function checkNode(): CheckResult {
   const version = process.versions.node;
-  const major = Number.parseInt(version.split('.')[0] ?? '0', 10);
-  if (major >= MIN_NODE_MAJOR) {
+  if (satisfiesNodeRange(version, NODE_RANGE)) {
     return {
       name: 'Node.js',
       status: 'ok',
-      detail: `v${version}`,
+      detail: NODE_RANGE ? `v${version} (satisfies ${NODE_RANGE})` : `v${version}`,
       criticality: 'core',
     };
   }
   return {
     name: 'Node.js',
     status: 'missing',
-    detail: `v${version} (need >= ${MIN_NODE_MAJOR})`,
-    remediation: `Install Node ${MIN_NODE_MAJOR}+ (nvm or https://nodejs.org). Global fetch & ES2022 are required.`,
+    detail: `v${version} (package.json requires ${NODE_RANGE})`,
+    remediation: `Install a Node matching ${NODE_RANGE} (nvm, or https://nodejs.org). Angular 22's CLI enforces the same range and fails the build otherwise.`,
     docs: 'docs/LOCAL_SETUP.md',
     criticality: 'core',
   };
@@ -307,10 +375,18 @@ async function checkWhisperModel(): Promise<CheckResult> {
       };
     }
   }
-  // Fall back to a filesystem hint for the HF cache.
-  const hfCache = ENV.HF_HOME
-    ? join(ENV.HF_HOME, 'hub')
-    : join(homedir(), '.cache', 'huggingface', 'hub');
+  // Fall back to a filesystem hint for the model cache. Resolve it the way the
+  // STT worker does (workers/stt-worker/app/config.py `_resolve_cache_dir`):
+  // STT_MODEL_CACHE_DIR is handed to faster-whisper as `download_root`, so it is
+  // the cache root VERBATIM — no `hub/` segment, unlike HF_HOME. Since 2026-09
+  // scripts/setup-local-models.{sh,ps1} pre-cache into exactly that directory
+  // under ~/VideoDubber-dev, so checking only HF_HOME/hub here would report
+  // "not confirmed" immediately after a setup run that worked.
+  const hfCache = ENV.STT_MODEL_CACHE_DIR
+    ? ENV.STT_MODEL_CACHE_DIR
+    : ENV.HF_HOME
+      ? join(ENV.HF_HOME, 'hub')
+      : join(homedir(), '.cache', 'huggingface', 'hub');
   const cached = existsSync(hfCache);
   return {
     name: 'faster-whisper',
@@ -562,10 +638,19 @@ async function main(): Promise<void> {
   process.exitCode = exitCode;
 }
 
-main().catch((err: unknown) => {
-  const message = err instanceof Error ? err.stack ?? err.message : String(err);
-  console.error(red('  verify-environment crashed unexpectedly:'));
-  console.error(message);
-  // A crash in the doctor itself is non-core; do not block on it.
-  process.exitCode = 0;
-});
+// Only run the checks when invoked as the CLI, so the pure helpers above
+// (satisfiesNodeRange) can be imported and tested without spawning python,
+// ffmpeg and five HTTP probes as a side effect of the import.
+const invokedDirectly =
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) {
+  main().catch((err: unknown) => {
+    const message = err instanceof Error ? err.stack ?? err.message : String(err);
+    console.error(red('  verify-environment crashed unexpectedly:'));
+    console.error(message);
+    // A crash in the doctor itself is non-core; do not block on it.
+    process.exitCode = 0;
+  });
+}

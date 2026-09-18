@@ -133,8 +133,12 @@ jobs:
       # --- Linux: Tauri system dependencies --------------------------------
       # WebKitGTK, libsoup, ayatana appindicator, librsvg, plus 7z for ffmpeg
       # extraction (not needed on Linux but harmless), and patchelf for AppImage.
+      # Match on the OS family, not an exact image name: the previous
+      # `matrix.os == 'ubuntu-22.04'` silently stopped installing the Tauri system
+      # deps the moment the runner pin moved, and `tauri build` would then fail
+      # deep in the build with a missing-webkit2gtk link error.
       - name: Install Tauri system deps (Linux)
-        if: matrix.os == 'ubuntu-22.04'
+        if: startsWith(matrix.os, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -150,37 +154,17 @@ jobs:
       - name: pnpm install
         run: pnpm install --frozen-lockfile
 
-      # --- Python worker venvs (one per worker) ----------------------------
-      # PyInstaller freezes against these. We install each worker's runtime
-      # requirements + pyinstaller. (No models are downloaded here — those are
-      # fetched on first run by the in-app wizard.)
-      - name: Build Python worker venvs (POSIX)
-        if: matrix.os != 'windows-latest'
-        shell: bash
-        run: |
-          set -euo pipefail
-          for w in stt-worker translation-worker tts-worker; do
-            echo "::group::venv $w"
-            python -m venv "workers/$w/.venv"
-            "workers/$w/.venv/bin/python" -m pip install --upgrade pip wheel
-            "workers/$w/.venv/bin/python" -m pip install -r "workers/$w/requirements.txt"
-            "workers/$w/.venv/bin/python" -m pip install pyinstaller
-            echo "::endgroup::"
-          done
-
-      - name: Build Python worker venvs (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          foreach ($w in @("stt-worker","translation-worker","tts-worker")) {
-            Write-Host "::group::venv $w"
-            python -m venv "workers/$w/.venv"
-            & "workers/$w/.venv/Scripts/python.exe" -m pip install --upgrade pip wheel
-            & "workers/$w/.venv/Scripts/python.exe" -m pip install -r "workers/$w/requirements.txt"
-            & "workers/$w/.venv/Scripts/python.exe" -m pip install pyinstaller
-            Write-Host "::endgroup::"
-          }
+      # --- Python worker venvs ---------------------------------------------
+      # Nothing to do here any more. build-workers.{sh,ps1} create their OWN
+      # throwaway venv per worker from the standalone CPython that fetch-python
+      # stages, install that worker's requirements.txt plus the pinned freezer
+      # from scripts/package/build-requirements.txt, and freeze from there.
+      #
+      # This step used to `python -m venv` each worker with the runner's ambient
+      # interpreter and `pip install pyinstaller` unpinned — which meant CI and a
+      # local release build produced materially different binaries from the same
+      # commit, and CI could not catch the macOS deployment-target bug at all
+      # because it happened to run on an older image than the maintainer's Mac.
 
       # --- Build ALL sidecars (orchestrator + workers + ffmpeg) ------------
       - name: Build sidecars (POSIX)

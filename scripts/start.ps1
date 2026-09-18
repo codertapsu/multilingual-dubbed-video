@@ -43,11 +43,17 @@ function PortOr($name, $default) {
 $OrchPort = PortOr 'ORCHESTRATOR_PORT' '5100'
 $AngPort  = PortOr 'ANGULAR_PORT' '1420'
 
-# Refuse to double-start if the orchestrator port is already in use.
-$busy = Get-NetTCPConnection -State Listen -LocalPort ([int]$OrchPort) -ErrorAction SilentlyContinue
-if ($busy) {
-    Write-Warn "Something is already listening on :$OrchPort. Run .\scripts\stop.ps1 first. Aborting."
-    exit 1
+# Refuse to double-start if EITHER stack port is already in use. Checking only
+# the orchestrator (as this did until 2026-09) meant that a stack whose
+# orchestrator had died but whose Angular dev server was still up passed the
+# guard, and you got a second stack fighting the first for :1420 - matching
+# start.sh, which has always guarded both.
+foreach ($guard in @(@{ port = $OrchPort; what = 'orchestrator' }, @{ port = $AngPort; what = 'Angular dev server' })) {
+    $busy = Get-NetTCPConnection -State Listen -LocalPort ([int]$guard.port) -ErrorAction SilentlyContinue
+    if ($busy) {
+        Write-Warn "Something is already listening on :$($guard.port) ($($guard.what)). Run .\scripts\stop.ps1 first. Aborting."
+        exit 1
+    }
 }
 
 # Launch dev.ps1 detached; it manages and cleans up its own children. The path is
@@ -64,5 +70,9 @@ Write-Host '  ----------------------------------------------------------------'
 Write-Host "  Angular UI:   http://localhost:$AngPort"
 Write-Host "  Orchestrator: http://127.0.0.1:$OrchPort"
 Write-Host ("  Logs:         {0}" -f $LogDir)
-Write-Host '  Stop:         pnpm stop   (or .\scripts\stop.ps1)'
+# NOT `pnpm stop`: package.json maps it to `bash scripts/stop.sh`, which on
+# Windows either fails outright or - with Git Bash installed - runs an
+# lsof/fuser sweep that finds nothing and cheerfully reports "already stopped"
+# while the stack keeps running.
+Write-Host '  Stop:         .\scripts\stop.ps1'
 Write-Host '  ----------------------------------------------------------------'

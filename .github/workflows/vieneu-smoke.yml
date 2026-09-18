@@ -41,7 +41,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-22.04, label: linux-x64 }
+          - { os: ubuntu-24.04, label: linux-x64 }  # 22.04 images entered deprecation brownouts 2026-09-17 (actions/runner-images#14254)
           - { os: macos-14, label: macos-arm64 } # Apple Silicon
           - { os: macos-13, label: macos-x64 } # Intel mac (no torch needed now)
           - { os: windows-latest, label: windows-x64 }

@@ -20,12 +20,21 @@
 #   bash scripts/package/release-upload.sh upload <file> [file...] # ensure + upload (replacing)
 set -euo pipefail
 
-# NOTE: this default is a footgun when the script is run BY HAND — always export
-# RELEASE_TAG. The release wrappers always set it; a bare run would otherwise
-# upload into the v0.1.0 release.
-TAG="${RELEASE_TAG:-v0.1.0}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." >/dev/null 2>&1 && pwd)"
+CONF="${REPO_ROOT}/apps/desktop/src-tauri/tauri.conf.json"
+
+# The default used to be a literal `v0.1.0`, which three runbooks then repeated as
+# an instruction ("upload to the v0.1.0 draft") — so a bare invocation at version
+# 0.9.0 published this release's installers into the FIRST release. Default to the
+# version actually being built instead, which is what docs/RELEASING.md already
+# claims the behaviour is.
+APP_VERSION="$(node -p "require('${CONF}').version" 2>/dev/null || true)"
+TAG="${RELEASE_TAG:-${APP_VERSION:+v${APP_VERSION}}}"
+[ -n "$TAG" ] || { echo "error: could not read the version from ${CONF}; export RELEASE_TAG." >&2; exit 1; }
 REPO="${GH_REPO:-codertapsu/multilingual-dubbed-video}"
 RELEASE_NAME="VideoDubber ${TAG}"
+BODY_HEADER="${SCRIPT_DIR}/release-body-header.md"
 
 TOKEN="${GH_TOKEN:-$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill 2>/dev/null | sed -n 's/^password=//p')}"
 [ -n "$TOKEN" ] || { echo "error: no GitHub token (set GH_TOKEN or log in so 'git credential' has one)" >&2; exit 1; }
@@ -46,7 +55,29 @@ ensure_release() {
 print(next((str(r['id']) for r in json.load(sys.stdin) if r['tag_name']==os.environ['TAG']), ''))")"
   if [ -z "$id" ]; then
     local body
-    body="$(python3 -c "import json,os;print(json.dumps({'tag_name':os.environ['TAG'],'name':os.environ['RELEASE_NAME'],'draft':True,'prerelease':False}))")"
+    # Seed the body with the download table (see release-body-header.md) so a
+    # non-technical user can tell the installer from the updater payload. The
+    # maintainer then appends the changelog under it; nothing here overwrites an
+    # existing release's body.
+    RELEASE_BODY="$(BODY_HEADER="$BODY_HEADER" APP_VERSION="${APP_VERSION:-}" CONF="$CONF" python3 -c "
+import json, os, re, sys
+path = os.environ['BODY_HEADER']
+try:
+    text = open(path, encoding='utf-8').read()
+except OSError:
+    print('', end=''); sys.exit(0)
+# Drop the HTML comment that documents the template for maintainers.
+text = re.sub(r'<!--.*?-->\n?', '', text, flags=re.S)
+try:
+    conf = json.load(open(os.environ['CONF'], encoding='utf-8'))
+    min_macos = conf.get('bundle', {}).get('macOS', {}).get('minimumSystemVersion', '14.0')
+except OSError:
+    min_macos = '14.0'
+text = text.replace('{{VERSION}}', os.environ.get('APP_VERSION', '')).replace('{{MIN_MACOS}}', min_macos)
+print(text, end='')
+")"
+    export RELEASE_BODY
+    body="$(python3 -c "import json,os;print(json.dumps({'tag_name':os.environ['TAG'],'name':os.environ['RELEASE_NAME'],'body':os.environ.get('RELEASE_BODY',''),'draft':True,'prerelease':False}))")"
     id="$(api POST "/repos/$REPO/releases" -d "$body" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")"
     echo "created draft release $TAG (id $id)" >&2
   fi

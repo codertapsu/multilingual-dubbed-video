@@ -30,10 +30,20 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-# NOTE: the v0.1.0 default is a footgun when run BY HAND - always set
-# $env:RELEASE_TAG. The release wrappers always set it; a bare run would
-# otherwise upload into the v0.1.0 release.
-$Tag  = if ($env:RELEASE_TAG) { $env:RELEASE_TAG } else { 'v0.1.0' }
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot  = Resolve-Path (Join-Path $ScriptDir "..\..")
+$Conf      = Join-Path $RepoRoot "apps\desktop\src-tauri\tauri.conf.json"
+$BodyHeader = Join-Path $ScriptDir "release-body-header.md"
+
+# The default used to be a literal 'v0.1.0', which three runbooks then repeated as
+# an instruction ("upload to the v0.1.0 draft") - so a bare invocation at version
+# 0.9.0 published this release's installers into the FIRST release. Default to the
+# version actually being built instead, which is what docs/RELEASING.md already
+# claims the behaviour is.
+$TauriConf  = Get-Content -Raw $Conf | ConvertFrom-Json
+$AppVersion = $TauriConf.version
+$Tag  = if ($env:RELEASE_TAG) { $env:RELEASE_TAG } else { "v$AppVersion" }
+if (-not $Tag -or $Tag -eq 'v') { throw "Could not read the version from $Conf; set `$env:RELEASE_TAG." }
 $Repo = if ($env:GH_REPO)     { $env:GH_REPO }     else { 'codertapsu/multilingual-dubbed-video' }
 
 function Get-GhToken {
@@ -52,7 +62,18 @@ function Ensure-Release {
   $rels = Invoke-RestMethod -Headers $Headers "https://api.github.com/repos/$Repo/releases?per_page=100"
   $r = $rels | Where-Object { $_.tag_name -eq $Tag } | Select-Object -First 1
   if ($r) { return $r.id }
-  $body = @{ tag_name = $Tag; name = "VideoDubber $Tag"; draft = $true; prerelease = $false } | ConvertTo-Json
+  # Seed the body with the download table (see release-body-header.md) so a
+  # non-technical user can tell the installer from the updater payload. The
+  # maintainer then appends the changelog under it; nothing here overwrites an
+  # existing release's body.
+  $header = ''
+  if (Test-Path $BodyHeader) {
+    $minMacos = $TauriConf.bundle.macOS.minimumSystemVersion
+    if (-not $minMacos) { $minMacos = '14.0' }
+    $header = (Get-Content -Raw $BodyHeader) -replace '(?s)<!--.*?-->\r?\n?', ''
+    $header = $header.Replace('{{VERSION}}', $AppVersion).Replace('{{MIN_MACOS}}', $minMacos)
+  }
+  $body = @{ tag_name = $Tag; name = "VideoDubber $Tag"; body = $header; draft = $true; prerelease = $false } | ConvertTo-Json
   $created = Invoke-RestMethod -Method Post -Headers $Headers -ContentType 'application/json' -Body $body `
     "https://api.github.com/repos/$Repo/releases"
   Write-Host "created draft release $Tag (id $($created.id))"

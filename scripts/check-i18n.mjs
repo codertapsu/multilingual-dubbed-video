@@ -127,6 +127,48 @@ const DYNAMIC_KEY_PREFIXES = [
   'capacity.',
 ];
 
+/**
+ * The mirror image of keysFeedingPipes: a string literal written DIRECTLY in
+ * front of a `| translate` that is not a plausible key.
+ *
+ * WHY: TranslateService.instant returns the key itself on a miss, so a piped
+ * literal that is not a key renders as raw English in every locale and looks
+ * deliberate. That is how every status pill in the app printed 'Created' /
+ * 'Running' / 'Completed' to a Vietnamese user while vi.json already had
+ * status.created / status.running / status.completed — the miss is silent by
+ * design, so nothing at runtime ever complains.
+ *
+ * SCOPE, honestly: this catches `{{ 'Cancel' | translate }}`, the direct form.
+ * It does NOT catch the shape that caused the status-badge bug —
+ * `{{ meta().label | translate }}`, where the English text lives in a
+ * STATUS_META table three files away. Following that statically would mean
+ * resolving the expression, and guessing would produce exactly the kind of false
+ * positive the stripComments() comment above records the cost of. The table form
+ * is a code fix (store keys in the table), not something a scanner can see.
+ */
+function nonKeyLiteralsFeedingPipes(text) {
+  const found = new Set();
+  const pipeRe = /\|\s*translate\b/g;
+  let m;
+  while ((m = pipeRe.exec(text)) !== null) {
+    let i = m.index - 1;
+    while (i >= 0 && /\s/.test(text[i])) i--;
+    // Only inspect a DIRECT string literal. An expression (`foo() | translate`,
+    // `(a ? 'x.y' : 'x.z') | translate`) may legitimately hold non-key literals
+    // in unrelated arguments, and flagging those would be a false positive —
+    // the lesson the stripComments() comment above already records.
+    const quote = text[i];
+    if (quote !== "'" && quote !== '"' && quote !== '`') continue;
+    const start = text.lastIndexOf(quote, i - 1);
+    if (start < 0) continue;
+    const literal = text.slice(start + 1, i);
+    // Interpolated template literals are expressions, not keys.
+    if (quote === '`' && literal.includes('${')) continue;
+    if (!KEY_RE.test(literal)) found.add(literal);
+  }
+  return found;
+}
+
 /** `instant('a.b')` in TypeScript. */
 const CALL_RE = /\binstant\(\s*['"`]([^'"`]+)['"`]/g;
 
@@ -145,9 +187,13 @@ const trees = Object.fromEntries(
 const defined = Object.fromEntries(locales.map((l) => [l, flatten(trees[l])]));
 
 const used = new Set();
+/** file -> the non-key literals it pipes through `translate` (see check 0). */
+const literalPipes = new Map();
 for (const file of walk(path.join(SRC, 'app'))) {
   const text = stripComments(readFileSync(file, 'utf8'), file.endsWith('.html'));
   for (const k of keysFeedingPipes(text)) used.add(k);
+  const bogus = nonKeyLiteralsFeedingPipes(text);
+  if (bogus.size) literalPipes.set(path.relative(SRC, file), [...bogus].sort());
   CALL_RE.lastIndex = 0;
   let m;
   while ((m = CALL_RE.exec(text)) !== null) {
@@ -156,6 +202,19 @@ for (const file of walk(path.join(SRC, 'app'))) {
 }
 
 let failed = false;
+
+// 0. Display text piped through `translate` — renders raw English in every
+//    locale, and is the ONLY check here that would have caught the status-badge
+//    bug (see nonKeyLiteralsFeedingPipes).
+if (literalPipes.size) {
+  failed = true;
+  console.error(`\n✗ ${literalPipes.size} file(s) pipe a non-key string literal through | translate:`);
+  for (const [file, lits] of [...literalPipes].sort()) {
+    console.error(`    ${file}`);
+    for (const l of lits) console.error(`      ${JSON.stringify(l)}`);
+  }
+  console.error('    Use a key ("status.created"), or drop the | translate.');
+}
 
 // 1. Used but undefined — the raw-key-on-screen bug.
 for (const locale of locales) {

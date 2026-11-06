@@ -148,7 +148,12 @@ expected; in-app updates are unaffected (they carry the updater's own signature)
 When writing code that touches the filesystem or spawns processes, assume the test suite has only
 ever run on macOS unless proven otherwise. Recent Windows-only failures: POSIX separators asserted
 against a `path.join` result; `/dev/null/...` used as an uncreatable path; `mode & 0o111` and
-`0o600` asserted where Windows implements neither.
+`0o600` asserted where Windows implements neither. And the one that failed real dubs: a
+temp-then-rename **replace fails with EPERM/EACCES/EBUSY on Windows while any other handle is open
+on the target** (a concurrent `pipeline.json` read, the studio preview streaming `output.mp4`,
+Defender scanning a fresh file). Every atomic write goes through `renameReplacing`
+(`node-orchestrator/src/fsRename.ts`; media-worker `atomic.ts` carries the same) — never a bare
+`fsp.rename` onto an existing file.
 
 ## Releases
 

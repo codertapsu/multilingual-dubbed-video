@@ -63,8 +63,55 @@ export async function writeAtomically<T>(
     removeQuietly(partial);
     throw err;
   }
-  // renameSync is atomic within a filesystem and overwrites an existing dest,
-  // which keeps the "-y overwrite" resume semantics ffmpeg had before.
-  renameSync(partial, dest);
+  // Rename is atomic within a filesystem and overwrites an existing dest, which
+  // keeps the "-y overwrite" resume semantics ffmpeg had before.
+  try {
+    await renameReplacing(partial, dest);
+  } catch (err) {
+    removeQuietly(partial);
+    throw err;
+  }
   return result;
+}
+
+const TRANSIENT_RENAME_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+/** 10 ms doubling to a 250 ms cap, ~2.3 s in total. */
+export const RENAME_RETRY_DELAYS_MS: readonly number[] = [
+  10, 20, 40, 80, 160, 250, 250, 250, 250, 250, 250, 250, 250,
+];
+
+/**
+ * Replace `dest` with `from`, retrying Windows' transient "target in use" codes.
+ *
+ * POSIX rename replaces a file whoever has it open; Windows refuses with EPERM /
+ * EACCES / EBUSY while any other handle is open on the target. Here that is not
+ * hypothetical: the studio's preview streams output.mp4 and the mix from disk,
+ * and Defender scans each freshly written partial. Re-rendering with the
+ * preview open would fail at random on Windows only. The orchestrator carries
+ * the same helper (src/fsRename.ts), which found the bug first, on
+ * pipeline.json. Other platforms and other codes throw at once.
+ */
+export async function renameReplacing(
+  from: string,
+  to: string,
+  deps: {
+    rename?: (a: string, b: string) => Promise<void>;
+    sleep?: (ms: number) => Promise<void>;
+    platform?: NodeJS.Platform;
+  } = {},
+): Promise<void> {
+  const rename = deps.rename ?? (async (a: string, b: string) => renameSync(a, b));
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const retries = (deps.platform ?? process.platform) === 'win32' ? RENAME_RETRY_DELAYS_MS : [];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const delay = retries[attempt];
+      if (delay === undefined || !code || !TRANSIENT_RENAME_CODES.has(code)) throw err;
+      await sleep(delay);
+    }
+  }
 }

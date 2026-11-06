@@ -8,6 +8,7 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { renameReplacing } from '../fsRename.js';
 import type { InstalledEnginePack } from '@videodubber/shared';
 
 /** Shape of engines.json: packId -> install record. */
@@ -98,6 +99,6 @@ export class EnginePackStore {
     await fsp.mkdir(this.configDir, { recursive: true });
     const tmp = path.join(this.configDir, `.engines.${crypto.randomBytes(6).toString('hex')}.tmp`);
     await fsp.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-    await fsp.rename(tmp, this.filePath);
+    await renameReplacing(tmp, this.filePath);
   }
 }

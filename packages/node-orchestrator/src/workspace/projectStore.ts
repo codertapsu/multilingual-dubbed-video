@@ -12,6 +12,7 @@ import crypto from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { renameReplacing } from '../fsRename.js';
 import {
   AppErrorException,
   createInitialPipelineState,
@@ -44,7 +45,7 @@ export async function writeTextAtomic(filePath: string, text: string): Promise<v
   await fsp.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, `.${path.basename(filePath)}.${crypto.randomBytes(6).toString('hex')}.tmp`);
   await fsp.writeFile(tmp, text, 'utf8');
-  await fsp.rename(tmp, filePath);
+  await renameReplacing(tmp, filePath);
 }
 
 /** {@link writeTextAtomic} for pretty-printed JSON (temp file + rename). */

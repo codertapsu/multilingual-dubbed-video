@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { renameReplacing } from '../../fsRename.js';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
@@ -223,7 +224,7 @@ export async function downloadMedia(req: DownloadRequest, onProgress: ProgressFn
     );
 
     if (muxed) {
-      await fsp.rename(videoTmp, outPath);
+      await renameReplacing(videoTmp, outPath);
       // A single served file is expected to carry its own audio; if it does
       // not, that is worth knowing now rather than at transcription.
       await verifyPlayable(req.ffprobePath ?? 'ffprobe', outPath, true);

@@ -15,6 +15,7 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { renameReplacing } from '../fsRename.js';
 import type {
   ArgosPair,
   InstalledModels,
@@ -44,7 +45,7 @@ async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> 
   const tmp = path.join(dir, `.${path.basename(filePath)}.${crypto.randomBytes(6).toString('hex')}.tmp`);
   const json = `${JSON.stringify(value, null, 2)}\n`;
   await fsp.writeFile(tmp, json, 'utf8');
-  await fsp.rename(tmp, filePath);
+  await renameReplacing(tmp, filePath);
 }
 
 /** Read and parse a JSON file, or return undefined if missing/unreadable. */

@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { renameReplacing } from '../fsRename.js';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import { AppErrorException, type EnginePackArtifact, type EnginePackInfo, type InstalledEnginePack } from '@videodubber/shared';
@@ -102,7 +103,7 @@ export class EngineInstaller {
         .then((st) => st.isDirectory())
         .catch(() => false);
       if (hadExisting) {
-        await fsp.rename(packDir, backupDir);
+        await renameReplacing(packDir, backupDir);
         movedAside = true;
       }
       await fsp.mkdir(packDir, { recursive: true });
@@ -199,7 +200,7 @@ export class EngineInstaller {
       this.deps.bus.emit({ type: 'log', level: 'warn', message: `No checksum pinned for ${pack.id}; installed unverified.` });
     }
 
-    await fsp.rename(tmp, dest);
+    await renameReplacing(tmp, dest);
 
     if (artifact.archive) {
       this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `Extracting ${pack.displayName}…` });

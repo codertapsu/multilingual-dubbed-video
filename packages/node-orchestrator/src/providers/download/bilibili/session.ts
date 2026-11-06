@@ -22,6 +22,7 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { renameReplacing } from '../../../fsRename.js';
 
 /** Display-safe view of whether a session is configured. */
 export interface BilibiliSessionInfo {
@@ -124,7 +125,7 @@ export class BilibiliSessionStore {
     await fsp.mkdir(dir, { recursive: true });
     const tmp = path.join(dir, `.bilibili-session.${crypto.randomBytes(6).toString('hex')}.tmp`);
     await fsp.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    await fsp.rename(tmp, this.filePath);
+    await renameReplacing(tmp, this.filePath);
     // 0o600 is enforced on POSIX only. Windows does not implement these bits:
     // the mode above yields 0o666 and this chmod merely toggles the read-only
     // attribute. Confidentiality on Windows therefore rests entirely on the ACL

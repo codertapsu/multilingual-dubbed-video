@@ -2,7 +2,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { partialPathFor, writeAtomically } from './atomic.js';
+import {
+  partialPathFor,
+  RENAME_RETRY_DELAYS_MS,
+  renameReplacing,
+  writeAtomically,
+} from './atomic.js';
 
 /**
  * Regression cover for the resume bug: a killed ffmpeg used to leave a
@@ -14,7 +19,9 @@ import { partialPathFor, writeAtomically } from './atomic.js';
 describe('partialPathFor', () => {
   it('keeps the extension so ffmpeg still infers the muxer', () => {
     expect(partialPathFor(join('/a/b', 'output.mp4'))).toBe(join('/a/b', 'output.partial.mp4'));
-    expect(partialPathFor(join('/a/b', 'final_mix.wav'))).toBe(join('/a/b', 'final_mix.partial.wav'));
+    expect(partialPathFor(join('/a/b', 'final_mix.wav'))).toBe(
+      join('/a/b', 'final_mix.partial.wav'),
+    );
   });
 
   it('handles an extension-less destination', () => {
@@ -95,5 +102,66 @@ describe('writeAtomically', () => {
       return { exitCode: 0 };
     });
     expect(result).toEqual({ exitCode: 0 });
+  });
+});
+
+describe('renameReplacing (Windows "target in use")', () => {
+  const errno = (code: string) => Object.assign(new Error(code), { code });
+
+  it('retries EPERM/EACCES/EBUSY on win32 until the other handle lets go', async () => {
+    const codes = ['EPERM', 'EBUSY', 'EACCES'];
+    let calls = 0;
+    const slept: number[] = [];
+    await renameReplacing('p', 'd', {
+      platform: 'win32',
+      sleep: async (ms) => void slept.push(ms),
+      rename: async () => {
+        calls++;
+        const c = codes.shift();
+        if (c) throw errno(c);
+      },
+    });
+    expect(calls).toBe(4);
+    expect(slept).toEqual([10, 20, 40]);
+  });
+
+  it('is bounded, throws other codes at once, and never retries off Windows', async () => {
+    let calls = 0;
+    const always = async () => {
+      calls++;
+      throw errno('EPERM');
+    };
+    await expect(
+      renameReplacing('p', 'd', {
+        platform: 'win32',
+        sleep: async () => undefined,
+        rename: always,
+      }),
+    ).rejects.toMatchObject({ code: 'EPERM' });
+    expect(calls).toBe(RENAME_RETRY_DELAYS_MS.length + 1);
+
+    calls = 0;
+    await expect(
+      renameReplacing('p', 'd', {
+        platform: 'linux',
+        sleep: async () => undefined,
+        rename: always,
+      }),
+    ).rejects.toMatchObject({ code: 'EPERM' });
+    expect(calls).toBe(1);
+
+    calls = 0;
+    const missing = async () => {
+      calls++;
+      throw errno('ENOENT');
+    };
+    await expect(
+      renameReplacing('p', 'd', {
+        platform: 'win32',
+        sleep: async () => undefined,
+        rename: missing,
+      }),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(calls).toBe(1);
   });
 });

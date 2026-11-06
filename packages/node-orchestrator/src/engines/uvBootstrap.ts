@@ -30,6 +30,7 @@ import { createHash } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { renameReplacing } from '../fsRename.js';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { AppErrorException } from '@videodubber/shared';
@@ -265,7 +266,7 @@ export async function installFromArchive(
   const destBin = managedUvPath(configDir, platform);
   await fsp.mkdir(path.dirname(destBin), { recursive: true });
   await fsp.rm(destBin, { force: true }).catch(() => undefined);
-  await fsp.rename(found, destBin);
+  await renameReplacing(found, destBin);
   await pruneOtherVersions(configDir);
   return destBin;
 }

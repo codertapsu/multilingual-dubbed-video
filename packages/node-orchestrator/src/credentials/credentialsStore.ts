@@ -14,6 +14,7 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { renameReplacing } from '../fsRename.js';
 import {
   ALL_CLOUD_SERVICES,
   type CloudCredentialInfo,
@@ -152,7 +153,7 @@ export class CredentialsStore {
     await fsp.mkdir(dir, { recursive: true });
     const tmp = path.join(dir, `.credentials.${crypto.randomBytes(6).toString('hex')}.tmp`);
     await fsp.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    await fsp.rename(tmp, this.filePath);
+    await renameReplacing(tmp, this.filePath);
     // Re-assert mode: rename preserves the temp file's 0600, but be explicit
     // in case an older file with looser permissions was replaced.
     await fsp.chmod(this.filePath, 0o600).catch(() => {

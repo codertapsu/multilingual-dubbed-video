@@ -18,6 +18,7 @@
 import { createWriteStream, type Dirent } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { renameReplacing } from '../fsRename.js';
 import { Readable, Transform } from 'node:stream';
 import { pipeline as streamPipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
@@ -406,7 +407,7 @@ export class SetupInstaller {
       const resumeFrom = await fileSizeOrZero(tmpPath);
       try {
         await this.downloadAttempt(url, tmpPath, item, label, quiet, resumeFrom);
-        await fsp.rename(tmpPath, destPath);
+        await renameReplacing(tmpPath, destPath);
         return;
       } catch (err) {
         if (!(err instanceof AppErrorException)) throw err;

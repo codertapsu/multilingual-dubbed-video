@@ -170,8 +170,13 @@ async function bothFilesPresent(...filePaths: string[]): Promise<boolean> {
  * `_SYSTRAN_REPOS` in workers/stt-worker/app/whisper_service.py — keep the two
  * in sync, or the orchestrator watches the wrong cache folder. Unknown ids fall
  * back the same way the worker does.
+ *
+ * It did drift: when the worker moved PhoWhisper Medium to its new repo (the
+ * old kiendt repos for medium/small do not exist), this copy kept the dead ids,
+ * so the wizard's progress bar would have watched an empty folder for the whole
+ * 1.5 GB download. installer.test.ts now parses the Python table and compares.
  */
-const WHISPER_REPOS: Readonly<Record<string, string>> = {
+export const WHISPER_REPOS: Readonly<Record<string, string>> = {
   tiny: 'Systran/faster-whisper-tiny',
   base: 'Systran/faster-whisper-base',
   small: 'Systran/faster-whisper-small',
@@ -181,8 +186,7 @@ const WHISPER_REPOS: Readonly<Record<string, string>> = {
   'large-v3-turbo': 'deepdml/faster-whisper-large-v3-turbo-ct2',
   turbo: 'deepdml/faster-whisper-large-v3-turbo-ct2',
   'distil-large-v3.5': 'distil-whisper/distil-large-v3.5-ct2',
-  'phowhisper-small': 'kiendt/PhoWhisper-small-ct2',
-  'phowhisper-medium': 'kiendt/PhoWhisper-medium-ct2',
+  'phowhisper-medium': 'nunu-willump/PhoWhisper-medium-ct2',
   'phowhisper-large': 'kiendt/PhoWhisper-large-ct2',
 };
 

@@ -1,10 +1,11 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SetupEvent } from '@videodubber/shared';
 import { loadConfig } from '../config.js';
-import { SetupInstaller } from './installer.js';
+import { SetupInstaller, WHISPER_REPOS } from './installer.js';
 import { SetupEventBus } from './setupBus.js';
 import { SetupStore } from './setupStore.js';
 import { setWorkerTransport, type RawWorkerResponse } from '../providers/workerHttp.js';
@@ -337,5 +338,25 @@ describe('SetupInstaller', () => {
     if (error?.type === 'error') {
       expect(error.error.code).toBe('TTS_VOICE_MISSING');
     }
+  });
+});
+
+describe('WHISPER_REPOS', () => {
+  it('mirrors _SYSTRAN_REPOS in the STT worker exactly', async () => {
+    // The worker decides which repo is downloaded and loaded; this copy only
+    // decides which cache folder the wizard's progress bar watches. They drifted
+    // once (PhoWhisper Medium moved repos), so compare against the source.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const py = await fsp.readFile(
+      path.join(here, '../../../../workers/stt-worker/app/whisper_service.py'),
+      'utf8',
+    );
+    const block = /_SYSTRAN_REPOS: dict\[str, str\] = \{([\s\S]*?)\n\}/.exec(py)?.[1];
+    expect(block, '_SYSTRAN_REPOS not found in whisper_service.py').toBeDefined();
+    const worker = Object.fromEntries(
+      [...block!.matchAll(/^\s*"([^"]+)":\s*"([^"]+)",/gm)].map((m) => [m[1], m[2]]),
+    );
+    expect(Object.keys(worker).length).toBeGreaterThan(5);
+    expect({ ...WHISPER_REPOS }).toEqual(worker);
   });
 });

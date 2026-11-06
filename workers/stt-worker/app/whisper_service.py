@@ -74,10 +74,56 @@ _SYSTRAN_REPOS: dict[str, str] = {
     "distil-large-v3.5": "distil-whisper/distil-large-v3.5-ct2",
     # PhoWhisper: VinAI Vietnamese-specialist (BSD-3); pre-converted CT2 builds.
     # Pin to a Vietnamese-source video for best results.
-    "phowhisper-small": "kiendt/PhoWhisper-small-ct2",
-    "phowhisper-medium": "kiendt/PhoWhisper-medium-ct2",
+    #
+    # `phowhisper-medium` used to point at kiendt/PhoWhisper-medium-ct2, and a
+    # `phowhisper-small` alias at kiendt/PhoWhisper-small-ct2. NEITHER REPO
+    # EXISTS (both answer 401 anonymously; kiendt publishes only the large
+    # build), so the setup wizard's "PhoWhisper Medium (best for Vietnamese-
+    # source audio)" could never download. Medium now comes from a float16
+    # conversion of vinai/PhoWhisper-medium made with ctranslate2 4.8.2, pinned
+    # to a revision in _REPO_REVISIONS because it is a community repo. No CT2
+    # build of PhoWhisper-small exists anywhere, so that alias is gone rather
+    # than pointed at something unverified.
+    "phowhisper-medium": "nunu-willump/PhoWhisper-medium-ct2",
     "phowhisper-large": "kiendt/PhoWhisper-large-ct2",
 }
+
+# Pinned revisions for community-hosted conversions, keyed by repo id. A repo
+# owner can force-push different bytes under `main`; a commit hash cannot change.
+# Passed to BOTH the setup download and WhisperModel, so the snapshot the wizard
+# fetched is the one transcription loads (offline included).
+_REPO_REVISIONS: dict[str, str] = {
+    # model.bin: 1,527,906,453 bytes, sha256 0fa00f44…7b7e (read 2026-11-05).
+    "nunu-willump/PhoWhisper-medium-ct2": "84fd238d9263ad77752ebb2fafb3402049199ef0",
+}
+
+
+def _resolve_model_ref(model_name: str) -> tuple[str, Optional[str]]:
+    """What to hand ``WhisperModel`` for a requested model: (ref, revision).
+
+    The orchestrator sends the catalog ALIAS (``large-v3-turbo``,
+    ``phowhisper-medium``, …). Those used to be passed to ``WhisperModel``
+    verbatim, which resolves names through faster-whisper's OWN ``_MODELS``
+    table — not this module's. Two shipped defects followed:
+
+    * ``phowhisper-*`` is not in faster-whisper's table, so loading raised
+      "Invalid model size" — PhoWhisper could be downloaded by the wizard but
+      never used for a single transcription.
+    * faster-whisper maps ``large-v3-turbo`` to ``mobiuslabsgmbh/…`` while the
+      wizard downloads ``deepdml/…`` (the repo this table names). After an
+      "offline-ready" setup, the first turbo transcription therefore went to
+      the network for a second ~1.6 GB copy — and failed outright with
+      ``STT_LOCAL_FILES_ONLY``.
+
+    So aliases THIS table defines resolve here; anything else (a local model
+    directory, an ``owner/repo`` id, or one of faster-whisper's own sizes such
+    as ``large`` or ``distil-large-v3`` that this table does not list) passes
+    through untouched, exactly as before.
+    """
+    repo_id = _SYSTRAN_REPOS.get(model_name)
+    if repo_id is None:
+        return model_name, _REPO_REVISIONS.get(model_name)
+    return repo_id, _REPO_REVISIONS.get(repo_id)
 
 
 # ---------------------------------------------------------------------------
@@ -175,22 +221,27 @@ def _load_model(model_name: str, settings: Settings) -> Any:
             _MODEL_CACHE.clear()
             gc.collect()
 
+        model_ref, revision = _resolve_model_ref(model_name)
         logger.info(
-            "Loading Whisper model name=%s device=%s compute_type=%s cache=%s",
+            "Loading Whisper model name=%s ref=%s%s device=%s compute_type=%s threads=%d cache=%s",
             model_name,
+            model_ref,
+            f"@{revision[:10]}" if revision else "",
             settings.device,
             settings.compute_type,
+            settings.cpu_threads,
             settings.download_root or "<default>",
         )
         try:
             model = WhisperModel(
-                model_name,
+                model_ref,
                 device=settings.device,
                 compute_type=settings.compute_type,
                 cpu_threads=settings.cpu_threads,
                 num_workers=settings.num_workers,
                 download_root=settings.download_root,
                 local_files_only=settings.local_files_only,
+                **({"revision": revision} if revision else {}),
             )
         except Exception as exc:
             raise AppError(
@@ -304,11 +355,14 @@ def _download_model_weights(model_name: str, settings: Settings) -> None:
             cause=exc,
         ) from exc
 
+    repo_id = _model_repo_id(model_name)
+    revision = _REPO_REVISIONS.get(repo_id)
     try:
         download_model(
-            _model_repo_id(model_name),
+            repo_id,
             cache_dir=settings.download_root or None,
             local_files_only=settings.local_files_only,
+            **({"revision": revision} if revision else {}),
         )
     except Exception as exc:
         raise AppError(

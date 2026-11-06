@@ -40,6 +40,8 @@ effort/impact, not by commitment date.
 | **English + Vietnamese UI** — the app is fully localized and switchable at runtime (Settings → Language); `scripts/check-i18n.mjs` gates missing keys in the desktop package's `test` script. | **v0.8.0** | [`USER_GUIDE.md`](USER_GUIDE.md#6-settings) |
 | **Update notifications** — tell the user a new version exists. | v0.8.0 | [`AUTOUPDATE.md`](AUTOUPDATE.md) |
 | **Video downloader** — fetch a source video from **Bilibili** or **Douyin**, with a quality target across Bilibili's two pipes and an optional per-provider session cookie. Adding a source is a two-line `SourceProvider` registration. | **v0.9.0** | [`USER_GUIDE.md`](USER_GUIDE.md#5-downloading-a-source-video), [`PROVIDERS.md`](PROVIDERS.md) |
+| **Studio editor** — a multi-track timeline (filmstrip, original waveform, source, subtitles, dub clips) with drag-to-move / trim, snapping, multi-select, undo/redo, autosave, a live dub preview that plays edits without re-rendering, per-line voices (drag a voice onto a line) and speaking rate, locked lines, `.srt`/`.vtt` import, and keyboard shortcuts. Light and dark themes app-wide. | **next** | [`USER_GUIDE.md`](USER_GUIDE.md#editing-a-dub), [`ARCHITECTURE.md`](ARCHITECTURE.md#6a-the-studio-editor) |
+| **Hardware-aware speed-ups** — STT on the machine's performance cores (was a flat 4 threads; large-v3-turbo 31% faster on an M4 Pro), a persistent Piper process per voice (2.3× faster synthesis), and the Mac / PC kept awake with Dock / taskbar progress while a dub runs. | **next** | [`NATIVE_STRATEGY.md`](NATIVE_STRATEGY.md) |
 
 ### Long videos (30–120 min+)
 
@@ -50,9 +52,9 @@ budget; alignment probes are individually timed out and report progress; and the
 long-video audio-mix path guards against temp-disk exhaustion. Full description in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#long-video-handling).
 
-**Remaining (optional):** a persistent/batch Piper process (synthesize many segments
-in one model-resident invocation) on top of the existing thread-pool parallelism, and
-ndjson streaming of the aligned-segment artifact beyond a few thousand segments.
+**Remaining (optional):** ndjson streaming of the aligned-segment artifact beyond a few
+thousand segments. (The persistent Piper process this line used to list shipped with
+the studio editor — one model-resident process per voice.)
 
 ### Accelerated engines that shipped
 
@@ -116,7 +118,31 @@ separation is absent, which is what ships today.
 ### Subtitle styling editor
 
 A visual editor for `SubtitleStyle` (font, size, colors, outline, alignment) with
-live preview for burned-in subtitles, beyond the current settings fields.
+live preview for burned-in subtitles, beyond the current settings fields. The studio's
+preview already overlays the active subtitle on the picture; styling it is the next step.
+
+### macOS GPU speech-to-text (whisper.cpp Metal + Core ML)
+
+CTranslate2 has no Metal backend, so macOS transcribes on the CPU. A whisper.cpp
+build with Metal and a Core ML encoder (Apple Neural Engine) is the largest native
+speed-up still available — upstream publishes no macOS binary, so it needs a
+project-built, signed, hosted artifact. See [`NATIVE_STRATEGY.md`](NATIVE_STRATEGY.md#gates-that-would-justify-going-further).
+
+### Studio editor: split and merge lines
+
+The timeline moves, trims and re-voices lines but cannot yet split one cue in two or
+merge two cues: both change segment ids, which name the clips on disk.
+
+### Engine-pack updates
+
+An installed pack is never upgraded when the catalog pin moves. `engines.json`
+records each pack's version at install time, but nothing compares it with the
+catalog, so a machine that installed llama.cpp b9592 keeps running b9592 after
+the pin moves to b12110. That is also why launch options newer than the oldest
+pinned build must reach llama-server through the environment (older builds
+ignore unknown variables but reject unknown flags). Wanted: a per-pack "update
+available" in Settings → Engines, driven by that recorded version. Until then,
+removing and reinstalling a pack is how a user gets the new build.
 
 ### Windows code signing
 

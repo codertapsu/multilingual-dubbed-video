@@ -293,9 +293,15 @@ The orchestrator creates one folder per project under `VIDEODUBBER_PROJECTS_DIR`
 │   ├── translated.json              # segments with translatedText
 │   ├── translated.srt
 │   ├── translated.vtt
-│   └── translated.aligned.json      # AlignedSegment[]
+│   ├── translated.aligned.json      # AlignedSegment[]
+│   ├── synthesis_groups.json        # (in audio/) which cues share one TTS take
+│   └── cue_timing.json              # voice-synced subtitle timing overrides
 ├── render/
 │   └── output.mp4
+├── cache/                           # editor-only, derived, safe to delete
+│   ├── waveform-original.json       # peaks of audio/original.wav (+ source stamp)
+│   ├── filmstrip.jpg / .json        # thumbnail sprite + its layout
+│   └── fitted/                      # dub clips tempo-fitted for the live preview
 └── logs/
     └── pipeline.log
 ```
@@ -324,7 +330,8 @@ handlers. The rest, by family:
 | Credentials | `/credentials*` | cloud API keys (write-only from the UI's perspective; values are masked on read) |
 | Storage & system | `/storage*`, `/system` | disk usage, delete-downloaded-data, hardware probe |
 | Project extras | `/projects/:id/settings`, `/segments/:segId/refit`, `/translation-context` | per-project settings, single-segment re-fit, the character sheet / glossary |
-| Files | `/file` | static read of a project artifact for the browser-mode preview |
+| Files | `/file` | static read of a project artifact, honouring HTTP byte ranges (WKWebView will not play or seek media without them) |
+| Studio editor | `/projects/:id/timeline` (GET, PATCH), `/waveform`, `/filmstrip`, `/units/:unitId/fitted` | the timeline document, batched line edits, and the preview media — see §6a |
 
 > Adding a route family here is easy to forget, and this table sat at 16 rows
 > against 62 handlers for months. If you touch `server.ts`, touch this section.
@@ -351,6 +358,48 @@ handlers. The rest, by family:
 | GET | `/projects/:id/events` | — | SSE stream (see §8) |
 
 ---
+
+## 6a. The studio editor
+
+The editor (`apps/desktop/src/app/screens/editor/`) is a multi-track timeline
+over the same artifacts the pipeline writes; it adds no parallel state.
+
+- **One document.** `GET /projects/:id/timeline` returns cues, synthesis units
+  (one dub clip each; a unit may span several cues) with their fit, the
+  voice-synced cue timing and the preview media, so every track is drawn from
+  one consistent read (`packages/shared/src/models/timeline.ts`).
+- **Edits are batched patches.** `PATCH /projects/:id/timeline` takes
+  `SegmentPatch[]` (text, timing, voice, rate, lock). `workspace/timelineEdit.ts`
+  validates them — a line never moves past a neighbour, never creates an overlap,
+  never leaves the media — and the UI's drag constraints
+  (`studio/timeline-math.ts`) mirror the same rules, so a drag the UI allows is
+  one the server accepts. A timing change is written to `translated.json` *and*
+  `source.json` (a re-translate rebuilds the former from the latter), the group
+  windows are re-derived, and **every unit is re-fitted gap-aware from the clip
+  durations already on disk** — no re-synthesis, so a drag is persisted in tens
+  of milliseconds even on a 2,000-line project, and the next mix uses it.
+- **Per-line voice and rate** are persisted on the segment (`voiceId`,
+  `speakingRate`) and honoured everywhere: grouping never merges lines that
+  differ, the TTS step partitions by (voice, rate), and a single-line regenerate
+  gives each former member of a degrouped unit its *own* voice.
+- **Locked lines.** A real text edit sets `locked`; auto-fit and
+  review-and-refine never rewrite a locked line (refine still reads it as
+  context). `ttsStale` marks a line whose text/voice/rate changed since it was
+  voiced; the TTS step and regenerate clear it.
+- **No partial artifacts.** Regenerating before alignment has ever run fits the
+  line in memory and does not create a one-entry `translated.aligned.json`.
+  All editor writes are atomic (temp file + rename).
+- **Live preview.** The video plays the picture and original audio; the dub
+  clips are scheduled in WebAudio at their placements (`studio/playback.service.ts`),
+  re-anchored to the video clock when they drift > 70 ms. Clips the aligner sped
+  up are fetched pre-fitted with the same `atempo` chain the mix uses
+  (`/units/:unitId/fitted`), because WebAudio can only resample.
+- **Scale.** Ruler, filmstrip and waveform are viewport-sized canvases; cues and
+  clips are windowed to the viewport. Measured on a 2 h / 2,000-line project:
+  60 fps scroll and playback in both WebKit and Chromium.
+
+The settings / re-dub / character-sheet surface of the previous editor lives on
+in the studio's **Project** tab (`studio/project-panel.component.*`).
 
 ## 7. Tauri command mapping
 

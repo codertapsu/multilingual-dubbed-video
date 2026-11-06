@@ -7,10 +7,11 @@
  * Intel Macs included). The resolver still supports a per-platform overlay + extra
  * index URLs for other packs.
  *
- * ⚠️ The exact pins below are validated CANDIDATES, not yet verified on a real
- * install on every OS/arch. Before shipping VieNeu, confirm `vieneu==3.0.5`
- * installs and its default engine is v3-Turbo per platform. See
- * `workers/tts-engine-neural/README.md`.
+ * The `tts-neural` set was verified end to end on macOS arm64 on 2026-11-05 (a
+ * fresh uv venv, the real model download, and a 48 kHz synthesis through our
+ * own VieNeuEngine). Windows/Linux are exercised by the opt-in
+ * `vieneu-smoke.yml` workflow — run it before a release that changes these
+ * pins. See `workers/tts-engine-neural/README.md`.
  */
 
 /** A resolved, install-ready requirement set for one pack on this machine. */
@@ -33,16 +34,34 @@ interface UvRequirementSpec {
 
 const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
   // VieNeu-TTS v3-Turbo via the `vieneu` SDK: torch-free, ONNX on CPU, same on
-  // every platform. `vieneu` pulls onnxruntime, soxr, tokenizers, sea-g2p and the
-  // Perth watermarker transitively; we pin soundfile/numpy for our WAV I/O and
-  // fastapi/uvicorn for the server.
+  // every platform. `vieneu` pulls onnxruntime, soxr, tokenizers and sea-g2p
+  // transitively, plus a PyPI package named `perth` that is NOT Resemble's
+  // watermarker (that is `resemble-perth`, which needs torch) — so 3.0.5's
+  // watermarker silently never initializes and output is unwatermarked; see
+  // workers/tts-engine-neural/README.md. We pin soundfile/numpy for our WAV I/O
+  // and fastapi/uvicorn for the server.
   'tts-neural': {
     base: [
+      // 3.0.5 is deliberately NOT bumped to 3.8.x: 3.8 removed four of our ten
+      // preset voices (including the default "Ngọc Lan"), swapped the default
+      // checkpoint, and made librosa + kaldi-native-fbank hard deps. Migrate
+      // as its own change, with voices.py, after an A/B on real dubs.
       'vieneu==3.0.5',
-      'soundfile==0.13.1',
-      'numpy==2.1.3',
-      'fastapi==0.115.6',
-      'uvicorn==0.34.0',
+      'soundfile==0.14.0',
+      'numpy==2.5.4',
+      'fastapi==0.162.0',
+      'uvicorn==0.54.0',
+      // Pinned EXPLICITLY although both arrive through vieneu, because leaving
+      // them floating is what broke this pack: huggingface_hub >= 1.33 began
+      // symlinking blobs into a cache-wide store sharded by hash, and
+      // onnxruntime refuses an .onnx whose external .data resolves into a
+      // different directory — every fresh install from 2026-09-24 downloaded
+      // the model and then failed to load it. The engine now opts out
+      // (HF_HUB_DISABLE_SHARED_BLOBS) and repairs old caches (hfcache.py);
+      // this exact pair was validated with a real download + synthesis on
+      // 2026-11-05 (workers/tts-engine-neural/scripts/smoke_test.py).
+      'onnxruntime==1.31.1',
+      'huggingface_hub==2.4.0',
     ],
   },
   // VieNeu-TTS v2 (24 kHz): pin vieneu 2.7.0, the last release where v2 is the

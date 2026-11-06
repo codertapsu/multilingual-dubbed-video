@@ -40,6 +40,25 @@ the pack ships unwatermarked until someone decides otherwise. The pinned
 requirement set lives in the orchestrator (`uvRequirements.ts`), and the same
 claim appears in `enginePackCatalog.ts` — both need the matching correction.
 
+## "External data path escapes model directory" (fixed 2026-11)
+
+Every fresh pack install from 2026-09-24 downloaded the model and then failed to
+load it. `huggingface_hub` 1.33/2.0 started storing Xet files in a cache-wide
+shared store (`<hub>/blobs/<2-hex>/<hash>`) and symlinking each repo's blobs into
+it, so VieNeu's `.onnx` graphs and their external `.data` weights resolve into
+different directories — and onnxruntime refuses external data outside the
+model's own directory. Neither package was pinned; both arrived through
+`vieneu`. The fix has three parts:
+
+- the orchestrator launches the engine with `HF_HUB_DISABLE_SHARED_BLOBS=1`
+  (and `engine.py` sets it before anything imports the SDK);
+- `hfcache.unshare_repo_blobs()` converts an existing shared-store cache back to
+  real per-repo files (hard links, no download) before the model loads;
+- `onnxruntime` and `huggingface_hub` are now pinned in `uvRequirements.ts`.
+
+Verified both ways on macOS: a broken cache healed offline, and a fresh install
+on `huggingface_hub` 2.4.0 + onnxruntime 1.31.1.
+
 ## How it fits the app
 
 - **Catalog**: `enginePackCatalog.ts` → pack `tts-neural` (`packKind: 'python-uv'`).

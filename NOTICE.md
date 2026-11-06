@@ -141,8 +141,11 @@ community **GGUF requants** of Google's `google/translategemma-*-it` models.
 
 The shipping Vietnamese neural voice pack is **Apache-2.0** (engine code and v3
 weights), and uses the MOSS-Audio-Tokenizer-Nano codec and the sea-g2p
-phonemizer — verify those components' licenses if you redistribute. Output
-carries an imperceptible AI-audio watermark.
+phonemizer — verify those components' licenses if you redistribute. Output is
+**not** watermarked: earlier versions of this notice said it was, but the pinned
+`vieneu` 3.0.5 depends on an unrelated PyPI package called `perth` rather than
+Resemble AI's `resemble-perth`, so its watermarker never initializes (details in
+[`workers/tts-engine-neural/README.md`](workers/tts-engine-neural/README.md)).
 
 > A withdrawn v2 pack (`tts-neural-v2`, in `DISABLED_PACK_IDS`, never offered in
 > Settings) bundled **CC BY-NC 4.0** reference voices — non-commercial only, with

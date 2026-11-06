@@ -24,8 +24,13 @@ import logging
 import random
 import threading
 
-from . import voices
+from . import hfcache, voices
 from .wavio import write_pcm16_wav
+
+# Before anything can import huggingface_hub (the SDK does, lazily, on load):
+# its shared blob store splits a model's .onnx and .data across directories,
+# which onnxruntime refuses to load. See hfcache.py.
+hfcache.disable_shared_blob_store()
 
 logger = logging.getLogger("vd_tts_engine.engine")
 
@@ -145,6 +150,12 @@ class VieNeuEngine:
         with self._lock:
             if self._backend is not None:
                 return
+            # Repair a cache written while the shared blob store was on (every
+            # fresh install from 2026-09-24 until this fix): no network, and a
+            # no-op on an already-flat cache.
+            hub = hfcache.hub_dir()
+            if hub is not None:
+                hfcache.unshare_repo_blobs(hub)
             try:
                 from vieneu import Vieneu  # type: ignore
 

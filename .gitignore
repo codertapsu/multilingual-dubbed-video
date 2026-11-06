@@ -94,3 +94,6 @@ Thumbs.db
 # Apple signing + notarization credentials. Only the .example is committed;
 # the filled-in file holds an app-specific password and must never be staged.
 /scripts/apple-credentials.env
+
+# workers/tts-engine-neural/scripts/smoke_test.py writes its clip to the CWD.
+smoke_out.wav

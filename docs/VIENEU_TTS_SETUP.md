@@ -37,8 +37,10 @@ There is **one** VieNeu pack, installed in one click from Settings → Engines:
 | **Languages** | Vietnamese (it also code‑switches English). |
 | **Default?** | For Vietnamese projects the wizard pre‑selects `tts-neural` **once its pack is installed**; otherwise Piper, so dubbing works out of the box. |
 
-> Output carries an **inaudible** watermark identifying it as AI‑generated speech.
-> This is intentional (disclosure) and doesn't affect what you hear.
+> Output is **not** watermarked. This page used to say every clip carried an
+> inaudible AI-speech watermark; the pinned `vieneu` 3.0.5 never applies one (it
+> depends on an unrelated PyPI package named `perth`, not Resemble's
+> `resemble-perth`). See [`workers/tts-engine-neural/README.md`](../workers/tts-engine-neural/README.md).
 
 ---
 
@@ -134,8 +136,7 @@ detect speakers on its own).
 - **If a line can't be synthesized** (e.g. the model isn't ready), that line is
   filled with **silence** rather than failing the whole dub — you'll see it flagged
   so you can regenerate it.
-- **Watermark:** every VieNeu clip carries an **inaudible** watermark identifying
-  it as AI‑generated speech.
+- **Watermark:** none — see the note under "At a glance" above.
 
 ---
 

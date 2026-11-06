@@ -55,6 +55,14 @@ function neuralTtsEnv(packDir: string, variant: 'v2' | 'v3'): Record<string, str
     VD_PACK_DIR: packDir,
     HF_HOME: path.join(packDir, 'hf'),
     VIENEU_VARIANT: variant,
+    // huggingface_hub >= 1.33 (2026-09-24) stores Xet files in a cache-wide
+    // shared store, symlinking each repo's blobs into `<hub>/blobs/<2-hex>/`.
+    // VieNeu's .onnx graphs and their external .data weights then resolve into
+    // DIFFERENT directories and onnxruntime refuses them ("External data path
+    // escapes model directory") — every fresh pack install since that release
+    // could download the model but never load it. Opt out; the engine also
+    // repairs caches written before this was set (vd_tts_engine/hfcache.py).
+    HF_HUB_DISABLE_SHARED_BLOBS: '1',
   };
 }
 

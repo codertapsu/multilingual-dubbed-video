@@ -15,6 +15,7 @@
 //! streamed to the webview directly via SSE (`/projects/:id/events`,
 //! `/setup/events`) and is NOT routed through Rust.
 
+mod activity;
 mod commands;
 mod logging;
 mod orchestrator_client;
@@ -93,6 +94,10 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 maybe_auto_update(app_handle).await;
             });
+
+            // Keep the machine awake + show Dock/taskbar progress while any dub
+            // runs (activity.rs). Polls the orchestrator; harmless when it's down.
+            activity::spawn(app.handle().clone());
 
             Ok(())
         })

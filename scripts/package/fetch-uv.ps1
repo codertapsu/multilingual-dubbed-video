@@ -24,7 +24,7 @@ param(
   # when no sidecar is bundled, verifying a per-platform sha256 pinned in
   # packages/node-orchestrator/src/engines/uvBootstrap.ts. Keep the two in
   # lockstep - a unit test fails the build if they drift.
-  [string]$UvVersion = $(if ($env:UV_VERSION) { $env:UV_VERSION } else { "0.12.1" })
+  [string]$UvVersion = $(if ($env:UV_VERSION) { $env:UV_VERSION } else { "0.13.7" })
 )
 
 $ErrorActionPreference = "Stop"

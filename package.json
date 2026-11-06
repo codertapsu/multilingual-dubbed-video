@@ -42,16 +42,16 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/node": "26.0.1",
-    "@typescript-eslint/eslint-plugin": "8.70.0",
-    "@typescript-eslint/parser": "8.70.0",
+    "@types/node": "26.6.6",
+    "@typescript-eslint/eslint-plugin": "8.72.1",
+    "@typescript-eslint/parser": "8.72.1",
     "esbuild": "0.28.2",
-    "eslint": "10.10.0",
+    "eslint": "10.14.0",
     "postject": "1.0.0-alpha.6",
-    "prettier": "3.9.7",
-    "tsx": "4.23.13",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.70.0",
-    "vitest": "4.1.11"
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
   }
 }

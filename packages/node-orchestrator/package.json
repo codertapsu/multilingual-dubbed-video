@@ -34,15 +34,15 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@fastify/cors": "11.3.0",
+    "@fastify/cors": "11.4.1",
     "@videodubber/media-worker": "workspace:*",
     "@videodubber/shared": "workspace:*",
-    "fastify": "5.12.5"
+    "fastify": "5.12.8"
   },
   "devDependencies": {
-    "@types/node": "26.0.1",
-    "tsx": "4.23.13",
+    "@types/node": "26.6.6",
+    "tsx": "4.23.15",
     "typescript": "6.0.3",
-    "vitest": "4.1.11"
+    "vitest": "5.1.0"
   }
 }

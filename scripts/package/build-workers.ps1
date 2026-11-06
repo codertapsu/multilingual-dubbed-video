@@ -23,7 +23,7 @@
 
   So the release build no longer touches the dev venvs. It creates a THROWAWAY venv
   per worker from the standalone CPython the repo already bundles
-  (apps\desktop\src-tauri\resources\python\cpython-3.12.13-*, the same interpreter
+  (apps\desktop\src-tauri\resources\python\cpython-3.12.16-*, the same interpreter
   the engine packs use at runtime), installs that worker's requirements.txt into it,
   and freezes from there. build-sidecars.ps1 stages uv and that CPython BEFORE
   calling this script for exactly that reason; if either is missing this script

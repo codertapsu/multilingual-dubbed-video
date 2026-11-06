@@ -41,7 +41,7 @@ import { AppErrorException } from '@videodubber/shared';
  * To bump: change this, re-read the `.sha256` assets from the GitHub release,
  * update the table below, and update both scripts.
  */
-export const UV_VERSION = '0.12.1';
+export const UV_VERSION = '0.13.7';
 
 /** Where Astral publishes the release assets. */
 const UV_RELEASE_BASE = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}`;
@@ -60,27 +60,27 @@ interface UvArtifact {
 const UV_ARTIFACTS: Record<string, UvArtifact> = {
   'win32-x64': {
     asset: 'uv-x86_64-pc-windows-msvc.zip',
-    sha256: '8fcb0cb46e1229065e344758980924e569bef5882ef45f46fada8fb24e06b74a',
+    sha256: '0cdc5b38fe5a8168ed6a25814f5ba43c21d313dd3187314fccb37b7cec46e021',
   },
   'win32-arm64': {
     asset: 'uv-aarch64-pc-windows-msvc.zip',
-    sha256: '9bc7c18e616230fa2dc6fb24bc3afde18a95c2b5c9433de747e9502c66041568',
+    sha256: '505d9e65e7692bac3ddf98c66754aa26c5050c409c184af30a881a0a72cc85e3',
   },
   'darwin-arm64': {
     asset: 'uv-aarch64-apple-darwin.tar.gz',
-    sha256: '77d2906988e8074fd43f2f329ec452ebbf9b0c257ba1c66451c71de70a6baf42',
+    sha256: '81b811b57e4624df7ed3aac148e0359100d9962f3d9dce00aec533dc2e086731',
   },
   'darwin-x64': {
     asset: 'uv-x86_64-apple-darwin.tar.gz',
-    sha256: '69d9f9a00337f25a50dcb13882052da08b8469bac11091c98c5694c3c6721467',
+    sha256: '20c47e4c1f630b8abaff8c291fa9b9aa300fef92c4fbff95adf198b55287cda7',
   },
   'linux-x64': {
     asset: 'uv-x86_64-unknown-linux-gnu.tar.gz',
-    sha256: '90b2f223fb69d19db49e117da601f64978593417988530aa733d456141b4bcbb',
+    sha256: 'c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83',
   },
   'linux-arm64': {
     asset: 'uv-aarch64-unknown-linux-gnu.tar.gz',
-    sha256: '769d373e146692c639b5fbaae33b331c297a32e03d30448772051902df52bbf4',
+    sha256: '71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc',
   },
 };
 

@@ -457,7 +457,7 @@ if (-not $pnpmProbe.Ok -or -not $pnpmVer) {
 
 # --- Python 3.12 -------------------------------------------------------------
 # 3.12 SPECIFICALLY. It is the interpreter this repo bundles
-# (apps\desktop\src-tauri\resources\python\cpython-3.12.13-*) and the one the
+# (apps\desktop\src-tauri\resources\python\cpython-3.12.16-*) and the one the
 # engine-pack venvs are built against. The last time a dev venv drifted to 3.13,
 # the frozen macOS workers only ran on macOS 26; the Windows equivalent is an
 # engine pack whose wheels do not match the runtime it will be loaded into.

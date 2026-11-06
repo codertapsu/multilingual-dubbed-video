@@ -8,7 +8,13 @@
 #
 # The old `piper-tts>=1.4` floor in build-workers.{sh,ps1} resolved to 1.8.0 on a
 # fresh venv — four minors past what the constraint's author was looking at —
-# silently, in the venv that freezes a GPL CLI. This is the version that froze
-# 0.9.0; bumping it is a reviewed commit.
+# silently, in the venv that freezes a GPL CLI. 1.4.2 froze 0.9.0 and 0.10.0;
+# bumping it is a reviewed commit.
+#
+# 1.8.0 (2026-11 refresh) was checked against the worker's CLI contract before it
+# landed: `--model`, `--output_file` and `--length_scale` are all still accepted
+# (as aliases of the new dashed spellings), stdin text in / 22.05 kHz mono s16le
+# WAV out is unchanged, and an A/B on vi_VN-vais1000-medium produced the same
+# duration and loudness as 1.4.2.
 -r build-requirements.txt
-piper-tts==1.4.2
+piper-tts==1.8.0

@@ -4,8 +4,12 @@ version = "0.10.0"
 description = "VideoDubber — local/offline-first desktop app that dubs videos into another language."
 authors = ["VideoDubber"]
 edition = "2021"
-# Tauri 2 requires a reasonably recent stable toolchain.
-rust-version = "1.77.2"
+# The floor our dependency tree actually needs: tauri 2.12 and
+# tauri-plugin-updater 2.14 both declare `rust_version = 1.90`. This used to say
+# 1.77.2 (Tauri 2.0's floor) long after the tree outgrew it, so an older
+# toolchain got a resolver error about a transitive crate instead of a clear
+# "this package needs Rust 1.90" from cargo.
+rust-version = "1.90"
 
 # ---------------------------------------------------------------------------
 # Tauri 2 standard crate layout.
@@ -61,10 +65,15 @@ serde_json = "1"
 # HTTP client used by `orchestrator_client.rs` to proxy commands to the
 # Node orchestrator (default http://127.0.0.1:5100). `json` feature gives us
 # `.json()` (de)serialization helpers.
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "rustls-tls",
-] }
+#
+# No TLS feature, deliberately: this client only ever speaks plain HTTP to the
+# loopback orchestrator. On 0.12 we carried `rustls-tls` for nothing, and once
+# tauri-plugin-updater moved to reqwest 0.13 the binary linked TWO reqwest
+# stacks. Matching the updater's major dedupes them. (Do not add `rustls` here
+# to "be safe": in 0.13 that feature means aws-lc-rs, whose build needs CMake +
+# NASM on the Windows release machine. The updater's own `rustls-no-provider`
+# + ring TLS is unaffected — cargo unifies features on the shared crate.)
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 
 # Async runtime. Tauri re-exports `tauri::async_runtime` (a tokio wrapper); we
 # also use tokio directly in commands.rs (oneshot channel bridging the dialog).

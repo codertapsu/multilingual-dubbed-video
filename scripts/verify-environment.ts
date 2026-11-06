@@ -283,7 +283,7 @@ async function checkPnpm(): Promise<CheckResult> {
 /**
  * Python must be 3.12 SPECIFICALLY — not ">= 3.12".
  *
- * The repo bundles CPython 3.12.13 (apps/desktop/src-tauri/resources/python/) and the
+ * The repo bundles CPython 3.12.16 (apps/desktop/src-tauri/resources/python/) and the
  * engine-pack venvs are built against it. A venv from a newer interpreter is exactly how
  * v0.8.1 shipped macOS workers whose extension modules were stamped `minos 26.0` and which
  * dyld then refused on every older Mac — the full autopsy is in

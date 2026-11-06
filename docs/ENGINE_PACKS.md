@@ -22,9 +22,19 @@ All download URLs are in the `ENGINE_PACKS` array in
 At the top of that file are the only knobs you normally touch:
 
 ```ts
-const LLAMA_CPP   = 'b9592';     // ggml-org/llama.cpp release tag
-const WHISPER_CPP = 'v1.8.6';    // ggml-org/whisper.cpp release tag
+const LLAMA_CPP         = 'b12110'; // ggml-org/llama.cpp BUILD tag (= stable v0.9.0)
+const WHISPER_CPP       = 'v1.9.5'; // display version
+const WHISPER_CPP_BUILD = 'b5454';  // the build tag that actually carries v1.9.5's assets
 ```
+
+> **Pin the build tag, not the stable tag.** Since 2026-10 both upstreams cut
+> semver "stable" releases whose GitHub release carries no binaries: llama.cpp's
+> `v0.9.0` ships only a `nightly-tag.txt` naming the `bNNNN` build it came from,
+> and whisper.cpp's `v1.9.5` has zero assets (its binaries are on build `b5454`,
+> same commit). To bump: open the stable release, read which build it names
+> (llama.cpp: download `nightly-tag.txt`; whisper.cpp: match `target_commitish`),
+> then take each asset's sha256 from the GitHub API's `digest` field on that
+> build's release — no download needed.
 
 Each pack lists one or more `artifacts`, each with a `url`, an optional `sha256`,
 and `archive: true` (extract the archive into the pack dir). To change a pack:

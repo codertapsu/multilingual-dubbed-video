@@ -117,7 +117,9 @@ installed app's `~/VideoDubber`.
 
 ## Platform constraints that have caused shipped bugs
 
-**Python must be 3.12, not ">= 3.12".** The bundled runtime is CPython 3.12.13 and engine-pack venvs
+**Python must be 3.12, not ">= 3.12".** The bundled runtime is CPython 3.12.16 (`fetch-python` runs
+`uv python install 3.12`, so the patch version is whatever the pinned uv knows — bumping uv moves it;
+re-check `minos` when it does) and engine-pack venvs
 are built against it. Freezing workers from a 3.13 interpreter stamped `minos 26.0` onto 120 bundled
 Mach-O files, so every published macOS build through v0.8.1 had a backend that could not start on
 any Mac below 26 — while the PyInstaller launcher itself looked fine at `minos 11.0`.

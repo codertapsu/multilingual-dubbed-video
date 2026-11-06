@@ -30,13 +30,24 @@
 import type { EnginePackInfo } from '@videodubber/shared';
 
 // Pinned upstream releases (single source of truth for the URL templates).
-// Verified against the GitHub releases on 2026-06-11.
-const LLAMA_CPP = 'b9592'; // github.com/ggml-org/llama.cpp/releases
-const WHISPER_CPP = 'v1.8.6'; // github.com/ggml-org/whisper.cpp/releases
+// Verified against the GitHub releases on 2026-11-05.
+//
+// BOTH UPSTREAMS NOW SPLIT "STABLE" FROM "WHERE THE BINARIES ARE". Since
+// 2026-10 llama.cpp cuts semver stable releases (v0.9.0 on 2026-11-04) whose
+// GitHub release carries no binaries — only a `nightly-tag.txt` naming the
+// `bNNNN` build it was cut from; the `bNNNN` builds (now marked prerelease)
+// still publish every platform asset. whisper.cpp does the same: the v1.9.5
+// release has ZERO assets, and the binaries live on build `b5454`, cut from the
+// identical commit (d1be6fde). So we pin the BUILD tag the stable release names
+// and record the stable version beside it. Pinning the stable tag itself would
+// 404 every Install button.
+const LLAMA_CPP = 'b12110'; // = llama.cpp v0.9.0 (its nightly-tag.txt) — github.com/ggml-org/llama.cpp/releases
+const WHISPER_CPP = 'v1.9.5'; // display version; binaries come from WHISPER_CPP_BUILD
+const WHISPER_CPP_BUILD = 'b5454'; // = whisper.cpp v1.9.5 (same target commit d1be6fde)
 
 /** Upstream release-asset download bases. */
 const LLAMA_DL = `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP}`;
-const WHISPER_DL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP}`;
+const WHISPER_DL = `https://github.com/ggml-org/whisper.cpp/releases/download/${WHISPER_CPP_BUILD}`;
 
 /**
  * The CUDA toolkit both Windows CUDA packs are built against, and the Windows
@@ -106,10 +117,14 @@ const GEMMA_IT_LICENSE_NOTE =
  *     `<|turn>`/`<turn|>` with thought channels; packSelection.ts maps each
  *     chat pack to its prompt format and the local-LLM provider renders it.
  * ggml-org publishes Q4_0/Q8_0 only (no Q4_K_M); Q4_0 is the intended 4-bit
- * target for this generation. Our pinned llama.cpp b9592 already runs the
- * arch (merged upstream 2026-04-02). Known upstream issue: PR #21587 (open)
- * fixes a tokenizer crash on ~8K-token prompts with NO newlines — our prompts
- * are newline-rich so it doesn't bite, but bump LLAMA_CPP once it lands.
+ * target for this generation. Every llama.cpp we have pinned since b9592 runs
+ * the arch (merged upstream 2026-04-02). Known upstream issue: Gemma 4's
+ * pre-tokenizer regex overflows the stack on very long spans. PR #21406
+ * (merged 2026-04-04; b9592 and b12110 both contain it) splits on newlines
+ * first, which is why our newline-rich prompts are safe. PR #21587 fixes the
+ * remaining case, ~8K tokens with NO newlines, and was still OPEN at the b12110
+ * (v0.9.0) bump on 2026-11-05. Don't feed a pack one giant newline-free block;
+ * re-check #21587 on the next bump.
  */
 const G4_12B_URL = 'https://huggingface.co/ggml-org/gemma-4-12B-it-GGUF/resolve/main/gemma-4-12B-it-Q4_0.gguf';
 const G4_26B_A4B_URL =
@@ -160,13 +175,17 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     // Built against CUDA 12.4 (see the artifact URL): an older driver aborts at
     // the first real kernel launch rather than failing to load.
     minNvidiaDriver: CUDA_MIN_DRIVER_WIN,
-    approxSizeMb: 90,
+    approxSizeMb: 685,
     artifacts: [
       {
-        // Upstream prebuilt (contains whisper-cli.exe / whisper-server.exe).
-        url: `${WHISPER_DL}/whisper-cublas-${CUDA_TOOLKIT}.0-bin-x64.zip`,
-        sha256: '63b70c91fe2fd7449865c45f6422ab628439eacc6985d8309c77bfb65cc68a19',
-        approxSizeMb: 90,
+        // Upstream prebuilt. Renamed in 1.9.x (was `whisper-cublas-12.4.0-bin-
+        // x64.zip`) and now SELF-CONTAINED: it ships cuBLAS, cuBLASLt, cudart and
+        // nvrtc beside `Release/whisper-server.exe` (read from the zip's central
+        // directory on 2026-11-05), which is why it grew from ~90 MB to ~685 MB.
+        // findFile() searches 4 levels deep, so the `Release/` folder is fine.
+        url: `${WHISPER_DL}/whisper-bin-win-cuda-${CUDA_TOOLKIT}.0-x64.zip`,
+        sha256: 'afef0b881c500958921c3f5523b50e59ee2ec9b6f5cbd25b324c51ed308a957a',
+        approxSizeMb: 685,
         destPath: '.',
         archive: true,
       },
@@ -192,12 +211,12 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     // No RAM gate on the runtime binary itself (it's tiny); the TranslateGemma
     // model pack carries the real memory requirement, so the 4B model stays
     // reachable on 8 GB Apple Silicon instead of being blanket-gated at 16 GB.
-    approxSizeMb: 30,
+    approxSizeMb: 17,
     artifacts: [
       {
         url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-macos-arm64.tar.gz`,
-        sha256: 'e395d9f746bc1b04e3e019295e76a5158de3ecc837a2f08b7fe6e76ec5b42729',
-        approxSizeMb: 30,
+        sha256: '4f5b8de12e0b9516658ca6a5764c6ffb3d7c659c3dd538556b1413c7b4050662',
+        approxSizeMb: 17,
         destPath: '.',
         archive: true,
       },
@@ -231,12 +250,15 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     // ran the byte-for-byte identical allocation. NVIDIA's minor-version
     // compatibility did not hold, and the symptom carries no hint of a driver.
     minNvidiaDriver: CUDA_MIN_DRIVER_WIN,
-    approxSizeMb: 420,
+    approxSizeMb: 680,
     artifacts: [
       {
+        // ~287 MB since the 0.9.x line: ggml-cuda.dll alone unpacks to ~600 MB
+        // (kernels for more GPU generations). It still carries NO CUDA runtime —
+        // that is the separate cudart zip below.
         url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-win-cuda-${CUDA_TOOLKIT}-x64.zip`,
-        sha256: 'd00b3e988f0fbd03d055904eb361b1065cfa014e1860366d42eb599af4016260',
-        approxSizeMb: 30,
+        sha256: '1ce755bc3a061889234048f88e33328e17971eaad73c4666cfeb26026b317fee',
+        approxSizeMb: 287,
         destPath: '.',
         archive: true,
       },
@@ -266,12 +288,12 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     accel: 'vulkan',
     tier: 'balanced',
     // RAM gate lives on the model pack, not the runtime binary (see metal pack).
-    approxSizeMb: 40,
+    approxSizeMb: 38,
     artifacts: [
       {
         url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-win-vulkan-x64.zip`,
-        sha256: '126667a2b89892fdc0c3b0b95cba0783bbdfaa69d8fd13e3d8da5c4c1307c8f4',
-        approxSizeMb: 40,
+        sha256: '9732a5e48887ca54d0bfe4af4324dc85fd56cd8cda19b52df3542fa6ebe6874f',
+        approxSizeMb: 38,
         destPath: '.',
         archive: true,
       },
@@ -292,12 +314,12 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     accel: 'vulkan',
     tier: 'balanced',
     // RAM gate lives on the model pack, not the runtime binary (see metal pack).
-    approxSizeMb: 50,
+    approxSizeMb: 36,
     artifacts: [
       {
         url: `${LLAMA_DL}/llama-${LLAMA_CPP}-bin-ubuntu-vulkan-x64.tar.gz`,
-        sha256: '414cf74f8e9e185c2903b4e7520b0479b723f60ae501fb16ed3a3cf89fd59719',
-        approxSizeMb: 50,
+        sha256: 'a5d741940956ec62e8783aee7e5a4c7c761af867d6f027c3277a51e1a3ac59b0',
+        approxSizeMb: 36,
         destPath: '.',
         archive: true,
       },

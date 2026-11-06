@@ -11,7 +11,10 @@
 # morning", with no diff to review and no record of which version froze which
 # release.
 #
-# This is the version that froze 0.9.0 (read out of the maintainer's worker
-# venvs). Bumping it is a reviewed commit, not a side effect of running a build.
-pyinstaller==6.21.0
+# 6.21.0 froze 0.9.0 and 0.10.0 (read out of the maintainer's worker venvs).
+# 6.22.3 is the 2026-11 refresh. Bumping it is a reviewed commit, not a side
+# effect of running a build — and because it decides the macOS `_internal/`
+# layout, re-run `pnpm release:check` and inspect one frozen worker's tree before
+# the first release cut with a new version.
+pyinstaller==6.22.3
 

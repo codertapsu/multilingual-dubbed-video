@@ -24,53 +24,53 @@
   ],
 
   "ffmpeg": {
-    "comment": "martin-riedl.de macOS builds are static + notarized and link only against system frameworks (fetch-ffmpeg's assert_portable re-checks that). BtbN win64-gpl/linux64-gpl are static with libass + libx264/x265; dated autobuild-* tags are immutable once published, unlike the rolling `latest` release whose assets are deleted and re-uploaded hourly.",
+    "comment": "martin-riedl.de macOS builds are static + notarized and link only against system frameworks (fetch-ffmpeg's assert_portable re-checks that). BtbN win64-gpl/linux64-gpl are static with libass + libx264/x265; dated autobuild-* tags are immutable once published, unlike the rolling `latest` release whose assets are deleted and re-uploaded hourly. Since the 2026-11 refresh Windows/Linux pin the RELEASE-BRANCH build each autobuild also carries (`ffmpeg-n9.0.2-…-gpl-9.0`: the 9.0 stable branch plus its backports) instead of the `ffmpeg-N-…` master snapshot, so all four targets ship the same 9.0.2 stable line. fetch-ffmpeg locates any `ffmpeg-*/bin/` folder, so the different archive name needs no script change.",
     "aarch64-apple-darwin": {
-      "version": "9.0.1",
+      "version": "9.0.2",
       "ffmpeg": {
-        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1787073674_9.0.1/ffmpeg.zip",
-        "sha256": "8287a1b2229e05eb41859f073e18e6c52c60a778f2f5e6881070fe51b79407fe"
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+        "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924"
       },
       "ffprobe": {
-        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1787073674_9.0.1/ffprobe.zip",
-        "sha256": "102a26b8940a053298d9929bfaae71e4b6ef65ba5f19a99a88c433108560741a"
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
+        "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6"
       }
     },
     "x86_64-apple-darwin": {
-      "version": "9.0.1",
+      "version": "9.0.2",
       "ffmpeg": {
-        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1787081194_9.0.1/ffmpeg.zip",
-        "sha256": "5bdead62ff504ab9b447cc72b212c4fb481e3f7de5877d427a51bee8136dda40"
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip",
+        "sha256": "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4"
       },
       "ffprobe": {
-        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1787081194_9.0.1/ffprobe.zip",
-        "sha256": "34511bbcf1988ad2886023bf5ace4f44cf62e6defeb3d194d6f7619e5b061f7f"
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffprobe.zip",
+        "sha256": "2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd"
       }
     },
     "x86_64-pc-windows-msvc": {
-      "version": "autobuild-2026-09-17-13-19 (N-126626-g7070fe638e)",
+      "version": "9.0.2 (n9.0.2-47-gb204e94e90, autobuild-2026-11-04-12-51)",
       "archive": {
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-17-13-19/ffmpeg-N-126626-g7070fe638e-win64-gpl.zip",
-        "sha256": "26e9035f26ddc871512a956e29da036e300dd1f16ae7dd53327bef7aa627b7b8"
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-04-12-51/ffmpeg-n9.0.2-47-gb204e94e90-win64-gpl-9.0.zip",
+        "sha256": "db2867364898bf8b68f5404b998165dfd8d31c9bfabc2a35d6e0c941bf33c1ea"
       }
     },
     "x86_64-unknown-linux-gnu": {
-      "version": "autobuild-2026-09-17-13-19 (N-126626-g7070fe638e)",
+      "version": "9.0.2 (n9.0.2-47-gb204e94e90, autobuild-2026-11-04-12-51)",
       "archive": {
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-17-13-19/ffmpeg-N-126626-g7070fe638e-linux64-gpl.tar.xz",
-        "sha256": "c4efd28eed88d68edab94210af35287f12d9b30ea52f80e743d5aa5078d9293c"
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-04-12-51/ffmpeg-n9.0.2-47-gb204e94e90-linux64-gpl-9.0.tar.xz",
+        "sha256": "7e4d04689554492f579c34de8ef3c849c8d9023f65805341826590f52d413304"
       }
     }
   },
 
   "uv": {
     "comment": "MIRROR of UV_ARTIFACTS in packages/node-orchestrator/src/engines/uvBootstrap.ts, keyed by Rust triple instead of platform-arch. The version lives in fetch-uv.{sh,ps1} (a unit test keeps it in lockstep with the orchestrator's UV_VERSION); only the hashes live here.",
-    "version": "0.12.1",
-    "aarch64-apple-darwin": "77d2906988e8074fd43f2f329ec452ebbf9b0c257ba1c66451c71de70a6baf42",
-    "x86_64-apple-darwin": "69d9f9a00337f25a50dcb13882052da08b8469bac11091c98c5694c3c6721467",
-    "x86_64-pc-windows-msvc": "8fcb0cb46e1229065e344758980924e569bef5882ef45f46fada8fb24e06b74a",
-    "aarch64-pc-windows-msvc": "9bc7c18e616230fa2dc6fb24bc3afde18a95c2b5c9433de747e9502c66041568",
-    "x86_64-unknown-linux-gnu": "90b2f223fb69d19db49e117da601f64978593417988530aa733d456141b4bcbb",
-    "aarch64-unknown-linux-gnu": "769d373e146692c639b5fbaae33b331c297a32e03d30448772051902df52bbf4"
+    "version": "0.13.7",
+    "aarch64-apple-darwin": "81b811b57e4624df7ed3aac148e0359100d9962f3d9dce00aec533dc2e086731",
+    "x86_64-apple-darwin": "20c47e4c1f630b8abaff8c291fa9b9aa300fef92c4fbff95adf198b55287cda7",
+    "x86_64-pc-windows-msvc": "0cdc5b38fe5a8168ed6a25814f5ba43c21d313dd3187314fccb37b7cec46e021",
+    "aarch64-pc-windows-msvc": "505d9e65e7692bac3ddf98c66754aa26c5050c409c184af30a881a0a72cc85e3",
+    "x86_64-unknown-linux-gnu": "c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83",
+    "aarch64-unknown-linux-gnu": "71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc"
   }
 }

@@ -7,9 +7,10 @@ written — minutes, on a long video — while the orchestrator probes health wi
 a 3 s budget and gates readiness on that same probe. A worker that was busy
 dubbing was therefore reported dead, and a second run was blocked behind it.
 
-The test drives the real ASGI app through httpx so the route dispatch (coroutine
+The test drives the real ASGI app through httpx2 so the route dispatch (coroutine
 vs threadpool) is exercised for real; a TestClient call is synchronous and could
-not observe overlap.
+not observe overlap. (httpx2 is the successor Starlette's TestClient prefers
+since 1.10 — it deprecates plain httpx — and keeps the same client API.)
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from __future__ import annotations
 import asyncio
 import threading
 
-import httpx
+import httpx2 as httpx
 
 # How long the fake synthesis blocks. Comfortably longer than the orchestrator's
 # 3 s health budget would be slow to test; 1.5 s is enough to prove the loop is

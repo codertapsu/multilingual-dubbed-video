@@ -25,7 +25,7 @@
 #     through their "exports", which point at dist/, not src/;
 #   * setup-local-models.sh builds its venvs from whatever `python3` happens to
 #     be. On this maintainer's Mac that is 3.14; the repo's bundled runtime is
-#     CPython 3.12.13. A 3.13 venv is exactly what shipped v0.8.1's macOS
+#     CPython 3.12.16. A 3.13 venv is exactly what shipped v0.8.1's macOS
 #     workers with `minos 26.0` extension modules that no older Mac could load
 #     (see scripts/package/build-workers.sh for the full autopsy). So this
 #     script resolves a REAL 3.12 and hands it over as PYTHON_PATH rather than
@@ -312,7 +312,7 @@ ${PNPM_FIX}"
 fi
 
 # --- Python 3.12 -------------------------------------------------------------
-# 3.12 SPECIFICALLY, not ">= 3.12". The repo bundles CPython 3.12.13
+# 3.12 SPECIFICALLY, not ">= 3.12". The repo bundles CPython 3.12.16
 # (apps/desktop/src-tauri/resources/python/) and the engine-pack venvs are built
 # against it; a venv from a newer interpreter is how v0.8.1 shipped macOS workers
 # that only ran on macOS 26. So we look for a real 3.12 and, further down, hand
@@ -376,7 +376,7 @@ if [ -n "${PYTHON_PATH_MISMATCH}" ] && [ -n "${PYTHON_RESOLVED}" ]; then
   OPTIONAL_MISSING=$((OPTIONAL_MISSING + 1))
   add_opt_fix "  * PYTHON_PATH is set to ${PYTHON_PATH} — which ${PYTHON_PATH_MISMATCH}.
     An explicit PYTHON_PATH wins, so the worker venvs WILL be built from it. The
-    repo bundles CPython 3.12.13 and the engine packs are built against 3.12; a
+    repo bundles CPython 3.12.16 and the engine packs are built against 3.12; a
     venv from anything else is what shipped v0.8.1's unloadable macOS workers.
     A usable 3.12 is already on this machine: ${PYTHON_RESOLVED}
     To use it instead:
@@ -396,18 +396,18 @@ else
   REQUIRED_MISSING=$((REQUIRED_MISSING + 1))
   MISSING_NAMES="${MISSING_NAMES} Python-3.12"
   case "${OS_KIND}" in
-    macos) add_fix "  * Python 3.12.x is required — the app bundles CPython 3.12.13 and the
+    macos) add_fix "  * Python 3.12.x is required — the app bundles CPython 3.12.16 and the
     worker venvs must match it. A 3.13+ venv produced macOS workers that only
     ran on macOS 26 (see scripts/package/build-workers.sh).
       brew install python@3.12
     Then re-run, or point this at it directly:
       PYTHON_PATH=${BREW_PREFIX}/opt/python@3.12/bin/python3.12 pnpm bootstrap" ;;
-    linux) add_fix "  * Python 3.12.x is required — the app bundles CPython 3.12.13 and the
+    linux) add_fix "  * Python 3.12.x is required — the app bundles CPython 3.12.16 and the
     worker venvs must match it.
     Distro package names differ; the distro-agnostic route is pyenv:
-      pyenv install 3.12.13
+      pyenv install 3.12.16
     See docs/LOCAL_SETUP.md. Then:
-      PYTHON_PATH=\$(pyenv prefix 3.12.13)/bin/python3.12 pnpm bootstrap" ;;
+      PYTHON_PATH=\$(pyenv prefix 3.12.16)/bin/python3.12 pnpm bootstrap" ;;
     *)     add_fix "  * Python 3.12.x is required. See docs/LOCAL_SETUP.md, then re-run with
       PYTHON_PATH=/path/to/python3.12 pnpm bootstrap" ;;
   esac

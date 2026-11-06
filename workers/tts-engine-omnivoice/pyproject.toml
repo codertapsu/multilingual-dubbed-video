@@ -27,7 +27,7 @@ omnivoice = [
 ]
 dev = [
   "pytest>=8.0",
-  "httpx>=0.27",
+  "httpx2>=2.16,<3",  # Starlette >=1.10 TestClient prefers httpx2 (httpx is deprecated there)
   "numpy>=1.26",
 ]
 

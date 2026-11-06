@@ -31,7 +31,7 @@
 #
 # So the release build no longer touches the dev venvs at all. It creates a
 # THROWAWAY venv per worker from the standalone CPython the repo already bundles
-# (apps/desktop/src-tauri/resources/python/cpython-3.12.13-*, minos 11.0 — the
+# (apps/desktop/src-tauri/resources/python/cpython-3.12.16-*, minos 11.0 — the
 # same interpreter the engine packs use at runtime, so macOS and Windows stop
 # shipping different Python versions), installs that worker's requirements.txt
 # into it, and freezes from there. A release is therefore a function of files in

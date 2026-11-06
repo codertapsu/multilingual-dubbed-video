@@ -138,8 +138,9 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     //   ggml_vulkan: Device memory allocation of size 1058781184 failed
     // and the engine never became healthy. Leaving it unset offloads as many
     // layers as actually fit — full offload on a big GPU or Apple Silicon,
-    // partial on a small one — instead of failing. (Both llama.cpp builds this
-    // catalog has ever pinned, b9581 and b9592, default to auto.)
+    // partial on a small one — instead of failing. (Every llama.cpp build this
+    // catalog has pinned — b9581, b9592, b12110 — defaults to auto: common.h
+    // `n_gpu_layers = -1`, `fit_params = true`, 1 GiB `fit_params_target`.)
     //
     // The context is protected by passing `-c 8192` EXPLICITLY: the fitter only
     // reduces n_ctx when the user left it at 0 (fit.cpp — `if (cparams->n_ctx ==

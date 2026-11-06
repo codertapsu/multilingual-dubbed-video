@@ -75,6 +75,13 @@ export STT_MODEL_CACHE_DIR="${STT_MODEL_CACHE_DIR:-${VIDEODUBBER_MODELS_DIR}/hug
 export HF_HOME="${HF_HOME:-${VIDEODUBBER_MODELS_DIR}/huggingface}"
 export PIPER_VOICES_DIR="${PIPER_VOICES_DIR:-${VIDEODUBBER_MODELS_DIR}/piper}"
 export ARGOS_PACKAGES_DIR="${ARGOS_PACKAGES_DIR:-${VIDEODUBBER_MODELS_DIR}/argos}"
+# The Piper binary, which sidecar.rs hands the shipped app's TTS worker. Dev never
+# set it, so unless you exported it yourself the worker reported piper=false and
+# dubbed every line with the silent fallback, even though bootstrap installs
+# piper into the tts-worker venv. Point at that one when nothing else is set.
+if [ -z "${PIPER_BINARY_PATH:-}" ] && [ -x "${ROOT_DIR}/workers/tts-worker/.venv/bin/piper" ]; then
+  export PIPER_BINARY_PATH="${ROOT_DIR}/workers/tts-worker/.venv/bin/piper"
+fi
 mkdir -p "${VIDEODUBBER_PROJECTS_DIR}" "${VIDEODUBBER_MODELS_DIR}" "${VIDEODUBBER_CACHE_DIR}"
 info "Dev data home: ${VIDEODUBBER_DEV_HOME} (isolated from the installed app's ~/VideoDubber)"
 

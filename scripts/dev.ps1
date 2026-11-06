@@ -113,6 +113,12 @@ $CacheDir    = Set-DefaultEnv 'VIDEODUBBER_CACHE_DIR'    (Join-Path $DevHome 'ca
 [void](Set-DefaultEnv 'HF_HOME'             (Join-Path $ModelsDir 'huggingface'))
 [void](Set-DefaultEnv 'PIPER_VOICES_DIR'    (Join-Path $ModelsDir 'piper'))
 [void](Set-DefaultEnv 'ARGOS_PACKAGES_DIR'  (Join-Path $ModelsDir 'argos'))
+# The Piper binary, which sidecar.rs hands the shipped app's TTS worker. Dev never
+# set it, so unless you exported it yourself the worker reported piper=false and
+# dubbed every line with the silent fallback, even though bootstrap installs
+# piper.exe into the tts-worker venv. Point at that one when nothing else is set.
+$VenvPiper = Join-Path $RootDir 'workers\tts-worker\.venv\Scripts\piper.exe'
+if (Test-Path $VenvPiper) { [void](Set-DefaultEnv 'PIPER_BINARY_PATH' $VenvPiper) }
 foreach ($d in @($ProjectsDir, $ModelsDir, $CacheDir)) {
     New-Item -ItemType Directory -Force -Path $d | Out-Null
 }

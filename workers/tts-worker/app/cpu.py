@@ -9,6 +9,11 @@ many cores it had. Measured on an M4 Pro (8 performance + 4 efficiency cores),
     small               4.74 s        4.20 s                 7.91 s
     large-v3-turbo     10.24 s        7.02 s  (-31%)            —
 
+The same shape, smaller, on Windows: an i5-13400F (6 P + 4 E cores, 16
+threads), 84 s of speech, small, mean of three warm runs — 4 threads 71.4 s,
+6 (P-cores) 68.1 s (-5%), 16 (all threads) 76.0 s (+12% vs 6). The probe
+returned 6 there, read from the real GetLogicalProcessorInformationEx records.
+
 Two lessons, both encoded below:
 
 1. More threads help — up to the number of PERFORMANCE cores.

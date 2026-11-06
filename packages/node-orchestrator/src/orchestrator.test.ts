@@ -130,6 +130,26 @@ describe('LocalJobOrchestrator extras', () => {
 
     const segments = makeSegments([[0, 1000, 'Hello']]);
     await fsp.writeFile(paths.translatedJson, JSON.stringify({ segments }), 'utf8');
+    // A project that has been through alignment. (Regenerating BEFORE alignment
+    // ever ran must not create a one-entry aligned file — that would make the
+    // alignment step look complete; timeline.test.ts pins that case.)
+    await fsp.writeFile(
+      paths.translatedAlignedJson,
+      JSON.stringify([
+        {
+          segmentId: 'seg_0001',
+          startMs: 0,
+          endMs: 1000,
+          audioPath: paths.ttsSegment(1),
+          generatedDurationMs: 2000,
+          placedDurationMs: 1000,
+          speedRatio: 2,
+          overflowMs: 0,
+          status: 'needs-review',
+        },
+      ]),
+      'utf8',
+    );
 
     const { segment, alignment } = await orchestrator.synthesizeSingleSegment(project.id, 'seg_0001', {
       text: 'Xin chào các bạn',
@@ -139,13 +159,15 @@ describe('LocalJobOrchestrator extras', () => {
     expect(segment.durationMs).toBe(900);
     expect(alignment.status).toBe('ok'); // 900ms fits in 1000ms window
 
-    // Edited text persisted back to translated.json.
+    // Edited text persisted back to translated.json — and, being a hand edit,
+    // locked against automatic rewriting.
     const merged = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8'));
     expect(merged.segments[0].translatedText).toBe('Xin chào các bạn');
+    expect(merged.segments[0].locked).toBe(true);
 
-    // Aligned file updated.
+    // Aligned file updated with the fresh duration.
     const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8'));
-    expect(aligned[0].segmentId).toBe('seg_0001');
+    expect(aligned[0]).toMatchObject({ segmentId: 'seg_0001', generatedDurationMs: 900, status: 'ok' });
   });
 
   it('probe persists mediaInfo and rejects videos without audio', async () => {

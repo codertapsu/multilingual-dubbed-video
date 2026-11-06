@@ -29,6 +29,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   ENGINE_UNAVAILABLE: 503, // engine process not reachable
   CANCELLED: 409, // Conflict
   RUN_IN_PROGRESS: 409, // Conflict — a run is already active for this project
+  INVALID_EDIT: 400, // an editor patch broke a timeline invariant (order, bounds, rate)
   UNKNOWN: 500,
 };
 

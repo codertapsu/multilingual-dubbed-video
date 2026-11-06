@@ -14,6 +14,7 @@
  *               translated.vtt, translated.aligned.json
  *     render/output.mp4
  *     logs/pipeline.log
+ *     cache/waveform-original.json, filmstrip.jpg, filmstrip.json   (editor)
  */
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -65,6 +66,16 @@ export interface WorkspacePaths {
   readonly logsDir: string;
   readonly pipelineLog: string;
 
+  /** Editor caches (derived from the input; safe to delete, rebuilt on demand). */
+  readonly cacheDir: string;
+  /** Cached waveform peaks of the original audio. */
+  readonly waveformOriginalJson: string;
+  /** Cached filmstrip sprite + its layout. */
+  readonly filmstripJpg: string;
+  readonly filmstripJson: string;
+  /** Tempo-fitted dub clips for the editor preview (see renderFittedClip). */
+  readonly fittedClipsDir: string;
+
   /** Resolve a single TTS segment WAV path from a numeric index (1-based). */
   ttsSegment(index: number): string;
 }
@@ -94,6 +105,7 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
   const subtitlesDir = path.join(root, 'subtitles');
   const renderDir = path.join(root, 'render');
   const logsDir = path.join(root, 'logs');
+  const cacheDir = path.join(root, 'cache');
 
   return {
     root,
@@ -131,6 +143,12 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
 
     logsDir,
     pipelineLog: path.join(logsDir, 'pipeline.log'),
+
+    cacheDir,
+    waveformOriginalJson: path.join(cacheDir, 'waveform-original.json'),
+    filmstripJpg: path.join(cacheDir, 'filmstrip.jpg'),
+    filmstripJson: path.join(cacheDir, 'filmstrip.json'),
+    fittedClipsDir: path.join(cacheDir, 'fitted'),
 
     ttsSegment: (index: number) => path.join(ttsSegmentsDir, `segment_${padSegmentIndex(index)}.wav`),
   };

@@ -37,6 +37,7 @@ export type ErrorCode =
   | 'ENGINE_BUSY'
   | 'CANCELLED'
   | 'RUN_IN_PROGRESS'
+  | 'INVALID_EDIT'
   | 'UNKNOWN';
 
 /**
@@ -175,6 +176,11 @@ export const REMEDIATIONS: Record<ErrorCode, { remediation: string; docsRef: str
     remediation:
       'A pipeline run is already in progress for this project. Wait for it to finish, or cancel it, before changing settings or re-dubbing.',
     docsRef: 'docs/TROUBLESHOOTING.md#run-in-progress',
+  },
+  INVALID_EDIT: {
+    remediation:
+      'That edit cannot be applied: a line must start before it ends, stay inside the video, and keep its place between its neighbours. Undo the last change or adjust it and try again.',
+    docsRef: 'docs/USER_GUIDE.md#editing-a-dub',
   },
   UNKNOWN: {
     remediation:

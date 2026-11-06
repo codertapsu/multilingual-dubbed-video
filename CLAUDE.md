@@ -99,6 +99,19 @@ omitted `clip16kMono`, which is exactly what the runner's long-video chunking ga
 STT was dead in every shipped build — and no test could see it, because the fixture media service
 implements the method.
 
+### The studio editor
+
+The editor route is a multi-track timeline over the pipeline's own artifacts (no parallel
+state). `GET/PATCH /projects/:id/timeline` is its API; `workspace/timelineEdit.ts` holds the
+invariants — a line never moves past a neighbour or creates an overlap — and
+`apps/desktop/.../studio/timeline-math.ts` MIRRORS them so the UI never offers an edit the
+server refuses. Change one, change both. A timing edit re-fits every unit from the clip
+durations on disk (no re-synthesis) and also writes `source.json`. Lines carry `voiceId`,
+`speakingRate`, `locked` (auto-fit / refine never rewrite it) and `ttsStale`. Regenerating
+before alignment must not create a partial `translated.aligned.json`. Editor writes are
+atomic (`writeJsonAtomic` / `writeTextAtomic`). The desktop package now runs vitest for its
+pure modules (`*.spec.ts`, excluded from the Angular build) after the i18n check.
+
 ### Engine packs
 
 Optional downloaded engines (whisper.cpp, llama.cpp + chat models, neural TTS) installed on demand

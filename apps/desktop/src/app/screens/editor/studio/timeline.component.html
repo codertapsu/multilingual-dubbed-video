@@ -1,0 +1,162 @@
+<div class="tl-toolbar" role="toolbar" [attr.aria-label]="'studio.timeline' | translate">
+  <div class="group">
+    <button type="button" class="icon-btn" (click)="zoomBy(1 / 1.5)" [title]="'studio.zoom-out' | translate" [attr.aria-label]="'studio.zoom-out' | translate">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M20 20l-3.5-3.5"/></svg>
+    </button>
+    <input
+      type="range"
+      class="zoom"
+      min="0"
+      max="1000"
+      [value]="zoomSlider()"
+      (input)="onZoomSlider($event)"
+      [attr.aria-label]="'studio.zoom' | translate"
+    />
+    <button type="button" class="icon-btn" (click)="zoomBy(1.5)" [title]="'studio.zoom-in' | translate" [attr.aria-label]="'studio.zoom-in' | translate">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M11 8v6M20 20l-3.5-3.5"/></svg>
+    </button>
+    <button type="button" class="btn btn-ghost btn-sm" (click)="zoomToFit()">{{ 'studio.zoom-fit' | translate }}</button>
+  </div>
+  <div class="group">
+    <button type="button" class="icon-btn" [class.active]="snap()" (click)="snap.set(!snap())" [title]="'studio.snap-title' | translate" [attr.aria-pressed]="snap()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 0 0 12 0V3M6 7h4M14 7h4"/></svg>
+    </button>
+    <button type="button" class="icon-btn" [class.active]="follow()" (click)="follow.set(!follow())" [title]="'studio.follow-title' | translate" [attr.aria-pressed]="follow()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 9l-3 3 3 3M19 9l3 3-3 3"/></svg>
+    </button>
+    <span class="legend">
+      <i class="sw ok"></i>{{ 'studio.legend-fits' | translate }}
+      <i class="sw stretch"></i>{{ 'studio.legend-stretched' | translate }}
+      <i class="sw conflict"></i>{{ 'studio.legend-conflict' | translate }}
+      <i class="sw stale"></i>{{ 'studio.legend-stale' | translate }}
+    </span>
+  </div>
+</div>
+
+@if (importNote(); as note) {
+  <div class="import-note" role="status">{{ note }}</div>
+}
+
+<div class="tl-body" [class.file-over]="fileOver()" (dragover)="onFileDragOver($event)" (dragleave)="fileOver.set(false)" (drop)="onFileDrop($event)">
+  <div class="tl-headers" aria-hidden="true">
+    <div class="h ruler-h"></div>
+    <div class="h film-h">{{ 'studio.track-video' | translate }}</div>
+    <div class="h wave-h">{{ 'studio.track-original' | translate }}</div>
+    <div class="h src-h">{{ 'studio.track-source' | translate }}</div>
+    <div class="h sub-h">{{ 'studio.track-subtitles' | translate }}</div>
+    <div class="h dub-h">{{ 'studio.track-dub' | translate }}</div>
+  </div>
+
+  <div class="tl-scroll" #scroll (scroll)="onScroll()" (wheel)="onWheel($event)">
+    <div class="tl-content" [style.width.px]="contentWidth()">
+      <canvas
+        #ruler
+        class="lane ruler"
+        [style.left.px]="scrollLeft()"
+        (pointerdown)="onScrubStart($event)"
+        (pointermove)="onScrubMove($event)"
+        (pointerup)="onScrubEnd()"
+        (pointercancel)="onScrubEnd()"
+      ></canvas>
+      <canvas #film class="lane film" [style.left.px]="scrollLeft()" (pointerdown)="onScrubStart($event)" (pointermove)="onScrubMove($event)" (pointerup)="onScrubEnd()"></canvas>
+      <canvas #wave class="lane wave" [style.left.px]="scrollLeft()" (pointerdown)="onScrubStart($event)" (pointermove)="onScrubMove($event)" (pointerup)="onScrubEnd()"></canvas>
+
+      <!-- Source text: read-only, same timing as the subtitles (a reference lane). -->
+      <div class="track src" (pointerdown)="onTrackBackground($event)">
+        @for (v of visibleLines(); track v.seg.id) {
+          <div
+            class="cue src-cue"
+            [class.sel]="isSelected(v.seg.id)"
+            [style.left.px]="x(v.seg.startMs)"
+            [style.width.px]="width(v.seg.startMs, v.seg.endMs)"
+            (pointerdown)="$event.stopPropagation(); store.select(v.seg.id, $event.shiftKey ? 'range' : $event.metaKey || $event.ctrlKey ? 'toggle' : 'replace')"
+            [title]="v.seg.sourceText"
+          >
+            <span class="txt">{{ v.seg.sourceText }}</span>
+          </div>
+        }
+      </div>
+
+      <!-- Subtitles: drag to move, drag an edge to trim, drop a voice on it. -->
+      <div class="track sub" (pointerdown)="onTrackBackground($event)">
+        @for (v of visibleLines(); track v.seg.id) {
+          <div
+            class="cue sub-cue"
+            [class.sel]="isSelected(v.seg.id)"
+            [class.problem]="v.line.problem"
+            [class.stale]="v.line.stale"
+            [class.locked]="v.line.locked"
+            [class.drop]="dropTarget() === v.seg.id"
+            [class.tiny]="tiny()"
+            [style.left.px]="x(v.seg.startMs)"
+            [style.width.px]="width(v.seg.startMs, v.seg.endMs)"
+            (pointerdown)="onCueDown($event, v.seg.id, 'move')"
+            (pointermove)="onDragMove($event)"
+            (pointerup)="onDragEnd($event)"
+            (pointercancel)="onDragEnd($event)"
+            (dblclick)="onCueDblClick(v.seg.id)"
+            (dragover)="onDragOver($event, v.seg.id)"
+            (dragleave)="onDragLeave(v.seg.id)"
+            (drop)="onVoiceDrop($event, [v.seg.id])"
+            [attr.aria-label]="'studio.line-n' | translate: { n: v.line.n }"
+            [title]="v.line.text"
+          >
+            @if (!tiny()) {
+              <i class="handle l" (pointerdown)="onCueDown($event, v.seg.id, 'start')" (pointermove)="onDragMove($event)" (pointerup)="onDragEnd($event)"></i>
+              <span class="n">{{ v.line.n }}</span>
+              <span class="txt">{{ v.line.text || ('studio.empty-line' | translate) }}</span>
+              @if (v.seg.voiceId) {
+                <span class="voice-dot" [title]="v.seg.voiceId"></span>
+              }
+              <i class="handle r" (pointerdown)="onCueDown($event, v.seg.id, 'end')" (pointermove)="onDragMove($event)" (pointerup)="onDragEnd($event)"></i>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- Dub clips: one per synthesis unit; its width is what it PLAYS for. -->
+      <div class="track dub" (pointerdown)="onTrackBackground($event)">
+        @for (u of visibleUnits(); track u.id) {
+          <div
+            [class]="'clip ' + unitClass(u)"
+            [class.sel]="unitSelected(u)"
+            [class.stale]="u.stale"
+            [class.busy]="store.busy().has(u.id)"
+            [class.playing]="playback.activeClipIds().has(u.id)"
+            [class.drop]="dropTarget() === u.id"
+            [style.left.px]="x(u.startMs)"
+            [style.width.px]="width(u.startMs, u.startMs + (u.placedDurationMs || u.endMs - u.startMs))"
+            (pointerdown)="onUnitDown($event, u)"
+            (pointermove)="onDragMove($event)"
+            (pointerup)="onDragEnd($event)"
+            (pointercancel)="onDragEnd($event)"
+            (dragover)="onDragOver($event, u.id)"
+            (dragleave)="onDragLeave(u.id)"
+            (drop)="onVoiceDrop($event, u.segmentIds)"
+            [title]="u.note ?? ''"
+          >
+            <!-- The window it had to fit: a clip running past it is an overlap. -->
+            <i class="window" [style.width.px]="width(u.startMs, u.endMs)"></i>
+            <span class="txt">
+              <span class="ln">#{{ lineNo(u.segmentIds[0]!) }}{{ u.segmentIds.length > 1 ? '–' + lineNo(u.segmentIds[u.segmentIds.length - 1]!) : '' }}</span>
+              @if (u.speedRatio > 1.001) {
+                <b>{{ u.speedRatio.toFixed(2) }}×</b>
+              }
+              @if (u.segmentIds.length > 1) {
+                {{ 'studio.merged-n' | translate: { n: u.segmentIds.length } }}
+              }
+            </span>
+          </div>
+        }
+      </div>
+
+      @if (snapGuideMs(); as g) {
+        <div class="snap-guide" [style.left.px]="x(g)"></div>
+      }
+      @if (dragTip(); as tip) {
+        <div class="drag-tip" [style.left.px]="x(tip.ms)">{{ tip.text }}</div>
+      }
+      <div class="playhead" [style.transform]="'translateX(' + playheadX() + 'px)'"><i></i></div>
+    </div>
+  </div>
+</div>

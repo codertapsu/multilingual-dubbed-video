@@ -74,9 +74,9 @@
 }
 
 .test-ok {
-  color: var(--vd-ok, #2e7d32);
+  color: var(--vd-success);
 }
 
 .test-fail {
-  color: var(--vd-danger, #c62828);
+  color: var(--vd-danger);
 }

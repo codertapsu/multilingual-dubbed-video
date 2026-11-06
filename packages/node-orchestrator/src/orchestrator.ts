@@ -9,6 +9,7 @@
  * AbortController) and composes the {@link PipelineRunner} from injected deps.
  */
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 import {
   AppErrorException,
   toAppError,
@@ -28,13 +29,23 @@ import {
   type QueueState,
   type RunScheduleResult,
   type RenderFinalVideoResult,
+  type SegmentPatch,
   type SystemProfile,
+  type TimelineDocument,
+  type TimelineFilmstrip,
+  type TimelineUnit,
+  type TimelineWaveform,
   type TranscriptSegment,
   type TranslationDocContext,
   type TtsSegment,
 } from '@videodubber/shared';
-import { alignSegment, type AlignInputSegment } from './alignment/align.js';
-import type { SynthesisGroup, SynthesisGroupsArtifact } from './pipeline/grouping.js';
+import { alignSegments, type AlignSettings } from './alignment/align.js';
+import {
+  rateForGroup,
+  voiceForGroup,
+  type SynthesisGroup,
+  type SynthesisGroupsArtifact,
+} from './pipeline/grouping.js';
 import type { OrchestratorConfig } from './config.js';
 import type { EngineManager } from './engines/engineManager.js';
 import { withEngineOwner } from './engines/engineOwner.js';
@@ -55,6 +66,13 @@ import { PipelineRunner, type RunnerDeps } from './pipeline/runner.js';
 import type { ProjectStore } from './workspace/projectStore.js';
 import { segmentIdToIndex, type WorkspacePaths } from './workspace/paths.js';
 import { applyCueOverrides, clearCueOverridesFor, readCueOverrides } from './workspace/subtitleTiming.js';
+import { writeJsonAtomic, writeTextAtomic } from './workspace/projectStore.js';
+import {
+  alignmentInputsForUnits,
+  applySegmentPatches,
+  reconcileGroups,
+  singletonUnits,
+} from './workspace/timelineEdit.js';
 
 /** Injected dependencies for the orchestrator (all mockable in tests). */
 export interface OrchestratorDeps {
@@ -195,6 +213,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * around a region that calls one, so it can never wait on itself.
    */
   private readonly artifactLock = new KeyedMutex();
+  /** In-flight editor media builds (waveform/filmstrip), so concurrent opens share one ffmpeg. */
+  private readonly editorMediaInFlight = new Map<string, Promise<unknown>>();
 
   constructor(private readonly deps: OrchestratorDeps) {}
 
@@ -388,6 +408,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   /**
    * Save edited translations. Merges `translatedText` into `translated.json`
    * (creating it from `source.json` if needed) and regenerates the SRT/VTT.
+   *
+   * A line whose text REALLY changed is also locked (auto-fit and refine leave
+   * it alone from now on) and its clip marked stale — the bulk save sends every
+   * line, so an unchanged one must not be locked just for being in the batch.
    */
   async saveTranslatedSegments(
     projectId: string,
@@ -402,20 +426,255 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         (await this.tryReadSegments(paths.translatedJson)) ?? (await this.tryReadSegments(paths.sourceJson)) ?? [];
 
       const editMap = new Map(edits.map((e) => [e.id, e.translatedText]));
-      const merged: TranscriptSegment[] = base.map((s) =>
-        editMap.has(s.id) ? { ...s, translatedText: editMap.get(s.id)! } : s,
-      );
+      const merged: TranscriptSegment[] = base.map((s) => {
+        const next = editMap.get(s.id);
+        if (next === undefined || next === (s.translatedText ?? '')) return s;
+        return { ...s, translatedText: next, locked: true, ttsStale: true };
+      });
 
-      await fsp.writeFile(paths.translatedJson, `${JSON.stringify({ segments: merged }, null, 2)}\n`, 'utf8');
-
-      // Regenerate subtitle sidecars to keep them in sync with edits — REAPPLYING
-      // the persisted voice-sync cue overrides so a text edit doesn't revert the
-      // whole track to source-speech timing.
-      const overrides = await readCueOverrides(paths.cueTimingJson);
-      const cues = transcriptSegmentsToCues(applyCueOverrides(merged, overrides));
-      await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
-      await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
+      await writeJsonAtomic(paths.translatedJson, { segments: merged });
+      await this.writeSidecars(paths, merged);
     });
+  }
+
+  /**
+   * The editor's timeline document: cues, synthesis units with their fit, the
+   * voice-synced subtitle timing and the preview media — one consistent read.
+   */
+  async getTimeline(projectId: string): Promise<TimelineDocument> {
+    const project = await this.deps.store.getProject(projectId);
+    const paths = this.deps.store.paths(projectId);
+    const translated = await this.tryReadSegments(paths.translatedJson);
+    const segments = translated ?? (await this.tryReadSegments(paths.sourceJson)) ?? [];
+    const aligned = await this.tryReadAligned(paths.translatedAlignedJson);
+    const groups = await this.tryReadGroups(paths.synthesisGroupsJson);
+    const alignedById = new Map((aligned ?? []).map((a) => [a.segmentId, a]));
+
+    // Units exist once TTS has planned/synthesized them; a project synthesized
+    // before group plans existed is one unit per line.
+    const units: TimelineUnit[] =
+      aligned || groups
+        ? reconcileGroups(groups ?? singletonUnits(segments), segments).map((u) => {
+            const alignment = alignedById.get(u.id);
+            return {
+              id: u.id,
+              segmentIds: u.segmentIds,
+              startMs: u.startMs,
+              endMs: u.endMs,
+              ...(alignment ? { alignment } : {}),
+            };
+          })
+        : [];
+
+    const overrides = await readCueOverrides(paths.cueTimingJson);
+    const video = project.mediaInfo?.videoStreams[0];
+    const exists = async (p: string): Promise<boolean> =>
+      fsp.stat(p).then((s) => s.isFile() && s.size > 0, () => false);
+
+    return {
+      projectId,
+      segments: segments.map((s) => {
+        const alignment = alignedById.get(s.id);
+        return alignment ? { ...s, alignment } : s;
+      }),
+      units,
+      translated: translated !== undefined,
+      aligned: aligned !== undefined,
+      cueOverrides: Object.fromEntries(overrides),
+      media: {
+        videoPath: project.inputVideoPath,
+        ...(project.mediaInfo?.durationMs !== undefined ? { durationMs: project.mediaInfo.durationMs } : {}),
+        ...(video ? { width: video.width, height: video.height, fps: video.fps } : {}),
+        ...((await exists(paths.originalWav)) ? { originalAudioPath: paths.originalWav } : {}),
+        ...((await exists(paths.outputMp4)) ? { outputPath: paths.outputMp4 } : {}),
+      },
+    };
+  }
+
+  /**
+   * Waveform peaks of the ORIGINAL audio for the editor (cached on disk).
+   *
+   * Reads `audio/original.wav` when extract-audio has produced it (a plain
+   * PCM decode — fast) and the input video otherwise. The cache records the
+   * source's size + mtime, so re-extracting the audio rebuilds it.
+   */
+  async getWaveform(projectId: string): Promise<TimelineWaveform> {
+    const project = await this.deps.store.getProject(projectId);
+    const paths = this.deps.store.paths(projectId);
+    const media = this.deps.media;
+    if (typeof media.computeWaveformPeaks !== 'function') {
+      throw new AppErrorException('ENGINE_UNAVAILABLE', 'This build cannot draw waveforms.');
+    }
+    const source = (await fileStamp(paths.originalWav)) ? paths.originalWav : project.inputVideoPath;
+    const stamp = await fileStamp(source);
+    const cached = await readJsonIfExists<TimelineWaveform & { source: string; stamp: string }>(paths.waveformOriginalJson);
+    if (cached && cached.source === source && cached.stamp === stamp) {
+      const { source: _s, stamp: _t, ...doc } = cached;
+      return doc;
+    }
+    return this.onceInFlight(`waveform:${projectId}`, async () => {
+      const { peaksPerSecond, durationMs, peaks } = await media.computeWaveformPeaks!(source, { peaksPerSecond: 100 });
+      const doc: TimelineWaveform = {
+        track: 'original',
+        peaksPerSecond,
+        durationMs,
+        peaks: Buffer.from(peaks.buffer, peaks.byteOffset, peaks.byteLength).toString('base64'),
+      };
+      await writeJsonAtomic(paths.waveformOriginalJson, { ...doc, source, stamp });
+      return doc;
+    });
+  }
+
+  /**
+   * The editor's filmstrip sprite (cached on disk next to its layout). The
+   * sprite is written atomically by the media worker; the layout JSON is
+   * written after it, so a layout on disk always describes a complete sprite.
+   */
+  async getFilmstrip(projectId: string): Promise<TimelineFilmstrip> {
+    const project = await this.deps.store.getProject(projectId);
+    const paths = this.deps.store.paths(projectId);
+    const media = this.deps.media;
+    if (typeof media.renderFilmstrip !== 'function') {
+      throw new AppErrorException('ENGINE_UNAVAILABLE', 'This build cannot draw a filmstrip.');
+    }
+    const durationMs = project.mediaInfo?.durationMs;
+    if (!durationMs || !project.mediaInfo?.videoStreams.length) {
+      throw new AppErrorException('UNSUPPORTED_MEDIA', 'The project has no probed video stream to draw a filmstrip from.');
+    }
+    const stamp = await fileStamp(project.inputVideoPath);
+    const cached = await readJsonIfExists<TimelineFilmstrip & { stamp: string }>(paths.filmstripJson);
+    if (cached && cached.stamp === stamp && (await fileStamp(paths.filmstripJpg))) {
+      const { stamp: _t, ...layout } = cached;
+      return layout;
+    }
+    return this.onceInFlight(`filmstrip:${projectId}`, async () => {
+      await fsp.mkdir(paths.cacheDir, { recursive: true });
+      const result = await media.renderFilmstrip!(project.inputVideoPath, paths.filmstripJpg, durationMs);
+      const layout: TimelineFilmstrip = {
+        path: result.path,
+        count: result.count,
+        columns: result.columns,
+        rows: result.rows,
+        tileWidth: result.tileWidth,
+        tileHeight: result.tileHeight,
+        intervalMs: result.intervalMs,
+      };
+      await writeJsonAtomic(paths.filmstripJson, { ...layout, stamp });
+      return layout;
+    });
+  }
+
+  /**
+   * The path of a dub clip tempo-fitted to `ratio` (cached), for the editor's
+   * preview. Validates the unit id (it becomes part of a file name) and clamps
+   * the ratio to what the aligner can produce; the cache key includes the
+   * clip's own size+mtime, so regenerating the line invalidates it, and older
+   * fits of the same unit are deleted when a new one is written.
+   */
+  async getFittedClip(projectId: string, unitId: string, ratio: number): Promise<string> {
+    const paths = this.deps.store.paths(projectId);
+    const media = this.deps.media;
+    if (!/^seg_\d{1,6}$/.test(unitId)) throw new AppErrorException('INVALID_EDIT', `Unknown clip ${unitId}.`);
+    if (typeof media.renderFittedClip !== 'function') {
+      throw new AppErrorException('ENGINE_UNAVAILABLE', 'This build cannot preview fitted clips.');
+    }
+    const r = Math.round(Math.max(1, Math.min(4, Number.isFinite(ratio) ? ratio : 1)) * 1000) / 1000;
+    const source = paths.ttsSegment(segmentIdToIndex(unitId) || 1);
+    const stamp = await fileStamp(source);
+    if (!stamp) throw new AppErrorException('TTS_VOICE_MISSING', `Clip ${unitId} has not been synthesized yet.`);
+    if (r === 1) return source;
+    const name = `${unitId}-r${r.toFixed(3)}-${stamp.replace(':', '-')}.wav`;
+    const out = path.join(paths.fittedClipsDir, name);
+    if (await fileStamp(out)) return out;
+    return this.onceInFlight(`fitted:${projectId}:${name}`, async () => {
+      await fsp.mkdir(paths.fittedClipsDir, { recursive: true });
+      await media.renderFittedClip!(source, out, r);
+      // Drop stale fits of this unit (other ratios / an older synthesis).
+      const entries = await fsp.readdir(paths.fittedClipsDir).catch(() => [] as string[]);
+      await Promise.all(
+        entries
+          .filter((e) => e.startsWith(`${unitId}-r`) && e !== name)
+          .map((e) => fsp.rm(path.join(paths.fittedClipsDir, e), { force: true })),
+      );
+      return out;
+    });
+  }
+
+  /** Run `fn` once per key at a time; concurrent callers share the result. */
+  private onceInFlight<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const existing = this.editorMediaInFlight.get(key) as Promise<T> | undefined;
+    if (existing) return existing;
+    const p = fn().finally(() => this.editorMediaInFlight.delete(key));
+    this.editorMediaInFlight.set(key, p);
+    return p;
+  }
+
+  /**
+   * Apply editor patches (text, timing, voice, rate, lock) and keep every
+   * artifact that encodes the same timing consistent — see timelineEdit.ts.
+   *
+   * A timing edit re-places the EXISTING clips (their durations are already
+   * known) and recomputes every fit status, so the editor shows the consequence
+   * of a drag immediately and the next mix uses it, without re-synthesizing a
+   * single line. Text/voice/rate edits only mark the clip stale; the editor
+   * regenerates it on demand.
+   */
+  async patchSegments(projectId: string, patches: SegmentPatch[]): Promise<TimelineDocument> {
+    this.assertNotRunning(projectId, 'edit the timeline');
+    if (!Array.isArray(patches) || patches.length === 0) {
+      throw new AppErrorException('INVALID_EDIT', 'No changes were sent.');
+    }
+    await this.artifactLock.run(projectId, async () => {
+      const project = await this.deps.store.getProject(projectId);
+      const paths = this.deps.store.paths(projectId);
+      const translated = await this.tryReadSegments(paths.translatedJson);
+      const source = await this.tryReadSegments(paths.sourceJson);
+      const base = translated ?? source;
+      if (!base) throw new AppErrorException('INVALID_EDIT', 'This project has no transcript to edit yet.');
+
+      const outcome = applySegmentPatches(base, patches, { durationMs: project.mediaInfo?.durationMs });
+      if (
+        !translated &&
+        (outcome.textChanged.size > 0 || outcome.voiceChanged.size > 0 || outcome.rateChanged.size > 0)
+      ) {
+        throw new AppErrorException(
+          'INVALID_EDIT',
+          'Translate the transcript before editing translations or voices — only timing can be changed now.',
+        );
+      }
+      const changed =
+        outcome.textChanged.size +
+        outcome.timingChanged.size +
+        outcome.voiceChanged.size +
+        outcome.rateChanged.size +
+        outcome.lockChanged.size;
+      if (changed === 0) return;
+
+      if (translated) await writeJsonAtomic(paths.translatedJson, { segments: outcome.segments });
+
+      if (outcome.timingChanged.size > 0) {
+        // Timing also lands in source.json: re-translating rebuilds translated.json
+        // FROM source.json, and must not snap every line back to the recogniser's
+        // timing the user just corrected.
+        if (source) {
+          const byId = new Map(outcome.segments.map((s) => [s.id, s]));
+          await writeJsonAtomic(paths.sourceJson, {
+            segments: source.map((s) => {
+              const n = byId.get(s.id);
+              return n ? { ...s, startMs: n.startMs, endMs: n.endMs } : s;
+            }),
+          });
+        }
+        await this.realign(project, paths, outcome.segments, new Map());
+        // A cue the user placed by hand is shown where they put it, not where the
+        // voice-sync pass would put it.
+        await clearCueOverridesFor(paths.cueTimingJson, [...outcome.timingChanged]);
+      }
+      if (outcome.timingChanged.size > 0 || outcome.textChanged.size > 0) {
+        await this.writeSidecars(paths, outcome.segments);
+      }
+    });
+    return this.getTimeline(projectId);
   }
 
   /**
@@ -486,92 +745,126 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // or never be heard at all (later members).
     const groups = await this.tryReadGroups(paths.synthesisGroupsJson);
     const group = groups?.find((g) => g.segmentIds.length > 1 && g.segmentIds.includes(segmentId));
-    const memberInputs = (group ? group.segmentIds : [segmentId]).map((id) => {
-      const s = id === segmentId ? segment : segments.find((x) => x.id === id);
+
+    // Voice + rate per member. An explicit override on THIS request applies to
+    // the edited line only (and is persisted below, so a later full run keeps
+    // it); every other member keeps its own per-line override or falls back to
+    // its speaker's / the project's voice. This used to give every former
+    // member the edited line's voice.
+    const voiceFor = (s: TranscriptSegment): string | undefined =>
+      s.id === segmentId && opts.voiceId !== undefined ? opts.voiceId || undefined : s.voiceId;
+    const rateFor = (s: TranscriptSegment): number | undefined =>
+      s.id === segmentId && opts.speed !== undefined ? opts.speed : s.speakingRate;
+    const units: SynthesisGroup[] = (group ? group.segmentIds : [segmentId]).map((id) => {
+      const s = (id === segmentId ? segment : segments.find((x) => x.id === id)) ?? segment;
+      const voiceId = voiceFor(s);
+      const speakingRate = rateFor(s);
       return {
         id,
-        text: id === segmentId ? text : (s?.translatedText ?? s?.sourceText ?? '').trim(),
-        startMs: s?.startMs ?? segment.startMs,
-        endMs: s?.endMs ?? segment.endMs,
+        segmentIds: [id],
+        text: id === segmentId ? text : (s.translatedText ?? s.sourceText ?? '').trim(),
+        startMs: s.startMs,
+        endMs: s.endMs,
+        ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+        ...(voiceId ? { voiceId } : {}),
+        ...(speakingRate !== undefined ? { speakingRate } : {}),
       };
     });
 
-    // Voice precedence: explicit override > the speaker's assigned voice
-    // (diarized projects) > the project voice.
-    const assignedVoice = segment.speakerId
-      ? project.settings.speakerVoices?.find((v) => v.speakerId === segment.speakerId)?.voiceId
-      : undefined;
-    const result = await provider.synthesizeSegments({
-      language: project.settings.targetLanguage,
-      voiceId: opts.voiceId ?? assignedVoice ?? project.settings.ttsVoiceId,
-      segments: memberInputs,
-      outputDir: paths.ttsSegmentsDir,
-      speed: opts.speed ?? 1.0,
-    });
+    // `voiceId` and `speed` are batch-level TTS parameters: one call per pair.
+    const buckets = new Map<string, { voiceId: string | undefined; speed: number; units: SynthesisGroup[] }>();
+    for (const u of units) {
+      const voiceId = voiceForGroup(u, project.settings);
+      const speed = rateForGroup(u);
+      const key = `${voiceId ?? ''}\u0000${speed}`;
+      const bucket = buckets.get(key) ?? { voiceId, speed, units: [] };
+      bucket.units.push(u);
+      buckets.set(key, bucket);
+    }
+    const synthesized: TtsSegment[] = [];
+    for (const b of buckets.values()) {
+      const result = await provider.synthesizeSegments({
+        language: project.settings.targetLanguage,
+        voiceId: b.voiceId,
+        segments: b.units.map((u) => ({ id: u.id, text: u.text, startMs: u.startMs, endMs: u.endMs })),
+        outputDir: paths.ttsSegmentsDir,
+        speed: b.speed,
+      });
+      synthesized.push(...result.segments);
+    }
 
-    const ttsSegment = result.segments.find((s) => s.segmentId === segmentId);
+    const ttsSegment = synthesized.find((s) => s.segmentId === segmentId);
     if (!ttsSegment) {
       throw new AppErrorException('UNKNOWN', `TTS produced no output for segment ${segmentId}.`);
     }
 
-    // Persist the degrouped plan (each former member is its own singleton now)
-    // and give the OTHER members fresh alignment entries; the edited segment's
-    // own entry is patched below.
-    if (group && groups) {
-      const replacement: SynthesisGroup[] = group.segmentIds.map((id) => {
-        const input = memberInputs.find((m) => m.id === id)!;
-        return { id, segmentIds: [id], text: input.text, startMs: input.startMs, endMs: input.endMs };
+    const alignment = await this.artifactLock.run(projectId, async () => {
+      // Re-read: another line may have been regenerated while this one synthesized.
+      const latest =
+        (await this.tryReadSegments(paths.translatedJson)) ?? (await this.tryReadSegments(paths.sourceJson)) ?? segments;
+      const synthesizedIds = new Set(synthesized.map((s) => s.segmentId));
+      const target = latest.find((s) => s.id === segmentId) ?? segment;
+      const textChanged = opts.text !== undefined && text !== (target.translatedText ?? '');
+      const merged = latest.map((s) => {
+        if (!synthesizedIds.has(s.id)) return s;
+        const { ttsStale: _wasStale, ...next } = s;
+        if (s.id === segmentId) {
+          if (textChanged) {
+            next.translatedText = text;
+            next.locked = true;
+          }
+          if (opts.voiceId !== undefined) {
+            if (opts.voiceId) next.voiceId = opts.voiceId;
+            else delete next.voiceId;
+          }
+          if (opts.speed !== undefined) {
+            if (Math.abs(opts.speed - 1) < 1e-3) delete next.speakingRate;
+            else next.speakingRate = opts.speed;
+          }
+        }
+        return next;
       });
-      const nextGroups = groups.flatMap((g) => (g === group ? replacement : [g]));
-      await this.writeGroups(paths.synthesisGroupsJson, nextGroups);
-      // The former group is now singletons: each member speaks from its own
-      // cue, so its voice-sync override no longer applies — drop them, and
-      // saveTranslatedSegments (below) regenerates sidecars with the rest.
-      await clearCueOverridesFor(paths.cueTimingJson, group.segmentIds);
+      await writeJsonAtomic(paths.translatedJson, { segments: merged });
 
-      for (const member of result.segments) {
-        if (member.segmentId === segmentId) continue;
-        const input = memberInputs.find((m) => m.id === member.segmentId);
-        if (!input) continue;
-        const idx = segmentIdToIndex(member.segmentId);
-        const memberAligned = alignSegment(
-          {
-            segmentId: member.segmentId,
-            startMs: input.startMs,
-            endMs: input.endMs,
-            audioPath: idx > 0 ? paths.ttsSegment(idx) : member.audioPath,
-            generatedDurationMs: member.durationMs,
-          },
-          {
-            maxSpeedRatio: project.settings.maxSpeedRatio,
-            allowedOverflowMs: project.settings.allowedOverflowMs,
-          },
+      // Persist the degrouped plan: each former member is its own unit now,
+      // carrying its own voice/rate, and its voice-sync cue override no longer
+      // applies (it speaks from its own cue).
+      let plan = (await this.tryReadGroups(paths.synthesisGroupsJson)) ?? groups;
+      if (group && plan) {
+        const replacement = new Map(units.map((u) => [u.id, u]));
+        plan = plan.flatMap((g) =>
+          g.segmentIds.length > 1 && g.segmentIds.includes(segmentId)
+            ? g.segmentIds.map((id) => replacement.get(id)!).filter(Boolean)
+            : [g],
         );
-        await this.patchAlignedSegment(projectId, paths, memberAligned);
+        await writeJsonAtomic(paths.synthesisGroupsJson, { groups: plan });
+        await clearCueOverridesFor(paths.cueTimingJson, group.segmentIds);
       }
-    }
+      if (textChanged || group) await this.writeSidecars(paths, merged);
 
-    // If text was edited, persist it back to translated.json too.
-    if (opts.text !== undefined) {
-      await this.saveTranslatedSegments(projectId, [{ id: segmentId, translatedText: text }]);
-    }
-
-    // Recompute alignment for just this segment and patch the aligned file.
-    const index = segmentIdToIndex(segmentId);
-    const audioPath = paths.ttsSegment(index > 0 ? index : segment.index + 1);
-    const alignInput: AlignInputSegment = {
-      segmentId,
-      startMs: segment.startMs,
-      endMs: segment.endMs,
-      audioPath,
-      generatedDurationMs: ttsSegment.durationMs,
-    };
-    const alignment = alignSegment(alignInput, {
-      maxSpeedRatio: project.settings.maxSpeedRatio,
-      allowedOverflowMs: project.settings.allowedOverflowMs,
+      // Re-fit the WHOLE timeline gap-aware, exactly as the alignment step does.
+      // This used to align just the edited line against its own cue window, so
+      // a line the pipeline accepted (it may use the pause before the next
+      // line) was reported as a timing conflict the moment it was regenerated.
+      const durations = new Map(synthesized.map((s) => [s.segmentId, s.durationMs]));
+      const placed = await this.realign(project, paths, merged, durations);
+      return (
+        placed?.find((a) => a.segmentId === segmentId) ??
+        // No alignment artifact yet (e.g. a preview at the review checkpoint,
+        // before TTS ever ran): fit this line in memory and do NOT create a
+        // one-entry aligned file — "an artifact that exists is complete".
+        alignSegments(
+          alignmentInputsForUnits(
+            [units.find((u) => u.id === segmentId)!],
+            new Map(),
+            (id) => paths.ttsSegment(segmentIdToIndex(id) || segment.index + 1),
+            durations,
+          ),
+          this.alignSettings(project),
+          project.mediaInfo?.durationMs,
+        )[0]!
+      );
     });
-
-    await this.patchAlignedSegment(projectId, paths, alignment);
 
     return { segment: ttsSegment, alignment };
   }
@@ -1191,25 +1484,55 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     }
   }
 
+  /** The aligner settings a project uses (one place, so every re-fit agrees). */
+  private alignSettings(project: Project): AlignSettings {
+    return {
+      maxSpeedRatio: project.settings.maxSpeedRatio,
+      allowedOverflowMs: project.settings.allowedOverflowMs,
+    };
+  }
+
   /**
-   * Update a single aligned segment within translated.aligned.json.
+   * Re-fit every synthesis unit, gap-aware, from the clip durations already on
+   * disk (overridden by `durations` for units just re-synthesized), and persist.
    *
-   * Read-array -> splice -> write-whole-file, so it MUST hold the project's
-   * artifact lock: regenerating two different segments at once used to drop one
-   * of the two entries, and the losing clip was then mixed with stale timing.
+   * Callers MUST hold the project's artifact lock. Returns undefined — and
+   * writes nothing — when no alignment artifact exists yet: creating one with a
+   * partial set of entries would make the alignment step look complete.
    */
-  private async patchAlignedSegment(
-    projectId: string,
+  private async realign(
+    project: Project,
     paths: WorkspacePaths,
-    alignment: AlignedSegment,
-  ): Promise<void> {
-    await this.artifactLock.run(projectId, async () => {
-      const existing = (await this.tryReadAligned(paths.translatedAlignedJson)) ?? [];
-      const idx = existing.findIndex((a) => a.segmentId === alignment.segmentId);
-      if (idx >= 0) existing[idx] = alignment;
-      else existing.push(alignment);
-      await fsp.writeFile(paths.translatedAlignedJson, `${JSON.stringify(existing, null, 2)}\n`, 'utf8');
-    });
+    segments: readonly TranscriptSegment[],
+    durations: ReadonlyMap<string, number>,
+  ): Promise<AlignedSegment[] | undefined> {
+    const previous = await this.tryReadAligned(paths.translatedAlignedJson);
+    const groups = await this.tryReadGroups(paths.synthesisGroupsJson);
+    const units = reconcileGroups(groups ?? singletonUnits(segments), segments);
+    if (groups) await writeJsonAtomic(paths.synthesisGroupsJson, { groups: units });
+    if (!previous) return undefined;
+    const prior = new Map(previous.map((a) => [a.segmentId, a]));
+    const inputs = alignmentInputsForUnits(
+      units,
+      prior,
+      (id) => paths.ttsSegment(segmentIdToIndex(id) || 1),
+      durations,
+    );
+    const aligned = alignSegments(inputs, this.alignSettings(project), project.mediaInfo?.durationMs);
+    await writeJsonAtomic(paths.translatedAlignedJson, aligned);
+    return aligned;
+  }
+
+  /**
+   * Regenerate the SRT/VTT sidecars from `segments`, REAPPLYING the persisted
+   * voice-sync cue overrides so an edit doesn't revert the whole track to
+   * source-speech timing. Atomic, like every other editor write.
+   */
+  private async writeSidecars(paths: WorkspacePaths, segments: readonly TranscriptSegment[]): Promise<void> {
+    const overrides = await readCueOverrides(paths.cueTimingJson);
+    const cues = transcriptSegmentsToCues(applyCueOverrides([...segments], overrides));
+    await writeTextAtomic(paths.translatedSrt, segmentsToSrt(cues));
+    await writeTextAtomic(paths.translatedVtt, segmentsToVtt(cues));
   }
 
   /** True if a project currently has an active run. */
@@ -1234,5 +1557,24 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         `Cannot ${action} while the pipeline is running. Cancel the run first.`,
       );
     }
+  }
+}
+
+/** "size:mtimeMs" of a file, or undefined when it does not exist. */
+async function fileStamp(file: string): Promise<string | undefined> {
+  try {
+    const s = await fsp.stat(file);
+    return s.isFile() && s.size > 0 ? `${s.size}:${Math.round(s.mtimeMs)}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parse a JSON file, or undefined when it is missing or corrupt. */
+async function readJsonIfExists<T>(file: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await fsp.readFile(file, 'utf8')) as T;
+  } catch {
+    return undefined;
   }
 }

@@ -10,6 +10,10 @@ import type {
   RenderFinalVideoResult,
   RunScheduleResult,
   TranslationDocContext,
+  SegmentPatch,
+  TimelineDocument,
+  TimelineFilmstrip,
+  TimelineWaveform,
 } from '../models';
 import type {
   LanguagesResponse,
@@ -55,7 +59,7 @@ import type {
 } from '../models';
 
 /** HTTP verbs the fetch fallback understands. */
-type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 /**
  * Detect whether we are running inside the Tauri webview. Tauri 2 injects
@@ -246,6 +250,44 @@ export class IpcService {
       `/projects/${encodeURIComponent(projectId)}/segments/${encodeURIComponent(segmentId)}/refit`,
       {},
     );
+  }
+
+  // ---- Studio editor (HTTP in both modes: no Rust command needed) -------------
+
+  /** GET /projects/:id/timeline — cues, synthesis units with their fit, media. */
+  getTimeline(projectId: string): Promise<TimelineDocument> {
+    return this.http('GET', `/projects/${encodeURIComponent(projectId)}/timeline`);
+  }
+
+  /** PATCH /projects/:id/timeline — move/trim/re-voice lines; returns the new document. */
+  patchTimeline(projectId: string, segments: SegmentPatch[]): Promise<TimelineDocument> {
+    return this.http('PATCH', `/projects/${encodeURIComponent(projectId)}/timeline`, { segments });
+  }
+
+  /** GET /projects/:id/waveform — the original audio's peaks (built + cached on first call). */
+  getWaveform(projectId: string): Promise<TimelineWaveform> {
+    return this.http('GET', `/projects/${encodeURIComponent(projectId)}/waveform`);
+  }
+
+  /** GET /projects/:id/filmstrip — the thumbnail sprite's layout (the image is served by /file). */
+  getFilmstrip(projectId: string): Promise<TimelineFilmstrip> {
+    return this.http('GET', `/projects/${encodeURIComponent(projectId)}/filmstrip`);
+  }
+
+  /**
+   * URL of a project artifact through the orchestrator's `/file` route (the
+   * webview cannot load `file://` from its http origin). `version` busts the
+   * cache for files rewritten in place (a regenerated clip keeps its path).
+   */
+  fileUrl(path: string, version?: string | number): string {
+    const v = version === undefined ? '' : `&v=${encodeURIComponent(String(version))}`;
+    return `${this.baseUrl}/file?path=${encodeURIComponent(path)}${v}`;
+  }
+
+  /** URL of a dub clip tempo-fitted to `ratio` exactly like the final mix (preview). */
+  fittedClipUrl(projectId: string, unitId: string, ratio: number, version?: string | number): string {
+    const v = version === undefined ? '' : `&v=${encodeURIComponent(String(version))}`;
+    return `${this.baseUrl}/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/fitted?ratio=${ratio.toFixed(3)}${v}`;
   }
 
   /** GET /projects/:id/translation-context — the project's character sheet (or null). */

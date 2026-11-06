@@ -26,6 +26,7 @@ import type {
   MediaInfo,
   RenderFinalVideoInput,
   RenderFinalVideoResult,
+  TimelineFilmstrip,
 } from '@videodubber/shared';
 
 /** The subset of the media-worker's `RunOptions` the orchestrator sets. */
@@ -76,6 +77,17 @@ interface MediaWorkerModule {
     input: DuckAndMixInput,
     opts?: MediaWorkerRunOptions,
   ): Promise<{ output: string; durationMs: number }>;
+  computeWaveformPeaks?(
+    input: string,
+    opts?: { peaksPerSecond?: number; signal?: AbortSignal },
+  ): Promise<{ peaksPerSecond: number; durationMs: number; peaks: Int8Array }>;
+  renderFilmstrip?(
+    input: string,
+    output: string,
+    durationMs: number,
+    opts?: MediaWorkerRunOptions,
+  ): Promise<TimelineFilmstrip>;
+  renderFittedClip?(input: string, output: string, ratio: number, opts?: MediaWorkerRunOptions): Promise<string>;
 }
 
 /**
@@ -163,6 +175,26 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
     buildTtsTimeline: (input, signal) =>
       buildTtsTimeline ? buildTtsTimeline(input, runOpts(signal)) : missing('buildTtsTimeline'),
     duckAndMix: (input, signal) => (duckAndMix ? duckAndMix(input, runOpts(signal)) : missing('duckAndMix')),
+    // The editor's waveform + filmstrip: module-level helpers, optional like
+    // clip16kMono (an older media-worker just yields an editor without them).
+    ...(typeof mod.computeWaveformPeaks === 'function'
+      ? {
+          computeWaveformPeaks: (i: string, o?: { peaksPerSecond?: number }, signal?: AbortSignal) =>
+            mod.computeWaveformPeaks!(i, { ...(o ?? {}), ...(signal ? { signal } : {}) }),
+        }
+      : {}),
+    ...(typeof mod.renderFilmstrip === 'function'
+      ? {
+          renderFilmstrip: (i: string, o: string, d: number, signal?: AbortSignal) =>
+            mod.renderFilmstrip!(i, o, d, runOpts(signal)),
+        }
+      : {}),
+    ...(typeof mod.renderFittedClip === 'function'
+      ? {
+          renderFittedClip: (i: string, o: string, r: number, signal?: AbortSignal) =>
+            mod.renderFittedClip!(i, o, r, runOpts(signal)),
+        }
+      : {}),
     // clip16kMono is optional on the interface: only expose it when the loaded
     // media-worker provides it, so the runner can detect support and otherwise
     // fall back to single-shot transcription.

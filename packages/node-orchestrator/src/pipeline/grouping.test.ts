@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   estimateGroupDriftMs,
   planSynthesisGroups,
+  rateForGroup,
   retimeCuesToVoice,
   singletonGroups,
+  voiceForGroup,
   type GroupableSegmentInput,
   type SynthesisGroup,
 } from './grouping.js';
@@ -39,6 +41,35 @@ describe('planSynthesisGroups', () => {
       seg('seg_0002', 2000, 3000, 'Two'), // 1000 ms gap > 750 default
     ]);
     expect(groups.map((g) => g.segmentIds)).toEqual([['seg_0001'], ['seg_0002']]);
+  });
+
+  it('never merges lines with different per-line voices (an editor override)', () => {
+    const groups = planSynthesisGroups([
+      seg('seg_0001', 0, 1000, 'Hi'),
+      { ...seg('seg_0002', 1100, 2000, 'there'), voiceId: 'voice-b' },
+      { ...seg('seg_0003', 2100, 3000, 'friend'), voiceId: 'voice-b' },
+    ]);
+    expect(groups.map((g) => g.segmentIds)).toEqual([['seg_0001'], ['seg_0002', 'seg_0003']]);
+    expect(groups[1]!.voiceId).toBe('voice-b');
+  });
+
+  it('never merges lines with different speaking rates, but 1× groups with "unset"', () => {
+    const groups = planSynthesisGroups([
+      seg('seg_0001', 0, 1000, 'one'),
+      { ...seg('seg_0002', 1100, 2000, 'two'), speakingRate: 1 },
+      { ...seg('seg_0003', 2100, 3000, 'three'), speakingRate: 1.3 },
+    ]);
+    expect(groups.map((g) => g.segmentIds)).toEqual([['seg_0001', 'seg_0002'], ['seg_0003']]);
+    expect(rateForGroup(groups[0]!)).toBe(1);
+    expect(rateForGroup(groups[1]!)).toBe(1.3);
+  });
+
+  it('resolves a unit voice: line override > speaker assignment > project voice', () => {
+    const settings = { ttsVoiceId: 'project', speakerVoices: [{ speakerId: 'S1', voiceId: 'speaker' }] };
+    const base: SynthesisGroup = { id: 'seg_0001', segmentIds: ['seg_0001'], text: 'x', startMs: 0, endMs: 1 };
+    expect(voiceForGroup({ ...base, speakerId: 'S1', voiceId: 'line' }, settings)).toBe('line');
+    expect(voiceForGroup({ ...base, speakerId: 'S1' }, settings)).toBe('speaker');
+    expect(voiceForGroup(base, settings)).toBe('project');
   });
 
   it('never merges across speaker changes', () => {

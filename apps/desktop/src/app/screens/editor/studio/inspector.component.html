@@ -1,0 +1,219 @@
+@if (multi()) {
+  <!-- ======================= Several lines: bulk edits ======================= -->
+  <section class="block">
+    <h3>{{ 'studio.n-selected' | translate: { n: store.selection().size } }}</h3>
+    <p class="hint">{{ 'studio.bulk-hint' | translate }}</p>
+  </section>
+
+  <section class="block">
+    <h4>{{ 'studio.timing' | translate }}</h4>
+    <div class="nudges">
+      @for (d of nudges; track d) {
+        <button type="button" class="btn btn-sm" (click)="shiftSelected(d)">{{ d > 0 ? '+' : '' }}{{ d }} ms</button>
+      }
+    </div>
+  </section>
+
+  <ng-container *ngTemplateOutlet="voiceBlock" />
+
+  <section class="block actions">
+    <button type="button" class="btn btn-sm" (click)="toggleLock()">{{ 'studio.toggle-lock' | translate }}</button>
+    <button type="button" class="btn btn-primary btn-sm" (click)="regenerate()" [disabled]="store.busy().size > 0">
+      {{ 'studio.regenerate-selected' | translate }}
+    </button>
+  </section>
+} @else if (line(); as l) {
+  <!-- ============================ One line ============================ -->
+  <section class="block head">
+    <div class="title">
+      <h3>{{ 'studio.line-n' | translate: { n: l.n } }}</h3>
+      <span class="mono muted">{{ fmt(l.seg.startMs) }} → {{ fmt(l.seg.endMs) }}</span>
+    </div>
+    <div class="chips">
+      @switch (l.status) {
+        @case ('ok') {
+          <span class="badge badge-completed">{{ 'studio.fits' | translate }}</span>
+        }
+        @case ('needs-review') {
+          <span class="badge badge-warning">{{ 'editor.needs-review' | translate }}</span>
+        }
+        @case ('timing-conflict') {
+          <span class="badge badge-failed">{{ 'editor.timing-conflict' | translate }}</span>
+        }
+      }
+      @if (l.stale) {
+        <span class="badge badge-info" [title]="'studio.stale-title' | translate">{{ 'studio.stale' | translate }}</span>
+      }
+      @if (l.locked) {
+        <span class="badge badge-pending" [title]="'studio.locked-title' | translate">{{ 'studio.locked' | translate }}</span>
+      }
+      @if (l.untranslated) {
+        <span class="badge badge-failed" [title]="'editor.untranslated-title' | translate">{{ 'editor.untranslated' | translate }}</span>
+      }
+      @if (l.long) {
+        <span class="badge badge-warning" [title]="'editor.long-subtitle-title' | translate">{{ 'editor.long-subtitle' | translate }}</span>
+      }
+    </div>
+  </section>
+
+  <section class="block">
+    <h4>{{ 'editor.col-source' | translate }}</h4>
+    <p class="source">{{ l.seg.sourceText }}</p>
+  </section>
+
+  <section class="block">
+    <label class="h4" for="vd-inspector-text">{{ 'editor.col-translation' | translate }}</label>
+    <textarea
+      #text
+      id="vd-inspector-text"
+      rows="3"
+      spellcheck="true"
+      [value]="l.text"
+      (input)="onText($any($event.target).value)"
+      [disabled]="!store.translated()"
+    ></textarea>
+    <div class="meter">
+      <span>{{ 'studio.chars' | translate: { n: l.text.length } }}</span>
+      <span [class]="'cps ' + cpsLevel(l.cps)" [title]="'studio.cps-title' | translate: { max: maxCps }">
+        {{ 'studio.cps' | translate: { n: l.cps.toFixed(1) } }}
+      </span>
+      <span [class.warn]="wrapped().length > 2">{{ 'studio.wrap-lines' | translate: { n: wrapped().length } }}</span>
+    </div>
+  </section>
+
+  <section class="block">
+    <h4>{{ 'studio.timing' | translate }}</h4>
+    <div class="timing">
+      @for (edge of edges; track edge) {
+        <div class="edge">
+          <span class="label">{{ edgeKeys[edge] | translate }}</span>
+          @if (editingTime()?.edge === edge) {
+            <input
+              #timeInput
+              type="text"
+              class="mono"
+              [value]="editingTime()!.value"
+              (keydown.enter)="commitTimeEdit(edge, $any($event.target).value)"
+              (keydown.escape)="editingTime.set(null)"
+              (blur)="commitTimeEdit(edge, $any($event.target).value)"
+              [attr.aria-label]="edgeKeys[edge] | translate"
+            />
+          } @else {
+            <button type="button" class="tc mono" (click)="beginTimeEdit(edge)" [title]="'studio.edit-time' | translate">
+              {{ fmt(edge === 'start' ? l.seg.startMs : l.seg.endMs) }}
+            </button>
+          }
+          <div class="nudges">
+            @for (d of nudges; track d) {
+              <button type="button" class="btn btn-sm" (click)="nudge(edge, d)">{{ d > 0 ? '+' : '' }}{{ d }}</button>
+            }
+            <button type="button" class="btn btn-sm" (click)="toPlayhead(edge)" [title]="'studio.to-playhead' | translate">⇤▸</button>
+          </div>
+        </div>
+      }
+      <p class="hint mono">{{ 'studio.duration' | translate: { s: (duration() / 1000).toFixed(2) } }}</p>
+    </div>
+  </section>
+
+  <ng-container *ngTemplateOutlet="voiceBlock" />
+
+  @if (unit(); as u) {
+    <section class="block">
+      <h4>{{ 'studio.fit' | translate }}</h4>
+      <dl class="fit">
+        <dt>{{ 'studio.fit-spoken' | translate }}</dt>
+        <dd class="mono">{{ ((u.placedDurationMs || 0) / 1000).toFixed(2) }} s</dd>
+        <dt>{{ 'studio.fit-window' | translate }}</dt>
+        <dd class="mono">{{ ((u.endMs - u.startMs) / 1000).toFixed(2) }} s</dd>
+        <dt>{{ 'studio.fit-speed' | translate }}</dt>
+        <dd class="mono">{{ u.speedRatio.toFixed(2) }}×</dd>
+        @if (u.overflowMs > 0) {
+          <dt>{{ 'studio.fit-overflow' | translate }}</dt>
+          <dd class="mono bad">{{ u.overflowMs }} ms</dd>
+        }
+        @if (u.segmentIds.length > 1) {
+          <dt>{{ 'studio.fit-merged' | translate }}</dt>
+          <dd>{{ 'studio.merged-n' | translate: { n: u.segmentIds.length } }}</dd>
+        }
+      </dl>
+      @if (u.note) {
+        <p class="hint">{{ u.note }}</p>
+      }
+    </section>
+  }
+
+  <section class="block actions">
+    <button type="button" class="btn btn-sm" (click)="playLine()">▶ {{ 'studio.play-line' | translate }}</button>
+    <button
+      type="button"
+      class="btn btn-sm"
+      [class.btn-primary]="l.stale"
+      (click)="regenerate()"
+      [disabled]="store.busy().has(l.seg.id) || !store.translated()"
+      [title]="'studio.regenerate-title' | translate"
+    >
+      {{ (store.busy().has(l.seg.id) ? 'editor.synthesizing' : 'editor.regenerate') | translate }}
+    </button>
+    @if (l.status === 'timing-conflict' || l.status === 'needs-review') {
+      <button type="button" class="btn btn-sm" (click)="store.tighten(l.seg.id)" [disabled]="store.busy().has(l.seg.id)" [title]="'editor.tighten-title' | translate">
+        {{ 'editor.tighten' | translate }}
+      </button>
+    }
+    <button type="button" class="btn btn-ghost btn-sm" (click)="toggleLock()" [title]="'studio.locked-title' | translate">
+      {{ (l.locked ? 'studio.unlock' : 'studio.lock') | translate }}
+    </button>
+  </section>
+} @else {
+  <section class="block empty">
+    <h3>{{ 'studio.nothing-selected' | translate }}</h3>
+    <p class="hint">{{ 'studio.nothing-selected-hint' | translate }}</p>
+    <ul class="shortcuts">
+      <li><span class="kbd">Space</span> {{ 'studio.key-play' | translate }}</li>
+      <li><span class="kbd">J</span><span class="kbd">K</span><span class="kbd">L</span> {{ 'studio.key-shuttle' | translate }}</li>
+      <li><span class="kbd">←</span><span class="kbd">→</span> {{ 'studio.key-frame' | translate }}</li>
+      <li><span class="kbd">↑</span><span class="kbd">↓</span> {{ 'studio.key-line' | translate }}</li>
+      <li><span class="kbd">[</span><span class="kbd">]</span> {{ 'studio.key-nudge' | translate }}</li>
+      <li><span class="kbd">I</span><span class="kbd">O</span> {{ 'studio.key-in-out' | translate }}</li>
+      <li><span class="kbd">⌘/Ctrl Z</span> {{ 'studio.key-undo' | translate }}</li>
+      <li><span class="kbd">⌘/Ctrl +/−</span> {{ 'studio.key-zoom' | translate }}</li>
+      <li><span class="kbd">R</span> {{ 'studio.key-regenerate' | translate }}</li>
+    </ul>
+  </section>
+}
+
+<ng-template #voiceBlock>
+  <section class="block">
+    <h4>{{ 'editor.voice' | translate }}</h4>
+    @if (store.voices().length > 0) {
+      <select [value]="multi() ? '' : (line()?.seg?.voiceId ?? '')" (change)="setVoice($any($event.target).value)">
+        <option value="">
+          {{ 'studio.voice-default' | translate: { label: store.voiceLabel(store.settings()?.ttsVoiceId) || ('editor.provider-default' | translate) } }}
+        </option>
+        @for (v of store.voices(); track v.id) {
+          <option [value]="v.id">{{ v.label }}</option>
+        }
+      </select>
+      @if (!multi() && voice(); as vv) {
+        <p class="hint">{{ voiceFromKeys[vv.source] | translate: { label: store.voiceLabel(vv.id) } }}</p>
+      }
+      <div class="voice-chips" [attr.aria-label]="'studio.voice-chips' | translate">
+        @for (v of store.voices().slice(0, 12); track v.id) {
+          <span class="voice-chip" draggable="true" (dragstart)="onVoiceDragStart($event, v.id)" [title]="'studio.voice-drag-title' | translate">{{ v.label }}</span>
+        }
+      </div>
+    } @else {
+      <p class="hint">{{ 'studio.no-voices' | translate }}</p>
+    }
+
+    <div class="rate">
+      <label for="vd-rate">{{ 'studio.rate' | translate }} <span class="mono">{{ rate().toFixed(2) }}×</span></label>
+      <input id="vd-rate" type="range" min="0.5" max="2" step="0.05" [value]="rate()" (change)="setRate(+$any($event.target).value)" />
+      <div class="nudges">
+        @for (r of rates; track r) {
+          <button type="button" class="btn btn-sm" [class.btn-primary]="!multi() && rate() === r" (click)="setRate(r)">{{ r }}×</button>
+        }
+      </div>
+      <p class="hint">{{ 'studio.rate-hint' | translate }}</p>
+    </div>
+  </section>
+</ng-template>

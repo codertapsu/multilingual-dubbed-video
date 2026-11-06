@@ -51,6 +51,14 @@ export type {
   TtsSegment,
   AlignmentStatus,
   AlignedSegment,
+  SegmentPatch,
+  // Editor timeline
+  TimelineSegment,
+  TimelineUnit,
+  TimelineMedia,
+  TimelineDocument,
+  TimelineWaveform,
+  TimelineFilmstrip,
   // Pipeline
   PipelineStepState,
   PipelineState,

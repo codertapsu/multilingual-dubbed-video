@@ -30,6 +30,10 @@ export interface GroupableSegmentInput {
   text: string;
   /** Diarization speaker id, when present. Segments never group across speakers. */
   speakerId?: string;
+  /** Per-line voice override (editor). Segments never group across voices. */
+  voiceId?: string;
+  /** Per-line speaking rate (editor). Segments never group across rates. */
+  speakingRate?: number;
 }
 
 /** One planned synthesis utterance covering one or more consecutive segments. */
@@ -46,6 +50,24 @@ export interface SynthesisGroup {
   endMs: number;
   /** Diarization speaker (all members share it — groups never span speakers). */
   speakerId?: string;
+  /** Per-line voice override shared by every member (groups never span voices). */
+  voiceId?: string;
+  /** Per-line speaking rate shared by every member (groups never span rates). */
+  speakingRate?: number;
+}
+
+/**
+ * The rate a unit is synthesized at: its members' shared per-line override, or
+ * natural (1). A rate of 1 and "unset" are the same utterance, so they group.
+ */
+export function rateForGroup(group: { speakingRate?: number }): number {
+  const r = group.speakingRate;
+  return typeof r === 'number' && Number.isFinite(r) && r > 0 ? r : 1;
+}
+
+/** Same-rate test that treats unset and 1.0 as equal. */
+function sameRate(a: { speakingRate?: number }, b: { speakingRate?: number }): boolean {
+  return Math.abs(rateForGroup(a) - rateForGroup(b)) < 1e-3;
 }
 
 /** Tunables for {@link planSynthesisGroups}. */
@@ -128,6 +150,12 @@ export function planSynthesisGroups(
       last.text.length > 0 &&
       // Speaker continuity: never merge across (known) speaker changes.
       prev.speakerId === seg.speakerId &&
+      // One utterance is ONE engine call with ONE voice and ONE rate, so a
+      // per-line override the user set in the editor must start a new group —
+      // otherwise the override would be silently applied to (or lost from) its
+      // neighbours when they are spoken together.
+      prev.voiceId === seg.voiceId &&
+      sameRate(prev, seg) &&
       // Gap in [0, maxGapMs]; a negative gap (overlap) breaks the group.
       seg.startMs - prev.endMs >= 0 &&
       seg.startMs - prev.endMs <= o.maxGapMs &&
@@ -150,6 +178,8 @@ export function planSynthesisGroups(
         startMs: seg.startMs,
         endMs: seg.endMs,
         ...(seg.speakerId ? { speakerId: seg.speakerId } : {}),
+        ...(seg.voiceId ? { voiceId: seg.voiceId } : {}),
+        ...(rateForGroup(seg) !== 1 ? { speakingRate: rateForGroup(seg) } : {}),
       });
     }
     prev = seg;
@@ -263,6 +293,8 @@ export interface VoiceSettings {
  * the project-wide voice. Pure.
  */
 export function voiceForGroup(group: SynthesisGroup, settings: VoiceSettings): string | undefined {
+  // A per-line override from the editor beats everything else.
+  if (group.voiceId) return group.voiceId;
   if (group.speakerId) {
     const assigned = settings.speakerVoices?.find((v) => v.speakerId === group.speakerId)?.voiceId;
     if (assigned) return assigned;

@@ -8,8 +8,8 @@
     "dev": "ng serve --port 1420",
     "start": "ng serve --port 1420",
     "build": "ng build",
-    "typecheck": "tsc -p tsconfig.app.json --noEmit",
-    "test": "node ../../scripts/check-i18n.mjs",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.spec.json --noEmit",
+    "test": "node ../../scripts/check-i18n.mjs && vitest run",
     "tauri": "tauri"
   },
   "dependencies": {

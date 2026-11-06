@@ -31,14 +31,25 @@ export function generateProjectId(): string {
   return `proj_${crypto.randomBytes(16).toString('hex')}`;
 }
 
-/** Write JSON atomically: temp file + rename within the same directory. */
-async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+/**
+ * Write a text file atomically: a sibling temp file, then rename over the target.
+ *
+ * The workspace's resumability rests on "an artifact that exists is complete";
+ * a plain writeFile interrupted mid-write (crash, quit, full disk) leaves a
+ * truncated JSON/SRT that the next run happily reads. Rename is atomic on the
+ * same filesystem, so readers see either the old file or the new one.
+ */
+export async function writeTextAtomic(filePath: string, text: string): Promise<void> {
   const dir = path.dirname(filePath);
   await fsp.mkdir(dir, { recursive: true });
   const tmp = path.join(dir, `.${path.basename(filePath)}.${crypto.randomBytes(6).toString('hex')}.tmp`);
-  const json = `${JSON.stringify(value, null, 2)}\n`;
-  await fsp.writeFile(tmp, json, 'utf8');
+  await fsp.writeFile(tmp, text, 'utf8');
   await fsp.rename(tmp, filePath);
+}
+
+/** {@link writeTextAtomic} for pretty-printed JSON (temp file + rename). */
+export async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+  await writeTextAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 /** Read and parse a JSON file, or return undefined if it is missing. */

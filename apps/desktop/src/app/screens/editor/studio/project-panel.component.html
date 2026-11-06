@@ -1,0 +1,397 @@
+  <!-- Transcript-review checkpoint: the pipeline paused before synthesis and
+       is waiting for the user to confirm the transcript. -->
+  @if (awaitingReview()) {
+    <section class="panel-block review-banner" role="status">
+      <div>
+        <strong>{{ 'editor.review-title' | translate }}</strong>
+        <p class="hint">
+          {{ 'editor.review-hint' | translate }}
+        </p>
+      </div>
+      <button type="button" class="btn btn-primary" (click)="continueDubbing()" [disabled]="continuing()">
+        {{ (continuing() ? 'editor.continuing' : 'editor.continue-dubbing') | translate }}
+      </button>
+    </section>
+  }
+
+  <!-- Final video: preview the rendered result + jump to export options. Shown
+       only once the render step has produced a video. -->
+  @if (rendered()) {
+    <section class="panel-block stack result-card">
+      <div class="row row-between">
+        <h2>{{ 'editor.final-video' | translate }}</h2>
+        <a class="btn btn-sm" [routerLink]="['/project', store.projectId(), 'export']">
+          {{ 'editor.export-options' | translate }}
+        </a>
+      </div>
+      @if (outputPath(); as path) {
+        <p><span class="label">{{ 'editor.output-label' | translate }}</span> <span class="mono">{{ path }}</span></p>
+      }
+      @if (resultPreviewUrl(); as url) {
+        @if (!resultPreviewFailed()) {
+          <video
+            class="video-preview"
+            controls
+            preload="metadata"
+            [src]="url"
+            (error)="resultPreviewFailed.set(true)"
+          ></video>
+        } @else {
+          <div class="badge badge-pending preview-note">
+            {{ 'editor.preview-unavailable' | translate }}
+          </div>
+        }
+      }
+    </section>
+  }
+
+  <!-- All applied settings + change-and-re-dub. Lets the user swap an engine,
+       model or voice and re-render from the affected stage (earlier stages are
+       reused, so e.g. changing the voice does NOT redo STT + translation). -->
+  @if (draft(); as s) {
+    <section class="panel-block stack settings-card">
+      <div class="row row-between">
+        <h2>{{ 'editor.settings' | translate }}</h2>
+        @if (settingsDirty()) {
+          <span class="badge badge-warning">{{ 'editor.unsaved' | translate }}</span>
+        }
+      </div>
+      <p class="muted">
+        {{ 'editor.settings-intro' | translate }}
+      </p>
+
+      <div class="settings-grid">
+        <!-- Languages & mode (fixed for the life of the project) -->
+        <div class="settings-group">
+          <h3>{{ 'editor.languages-mode' | translate }}</h3>
+          <div class="setting-row">
+            <span class="label">{{ 'editor.source-language' | translate }}</span>
+            <span class="value">{{ languageLabel(s.sourceLanguage) }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="label">{{ 'editor.target-language' | translate }}</span>
+            <span class="value">{{ languageLabel(s.targetLanguage) }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="label">{{ 'editor.processing' | translate }}</span>
+            <span class="value">{{ processingLabels[s.processingMode] | translate }}</span>
+          </div>
+        </div>
+
+        <!-- Speech-to-Text -->
+        <div class="settings-group">
+          <h3>{{ 'editor.stt' | translate }}</h3>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.engine' | translate }}</span>
+            <select
+              [ngModel]="s.sttProviderId"
+              (ngModelChange)="onSettingChange('sttProviderId', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (p of providers()?.stt ?? []; track p.id) {
+                <option [value]="p.id">{{ providerLabel(p) }}</option>
+              }
+              @if (!providerInList('stt', s.sttProviderId)) {
+                <option [value]="s.sttProviderId">{{ s.sttProviderId }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.local-stt-model' | translate }}</span>
+            @if (whisperModels().length > 0) {
+              <select
+                [ngModel]="s.sttModel ?? ''"
+                (ngModelChange)="onSettingChange('sttModel', $event)"
+                [disabled]="redubbing()"
+              >
+                @for (m of whisperModels(); track m.id) {
+                  <option [value]="m.id">{{ m.label }}</option>
+                }
+                @if (!modelInList(s.sttModel)) {
+                  <option [value]="s.sttModel">{{ s.sttModel }}</option>
+                }
+              </select>
+            } @else {
+              <span class="value">{{ modelLabel(s.sttModel) }}</span>
+            }
+          </label>
+        </div>
+
+        <!-- Translation -->
+        <div class="settings-group">
+          <h3>{{ 'editor.translation' | translate }}</h3>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.engine' | translate }}</span>
+            <select
+              [ngModel]="s.translationProviderId"
+              (ngModelChange)="onSettingChange('translationProviderId', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (p of providers()?.translation ?? []; track p.id) {
+                <option [value]="p.id">{{ providerLabel(p) }}</option>
+              }
+              @if (!providerInList('translation', s.translationProviderId)) {
+                <option [value]="s.translationProviderId">{{ s.translationProviderId }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.review-refine' | translate }}</span>
+            <select
+              [ngModel]="s.refineProviderId ?? 'none'"
+              (ngModelChange)="onSettingChange('refineProviderId', $event === 'none' ? undefined : $event)"
+              [disabled]="redubbing()"
+            >
+              <option value="none">{{ 'editor.off' | translate }}</option>
+              @for (p of refinerOptions(); track p.id) {
+                <option [value]="p.id">{{ providerLabel(p) }}</option>
+              }
+            </select>
+          </label>
+          <div class="setting-row">
+            <span class="label">{{ 'editor.auto-fit' | translate }}</span>
+            <span class="value">{{ (s.autoFitOverflow ? 'editor.on' : 'editor.off') | translate }}</span>
+          </div>
+          <p class="hint">
+            {{ 'editor.refine-hint' | translate }}
+          </p>
+        </div>
+
+        <!-- Text-to-Speech -->
+        <div class="settings-group">
+          <h3>{{ 'editor.tts' | translate }}</h3>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.engine' | translate }}</span>
+            <select
+              [ngModel]="s.ttsProviderId"
+              (ngModelChange)="onSettingChange('ttsProviderId', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (p of providers()?.tts ?? []; track p.id) {
+                <option [value]="p.id">{{ providerLabel(p) }}</option>
+              }
+              @if (!providerInList('tts', s.ttsProviderId)) {
+                <option [value]="s.ttsProviderId">{{ s.ttsProviderId }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.voice' | translate }}</span>
+            @if (draftHasVoices()) {
+              <select
+                [ngModel]="s.ttsVoiceId ?? ''"
+                (ngModelChange)="onSettingChange('ttsVoiceId', $event || undefined)"
+                [disabled]="redubbing()"
+              >
+                <option value="">{{ 'editor.provider-default' | translate }}</option>
+                @for (v of draftVoices(); track v.id) {
+                  <option [value]="v.id">{{ v.label }}</option>
+                }
+              </select>
+            } @else {
+              <span class="value">{{ s.ttsVoiceId ?? ('editor.provider-default' | translate) }}</span>
+            }
+          </label>
+        </div>
+
+        <!-- Audio mix -->
+        <div class="settings-group">
+          <h3>{{ 'editor.audio-mixing' | translate }}</h3>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.original-audio' | translate }}</span>
+            <select
+              [ngModel]="s.originalAudioMode ?? 'keep'"
+              (ngModelChange)="onSettingChange('originalAudioMode', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (m of originalAudioModes(); track m) {
+                <option [value]="m">{{ originalAudioModeLabels[m] | translate }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.ducking' | translate }}</span>
+            <select
+              [ngModel]="s.duckingLevelDb"
+              (ngModelChange)="onNumberSettingChange('duckingLevelDb', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (d of duckingOptions; track d.value) {
+                <option [ngValue]="d.value">{{ d.label | translate }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.max-speed' | translate }}</span>
+            <select
+              [ngModel]="s.maxSpeedRatio"
+              (ngModelChange)="onNumberSettingChange('maxSpeedRatio', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (sp of speedOptions; track sp.value) {
+                <option [ngValue]="sp.value">{{ sp.label | translate }}</option>
+              }
+            </select>
+          </label>
+          <div class="setting-row">
+            <span class="label">{{ 'editor.time-stretch' | translate }}</span>
+            <span class="value">{{ timeStretchLabels[s.timeStretchEngine ?? 'auto'] | translate }}</span>
+          </div>
+          <div class="setting-row">
+            <span class="label">{{ 'editor.tts-gain' | translate }}</span>
+            <span class="value">{{ s.ttsGainDb }} dB</span>
+          </div>
+        </div>
+
+        <!-- Output -->
+        <div class="settings-group">
+          <h3>{{ 'editor.subtitles-render' | translate }}</h3>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.subtitles' | translate }}</span>
+            <select
+              [ngModel]="s.subtitleExportMode"
+              (ngModelChange)="onSettingChange('subtitleExportMode', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (mode of subtitleModes; track mode) {
+                <option [value]="mode">{{ subtitleLabels[mode] | translate }}</option>
+              }
+            </select>
+          </label>
+          <label class="setting-row">
+            <span class="label">{{ 'editor.render-quality' | translate }}</span>
+            <select
+              [ngModel]="s.renderQuality ?? 'quality'"
+              (ngModelChange)="onSettingChange('renderQuality', $event)"
+              [disabled]="redubbing()"
+            >
+              @for (q of renderQualities; track q) {
+                <option [value]="q">{{ renderQualityLabels[q] | translate }}</option>
+              }
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="redub-bar">
+        <span class="label">{{ 'editor.redub-from' | translate }}</span>
+        <div class="redub-buttons">
+          @for (step of redubStages; track step) {
+            <button
+              type="button"
+              class="btn btn-sm"
+              [class.btn-primary]="isRecommendedStep(step)"
+              (click)="redubFrom(step)"
+              [disabled]="redubbing()"
+              [title]="'editor.redub-title' | translate: { step: stepLabels[step] | translate }"
+            >
+              {{ stepLabels[step] | translate }}
+            </button>
+          }
+        </div>
+      </div>
+      @if (recommendedStep(); as rec) {
+        <p class="hint">
+          {{ 'editor.redub-recommended' | translate: { step: stepLabels[rec] | translate } }}
+        </p>
+      } @else {
+        <p class="hint">
+          {{ 'editor.redub-none' | translate }}
+        </p>
+      }
+    </section>
+  }
+
+  <!-- Cast & translation context: the project's character sheet. Context-aware
+       translation providers follow it, so fixing a pronoun/term HERE fixes it
+       across the whole video on the next re-translate. -->
+  @if (ctxDraft(); as ctx) {
+    <section class="panel-block stack ctx-card">
+      <div class="ctx-head">
+        <h2>{{ 'editor.ctx-title' | translate }}</h2>
+        @if (ctxDirty()) {
+          <span class="badge badge-warning">{{ 'editor.ctx-unsaved' | translate }}</span>
+        }
+      </div>
+      <p class="hint">
+        {{ 'editor.ctx-intro' | translate }}
+      </p>
+
+      <!-- Argos is the DEFAULT translation engine and reads none of this: it is
+           sentence-level statistical MT with nowhere to put a synopsis or a
+           glossary. Without this notice the whole card is a form that silently
+           does nothing for most users. -->
+      @if (contextIgnoredByEngine()) {
+        <div class="badge badge-warning ctx-ignored" role="note">
+          {{ 'editor.ctx-ignored' | translate }}
+        </div>
+      }
+
+      <label class="ctx-field">
+        <span class="label">{{ 'editor.synopsis' | translate }}</span>
+        <textarea
+          rows="2"
+          [ngModel]="ctx.synopsis"
+          (ngModelChange)="ctx.synopsis = $event; ctxChanged()"
+          [placeholder]="'editor.synopsis-ph' | translate"
+        ></textarea>
+      </label>
+
+      <label class="ctx-field">
+        <span class="label">{{ 'editor.pronouns' | translate }}</span>
+        <textarea
+          rows="3"
+          [ngModel]="ctx.pronounGuide"
+          (ngModelChange)="ctx.pronounGuide = $event; ctxChanged()"
+          [placeholder]="'editor.pronouns-ph' | translate"
+        ></textarea>
+      </label>
+
+      <div class="ctx-field">
+        <span class="label">{{ 'editor.cast' | translate }}</span>
+        @for (c of ctx.cast; track $index) {
+          <div class="ctx-row">
+            <input [ngModel]="c.name" (ngModelChange)="c.name = $event; ctxChanged()" [placeholder]="'editor.cast-name-ph' | translate" />
+            <input [ngModel]="c.role" (ngModelChange)="c.role = $event; ctxChanged()" [placeholder]="'editor.cast-role-ph' | translate" />
+            <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveCast($index)" [title]="'editor.remove' | translate">✕</button>
+          </div>
+        }
+        <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddCast()">{{ 'editor.add-speaker' | translate }}</button>
+      </div>
+
+      <div class="ctx-field">
+        <span class="label">{{ 'editor.glossary' | translate }}</span>
+        @for (g of ctx.glossary; track $index) {
+          <div class="ctx-row">
+            <input [ngModel]="g.source" (ngModelChange)="g.source = $event; ctxChanged()" [placeholder]="'editor.glossary-source-ph' | translate" />
+            <input [ngModel]="g.target" (ngModelChange)="g.target = $event; ctxChanged()" [placeholder]="'editor.glossary-target-ph' | translate" />
+            <button type="button" class="btn btn-ghost btn-sm" (click)="ctxRemoveGlossary($index)" [title]="'editor.remove' | translate">✕</button>
+          </div>
+        }
+        <button type="button" class="btn btn-ghost btn-sm" (click)="ctxAddGlossary()">{{ 'editor.add-term' | translate }}</button>
+      </div>
+
+      <div class="ctx-actions">
+        <button type="button" class="btn btn-sm" (click)="saveCtx(false)" [disabled]="!ctxDirty() || ctxSaving()">
+          {{ 'editor.save-sheet' | translate }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-primary btn-sm"
+          (click)="saveCtx(true)"
+          [disabled]="ctxSaving() || redubbing()"
+          [title]="'editor.save-retranslate-title' | translate"
+        >
+          {{ 'editor.save-retranslate' | translate }}
+        </button>
+      </div>
+    </section>
+  } @else if (store.project()) {
+    <section class="panel-block muted ctx-card empty-ctx">
+      <span>
+        {{ 'editor.no-sheet' | translate }}
+      </span>
+      <button type="button" class="btn btn-ghost btn-sm" (click)="createCtxSheet()">{{ 'editor.create-sheet' | translate }}</button>
+    </section>
+  }
+

@@ -25,6 +25,7 @@ import {
   type PipelineStepId,
   type ProjectSettings,
   type SaveCredentialRequest,
+  type SegmentPatch,
   type SetupInstallRequest,
   type SubtitleExportMode,
   type SubtitleStyle,
@@ -49,6 +50,7 @@ import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvide
 import { EventBusRegistry } from './events.js';
 import { checkWorkersHealth } from './health.js';
 import { toHttpError } from './httpErrors.js';
+import { decideRange } from './httpRange.js';
 import { createFfmpegMediaService } from './mediaAdapter.js';
 import { openPath } from './openPath.js';
 import { describeStorage, clearStorage } from './storage.js';
@@ -335,7 +337,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       if (!origin || allowedOrigin.test(origin)) cb(null, true);
       else cb(null, false);
     },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
 
   // Stop any running engine servers (whisper.cpp / llama.cpp / uv-env workers)
@@ -1241,6 +1243,63 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
   );
 
+  // The editor's timeline document (cues + synthesis units + fit + media), and
+  // the batch patch that moves/trims/re-voices lines. PATCH returns the updated
+  // document so the editor never has to stitch two reads together.
+  app.get('/projects/:id/timeline', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      return await orchestrator.getTimeline(req.params.id);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.patch(
+    '/projects/:id/timeline',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { segments?: SegmentPatch[] } }>, reply) => {
+      try {
+        return await orchestrator.patchSegments(req.params.id, req.body?.segments ?? []);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // Editor media: the original audio's waveform peaks and the filmstrip sprite.
+  // Both are built on first request with ffmpeg, then served from the project's
+  // cache/ dir (the sprite itself is fetched through /file).
+  app.get('/projects/:id/waveform', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      return await orchestrator.getWaveform(req.params.id);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.get('/projects/:id/filmstrip', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      return await orchestrator.getFilmstrip(req.params.id);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // A dub clip tempo-fitted like the final mix, for the editor's live preview.
+  app.get(
+    '/projects/:id/units/:unitId/fitted',
+    async (
+      req: FastifyRequest<{ Params: { id: string; unitId: string }; Querystring: { ratio?: string } }>,
+      reply,
+    ) => {
+      try {
+        const file = await orchestrator.getFittedClip(req.params.id, req.params.unitId, Number(req.query.ratio ?? '1'));
+        return await sendFileWithRanges(req, reply, file);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
   // "Tighten to fit": re-translate one line shorter, then re-synthesize + re-align.
   app.post(
     '/projects/:id/segments/:segId/refit',
@@ -1366,13 +1425,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           .status(403)
           .send({ error: { code: 'UNKNOWN', message: 'Path is outside the projects directory.' } });
       }
-      const info = await stat(resolved).catch(() => undefined);
-      if (!info || !info.isFile()) {
-        return reply.status(404).send({ error: { code: 'UNKNOWN', message: 'File not found.' } });
-      }
-      void reply.header('Content-Length', info.size);
-      void reply.type(contentTypeFor(resolved));
-      return reply.send(createReadStream(resolved));
+      return await sendFileWithRanges(req, reply, resolved);
     } catch (err) {
       return sendError(reply, err);
     }
@@ -1423,6 +1476,32 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   });
 
   return app;
+}
+
+/**
+ * Stream a file honouring HTTP byte ranges (see httpRange.ts — WKWebView will
+ * not play or seek media from a server that ignores them). Shared by `/file`
+ * and the editor's fitted-clip route so both behave identically.
+ */
+async function sendFileWithRanges(req: FastifyRequest, reply: FastifyReply, file: string): Promise<FastifyReply> {
+  const info = await stat(file).catch(() => undefined);
+  if (!info || !info.isFile()) {
+    return reply.status(404).send({ error: { code: 'UNKNOWN', message: 'File not found.' } });
+  }
+  void reply.header('Accept-Ranges', 'bytes');
+  void reply.type(contentTypeFor(file));
+  const range = decideRange(req.headers.range, info.size);
+  if (range.kind === 'unsatisfiable') {
+    void reply.header('Content-Range', `bytes */${info.size}`);
+    return reply.status(416).send();
+  }
+  if (range.kind === 'partial') {
+    void reply.header('Content-Range', `bytes ${range.start}-${range.end}/${info.size}`);
+    void reply.header('Content-Length', range.end - range.start + 1);
+    return reply.status(206).send(createReadStream(file, { start: range.start, end: range.end }));
+  }
+  void reply.header('Content-Length', info.size);
+  return reply.send(createReadStream(file));
 }
 
 /**

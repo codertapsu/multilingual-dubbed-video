@@ -163,6 +163,38 @@ export class FakeMediaService implements PipelineMediaService {
     return { output: input.output, durationMs: 10_000 };
   }
 
+  /** Counts calls so tests can assert the editor's caches are reused. */
+  public waveformCalls = 0;
+  public filmstripCalls = 0;
+
+  async computeWaveformPeaks(
+    _inputPath: string,
+    opts?: { peaksPerSecond?: number },
+  ): Promise<{ peaksPerSecond: number; durationMs: number; peaks: Int8Array }> {
+    this.waveformCalls += 1;
+    const pps = opts?.peaksPerSecond ?? 100;
+    // 1 s of a rising envelope: deterministic, and non-trivial to encode.
+    return { peaksPerSecond: pps, durationMs: 1000, peaks: Int8Array.from({ length: pps * 2 }, (_, i) => (i % 2 ? i % 127 : -(i % 127))) };
+  }
+
+  async renderFilmstrip(
+    _inputPath: string,
+    outputPath: string,
+    durationMs: number,
+  ): Promise<{ path: string; count: number; columns: number; rows: number; tileWidth: number; tileHeight: number; intervalMs: number }> {
+    this.filmstripCalls += 1;
+    await this.touch(outputPath, 'jpeg');
+    return { path: outputPath, count: 8, columns: 8, rows: 1, tileWidth: 160, tileHeight: 90, intervalMs: Math.round(durationMs / 8) };
+  }
+
+  public fittedCalls = 0;
+
+  async renderFittedClip(_inputPath: string, outputPath: string, ratio: number): Promise<string> {
+    this.fittedCalls += 1;
+    await this.touch(outputPath, `fitted@${ratio}`);
+    return outputPath;
+  }
+
   async renderFinalVideo(input: RenderFinalVideoInput): Promise<RenderFinalVideoResult> {
     this.calls.push(`renderFinalVideo:${input.outputPath}`);
     await this.touch(input.outputPath);
@@ -209,11 +241,14 @@ export class FakeTtsProvider implements TtsProvider {
   readonly displayName = 'Fake TTS';
   readonly isLocal = true;
   public calls = 0;
+  /** Every request, in order — lets tests assert the voice/speed of each batch. */
+  public inputs: TtsInput[] = [];
 
   constructor(private readonly durationForSegment: (segmentId: string) => number = () => 1000) {}
 
   async synthesizeSegments(input: TtsInput): Promise<TtsResult> {
     this.calls += 1;
+    this.inputs.push(input);
     const segments = await Promise.all(
       input.segments.map(async (s, i) => {
         const numeric = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;

@@ -36,11 +36,22 @@ export type {
   Project,
   TranscriptWord,
   TranscriptSegment,
+  SegmentPatch,
   TtsSegment,
   AlignmentStatus,
   AlignedSegment,
   CreateProjectInput,
 } from './models/domain.js';
+
+// ---- Editor timeline -------------------------------------------------------
+export type {
+  TimelineSegment,
+  TimelineUnit,
+  TimelineMedia,
+  TimelineDocument,
+  TimelineWaveform,
+  TimelineFilmstrip,
+} from './models/timeline.js';
 
 // ---- Engine packs ----------------------------------------------------------
 export type {

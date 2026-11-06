@@ -88,7 +88,7 @@
 
 .chip {
   padding: 0.2rem 0.6rem;
-  border: 1px solid var(--border, #3a3a44);
+  border: 1px solid var(--vd-border-strong);
   border-radius: 999px;
   font-size: 0.82rem;
   opacity: 0.9;
@@ -96,7 +96,7 @@
 
 .chip-tier {
   text-transform: capitalize;
-  border-color: var(--accent, #7aa2f7);
+  border-color: var(--vd-primary);
 }
 
 .stack-sm {
@@ -123,7 +123,7 @@
 
 .cred-row {
   padding: 0.7rem 0;
-  border-top: 1px solid var(--border, #2c2c34);
+  border-top: 1px solid var(--vd-border);
 }
 
 .cred-head {
@@ -148,11 +148,11 @@
 }
 
 .test-ok {
-  color: var(--ok, #9ece6a);
+  color: var(--vd-success);
 }
 
 .test-fail {
-  color: var(--error, #f7768e);
+  color: var(--vd-danger);
 }
 
 .install-progress {

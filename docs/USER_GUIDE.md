@@ -145,13 +145,54 @@ You can **cancel** at any point, and **retry a single step** — retrying re-run
 that step and everything after it, and skips the steps whose output already
 exists. That is why re-running a project is much faster than the first run.
 
-### Fixing the translation
+<a id="editing-a-dub"></a>
 
-The **Editor** screen shows the original transcript and the translation side by
-side. Edit any line, then use **Regenerate TTS** on that row to re-voice just
-that line — you never have to re-run the whole video. Each row also has a
-**voice** dropdown, which is the simplest way to give a second speaker a
-different voice (VideoDubber does not yet detect speakers on its own).
+### Editing a dub (the studio)
+
+The **Editor** is a small dubbing studio. The video plays in the middle; every
+line sits on a **timeline** underneath, in five lanes — thumbnails of the
+picture, the original soundtrack's waveform, the source text, the subtitles, and
+the **dub** clips the new voice actually speaks. On the left is a searchable list
+of every line (filter it to **Issues**, **Changed** or **Locked** lines); on the
+right, the **Line** tab edits whatever you selected and the **Project** tab holds
+the engines, mix settings and the translation character sheet.
+
+What you can do, and how:
+
+- **Fix the translation.** Select a line and type in the Line tab. The meter
+  under the box shows how fast it reads (characters per second — above about 17
+  most viewers can't finish it) and how many subtitle rows it wraps to.
+- **Fix the timing.** Drag a subtitle on the timeline to move it, or drag either
+  edge to trim it; it snaps to the playhead and to the lines beside it (hold
+  **Alt** to stop snapping). A line can't be dragged past its neighbours or
+  made to overlap them. You can also type an exact time, nudge by ±10/100 ms,
+  press **I** / **O** to set the start / end to the playhead, or select several
+  lines and press **[** / **]** to move them together. Drag a **dub clip** to move
+  the voice and its subtitles as one.
+- **Change a voice.** Pick a voice in the Line tab, or **drag a voice chip onto
+  any line or clip** on the timeline. Select several lines first to re-voice them
+  all at once. **Speaking rate** reads a line faster or slower (a faster reading
+  fits a long line more naturally than stretching the audio).
+- **Hear it immediately.** Press **Space**. The preview plays your edited dub
+  over the video — moved lines play from their new place, without re-rendering.
+  **Final mix / Original / Dub only** switches what you hear; the sliders set the
+  two volumes.
+- **Re-voice what you changed.** Lines whose text, voice or rate changed are
+  marked *needs re-voicing* (striped on the timeline). **Voice N changed lines**
+  in the toolbar re-synthesizes them all; **Regenerate TTS** does one.
+- **Undo anything** with ⌘Z / Ctrl+Z (⇧ to redo). Every change saves itself a
+  moment after you make it — the toolbar says *All changes saved*.
+- **Import subtitles.** Drop an `.srt` or `.vtt` file on the timeline and its
+  text replaces the translations it overlaps in time (one undoable step).
+- **Render.** **Render video** re-mixes the dub from the timeline and renders the
+  final file; transcription and translation are reused, so it takes seconds to
+  minutes, not the whole pipeline again.
+
+Lines you edit by hand are **locked**: the automatic passes that shorten
+overflowing lines or polish the translation leave them exactly as you wrote
+them. Unlock a line in the Line tab to let them work on it again.
+
+Press **?** in the editor for the full list of keyboard shortcuts.
 
 ### Getting the finished file
 
@@ -301,8 +342,8 @@ How it works, including how to go back to an older version:
 Stated plainly, so you are not hunting for a feature that is not there:
 
 - **No speaker detection.** Every line is dubbed in one voice. You can assign a
-  different voice per line by hand in the Editor, but the app will not work out
-  who is speaking. (The diarization engine pack is not built — it is hidden from
+  different voice per line by hand in the Editor (drag a voice onto the lines a
+  speaker says), but the app will not work out who is speaking. (The diarization engine pack is not built — it is hidden from
   Settings → Engines rather than shipped broken.)
 - **No music/voice separation.** "Keep the music, replace the speech" is not
   available; the background is turned *down* under the new voice, not separated

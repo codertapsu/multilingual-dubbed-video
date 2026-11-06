@@ -57,6 +57,7 @@ import {
   planSynthesisGroups,
   retimeCuesToVoice,
   singletonGroups,
+  rateForGroup,
   voiceForGroup,
   type SynthesisGroup,
   type SynthesisGroupsArtifact,
@@ -185,6 +186,8 @@ function toGroupInputs(segments: readonly TranscriptSegment[]): {
   endMs: number;
   text: string;
   speakerId?: string;
+  voiceId?: string;
+  speakingRate?: number;
 }[] {
   return segments.map((s) => ({
     id: s.id,
@@ -192,6 +195,9 @@ function toGroupInputs(segments: readonly TranscriptSegment[]): {
     endMs: s.endMs,
     text: (s.translatedText ?? s.sourceText ?? '').trim(),
     ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+    // Per-line editor overrides: grouping splits on them and synthesis honours them.
+    ...(s.voiceId ? { voiceId: s.voiceId } : {}),
+    ...(s.speakingRate !== undefined ? { speakingRate: s.speakingRate } : {}),
   }));
 }
 
@@ -863,11 +869,16 @@ export class PipelineRunner {
       await writeDocContext(paths.translationContextJson, outcome.analysis);
     }
 
-    if (outcome.changedIds.length > 0) {
+    // Locked lines (hand-written or approved in the editor) were sent as
+    // CONTEXT — the reviewer still reads them to keep pronouns and terms
+    // consistent — but their text is never replaced.
+    const lockedIds = new Set(segments.filter((s) => s.locked === true).map((s) => s.id));
+    const appliedIds = outcome.changedIds.filter((id) => !lockedIds.has(id));
+    if (appliedIds.length > 0) {
       const byId = new Map(outcome.segments.map((s) => [s.id, s.translatedText]));
       const merged: TranscriptSegment[] = segments.map((s) => ({
         ...s,
-        translatedText: byId.get(s.id) ?? s.translatedText ?? '',
+        translatedText: lockedIds.has(s.id) ? (s.translatedText ?? '') : (byId.get(s.id) ?? s.translatedText ?? ''),
       }));
       await writeSegments(paths.translatedJson, merged);
       const cues = transcriptSegmentsToCues(merged);
@@ -877,15 +888,17 @@ export class PipelineRunner {
     await writeReport({
       provider: providerId,
       reviewed: segments.length,
-      changed: outcome.changedIds.length,
-      changedIds: outcome.changedIds.slice(0, 200),
+      changed: appliedIds.length,
+      changedIds: appliedIds.slice(0, 200),
+      ...(lockedIds.size > 0 ? { lockedKept: lockedIds.size } : {}),
       finishedAt: new Date().toISOString(),
     });
     this.deps.logger.info(
-      `Refinement complete: ${outcome.changedIds.length}/${segments.length} line(s) improved` +
-        (outcome.changedIds.length > 0
-          ? ` (e.g. ${outcome.changedIds.slice(0, 3).join(', ')}).`
-          : ' — the translation was already consistent.'),
+      `Refinement complete: ${appliedIds.length}/${segments.length} line(s) improved` +
+        (appliedIds.length > 0
+          ? ` (e.g. ${appliedIds.slice(0, 3).join(', ')}).`
+          : ' — the translation was already consistent.') +
+        (lockedIds.size > 0 ? ` ${lockedIds.size} locked line(s) kept as written.` : ''),
     );
   }
 
@@ -950,6 +963,8 @@ export class PipelineRunner {
           startMs: seg.startMs,
           endMs: seg.endMs,
           ...(g.speakerId ? { speakerId: g.speakerId } : {}),
+          ...(g.voiceId ? { voiceId: g.voiceId } : {}),
+          ...(g.speakingRate !== undefined ? { speakingRate: g.speakingRate } : {}),
         };
       });
       degrouped.push(...singles);
@@ -999,6 +1014,14 @@ export class PipelineRunner {
           `those segments contain silent placeholder audio.`,
       );
     }
+    // Every line was just synthesized from its current text/voice/rate, so no
+    // clip is stale any more. Rewritten only when a flag is actually set.
+    if (segments.some((s) => s.ttsStale === true)) {
+      await writeSegments(
+        paths.translatedJson,
+        segments.map(({ ttsStale: _stale, ...rest }) => rest),
+      );
+    }
     this.deps.logger.info(`Speech synthesis complete (engine: ${engine ?? (sawFallbackEngine ? 'fallback' : 'unknown')}).`);
   }
 
@@ -1014,10 +1037,18 @@ export class PipelineRunner {
     signal: AbortSignal,
   ): Promise<GroupSynthesisOutcome> {
     const provider = this.deps.registry.getTts(project.settings.ttsProviderId);
-    const byVoice = new Map<string | undefined, SynthesisGroup[]>();
+    // `voiceId` and `speed` are BATCH-level TTS parameters, so units are
+    // partitioned by the (voice, rate) pair they resolve to: a per-line rate or
+    // voice from the editor gets its own call instead of being flattened into
+    // its neighbours' batch.
+    const byVoice = new Map<string, { voiceId: string | undefined; speed: number; groups: SynthesisGroup[] }>();
     for (const g of groups) {
-      const voice = voiceForGroup(g, project.settings);
-      byVoice.set(voice, [...(byVoice.get(voice) ?? []), g]);
+      const voiceId = voiceForGroup(g, project.settings);
+      const speed = rateForGroup(g);
+      const key = `${voiceId ?? ''}\u0000${speed}`;
+      const bucket = byVoice.get(key) ?? { voiceId, speed, groups: [] };
+      bucket.groups.push(g);
+      byVoice.set(key, bucket);
     }
 
     const outcome: GroupSynthesisOutcome = {
@@ -1026,7 +1057,7 @@ export class PipelineRunner {
       sawFallbackEngine: false,
       fallbackSegments: 0,
     };
-    for (const [voiceId, voiceGroups] of byVoice) {
+    for (const { voiceId, speed, groups: voiceGroups } of byVoice.values()) {
       throwIfCancelled(signal);
       const result = await provider.synthesizeSegments(
         {
@@ -1034,7 +1065,7 @@ export class PipelineRunner {
           voiceId,
           segments: voiceGroups.map((g) => ({ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs })),
           outputDir: paths.ttsSegmentsDir,
-          speed: 1.0,
+          speed,
         },
         signal,
       );
@@ -1255,6 +1286,11 @@ export class PipelineRunner {
       for (const c of conflicts) {
         const group = groupById.get(c.segmentId);
         if (!group) continue;
+        // A line the user wrote or approved by hand is never machine-shortened:
+        // re-running from alignment used to replace it with the LLM's tighter
+        // version without a word. Its unit keeps whatever stretch it needs and
+        // stays flagged in the editor instead.
+        if (group.segmentIds.some((id) => segById.get(id)?.locked === true)) continue;
         const availableMs = Math.max(1, c.placedDurationMs - c.overflowMs);
         // Attempt 1 targets a window that still uses some speed-up headroom
         // (max speed for real conflicts; a comfortable ~1.15x for lines that
@@ -1325,7 +1361,7 @@ export class PipelineRunner {
             voiceId: voiceForGroup(g, project.settings),
             segments: [{ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs }],
             outputDir: paths.ttsSegmentsDir,
-            speed: 1.0,
+            speed: rateForGroup(g),
           },
           signal,
         );
@@ -1399,7 +1435,9 @@ export class PipelineRunner {
       if (!group || !input) continue;
       // `speed` is a batch-level TTS parameter, so units go one call at a time
       // (there are few of them). A failed call keeps the stretched fallback.
-      const speed = Math.min(a.speedRatio, 2);
+      // The ratio was measured on audio already spoken at the unit's own rate
+      // (a per-line editor override), so the two compound.
+      const speed = Math.min(rateForGroup(group) * a.speedRatio, 2);
       try {
         await tts.synthesizeSegments(
           {

@@ -1,749 +1,341 @@
-import type {
-  OnInit} from '@angular/core';
 import {
   ChangeDetectionStrategy,
   Component,
+  HostListener,
   computed,
+  effect,
   inject,
   input,
   signal,
+  viewChild,
+  type OnDestroy,
+  type OnInit,
 } from '@angular/core';
-import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 
-import { splitSubtitleLines } from '@videodubber/shared';
-
-import { environment } from '../../core/environment';
 import type { HasUnsavedChanges } from '../../core/guards/unsaved-changes.guard';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
-import { ProjectStore, toAppError } from '../../core/state/project.store';
+import { toAppError } from '../../core/state/project.store';
+import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
-import {
-  ALL_SUBTITLE_EXPORT_MODES,
-  formatTimecode,
-  PIPELINE_STEP_LABELS,
-  PROCESSING_MODE_LABELS,
-  SUBTITLE_EXPORT_MODE_LABELS,
-} from '../../core/util/format';
-import {
-  DUCKING_OPTIONS,
-  earliestStepForChanges,
-  ORIGINAL_AUDIO_MODE_LABELS,
-  REDUB_STAGES,
-  RENDER_QUALITY_LABELS,
-  SPEED_OPTIONS,
-  TIME_STRETCH_ENGINE_LABELS,
-  ttsEngineParam,
-} from '../../core/util/settings-options';
-import type {
-  AppError,
-  OriginalAudioMode,
-  PipelineStepId,
-  Project,
-  ProjectSettings,
-  RenderQuality,
-  SubtitleExportMode,
-  TranslationDocContext,
-} from '../../core/models';
-import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, WhisperModelInfo } from '../../core/models/setup';
-import type { EditorSegmentVm, SegmentWithAlignment } from '../../core/models/view-models';
-import { TranslatePipe } from '../../core/i18n';
+import { InspectorComponent } from './studio/inspector.component';
+import { LinesPanelComponent } from './studio/lines-panel.component';
+import { PlaybackService, type MonitorMode } from './studio/playback.service';
+import { PreviewComponent } from './studio/preview.component';
+import { ProjectPanelComponent } from './studio/project-panel.component';
+import { StudioStore, type SaveState } from './studio/studio.store';
+import { TimelineComponent } from './studio/timeline.component';
 
-/** Soft cap for "long subtitle" warning (≈ 2 lines × 42 chars). */
-const LONG_SUBTITLE_CHAR_LIMIT = 84;
-const MAX_SUBTITLE_LINES = 2;
+type SideTab = 'line' | 'project';
 
-/** Fully-populated editable copy of the translation character sheet. */
-interface CtxDraft {
-  synopsis: string;
-  pronounGuide: string;
-  cast: { name: string; role: string }[];
-  glossary: { source: string; target: string }[];
-}
-
-/** Normalize a persisted sheet into the editable draft shape ('' defaults). */
-function toCtxDraft(ctx: TranslationDocContext): CtxDraft {
-  return {
-    synopsis: ctx.synopsis ?? '',
-    pronounGuide: ctx.pronounGuide ?? '',
-    cast: (ctx.cast ?? []).map((c) => ({ name: c.name, role: c.role ?? '' })),
-    glossary: (ctx.glossary ?? []).map((g) => ({ source: g.source, target: g.target })),
-  };
-}
+const TIMELINE_H_KEY = 'vd.studio.timelineHeight';
+const LINES_OPEN_KEY = 'vd.studio.linesOpen';
 
 /**
- * "Looks untranslated" heuristic — mirrors the orchestrator's
- * looksUntranslated(): identical to the source (punctuation/case-insensitive)
- * AND either CJK source (a vi/en voice can't speak it) or a substantial line.
- * Short identical lines ("OK", numbers, names) are legitimate and not flagged.
- */
-const CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-function normalizeForCompare(text: string): string {
-  return text.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '').normalize('NFC');
-}
-function looksUntranslatedText(sourceText: string, text: string): boolean {
-  const src = normalizeForCompare(sourceText);
-  if (src.length < 2 || normalizeForCompare(text) !== src) return false;
-  return CJK_RE.test(sourceText) || src.length >= 15;
-}
-
-/**
- * Translation engines that ignore the translation-context sheet.
+ * EditorComponent (route "project/:id/editor") — the dubbing studio.
  *
- * Argos and LibreTranslate are sentence-level statistical MT: they take one
- * sentence and return one sentence, with nowhere to put a synopsis, a pronoun
- * guide, a cast list or a glossary. Everything else the app offers is an LLM,
- * which does read them. Argos is the default engine, so without this list the
- * whole card is a form that does nothing for most users.
- */
-const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libretranslate'];
-
-/**
- * EditorComponent (route "project/:id/editor").
+ *   ┌ toolbar: project · save state · undo/redo · voice changed lines · render ┐
+ *   │ lines (search/filter) │ preview + transport │ inspector | project panel  │
+ *   ├────────────────────── resizable splitter ────────────────────────────────┤
+ *   │ timeline: ruler · filmstrip · original waveform · source · subtitles · dub│
  *
- * Side-by-side review/edit of transcript segments: read-only source text and
- * an editable translation, with timestamps and warning badges (long subtitle,
- * needs-review, timing-conflict). Each row can preview its TTS audio and
- * regenerate a single segment. A Save button persists all edited translations.
- *
- * It also shows ALL of the project's applied settings (engines, models, voice,
- * mix/render options) and lets the user change the re-runnable ones (STT/MT/TTS
- * engine, STT model, voice, …) and RE-DUB from the affected stage — reusing the
- * earlier stages' outputs (e.g. swap the voice and re-render without redoing STT
- * + translation). This drives the existing retry-from-step machinery.
- *
- * The "long subtitle" warning is computed with the shared `splitSubtitleLines`
- * helper so the UI matches what the burned-in renderer will actually wrap.
+ * Every edit autosaves (debounced) through StudioStore; timing edits re-place
+ * the existing clips server-side, so what you see and hear is what renders.
+ * The previous editor's settings / re-dub / character-sheet surface lives on,
+ * unchanged, in the Project tab.
  */
 @Component({
   selector: 'vd-editor',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, ErrorBannerComponent, TranslatePipe],
+  providers: [StudioStore, PlaybackService],
+  imports: [
+    RouterLink,
+    TranslatePipe,
+    ErrorBannerComponent,
+    LinesPanelComponent,
+    PreviewComponent,
+    InspectorComponent,
+    ProjectPanelComponent,
+    TimelineComponent,
+  ],
   templateUrl: './editor.component.html',
   styleUrl: './editor.component.scss',
 })
-export class EditorComponent implements OnInit, HasUnsavedChanges {
+export class EditorComponent implements OnInit, OnDestroy, HasUnsavedChanges {
   readonly id = input.required<string>();
 
-  /**
-   * Route guard hook: true when leaving would discard typing.
-   *
-   * Covers both editable buffers — the per-segment translation drafts and the
-   * translation-context sheet (synopsis / pronouns / cast / glossary) — because
-   * both are held in memory until their own explicit Save.
-   */
-  hasUnsavedChanges(): boolean {
-    return this.dirty() || this.ctxDirty();
-  }
-
+  protected readonly store = inject(StudioStore);
+  protected readonly playback = inject(PlaybackService);
   private readonly ipc = inject(IpcService);
-  private readonly store = inject(ProjectStore);
   private readonly router = inject(Router);
+  private readonly confirm = inject(ConfirmService);
+  private readonly translate = inject(TranslateService);
 
-  protected readonly formatTimecode = formatTimecode;
-  protected readonly stepLabels = PIPELINE_STEP_LABELS;
-  protected readonly redubStages = REDUB_STAGES;
+  private readonly timeline = viewChild(TimelineComponent);
+  private readonly inspector = viewChild(InspectorComponent);
+  private readonly projectPanel = viewChild(ProjectPanelComponent);
 
-  /** Working copy of the segments (translations are mutated in place by id). */
-  protected readonly segments = signal<SegmentWithAlignment[]>([]);
-  /** Map of segmentId -> edited translatedText (the editable buffer). */
-  protected readonly drafts = signal<Record<string, string>>({});
+  protected readonly sideTab = signal<SideTab>('line');
+  protected readonly linesOpen = signal(localStorage.getItem(LINES_OPEN_KEY) !== '0');
+  protected readonly timelineHeight = signal(Number(localStorage.getItem(TIMELINE_H_KEY)) || 300);
+  protected readonly rendering = signal(false);
+  protected readonly showHelp = signal(false);
 
-  protected readonly loading = signal(false);
-  protected readonly saving = signal(false);
-  protected readonly error = signal<AppError | null>(null);
-  protected readonly dirty = signal(false);
-  /** Segment ids currently being (re)synthesized. */
-  protected readonly synthesizing = signal<ReadonlySet<string>>(new Set());
+  protected readonly projectName = computed(() => this.store.project()?.name ?? '');
+  protected readonly canRender = computed(() => this.store.aligned() && !this.rendering());
 
-  /** The project's PERSISTED settings (provider + default voice + target language). */
-  protected readonly projectSettings = signal<ProjectSettings | null>(null);
-  /** Voices available for the project's CURRENT TTS engine + target language. */
-  protected readonly availableVoices = signal<PiperVoiceInfo[]>([]);
-  /** Per-segment voice override (segmentId -> voiceId); empty = project default. */
-  protected readonly segmentVoiceOverrides = signal<Record<string, string>>({});
+  private readonly monitors: readonly MonitorMode[] = ['mix', 'original', 'dub'];
+  protected readonly saveKeys: Record<SaveState, string> = {
+    saved: 'studio.save-saved',
+    pending: 'studio.save-pending',
+    saving: 'studio.save-saving',
+    error: 'studio.save-error',
+  };
 
-  // -------- project settings panel (display + change + re-dub) -----------------
-  /** Editable copy of the project settings (diffed against `projectSettings`). */
-  protected readonly draft = signal<ProjectSettings | null>(null);
-  /** Selectable providers per phase (with availability), for the engine pickers. */
-  protected readonly providers = signal<ProvidersResponse | null>(null);
-  /** STT model catalog (label + size), for the model picker. */
-  protected readonly whisperModels = signal<WhisperModelInfo[]>([]);
-  /** Language code -> human label (from the setup catalog). */
-  protected readonly languageLabels = signal<ReadonlyMap<string, string>>(new Map());
-  /** Voices for the DRAFT TTS engine (the settings-panel default-voice picker). */
-  protected readonly draftVoices = signal<PiperVoiceInfo[]>([]);
-  /** A re-dub is being started (disables the stage buttons + selects). */
-  protected readonly redubbing = signal(false);
-  /** Paused at the transcript-review checkpoint — show the continue banner. */
-  protected readonly awaitingReview = signal(false);
-  protected readonly continuing = signal(false);
-
-  protected readonly originalAudioModeLabels = ORIGINAL_AUDIO_MODE_LABELS;
-  protected readonly renderQualityLabels = RENDER_QUALITY_LABELS;
-  protected readonly timeStretchLabels = TIME_STRETCH_ENGINE_LABELS;
-  protected readonly subtitleLabels = SUBTITLE_EXPORT_MODE_LABELS;
-  protected readonly processingLabels = PROCESSING_MODE_LABELS;
-  protected readonly duckingOptions = DUCKING_OPTIONS;
-  protected readonly speedOptions = SPEED_OPTIONS;
-  /** Engine packs the backend OFFERS on this machine/OS (available = enabled +
-   * runnable). Gates features whose pack isn't offered so they don't show. */
-  protected readonly offeredPacks = signal<ReadonlySet<string>>(new Set<string>());
-  // Typed option lists so the template can index the label Records strictly.
-  // 'replace-vocals' needs the Vocal-separation engine; hide it unless that pack
-  // is offered here (else the dropdown would let a user pick a silent no-op).
-  protected readonly originalAudioModes = computed<readonly OriginalAudioMode[]>(() =>
-    this.offeredPacks().has('separation-audio')
-      ? (['keep', 'replace-vocals', 'remove'] as const)
-      : (['keep', 'remove'] as const),
-  );
-  protected readonly renderQualities: readonly RenderQuality[] = ['quality', 'fast'];
-  protected readonly subtitleModes: readonly SubtitleExportMode[] = ALL_SUBTITLE_EXPORT_MODES;
-
-  /** Show the per-segment voice override whenever the engine exposes voices. */
-  protected readonly showVoicePicker = computed(() => this.availableVoices().length > 0);
-
-  /**
-   * True when the project's translation engine cannot read the context sheet.
-   *
-   * The synopsis, pronoun guide, cast and glossary are delivered as prompt
-   * context, which only an LLM translator consumes — the local statistical
-   * engines below take a sentence in and give a sentence back. On the DEFAULT
-   * engine (argos) the whole card was therefore a form that silently did
-   * nothing: a user could sit and type a pronoun map for a long video and see
-   * no change on the next re-translate, with no warning anywhere. Say so.
-   */
-  protected readonly contextIgnoredByEngine = computed(() =>
-    CONTEXT_BLIND_TRANSLATION_PROVIDERS.includes(
-      this.projectSettings()?.translationProviderId ?? '',
-    ),
-  );
-
-  /** Label for the project's default voice (shown as the "Default" option). */
-  protected readonly defaultVoiceLabel = computed(() => {
-    const id = this.projectSettings()?.ttsVoiceId;
-    if (!id) return 'auto';
-    return this.availableVoices().find((v) => v.id === id)?.label ?? id;
-  });
-
-  /** The setting keys whose draft value differs from the persisted value. */
-  protected readonly changedKeys = computed<(keyof ProjectSettings)[]>(() => {
-    const base = this.projectSettings();
-    const next = this.draft();
-    if (!base || !next) return [];
-    return (Object.keys(next) as (keyof ProjectSettings)[]).filter(
-      (k) => JSON.stringify(next[k]) !== JSON.stringify(base[k]),
-    );
-  });
-
-  protected readonly settingsDirty = computed(() => this.changedKeys().length > 0);
-
-  /** The earliest stage a change requires re-running from (recommended button). */
-  protected readonly recommendedStep = computed<PipelineStepId | null>(() =>
-    earliestStepForChanges(this.changedKeys()),
-  );
-
-  /** Whether the draft TTS engine exposes a selectable voice list. */
-  protected readonly draftHasVoices = computed(() => this.draftVoices().length > 0);
-
-  // -------- rendered result (preview + open folder) ----------------------------
-  /** The loaded project (for outputDir + the result preview). */
-  protected readonly project = signal<Project | null>(null);
-  /** True once the pipeline's render step has produced the final video. */
-  protected readonly rendered = signal(false);
-  protected readonly opening = signal(false);
-  protected readonly resultPreviewFailed = signal(false);
-
-  /** Absolute path of the rendered video (same convention as the export screen). */
-  protected readonly outputPath = computed<string | null>(() => {
-    const p = this.project();
-    return p ? `${p.outputDir}/output.mp4` : null;
-  });
-
-  /**
-   * Best-effort in-app preview URL for the final video, via the orchestrator's
-   * `/file?path=` route (browsers can't load `file://` from an http origin).
-   * Same approach as the export screen; falls back to "open folder" on error.
-   */
-  protected readonly resultPreviewUrl = computed<string | null>(() => {
-    const path = this.outputPath();
-    if (!path) return null;
-    return `${environment.orchestratorUrl}/file?path=${encodeURIComponent(path)}`;
-  });
-
-  /** Derived per-row view models with computed warnings. */
-  protected readonly rows = computed<EditorSegmentVm[]>(() => {
-    const drafts = this.drafts();
-    // "Untranslated" detection only applies to real cross-language projects.
-    // When settings haven't loaded (transient IPC failure) default to ON —
-    // hiding the badges would recreate the silent-failure mode they exist for.
-    const s = this.projectSettings();
-    const crossLanguage =
-      s === null || s.sourceLanguage.split('-')[0] !== s.targetLanguage.split('-')[0];
-    return this.segments().map((segment) => {
-      const text = drafts[segment.id] ?? segment.translatedText ?? segment.sourceText;
-      const wrappedLines = splitSubtitleLines(text, 42, MAX_SUBTITLE_LINES);
-      const tooLong =
-        text.length > LONG_SUBTITLE_CHAR_LIMIT ||
-        wrappedLines.length > MAX_SUBTITLE_LINES;
-      // Alignment (status/note/audioPath) is merged onto each segment by the
-      // orchestrator's GET /segments once the alignment step has run.
-      const alignment = segment.alignment;
-      return {
-        segment,
-        wrappedLines,
-        longSubtitle: tooLong,
-        untranslated: crossLanguage && looksUntranslatedText(segment.sourceText, text),
-        needsReview: alignment?.status === 'needs-review',
-        timingConflict: alignment?.status === 'timing-conflict',
-        alignmentNote: alignment?.note,
-      };
+  constructor() {
+    // The preview plays what the timeline shows — re-placed live during edits.
+    effect(() => {
+      const clips = this.store
+        .units()
+        .map((u) => ({ u, url: this.store.clipUrl(u) }))
+        .filter((c): c is { u: (typeof c)['u']; url: string } => c.url !== null && c.u.placedDurationMs > 0)
+        .map(({ u, url }) => ({ id: u.id, startMs: u.startMs, durationMs: u.placedDurationMs, url }));
+      this.playback.setClips(clips);
     });
-  });
-
-  protected readonly anyWarnings = computed(() =>
-    this.rows().some((r) => r.longSubtitle || r.needsReview || r.timingConflict || r.untranslated),
-  );
+    // Simulate the project's mix in the preview (ducking, original removed).
+    effect(() => {
+      const s = this.store.settings();
+      if (!s) return;
+      this.playback.duckingDb.set(s.duckOriginalAudio === false ? 0 : s.duckingLevelDb);
+      this.playback.originalMode.set(s.originalAudioMode ?? (s.includeOriginalBackgroundAudio ? 'keep' : 'remove'));
+    });
+  }
 
   ngOnInit(): void {
-    void this.load();
+    void this.store.load(this.id());
   }
 
-  private async load(): Promise<void> {
-    this.loading.set(true);
-    this.error.set(null);
+  ngOnDestroy(): void {
+    // Best effort: an edit made in the last half-second still reaches the disk.
+    void this.store.flushNow();
+  }
+
+  /** Route guard: only what has NOT reached the server yet counts. */
+  hasUnsavedChanges(): boolean {
+    return this.store.hasUnsavedChanges() || this.projectPanel()?.ctxDirty() === true;
+  }
+
+  // ------------------------------------------------------------- actions
+
+  protected onPick(e: { id: string; mode: 'replace' | 'toggle' | 'range' }): void {
+    this.store.select(e.id, e.mode);
+    const seg = this.store.segments()[this.store.indexById().get(e.id) ?? -1];
+    if (seg && e.mode === 'replace') {
+      this.playback.seek(seg.startMs);
+      this.timeline()?.reveal(seg.startMs);
+    }
+    this.sideTab.set('line');
+  }
+
+  protected editText(): void {
+    this.sideTab.set('line');
+    this.inspector()?.focusText();
+  }
+
+  protected toggleLines(): void {
+    this.linesOpen.update((v) => !v);
+    localStorage.setItem(LINES_OPEN_KEY, this.linesOpen() ? '1' : '0');
+  }
+
+  /** Re-mix + render from the edited timeline (alignment is already on disk). */
+  protected async render(): Promise<void> {
+    if (this.rendering()) return;
+    this.rendering.set(true);
     try {
-      const segs = await this.ipc.getSegments(this.id());
-      this.segments.set(segs);
-      const drafts: Record<string, string> = {};
-      for (const s of segs) {
-        drafts[s.id] = s.translatedText ?? '';
+      if (!(await this.store.flushNow())) return;
+      const stale = this.store.staleCount();
+      if (stale > 0) {
+        const ok = await this.confirm.confirm({
+          title: this.translate.instant('studio.render-stale-title'),
+          message: this.translate.instant('studio.render-stale-body', { n: stale }),
+          confirmLabel: this.translate.instant('studio.render-stale-confirm'),
+        });
+        if (!ok) return;
+        await this.store.regenerateStale();
+        if (this.store.staleCount() > 0) return;
       }
-      this.drafts.set(drafts);
-      this.dirty.set(false);
-      void this.loadProjectAndSettings();
-      void this.loadTranslationContext();
+      this.playback.pause();
+      await this.ipc.retryPipelineStep(this.store.projectId(), 'audio-mix');
+      await this.router.navigate(['/project', this.store.projectId(), 'processing']);
     } catch (err) {
-      this.error.set(toAppError(err));
+      this.store.error.set(toAppError(err));
     } finally {
-      this.loading.set(false);
+      this.rendering.set(false);
     }
   }
 
-  /** Load the project's translation character sheet (best-effort). */
-  private async loadTranslationContext(): Promise<void> {
-    try {
-      const { context } = await this.ipc.getTranslationContext(this.id());
-      if (context) {
-        this.ctxDraft.set(toCtxDraft(context));
-        this.ctxDirty.set(false);
-      }
-    } catch {
-      /* non-fatal: the sheet card just shows its empty state */
-    }
+  // ------------------------------------------------------------ splitter
+
+  protected onSplitterDown(e: PointerEvent): void {
+    const startY = e.clientY;
+    const startH = this.timelineHeight();
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const move = (ev: PointerEvent): void => {
+      const h = Math.max(200, Math.min(window.innerHeight - 260, startH + (startY - ev.clientY)));
+      this.timelineHeight.set(h);
+    };
+    const up = (): void => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      localStorage.setItem(TIMELINE_H_KEY, String(this.timelineHeight()));
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
   }
 
-  /**
-   * Load the project + the metadata the settings panel needs: the selectable
-   * providers per phase, the STT model catalog, language labels, and the voices
-   * for the current TTS engine (so a segment / the project default can be
-   * re-voiced). Best-effort: a failure here just hides the editable controls,
-   * the transcript editor still works.
-   */
-  private async loadProjectAndSettings(): Promise<void> {
-    try {
-      const { project, pipeline } = await this.ipc.getProject(this.id());
-      this.project.set(project);
-      this.projectSettings.set(project.settings);
-      this.draft.set({ ...project.settings });
-      // The result preview/open-folder only make sense once a final video exists,
-      // i.e. the render step finished (project may also be marked completed).
-      const renderDone = pipeline?.steps.some((s) => s.id === 'render' && s.status === 'completed');
-      this.rendered.set(renderDone === true || project.status === 'completed');
-      this.awaitingReview.set(pipeline?.awaitingReview === true);
+  // ----------------------------------------------------------- keyboard
 
-      // Provider/model catalogs for the pickers (each best-effort + parallel).
-      const [providers, catalog, engines] = await Promise.all([
-        this.ipc.getProviders().catch(() => null),
-        this.ipc.setupGetCatalog().catch(() => null),
-        this.ipc.getEngines().catch(() => null),
-      ]);
-      if (providers) this.providers.set(providers);
-      if (engines) this.offeredPacks.set(new Set(engines.available.map((p) => p.id)));
-      if (catalog) {
-        this.whisperModels.set(catalog.whisperModels ?? []);
-        this.languageLabels.set(new Map((catalog.languages ?? []).map((l) => [l.code, l.label])));
-      }
+  @HostListener('window:keydown', ['$event'])
+  protected onKey(e: KeyboardEvent): void {
+    const mod = e.metaKey || e.ctrlKey;
+    const target = e.target as HTMLElement | null;
+    const typing =
+      !!target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 
-      await this.reloadVoices(project.settings.ttsProviderId, project.settings.targetLanguage);
-    } catch {
-      // Non-fatal: the editor still works without the settings panel.
-    }
-  }
-
-  /**
-   * Load the installed voices for a TTS engine + language into BOTH the
-   * per-segment override list and the settings-panel draft-voice list. Engines
-   * without a voice endpoint (cloud) clear the list (the provider default is used).
-   */
-  private async reloadVoices(ttsProviderId: string | undefined, language: string): Promise<void> {
-    const engine = ttsEngineParam(ttsProviderId);
-    if (!engine) {
-      this.availableVoices.set([]);
-      this.draftVoices.set([]);
+    // Save works everywhere; the rest yield to a focused text field.
+    if (mod && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      void this.store.flushNow();
       return;
     }
-    try {
-      const [voices, status] = await Promise.all([
-        this.ipc.setupListVoices(language, engine),
-        this.ipc.setupGetStatus().catch(() => null),
-      ]);
-      // Only offer voices already on disk for a per-segment override — never a
-      // voice that isn't installed (it would fail/stall at synth). The project's
-      // default voice is always installed, so keep it. If the installed set can't
-      // be read, fall back to the full list (best-effort, non-blocking).
-      const usable =
-        status && engine === 'piper'
-          ? voices.filter(
-              (v) => status.installed.piperVoices.includes(v.id) || v.id === this.projectSettings()?.ttsVoiceId,
-            )
-          : voices;
-      this.availableVoices.set(usable);
-      this.draftVoices.set(voices);
-    } catch {
-      this.availableVoices.set([]);
-      this.draftVoices.set([]);
+    if (typing) {
+      if (e.key === 'Escape') target?.blur();
+      return;
     }
-  }
 
-  // ----- settings panel: change + re-dub --------------------------------------
+    const sel = [...this.store.selection()];
+    const primary = this.store.primary();
+    const key = e.key;
 
-  /** A typed patch into the draft settings. Reloads voices when the TTS engine
-   *  changes (and resets the voice to the engine default). */
-  protected onSettingChange<K extends keyof ProjectSettings>(key: K, value: ProjectSettings[K]): void {
-    this.draft.update((d) => (d ? { ...d, [key]: value } : d));
-    if (key === 'ttsProviderId') {
-      // The voice list is engine-specific; reset to "provider default" + reload.
-      this.draft.update((d) => (d ? { ...d, ttsVoiceId: undefined } : d));
-      const lang = this.draft()?.targetLanguage ?? '';
-      void this.reloadVoices(value as string, lang).then(() => {
-        // If the chosen engine has a recommended voice, pre-select it.
-        const rec = this.draftVoices().find((v) => v.recommended) ?? this.draftVoices()[0];
-        if (rec) this.draft.update((d) => (d ? { ...d, ttsVoiceId: rec.id } : d));
-      });
+    if (mod && key.toLowerCase() === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) this.store.redo();
+      else this.store.undo();
+      return;
     }
-  }
+    if (mod && key.toLowerCase() === 'y') {
+      e.preventDefault();
+      this.store.redo();
+      return;
+    }
+    if (mod && key.toLowerCase() === 'a') {
+      e.preventDefault();
+      this.store.selection.set(new Set(this.store.segments().map((s) => s.id)));
+      return;
+    }
+    if ((mod && (key === '=' || key === '+')) || (!mod && (key === '=' || key === '+'))) {
+      e.preventDefault();
+      this.timeline()?.zoomBy(1.5);
+      return;
+    }
+    if (key === '-' || key === '_') {
+      e.preventDefault();
+      this.timeline()?.zoomBy(1 / 1.5);
+      return;
+    }
+    if (mod && key === '0') {
+      e.preventDefault();
+      this.timeline()?.zoomToFit();
+      return;
+    }
+    if (mod) return;
 
-  /** Coerce a numeric <select> value (strings come back from the DOM). */
-  protected onNumberSettingChange<K extends keyof ProjectSettings>(key: K, value: unknown): void {
-    this.onSettingChange(key, Number(value) as ProjectSettings[K]);
-  }
-
-  protected providerLabel(p: ProviderInfo): string {
-    return p.available ? p.displayName : `${p.displayName} — unavailable`;
-  }
-
-  /** Translation providers able to run the optional review-and-refine pass. */
-  protected refinerOptions(): ProviderInfo[] {
-    return (this.providers()?.translation ?? []).filter((p) => p.supportsRefinement === true);
-  }
-
-  /** Whether a persisted provider id is present in the selectable list (so the
-   *  template can append it as a fallback option and never render a blank select). */
-  protected providerInList(phase: 'stt' | 'translation' | 'tts', id: string | undefined): boolean {
-    if (!id) return true;
-    return (this.providers()?.[phase] ?? []).some((p) => p.id === id);
-  }
-
-  protected modelInList(id: string | undefined): boolean {
-    if (!id) return true;
-    return this.whisperModels().some((m) => m.id === id);
-  }
-
-  protected languageLabel(code: string | undefined): string {
-    if (!code) return '—';
-    return this.languageLabels().get(code) ?? code;
-  }
-
-  protected modelLabel(id: string | undefined): string {
-    if (!id) return 'default';
-    return this.whisperModels().find((m) => m.id === id)?.label ?? id;
-  }
-
-  /** Display label for the persisted value of a provider id within a phase. */
-  protected providerName(phase: 'stt' | 'translation' | 'tts', id: string | undefined): string {
-    if (!id) return '—';
-    return this.providers()?.[phase]?.find((p) => p.id === id)?.displayName ?? id;
-  }
-
-  protected isRecommendedStep(step: PipelineStepId): boolean {
-    return this.recommendedStep() === step;
-  }
-
-  /**
-   * Persist any changed settings, then re-run the pipeline from `step` and go to
-   * the live progress screen. Earlier stages are reused (the orchestrator skips
-   * already-completed steps before `step`). Works even with no setting change —
-   * e.g. to re-translate after installing a larger model in Settings → Engines.
-   */
-  protected async redubFrom(step: PipelineStepId): Promise<void> {
-    if (this.redubbing()) return;
-    this.redubbing.set(true);
-    this.error.set(null);
-    try {
-      const base = this.projectSettings();
-      const next = this.draft();
-      if (base && next) {
-        const patch: Partial<ProjectSettings> = {};
-        for (const key of this.changedKeys()) {
-          (patch as Record<string, unknown>)[key] = next[key];
+    const frame = 1000 / (this.store.media()?.fps || 30);
+    switch (key) {
+      case ' ':
+        e.preventDefault();
+        this.playback.toggle();
+        break;
+      case 'j':
+      case 'k':
+      case 'l':
+        this.playback.shuttle(key);
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        this.playback.skip(e.shiftKey ? -1000 : -frame);
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        this.playback.skip(e.shiftKey ? 1000 : frame);
+        break;
+      case 'ArrowUp':
+      case 'ArrowDown': {
+        e.preventDefault();
+        const seg = this.store.step(key === 'ArrowUp' ? -1 : 1);
+        if (seg) {
+          this.playback.seek(seg.startMs);
+          this.timeline()?.reveal(seg.startMs);
         }
-        if (Object.keys(patch).length > 0) {
-          const updated = await this.ipc.updateProjectSettings(this.id(), patch);
-          this.projectSettings.set(updated.project.settings);
-          this.draft.set({ ...updated.project.settings });
-        }
+        break;
       }
-      await this.ipc.retryPipelineStep(this.id(), step);
-      await this.router.navigate(['/project', this.id(), 'processing']);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.redubbing.set(false);
+      case 'Home':
+        this.playback.seek(0);
+        break;
+      case 'End':
+        this.playback.seek(this.store.durationMs());
+        break;
+      case 'Enter':
+        if (primary) {
+          e.preventDefault();
+          this.editText();
+        }
+        break;
+      case 'Escape':
+        this.store.clearSelection();
+        break;
+      case '[':
+      case ']':
+        if (sel.length) this.store.shift(sel, (key === '[' ? -1 : 1) * (e.shiftKey ? 100 : 10), `kbd-shift:${sel.join(',')}`);
+        break;
+      case '{':
+      case '}':
+        if (sel.length) this.store.shift(sel, (key === '{' ? -1 : 1) * 100, `kbd-shift:${sel.join(',')}`);
+        break;
+      case 'i':
+      case 'o':
+        if (primary) {
+          const t = Math.round(this.playback.currentMs());
+          const s = primary.seg;
+          if (key === 'i' && t < s.endMs) this.store.setTiming([{ id: s.id, startMs: Math.max(0, t), endMs: s.endMs }], 'studio.undo-trim');
+          if (key === 'o' && t > s.startMs) this.store.setTiming([{ id: s.id, startMs: s.startMs, endMs: t }], 'studio.undo-trim');
+        }
+        break;
+      case 'r':
+        if (sel.length) {
+          const units = this.store.unitBySegment();
+          void this.store.regenerate([...new Set(sel.map((id) => units.get(id)?.id ?? id))]);
+        }
+        break;
+      case 'm': {
+        const i = this.monitors.indexOf(this.playback.monitor());
+        this.playback.setMonitor(this.monitors[(i + 1) % this.monitors.length]!);
+        break;
+      }
+      case '?':
+        this.showHelp.update((v) => !v);
+        break;
+      default:
+        return;
     }
   }
 
-  // -------- translation character sheet (cast & address) --------
-  /** Editable working copy of the sheet; null = none generated/created yet. */
-  protected readonly ctxDraft = signal<CtxDraft | null>(null);
-  protected readonly ctxDirty = signal(false);
-  protected readonly ctxSaving = signal(false);
-
-  /** Seed an empty sheet so the user can fill it in before the first LLM run. */
-  protected createCtxSheet(): void {
-    this.ctxDraft.set({ synopsis: '', pronounGuide: '', cast: [{ name: '', role: '' }], glossary: [] });
-    this.ctxDirty.set(true);
-  }
-
-  protected ctxChanged(): void {
-    this.ctxDirty.set(true);
-  }
-
-  protected ctxAddCast(): void {
-    this.ctxDraft.update((d) => (d ? { ...d, cast: [...d.cast, { name: '', role: '' }] } : d));
-    this.ctxDirty.set(true);
-  }
-
-  protected ctxRemoveCast(index: number): void {
-    this.ctxDraft.update((d) => (d ? { ...d, cast: d.cast.filter((_, i) => i !== index) } : d));
-    this.ctxDirty.set(true);
-  }
-
-  protected ctxAddGlossary(): void {
-    this.ctxDraft.update((d) => (d ? { ...d, glossary: [...d.glossary, { source: '', target: '' }] } : d));
-    this.ctxDirty.set(true);
-  }
-
-  protected ctxRemoveGlossary(index: number): void {
-    this.ctxDraft.update((d) => (d ? { ...d, glossary: d.glossary.filter((_, i) => i !== index) } : d));
-    this.ctxDirty.set(true);
-  }
-
-  /** Persist the sheet; optionally re-run translation so it takes effect. */
-  protected async saveCtx(retranslate: boolean): Promise<void> {
-    const draft = this.ctxDraft();
-    if (!draft || this.ctxSaving()) return;
-    this.ctxSaving.set(true);
-    this.error.set(null);
-    try {
-      const ctx: TranslationDocContext = {
-        synopsis: draft.synopsis,
-        pronounGuide: draft.pronounGuide,
-        cast: draft.cast.filter((c) => c.name.trim().length > 0),
-        glossary: draft.glossary.filter((g) => g.source.trim().length > 0),
-      };
-      const { context } = await this.ipc.saveTranslationContext(this.id(), ctx);
-      this.ctxDraft.set(toCtxDraft(context));
-      this.ctxDirty.set(false);
-      if (retranslate) await this.redubFrom('translation');
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.ctxSaving.set(false);
-    }
-  }
-
-  /**
-   * Leave the transcript-review checkpoint: save any pending edits, then
-   * resume the pipeline at speech synthesis and watch it on the processing
-   * screen.
-   */
-  protected async continueDubbing(): Promise<void> {
-    if (this.continuing()) return;
-    this.continuing.set(true);
-    this.error.set(null);
-    try {
-      if (this.dirty()) await this.save();
-      await this.ipc.retryPipelineStep(this.id(), 'tts');
-      await this.router.navigate(['/project', this.id(), 'processing']);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.continuing.set(false);
-    }
-  }
-
-  protected onTranslationChange(segmentId: string, value: string): void {
-    this.drafts.update((d) => ({ ...d, [segmentId]: value }));
-    this.dirty.set(true);
-  }
-
-  protected draftText(segmentId: string): string {
-    return this.drafts()[segmentId] ?? '';
-  }
-
-  /** Persist all edited translations. */
-  protected async save(): Promise<void> {
-    if (this.saving()) return;
-    this.saving.set(true);
-    this.error.set(null);
-    try {
-      const drafts = this.drafts();
-      const payload = this.segments().map((s) => ({
-        id: s.id,
-        translatedText: drafts[s.id] ?? s.translatedText ?? '',
-      }));
-      await this.ipc.saveTranslatedSegments(this.id(), payload);
-      // Reflect saved values back onto the segments.
-      this.segments.update((segs) =>
-        segs.map((s) => ({ ...s, translatedText: drafts[s.id] ?? s.translatedText })),
-      );
-      this.dirty.set(false);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.saving.set(false);
-    }
-  }
-
-  /** Regenerate TTS for one segment using the (possibly edited) translation. */
-  protected async regenerate(segment: SegmentWithAlignment): Promise<void> {
-    const segmentId = segment.id;
-    if (this.synthesizing().has(segmentId)) return;
-    this.markSynth(segmentId, true);
-    this.error.set(null);
-    try {
-      const text = this.drafts()[segmentId] ?? segment.translatedText ?? '';
-      // An empty override means "use the project's default voice" (the backend
-      // falls back to project.settings.ttsVoiceId when voiceId is undefined).
-      const voiceId = this.segmentVoiceOverrides()[segmentId] || undefined;
-      const result = await this.ipc.synthesizeSingleSegment(this.id(), segmentId, {
-        text: text.length > 0 ? text : undefined,
-        voiceId,
-      });
-      // Replace the segment's alignment with the fresh result so the warnings
-      // and the preview <audio> (cache-busted via generatedDurationMs) update.
-      this.segments.update((segs) =>
-        segs.map((s) => (s.id === segmentId ? { ...s, alignment: result.alignment } : s)),
-      );
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.markSynth(segmentId, false);
-    }
-  }
-
-  /** Re-translate one overflowing line shorter, then re-synthesize, so it fits. */
-  protected async tightenToFit(segment: SegmentWithAlignment): Promise<void> {
-    const segmentId = segment.id;
-    if (this.synthesizing().has(segmentId)) return;
-    this.markSynth(segmentId, true);
-    this.error.set(null);
-    try {
-      const result = await this.ipc.refitSegment(this.id(), segmentId);
-      // The line was shortened + persisted; reflect the new text + alignment.
-      this.drafts.update((d) => ({ ...d, [segmentId]: result.translatedText }));
-      this.segments.update((segs) =>
-        segs.map((s) =>
-          s.id === segmentId ? { ...s, translatedText: result.translatedText, alignment: result.alignment } : s,
-        ),
-      );
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.markSynth(segmentId, false);
-    }
-  }
-
-  protected isSynthesizing(segmentId: string): boolean {
-    return this.synthesizing().has(segmentId);
-  }
-
-  /** The chosen voice override for a segment ('' = project default). */
-  protected segmentVoice(segmentId: string): string {
-    return this.segmentVoiceOverrides()[segmentId] ?? '';
-  }
-
-  /** Set (or clear, with '') a segment's voice override; takes effect on regenerate. */
-  protected onSegmentVoiceChange(segmentId: string, voiceId: string): void {
-    this.segmentVoiceOverrides.update((o) => {
-      const next = { ...o };
-      if (voiceId) next[segmentId] = voiceId;
-      else delete next[segmentId];
-      return next;
-    });
-  }
-
-  /**
-   * URL for previewing a segment's synthesized audio.
-   *
-   * The orchestrator serves segment WAVs (scoped to the projects dir) at
-   * `GET /file?path=<abs>`; the alignment carries the audio path + duration,
-   * so previews work both on first load and after a regenerate. Inside Tauri
-   * the same localhost URL works from the webview.
-   */
-  protected previewUrl(segment: SegmentWithAlignment): string | null {
-    const audioPath = segment.alignment?.audioPath;
-    if (!audioPath) return null;
-    const bust = segment.alignment?.generatedDurationMs ?? 0;
-    return `${environment.orchestratorUrl}/file?path=${encodeURIComponent(audioPath)}&v=${bust}`;
-  }
-
-  protected reload(): void {
-    void this.load();
-  }
-
-  /** Open the project's output folder in the OS file manager. */
-  protected async openFolder(): Promise<void> {
-    const dir = this.project()?.outputDir;
-    if (!dir || this.opening()) return;
-    this.opening.set(true);
-    this.error.set(null);
-    try {
-      await this.ipc.openOutputFolder(dir);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.opening.set(false);
-    }
-  }
-
-  protected onResultPreviewError(): void {
-    this.resultPreviewFailed.set(true);
-  }
-
-  protected dismissError(): void {
-    this.error.set(null);
-  }
-
-  private markSynth(segmentId: string, on: boolean): void {
-    this.synthesizing.update((set) => {
-      const next = new Set(set);
-      if (on) next.add(segmentId);
-      else next.delete(segmentId);
-      return next;
-    });
+  @HostListener('window:blur')
+  protected onBlur(): void {
+    // Switching away from the app saves immediately rather than after the debounce.
+    void this.store.flushNow();
   }
 }

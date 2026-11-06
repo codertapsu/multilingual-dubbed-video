@@ -19,6 +19,7 @@ import type {
   RenderFinalVideoInput,
   RenderFinalVideoResult,
   TimeStretchEngine,
+  TimelineFilmstrip,
 } from '@videodubber/shared';
 
 /** A single placed segment for the TTS timeline build. */
@@ -150,6 +151,30 @@ export interface PipelineMediaService extends MediaService {
   ): Promise<{ outputPath: string; durationMs: number; stretch?: TimelineStretchReport }>;
   /** Duck the original audio and mix the TTS timeline into the final track. */
   duckAndMix(input: DuckAndMixInput, signal?: AbortSignal): Promise<{ output: string; durationMs: number }>;
+  /**
+   * Waveform peaks (interleaved int8 min/max) for the editor's audio tracks.
+   * Optional: without it the editor simply draws no waveform.
+   */
+  computeWaveformPeaks?(
+    inputPath: string,
+    opts?: { peaksPerSecond?: number },
+    signal?: AbortSignal,
+  ): Promise<{ peaksPerSecond: number; durationMs: number; peaks: Int8Array }>;
+  /**
+   * The editor's filmstrip: one JPEG sprite of evenly spaced thumbnails, written
+   * atomically. Optional: without it the editor shows no filmstrip.
+   */
+  renderFilmstrip?(
+    inputPath: string,
+    outputPath: string,
+    durationMs: number,
+    signal?: AbortSignal,
+  ): Promise<Omit<TimelineFilmstrip, 'path'> & { path: string }>;
+  /**
+   * Tempo-fit one dub clip exactly as the timeline mix will (atempo), for the
+   * editor's WebAudio preview — which can only resample, i.e. shift pitch.
+   */
+  renderFittedClip?(inputPath: string, outputPath: string, ratio: number, signal?: AbortSignal): Promise<string>;
 }
 
 /**
@@ -177,6 +202,9 @@ const MEDIA_SERVICE_METHOD_TABLE: Record<keyof PipelineMediaService, true> = {
   clip16kMono: true,
   buildTtsTimeline: true,
   duckAndMix: true,
+  computeWaveformPeaks: true,
+  renderFilmstrip: true,
+  renderFittedClip: true,
 };
 
 /** A method name of {@link PipelineMediaService}. */

@@ -5,6 +5,7 @@ import { IpcService } from './core/ipc/ipc.service';
 import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.component';
 import { UpdateNoticeComponent } from './shared/update-notice/update-notice.component';
 import { TranslatePipe, TranslateService } from './core/i18n';
+import { ThemeService, type ThemePreference } from './core/theme/theme.service';
 
 /**
  * Root shell: a slim top nav + a routed outlet. The whole app lives inside a
@@ -40,6 +41,26 @@ import { TranslatePipe, TranslateService } from './core/i18n';
         <a routerLink="/help" routerLinkActive="active">{{ 'nav.help' | translate }}</a>
         <a routerLink="/support" routerLinkActive="active">{{ 'nav.support' | translate }}</a>
       </nav>
+
+      <button
+        type="button"
+        class="icon-btn theme-toggle"
+        (click)="theme.cycle()"
+        [title]="themeKeys[theme.preference()] | translate"
+        [attr.aria-label]="themeKeys[theme.preference()] | translate"
+      >
+        @switch (theme.preference()) {
+          @case ('light') {
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          }
+          @case ('dark') {
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          }
+          @default {
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+          }
+        }
+      </button>
 
       <span class="mode-tag" [class.local]="!ipc.inTauri" [title]="modeTooltip()">
         {{ (ipc.inTauri ? 'shell.mode-desktop' : 'shell.mode-browser') | translate }}
@@ -95,8 +116,8 @@ import { TranslatePipe, TranslateService } from './core/i18n';
         justify-content: space-between;
         gap: var(--vd-sp-4);
         padding: var(--vd-sp-3) var(--vd-sp-5);
-        background: var(--vd-danger-bg, #3a1d1d);
-        border-bottom: 1px solid var(--vd-danger, #a33);
+        background: var(--vd-danger-bg);
+        border-bottom: 1px solid var(--vd-danger);
         font-size: 0.92rem;
       }
       .backend-down span {
@@ -116,8 +137,7 @@ import { TranslatePipe, TranslateService } from './core/i18n';
         padding: var(--vd-sp-3) var(--vd-sp-5);
         background: var(--vd-surface);
         border-bottom: 1px solid var(--vd-border);
-        position: sticky;
-        top: 0;
+        flex: none;
         z-index: 10;
       }
       .brand {
@@ -166,8 +186,14 @@ import { TranslatePipe, TranslateService } from './core/i18n';
         background: var(--vd-warning-bg);
         color: var(--vd-warning);
       }
+      /* A column that fills the window below the nav: ordinary screens stack
+         their .page inside it, and the studio editor takes the full height. */
       .app-main {
-        display: block;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: auto;
       }
     `,
   ],
@@ -188,6 +214,12 @@ export class AppComponent {
   }
 
   protected readonly ipc = inject(IpcService);
+  protected readonly theme = inject(ThemeService);
+  protected readonly themeKeys: Record<ThemePreference, string> = {
+    system: 'shell.theme-system',
+    light: 'shell.theme-light',
+    dark: 'shell.theme-dark',
+  };
   private readonly translate = inject(TranslateService);
 
   /**

@@ -261,6 +261,55 @@ export interface TranscriptSegment {
   confidence?: number;
   /** Optional per-word timings. */
   words?: TranscriptWord[];
+  /**
+   * Per-line TTS voice override, set in the editor. Wins over the speaker's
+   * assigned voice and the project voice, in a full run AND in a single-line
+   * regenerate — so a re-dub no longer quietly reverts a voice the user picked.
+   * Synthesis groups never merge lines that resolve to different voices.
+   */
+  voiceId?: string;
+  /**
+   * Per-line speaking-rate multiplier for TTS (1 = natural; engines that honour
+   * a native rate read it faster/slower rather than time-stretching). Lines
+   * with different rates never share a synthesis group.
+   */
+  speakingRate?: number;
+  /**
+   * The user wrote or approved this translation by hand. Automatic rewriting
+   * passes (auto-fit shortening, review-and-refine) leave locked lines exactly
+   * as they are — before this flag, re-running from alignment could silently
+   * replace a hand-tuned line with a machine-shortened one.
+   */
+  locked?: boolean;
+  /**
+   * The text, voice or rate changed since this line's audio was synthesized, so
+   * the clip on the timeline no longer matches it. Set by the editor's segment
+   * patch; cleared whenever the line is (re-)synthesized.
+   */
+  ttsStale?: boolean;
+}
+
+/**
+ * One editor change to a segment (PATCH /projects/:id/segments). Every field
+ * except `id` is optional; `null` CLEARS an override. Timing edits may move or
+ * trim a line but never reorder it past a neighbour — the timeline order is
+ * the order of the WAVs on disk and of every gap-aware alignment window.
+ */
+export interface SegmentPatch {
+  /** Segment id (e.g. "seg_0001"). */
+  id: string;
+  /** New translation text. A real change also marks the line `locked`. */
+  translatedText?: string;
+  /** New start on the original timeline (ms). */
+  startMs?: number;
+  /** New end on the original timeline (ms). */
+  endMs?: number;
+  /** Voice override; `null` returns the line to the speaker/project voice. */
+  voiceId?: string | null;
+  /** Speaking-rate override (0.5..2); `null` returns it to natural rate. */
+  speakingRate?: number | null;
+  /** Explicitly lock/unlock the line against automatic rewriting. */
+  locked?: boolean;
 }
 
 /** A synthesized speech clip for a single segment. */

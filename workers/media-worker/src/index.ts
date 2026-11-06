@@ -126,6 +126,26 @@ export {
 export { partialPathFor, writeAtomically } from './atomic.js';
 
 export {
+  computeWaveformPeaks,
+  buildWaveformArgs,
+  PeakAccumulator,
+  DEFAULT_PEAKS_PER_SECOND,
+  WAVEFORM_DECODE_RATE,
+  type WaveformOptions,
+  type WaveformPeaks,
+} from './waveform.js';
+
+export { renderFittedClip, buildFittedClipArgs } from './fittedclip.js';
+
+export {
+  renderFilmstrip,
+  buildFilmstripArgs,
+  planFilmstrip,
+  type FilmstripLayout,
+  type FilmstripResult,
+} from './filmstrip.js';
+
+export {
   probe,
   probeDurationMs,
   buildProbeArgs,

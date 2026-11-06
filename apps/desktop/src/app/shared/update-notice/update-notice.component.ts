@@ -105,7 +105,7 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background: var(--vd-accent, #3b82f6);
+        background: var(--vd-primary);
         animation: vd-update-pulse 1.6s ease-in-out infinite;
       }
       @keyframes vd-update-pulse {
@@ -163,7 +163,7 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
         color: var(--vd-text-muted);
       }
       .update-error {
-        color: var(--vd-danger, #dc2626);
+        color: var(--vd-danger);
         font-size: 0.9rem;
       }
       .update-actions {

@@ -193,18 +193,27 @@ mod keep_awake {
 
         pub fn acquire(_reason: &str) -> Option<Guard> {
             let (tx, rx) = mpsc::channel::<()>();
+            // The holder thread reports whether the call took before a guard is
+            // handed out: SetThreadExecutionState returns 0 on failure, and a
+            // guard that holds nothing would make the poll loop believe the
+            // machine is protected and never try again.
+            let (ok_tx, ok_rx) = mpsc::channel::<bool>();
             std::thread::Builder::new()
                 .name("vd-keep-awake".into())
                 .spawn(move || {
                     // SAFETY: plain Win32 call with documented flag values.
-                    unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) };
+                    let prev = unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) };
+                    let _ = ok_tx.send(prev != 0);
+                    if prev == 0 {
+                        return;
+                    }
                     // Blocks until the sender is dropped (recv -> Err).
                     let _ = rx.recv();
                     // SAFETY: as above; restores normal idle behaviour.
                     unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
                 })
                 .ok()?;
-            Some(Guard(tx))
+            ok_rx.recv().ok()?.then_some(Guard(tx))
         }
     }
 
@@ -257,5 +266,52 @@ mod tests {
         let guard = keep_awake::acquire("VideoDubber test assertion");
         assert!(guard.is_some(), "IOPMAssertionCreateWithName failed");
         drop(guard);
+    }
+
+    /// The machine-wide execution state — what `powercfg /requests` reports
+    /// from — readable without elevation, unlike powercfg itself.
+    #[cfg(windows)]
+    fn system_execution_state() -> u32 {
+        use windows_sys::Win32::System::Power::{CallNtPowerInformation, SystemExecutionState};
+        let mut state: u32 = 0;
+        // SAFETY: documented call; the output buffer is a u32 of the size we pass.
+        let status = unsafe {
+            CallNtPowerInformation(
+                SystemExecutionState,
+                std::ptr::null(),
+                0,
+                (&mut state as *mut u32).cast(),
+                std::mem::size_of::<u32>() as u32,
+            )
+        };
+        assert_eq!(status, 0, "CallNtPowerInformation failed: {status:#x}");
+        state
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_windows_execution_state_is_set_and_released() {
+        use windows_sys::Win32::System::Power::ES_SYSTEM_REQUIRED;
+        // Other software (a media player, a download) may already hold the
+        // machine awake, so "before" can legitimately include the flag; what
+        // must hold is that it IS set while we hold the guard and that we put
+        // things back exactly as we found them.
+        let before = system_execution_state() & ES_SYSTEM_REQUIRED;
+        let guard = keep_awake::acquire("VideoDubber test");
+        assert!(guard.is_some(), "SetThreadExecutionState failed");
+        assert_ne!(system_execution_state() & ES_SYSTEM_REQUIRED, 0, "machine not held awake");
+        drop(guard);
+        // The holder thread clears its state as it exits; give it a moment.
+        let mut after = system_execution_state() & ES_SYSTEM_REQUIRED;
+        for _ in 0..50 {
+            if after == before {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            after = system_execution_state() & ES_SYSTEM_REQUIRED;
+        }
+        assert_eq!(after, before, "the keep-awake request outlived its guard");
+        // And it can be taken again (the state is per-thread, not global).
+        assert!(keep_awake::acquire("VideoDubber test").is_some(), "re-acquire failed");
     }
 }

@@ -4,10 +4,10 @@ import { LocalLlmTranslationProvider, type LocalPostJson } from './localLlmTrans
 import { buildRawTranslationPrompt } from './llmTranslationProvider.js';
 
 /** A postJson spy that records the last call and returns a canned reply. */
-function spy(reply: unknown): { post: LocalPostJson; calls: { url: string; body: any }[] } {
-  const calls: { url: string; body: any }[] = [];
-  const post: LocalPostJson = async <T>(url: string, _h: Record<string, string>, body: unknown): Promise<T> => {
-    calls.push({ url, body });
+function spy(reply: unknown): { post: LocalPostJson; calls: { url: string; body: any; headers: Record<string, string> }[] } {
+  const calls: { url: string; body: any; headers: Record<string, string> }[] = [];
+  const post: LocalPostJson = async <T>(url: string, headers: Record<string, string>, body: unknown): Promise<T> => {
+    calls.push({ url, body, headers });
     return reply as T;
   };
   return { post, calls };
@@ -20,6 +20,20 @@ const oneSeg: TranslationInput = {
 };
 
 describe('LocalLlmTranslationProvider transport', () => {
+  it('sends the engine\'s per-launch bearer token with every request', async () => {
+    const { post, calls } = spy({ content: 'Xin chào.<end_of_turn>' });
+    const provider = new LocalLlmTranslationProvider({
+      id: 'llama-cpp',
+      backend: 'llama-cpp',
+      model: 'translategemma',
+      resolveBaseUrl: async () => ({ baseUrl: 'http://127.0.0.1:8080', headers: { Authorization: 'Bearer k123' } }),
+      timeoutMs: 1000,
+      postJson: post,
+    });
+    await provider.translateSegments(oneSeg);
+    expect(calls[0]!.headers).toEqual({ Authorization: 'Bearer k123' });
+  });
+
   it('ollama → OpenAI /chat/completions, greedy (temperature 0)', async () => {
     const { post, calls } = spy({ choices: [{ message: { content: 'Xin chào.' } }] });
     const provider = new LocalLlmTranslationProvider({

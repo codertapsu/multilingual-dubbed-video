@@ -193,6 +193,50 @@ describe('TranslateGemma model packs', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  it('locks llama-server to its caller: a per-launch key in the ENV, loopback-only CORS', async () => {
+    // llama-server allows every CORS origin by default and needs no key, so any
+    // web page open in the user's browser could drive the local model. The key
+    // rides in the environment (argv is visible to every local user via `ps`),
+    // is fresh per launch, and authHeaders() hands it to the provider.
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-llm-key-'));
+    const store = new EnginePackStore(dir);
+    const p = store.packDir('llama-cpp-metal');
+    await mkdir(p, { recursive: true });
+    await writeFile(path.join(p, 'llama-server'), '#!/bin/sh\n');
+    await store.add({ id: 'llama-cpp-metal', path: p, installedAt: '2026-01-01T00:00:00Z' });
+
+    const launches: { args: string[]; env: Record<string, string> }[] = [];
+    const manager = new EngineManager({
+      store,
+      allocatePort: async () => 52346,
+      healthProbe: async () => true,
+      spawnImpl: (_cmd, args, env) => {
+        launches.push({ args, env });
+        return { on: () => undefined, stderr: { on: () => undefined }, kill: () => true } as never;
+      },
+      startTimeoutMs: 1000,
+    });
+
+    const baseUrl = await manager.ensureRunning('llama-cpp-metal', { exclusive: true, model: '/models/a.gguf' });
+    const key = launches[0]!.env['LLAMA_API_KEY'];
+    expect(key).toMatch(/^[0-9a-f]{48}$/);
+    expect(launches[0]!.args.join(' ')).not.toContain(key!);
+    // CORS rides in the env too, but for a different reason: b9592 (still
+    // installed on machines that never re-downloaded the pack) has no
+    // `--cors-origins` and would refuse to start with it in argv.
+    expect(launches[0]!.env['LLAMA_ARG_CORS_ORIGINS']).toBe('localhost');
+    expect(launches[0]!.args).not.toContain('--cors-origins');
+    expect(manager.authHeaders(baseUrl)).toEqual({ Authorization: `Bearer ${key}` });
+    expect(manager.authHeaders('http://127.0.0.1:1')).toEqual({});
+
+    // A relaunch (model swap) gets a NEW key; the old one stops working.
+    await manager.ensureRunning('llama-cpp-metal', { exclusive: true, model: '/models/b.gguf' });
+    const second = launches[launches.length - 1]!.env['LLAMA_API_KEY'];
+    expect(second).toMatch(/^[0-9a-f]{48}$/);
+    expect(second).not.toBe(key);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   it('threads the resolved GGUF into llama-server as `-m`, letting it auto-fit the GPU', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-tgm-run-'));
     const store = new EnginePackStore(dir);

@@ -16,6 +16,7 @@
  * lifecycle are unit-testable without real binaries.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import type { Dirent } from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -95,6 +96,8 @@ export interface RunningEngine {
   packId: string;
   baseUrl: string;
   port: number;
+  /** Per-launch bearer token the engine requires (see EngineLaunchSpec.apiKeyEnv). */
+  apiKey?: string;
   /** The model file this instance was launched with (llama.cpp runtime). */
   model?: string;
   /** Kill the process. */
@@ -118,6 +121,12 @@ export interface EngineLaunchSpec {
   healthPath?: string;
   /** Whether this engine is "heavy" (subject to the exclusive unload policy). */
   heavy?: boolean;
+  /**
+   * Env var through which the engine accepts an API key. When set, every
+   * launch gets a fresh random key (passed in the ENVIRONMENT, not argv, so it
+   * never shows up in `ps`) and callers must send it — see authHeaders().
+   */
+  apiKeyEnv?: string;
 }
 
 /** Built-in launch specs per provider/pack. */
@@ -195,8 +204,25 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
       'chatml',
       ...(model ? ['-m', model] : []),
     ],
+    // llama-server allows every CORS origin by default, so ANY web page open in
+    // the user's browser could drive this local model — read its answers, or
+    // just burn the machine's GPU. 'localhost' reflects loopback origins only;
+    // the orchestrator itself calls server-side (no Origin header at all).
+    //
+    // It goes in the ENVIRONMENT, not argv, on purpose. `--cors-origins` does
+    // not exist in b9592, and an installed pack is never upgraded when the
+    // catalog pin moves, so on every machine still running the old binary the
+    // flag would abort startup ("invalid argument") and take local translation
+    // down with it. llama-server reads LLAMA_ARG_CORS_ORIGINS where the option
+    // exists and older builds never look at it; the key below is what actually
+    // keeps a web page out, on every build (LLAMA_API_KEY and the public /health
+    // are both in b9592 too).
+    env: () => ({ LLAMA_ARG_CORS_ORIGINS: 'localhost' }),
     healthPath: '/health',
     heavy: true,
+    // ...and requests without the per-launch key are refused (401) before any
+    // work happens. /health stays public, so readiness polling is unchanged.
+    apiKeyEnv: 'LLAMA_API_KEY',
   },
   // Both VieNeu variants run the same bundled `vd_tts_engine` server; the venv
   // (per pack) supplies the deps, PYTHONPATH supplies our module, HF_HOME points
@@ -473,11 +499,13 @@ export class EngineManager {
     // orchestrator (so they flow in via process.env); set them here too so
     // `npm run dev` and any host without the flag are covered. Our defaults come
     // first so an inherited value (if present) still wins.
+    const apiKey = spec.apiKeyEnv ? randomBytes(24).toString('hex') : undefined;
     const env = {
       PYTHONUTF8: '1',
       PYTHONIOENCODING: 'utf-8',
       ...process.env,
       ...(spec.env ? spec.env({ port, packDir: rec.path }) : {}),
+      ...(spec.apiKeyEnv && apiKey ? { [spec.apiKeyEnv]: apiKey } : {}),
     } as Record<string, string>;
 
     this.deps.logger?.info(`Starting engine "${packId}" on port ${port}.`);
@@ -555,7 +583,14 @@ export class EngineManager {
       );
     }
 
-    const instance: RunningEngine = { packId, baseUrl, port, ...(opts.model ? { model: opts.model } : {}), stop };
+    const instance: RunningEngine = {
+      packId,
+      baseUrl,
+      port,
+      ...(apiKey ? { apiKey } : {}),
+      ...(opts.model ? { model: opts.model } : {}),
+      stop,
+    };
     this.running.set(packId, instance);
     return baseUrl;
   }
@@ -597,6 +632,19 @@ export class EngineManager {
     // NEW pack's launch spec is found without adding a line here. Falls back to the
     // pack id only if it isn't in the catalog.
     return findPack(packId)?.providerId ?? packId;
+  }
+
+  /**
+   * Headers a caller must send to the running engine at `baseUrl` (its bearer
+   * token, when the engine was launched with one). Empty for engines without a
+   * key, or for a URL no running instance owns.
+   */
+  authHeaders(baseUrl: string): Record<string, string> {
+    const norm = baseUrl.replace(/\/$/, '');
+    for (const inst of this.running.values()) {
+      if (inst.baseUrl.replace(/\/$/, '') === norm && inst.apiKey) return { Authorization: `Bearer ${inst.apiKey}` };
+    }
+    return {};
   }
 
   /** Find the server binary (binary pack) or the venv python (uv-env pack). */

@@ -246,7 +246,8 @@ export function createDefaultRegistry(
           const packIds = await installedPacksForProvider(store, 'local-llm', process.platform, process.arch, profile);
           if (packIds.length === 0) await requireInstalledPack(store, 'local-llm'); // throws the actionable error
           const model = await resolveLocalLlmModelPath(store);
-          return engines.ensureRunningFirstUsable(packIds, { exclusive: true, model });
+          const baseUrl = await engines.ensureRunningFirstUsable(packIds, { exclusive: true, model });
+          return { baseUrl, headers: engines.authHeaders(baseUrl) };
         },
         timeoutMs: timeout,
       }),
@@ -274,7 +275,7 @@ export function createDefaultRegistry(
           exclusive: true,
           model: chatModel.modelPath,
         });
-        return { baseUrl, promptFormat: chatModel.promptFormat };
+        return { baseUrl, promptFormat: chatModel.promptFormat, headers: engines.authHeaders(baseUrl) };
       },
       timeoutMs: timeout,
     });

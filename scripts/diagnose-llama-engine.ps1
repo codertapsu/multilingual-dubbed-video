@@ -267,6 +267,9 @@ function Invoke-LlamaRun {
 
   $prevBlocking = $env:CUDA_LAUNCH_BLOCKING
   if ($LaunchBlocking) { $env:CUDA_LAUNCH_BLOCKING = '1' }
+  # The app sets CORS through the environment, not argv (b9592 has no
+  # --cors-origins and would refuse to start); mirror that.
+  $env:LLAMA_ARG_CORS_ORIGINS = 'localhost'
   try {
     $proc = Start-Process -FilePath $exe.FullName -ArgumentList $launchArgs -NoNewWindow -PassThru `
                           -RedirectStandardOutput $out -RedirectStandardError $err

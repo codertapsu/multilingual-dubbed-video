@@ -128,6 +128,8 @@ export type LocalLlmPromptFormat = 'gemma' | 'gemma4';
 export interface LocalLlmEndpoint {
   baseUrl: string;
   promptFormat?: LocalLlmPromptFormat;
+  /** Headers the engine requires (its per-launch bearer token). */
+  headers?: Record<string, string>;
 }
 
 /** Gemma chat-turn control tokens (the format TranslateGemma was trained on). */
@@ -269,10 +271,14 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
    * chat resolver picks the best INSTALLED pack each time, so the format must
    * ride along with the URL it came from.
    */
-  private async resolveEndpoint(): Promise<{ baseUrl: string; format: LocalLlmPromptFormat }> {
+  private async resolveEndpoint(): Promise<{ baseUrl: string; format: LocalLlmPromptFormat; headers: Record<string, string> }> {
     const resolved = await this.opts.resolveBaseUrl();
     const endpoint: LocalLlmEndpoint = typeof resolved === 'string' ? { baseUrl: resolved } : resolved;
-    return { baseUrl: endpoint.baseUrl.replace(/\/$/, ''), format: endpoint.promptFormat ?? 'gemma' };
+    return {
+      baseUrl: endpoint.baseUrl.replace(/\/$/, ''),
+      format: endpoint.promptFormat ?? 'gemma',
+      headers: endpoint.headers ?? {},
+    };
   }
 
   /**
@@ -302,7 +308,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
 
   /** Chat-JSON-batch mode (general LLMs via Ollama). */
   private async translateBatch(
-    endpoint: { baseUrl: string; format: LocalLlmPromptFormat },
+    endpoint: { baseUrl: string; format: LocalLlmPromptFormat; headers?: Record<string, string> },
     source: string,
     target: string,
     input: TranslationInput,
@@ -368,7 +374,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
 
   /** Raw-per-segment mode (translation-specialized models like TranslateGemma). */
   private async translateRaw(
-    endpoint: { baseUrl: string; format: LocalLlmPromptFormat },
+    endpoint: { baseUrl: string; format: LocalLlmPromptFormat; headers?: Record<string, string> },
     source: string,
     target: string,
     input: TranslationInput,
@@ -400,7 +406,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
   private async complete(
     system: string | undefined,
     user: string,
-    endpoint: { baseUrl: string; format: LocalLlmPromptFormat },
+    endpoint: { baseUrl: string; format: LocalLlmPromptFormat; headers?: Record<string, string> },
     signal: AbortSignal | undefined,
     nPredictOverride?: number,
   ): Promise<string> {
@@ -409,6 +415,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     const timeout = AbortSignal.timeout(this.opts.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     const { baseUrl, format } = endpoint;
+    const headers = endpoint.headers ?? {};
     if (this.opts.backend === 'llama-cpp') {
       const prompt =
         format === 'gemma4'
@@ -420,7 +427,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       const nPredict = nPredictOverride ?? (this.mode === 'chat-json-batch' ? 3072 : 512);
       const data = await this.postJson<{ content?: string }>(
         `${baseUrl}/completion`,
-        {},
+        headers,
         {
           prompt,
           temperature: 0,
@@ -443,7 +450,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       : [{ role: 'user', content: user }];
     const data = await this.postJson<{ choices?: { message?: { content?: string } }[] }>(
       `${baseUrl}/chat/completions`,
-      {},
+      headers,
       { model: this.opts.model, messages, temperature: 0, stream: false },
       combined,
     );

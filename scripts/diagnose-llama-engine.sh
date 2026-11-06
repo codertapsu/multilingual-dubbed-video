@@ -521,6 +521,9 @@ invoke_llama_run() {  # invoke_llama_run LABEL WHY PORT FITT NGL
   rm -f "${pidfile}" "${codefile}"
   (
     [ "${LAUNCH_BLOCKING}" -eq 1 ] && export CUDA_LAUNCH_BLOCKING=1
+    # The app sets CORS through the environment, not argv (b9592 has no
+    # --cors-origins and would refuse to start); mirror that.
+    export LLAMA_ARG_CORS_ORIGINS=localhost
     "${EXE}" "${LAUNCH_ARGS[@]}" >"${out}" 2>"${err}" &
     _child=$!
     printf '%s' "${_child}" > "${pidfile}"

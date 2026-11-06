@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.cpu import default_cpu_threads
+
 
 def _env(name: str, default: str | None = None) -> str | None:
     """Read an env var, treating empty/whitespace-only values as unset."""
@@ -36,10 +38,12 @@ def _default_cache_dir() -> Path:
 def _resolve_concurrency() -> int:
     """Number of segments to synthesize in parallel.
 
-    Each segment is an independent engine subprocess (Piper) writing a distinct
-    file under a uniquely-keyed cache, so concurrency overlaps the per-segment
-    subprocess wall-clock (the dominant cost on long videos). Defaults to a
-    conservative min(cpu, 4); override with TTS_CONCURRENCY.
+    Defaults to the machine's PERFORMANCE cores (app/cpu.py — the same probe
+    the STT worker uses), not the former flat min(cpu, 4): with one Piper
+    process per line, 8 workers beat 4 by 22% on an 8P+4E M4 Pro (4.9 vs 4.0
+    lines/s) and 12 added nothing. With the persistent Piper (piper_batch.py)
+    each voice is ONE process and these threads simply queue on it, so a
+    larger pool costs nothing there. Override with TTS_CONCURRENCY.
     """
     raw = _env("TTS_CONCURRENCY")
     if raw:
@@ -49,7 +53,7 @@ def _resolve_concurrency() -> int:
                 return n
         except ValueError:
             pass
-    return max(1, min(os.cpu_count() or 4, 4))
+    return max(1, default_cpu_threads())
 
 
 # Default LRU ceiling for the synthesized-audio cache. Every distinct segment of

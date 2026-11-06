@@ -77,7 +77,7 @@ non-fatal; `/health` stays up and the error surfaces on the first transcribe).
 | `FASTER_WHISPER_MODEL`  | `small`     | Model size (`tiny`…`large-v3`).                    |
 | `STT_DEVICE`            | `auto`      | `auto`→`cpu`, or `cpu` / `cuda`.                   |
 | `STT_COMPUTE_TYPE`      | `int8`(cpu) | Override CTranslate2 compute type.                 |
-| `STT_CPU_THREADS`       | `0`         | `0` = auto (CTranslate2 picks).                    |
+| `STT_CPU_THREADS`       | `0`         | `0` = this machine's physical **performance** cores (`app/cpu.py`). Not CTranslate2's own default, which is a flat 4. |
 | `STT_NUM_WORKERS`       | `1`         | Parallel transcription workers.                    |
 | `STT_MODEL_CACHE_DIR`   | _(unset)_   | Model weights cache dir.                           |
 | `STT_LOCAL_FILES_ONLY`  | `false`     | If true, never download; fail with model-missing.  |

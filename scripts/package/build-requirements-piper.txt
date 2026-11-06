@@ -16,5 +16,13 @@
 # (as aliases of the new dashed spellings), stdin text in / 22.05 kHz mono s16le
 # WAV out is unchanged, and an A/B on vi_VN-vais1000-medium produced the same
 # duration and loudness as 1.4.2.
+#
+# The persistent `--vd-batch` path in entry_piper.py imports piper's PYTHON API
+# (PiperVoice.load, SynthesisConfig, synthesize_wav), not the CLI, so it is a
+# second contract to re-check on every bump. Against 1.8.0 it gives the ready
+# handshake, 22.05 kHz mono s16 WAVs, and length_scale 0.5/0.8/1.0/1.25
+# durations within run-to-run noise of the CLI on both 1.4.2 and 1.8.0. (Piper's
+# length_scale is sub-linear on this voice: 0.5 gives ~0.75x duration on EITHER
+# path, so that is upstream behaviour, not a batch-mode regression.)
 -r build-requirements.txt
 piper-tts==1.8.0

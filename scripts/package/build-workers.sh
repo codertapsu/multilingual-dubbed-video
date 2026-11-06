@@ -7,8 +7,10 @@
 #     vd-stt-worker-<target-triple>[.exe]
 #     vd-translation-worker-<target-triple>[.exe]
 #     vd-tts-worker-<target-triple>[.exe]
-#     vd-piper-<target-triple>[.exe]        (frozen piper-tts CLI; spawned by
-#                                            the TTS worker per segment)
+#     vd-piper-<target-triple>[.exe]        (frozen piper-tts CLI; the TTS
+#                                            worker keeps one per voice in
+#                                            --vd-batch mode, else spawns one
+#                                            per segment)
 #
 # Tauri appends the Rust *target triple* to externalBin base names, so each
 # sidecar MUST be suffixed with the triple of the host you build on
@@ -196,7 +198,8 @@ mkdir -p "${BIN_DIR}"
 #   deliberately reuses the tts-worker subdir for its .spec while prepare_build_venv
 #   skips that worker's requirements.txt for it (see below).
 # NOTE: "piper" is not a worker service — it's the frozen piper-tts CLI the TTS
-# worker spawns per segment. It gets its OWN build venv holding nothing but
+# worker runs: one persistent `--vd-batch` process per voice (entry_piper.py),
+# or one process per segment as the fallback. It gets its OWN build venv holding nothing but
 # piper-tts, so the TTS worker tree stops carrying piper's onnxruntime/sympy.
 # The 3 server workers are one-dir (fast start, no per-launch extraction). piper
 # is the on-demand CLI the TTS worker spawns by path — kept one-file (externalBin).

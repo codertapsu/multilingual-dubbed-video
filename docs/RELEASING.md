@@ -210,6 +210,12 @@ an artifact that cannot work.
 > (`zlib.brotliDecompressSync` over
 > `target/release/build/videodubber-desktop-*/out/tauri-codegen-assets/*`).
 
+> **`vd-piper` is verified by asking it, not grepping it.** A stale `vd-piper`
+> fails silently: the TTS worker finds no batch mode, falls back to one process
+> per line, and every dub still works, just 2.3× slower. So:
+> `"$APP/Contents/MacOS/vd-piper" --vd-batch-probe` must print `vd-batch/1`
+> (on Windows, the `vd-piper.exe` next to the installed `VideoDubber.exe`).
+
 ### Why the deep-sign + notarize dance
 
 `tauri build` will try to notarize the app itself if `APPLE_ID` / `APPLE_PASSWORD` /

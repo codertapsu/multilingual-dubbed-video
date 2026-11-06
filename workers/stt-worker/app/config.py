@@ -13,6 +13,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
+from .cpu import default_cpu_threads
+
 # Default Whisper model size. "small" is a good CPU-friendly default that
 # balances speed and quality; override with FASTER_WHISPER_MODEL.
 DEFAULT_MODEL = "small"
@@ -106,8 +108,11 @@ def get_settings() -> Settings:
         model=_env("FASTER_WHISPER_MODEL", DEFAULT_MODEL),
         device=device,
         compute_type=compute_type,
-        # 0 => let ctranslate2 pick based on available cores.
-        cpu_threads=_int_env("STT_CPU_THREADS", 0),
+        # Unset/0 => the machine's physical PERFORMANCE cores (see app/cpu.py).
+        # This used to pass 0 straight through, which faster-whisper documents
+        # as "4 by default" — every machine transcribed on four threads, and
+        # large-v3-turbo ran 31% slower on an M4 Pro than with its 8 P-cores.
+        cpu_threads=_int_env("STT_CPU_THREADS", 0) or default_cpu_threads(),
         num_workers=_int_env("STT_NUM_WORKERS", 1),
         download_root=_resolve_cache_dir(),
         # If true, never hit the network; fail fast with STT_MODEL_MISSING.

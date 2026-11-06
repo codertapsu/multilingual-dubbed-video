@@ -145,7 +145,8 @@ New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 
 # key | requirements subdir | output base name | bundle mode
 # NOTE: "piper" is not a worker service - it's the frozen piper-tts CLI the TTS
-# worker spawns per segment. It gets its OWN build venv holding nothing but
+# worker runs: one persistent --vd-batch process per voice (entry_piper.py),
+# or one process per segment as the fallback. It gets its OWN build venv holding nothing but
 # piper-tts, so the TTS worker tree stops carrying piper's onnxruntime/sympy.
 $Workers = @(
   @{ key="stt";         subdir="stt-worker";         base="vd-stt-worker";         mode="onedir" },

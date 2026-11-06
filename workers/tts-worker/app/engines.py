@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from app.config import Settings
+from app.piper_batch import BatchUnavailable, PiperBatchPool, resolve_batch_command
 from app.wavutil import write_silent_wav
 
 logger = logging.getLogger("tts.engines")
@@ -142,6 +143,26 @@ class PiperEngine:
         self._binary = settings.piper_binary_path
         self._model = settings.piper_voice_model_path
         self._voices_dir = settings.piper_voices_dir
+        # Persistent batch processes (see app/piper_batch.py), resolved lazily
+        # on the first synthesis: probing the binary at import would put a
+        # subprocess on the /health path.
+        self._batch_pool: PiperBatchPool | None = None
+        self._batch_resolved = False
+        self._batch_lock = threading.Lock()
+
+    def _pool(self) -> PiperBatchPool | None:
+        if self._batch_resolved:
+            return self._batch_pool
+        with self._batch_lock:
+            if not self._batch_resolved:
+                command = resolve_batch_command(self._binary or "")
+                self._batch_pool = PiperBatchPool(command) if command else None
+                self._batch_resolved = True
+                logger.info(
+                    "piper mode: %s",
+                    "persistent (one loaded voice per process)" if command else "one process per line",
+                )
+        return self._batch_pool
 
     def _binary_ok(self) -> bool:
         if not self._binary:
@@ -162,9 +183,20 @@ class PiperEngine:
         return candidates
 
     def model_for(self, language: str, voice: str | None = None) -> Path | None:
-        """Resolve the voice model to use for a base language subtag."""
+        """Resolve the voice model to use for a base language subtag.
+
+        A bare voice ID ("vi_VN-vais1000-medium") — what the orchestrator sends
+        for the project voice AND for a per-line voice picked in the editor — is
+        looked up in the voices dir. It used to be ignored unless it was a full
+        .onnx path, so with two voices installed for one language every line
+        was spoken by whichever sorted first, whatever the user chose.
+        """
         if voice and voice.endswith(".onnx") and Path(voice).is_file():
             return Path(voice)
+        if voice and "/" not in voice and "\\" not in voice:
+            named = self._voices_dir / f"{voice}.onnx"
+            if named.is_file() and (not language or model_language(named.name) in ("", language)):
+                return named
         candidates = self.candidate_models()
         if not language:
             return candidates[0] if candidates else None
@@ -202,6 +234,24 @@ class PiperEngine:
                 f"(voices dir: {self._voices_dir})"
             )
 
+        # Piper's length_scale slows/speeds speech (> 1 is slower); we map the
+        # speed multiplier to 1/speed.
+        length_scale = 1.0 / speed if speed and speed > 0 and abs(speed - 1.0) > 1e-3 else None
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+
+        pool = self._pool()
+        if pool is not None:
+            try:
+                pool.synth(model, text, str(out_path), length_scale)
+                logger.info("piper (persistent) synthesized %d chars -> %s", len(text), out_path)
+                return
+            except BatchUnavailable as exc:
+                # Never fail a dub because the fast path broke: drop to the
+                # per-line path for the rest of this worker's life.
+                logger.warning("persistent Piper unavailable (%s); spawning per line from now on", exc)
+                with self._batch_lock:
+                    self._batch_pool = None
+
         argv = [
             str(self._binary),
             "--model",
@@ -209,12 +259,8 @@ class PiperEngine:
             "--output_file",
             str(out_path),
         ]
-        # Piper supports --length_scale to slow/speed speech: length_scale > 1
-        # is slower. We map speed (rate multiplier) to 1/speed.
-        if speed and speed > 0 and abs(speed - 1.0) > 1e-3:
-            argv += ["--length_scale", f"{1.0 / speed:.4f}"]
-
-        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        if length_scale is not None:
+            argv += ["--length_scale", f"{length_scale:.4f}"]
         _run_subprocess(argv, input_bytes=text.encode("utf-8"))
         logger.info("piper synthesized %d chars -> %s", len(text), out_path)
 

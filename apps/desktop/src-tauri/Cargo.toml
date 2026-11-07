@@ -126,4 +126,17 @@ panic = "abort"
 codegen-units = 1
 lto = true
 opt-level = "s"
+# On macOS the release script overrides this for the app binary
+# (CARGO_PROFILE_RELEASE_STRIP=false in scripts/package/release-macos.sh), for the
+# reason given below.
 strip = true
+
+# Build scripts and proc macros are never stripped. On Apple targets rustc strips
+# with its bundled rust-objcopy, which only SOMETIMES leaves the LINKEDIT string
+# pool 8-byte aligned, and macOS 27.2's dyld refuses a Mach-O where it is not
+# ("mis-aligned LINKEDIT string pool"). The first clean 0.11.0 build on such a Mac
+# died with E0463 on serde_derive / phf_macros / thiserror_impl: their stripped
+# dylibs could no longer be dlopen()ed by the compiler itself. They never ship,
+# so stripping them bought nothing.
+[profile.release.build-override]
+strip = false

@@ -194,6 +194,40 @@ function New-BuildVenv($w) {
   $script:BuildVenv = $venv
 }
 
+# Run a frozen binary and capture its output. The frozen workers and vd-piper are
+# windowed (no console), so a plain `& $exe` neither waits for them nor captures
+# what they print: go through Start-Process with redirected streams instead.
+function Invoke-Frozen([string]$Exe, [string]$Arg, [string]$Tag) {
+  $stdout = Join-Path $PyiTmp ("$Tag.out.log")
+  $stderr = Join-Path $PyiTmp ("$Tag.err.log")
+  $p = Start-Process -FilePath $Exe -ArgumentList $Arg -Wait -PassThru -NoNewWindow `
+    -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+  $text = ((Get-Content $stdout -Raw -ErrorAction SilentlyContinue) + (Get-Content $stderr -Raw -ErrorAction SilentlyContinue))
+  return @{ code = $p.ExitCode; text = "$text".Trim() }
+}
+
+# Load everything a worker imports lazily, in the FROZEN binary. /health never
+# touches those, so a bundle missing a DLL used to ship looking fine: the 0.11.0
+# test build's translation worker could not import sentencepiece at all.
+function Assert-ImportCheck([string]$Exe, [string]$Key) {
+  Write-Host "    - import check (frozen binary)"
+  $r = Invoke-Frozen $Exe '--vd-import-check' "import-check-$Key"
+  foreach ($line in ($r.text -split "`r?`n")) { if ($line) { Write-Host "      $line" } }
+  if ($r.code -ne 0) {
+    throw "[$Key] the frozen worker cannot import what it needs at run time (see above). Refusing to ship it."
+  }
+}
+
+# vd-piper is checked by asking it, as the TTS worker does: a broken one never
+# fails a dub, it silently runs one process per line instead (2.3x slower).
+function Assert-PiperProbe([string]$Exe) {
+  $r = Invoke-Frozen $Exe '--vd-batch-probe' 'piper-probe'
+  if ($r.code -ne 0 -or $r.text -notmatch 'vd-batch/1') {
+    throw "vd-piper did not answer its batch probe (exit $($r.code): $($r.text)). Refusing to ship it."
+  }
+  Write-Host "    - batch probe: $($r.text)"
+}
+
 function Build-One($w) {
   $workerDir = Join-Path $RepoRoot ("workers\" + $w.subdir)
   $spec = Join-Path $ScriptDir ($w.base + ".spec")
@@ -242,6 +276,7 @@ function Build-One($w) {
     $producedDir = Join-Path $dist $w.base
     $producedExe = Join-Path $producedDir ($w.base + ".exe")
     if (-not (Test-Path $producedExe)) { throw "expected $producedExe but it was not produced." }
+    Assert-ImportCheck $producedExe $w.key
     $targetDir = Join-Path $ResWorkers $w.base
     New-Item -ItemType Directory -Force -Path $ResWorkers | Out-Null
     if (Test-Path $targetDir) { Remove-Item -Recurse -Force $targetDir }
@@ -250,6 +285,7 @@ function Build-One($w) {
   } else {
     $produced = Join-Path $dist ($w.base + ".exe")
     if (-not (Test-Path $produced)) { throw "expected $produced but it was not produced." }
+    Assert-PiperProbe $produced
     $target = Join-Path $BinDir ("$($w.base)-$Triple.exe")
     Copy-Item -Force $produced $target
     Write-Host "    -> $target"

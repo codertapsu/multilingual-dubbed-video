@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sys
 from typing import Protocol, runtime_checkable
 
 from .errors import AppErrorException
@@ -25,6 +26,43 @@ logger = logging.getLogger("translation_worker.providers")
 
 # Docs link surfaced in remediation messages.
 _MODEL_SETUP_DOC = "docs/MODEL_SETUP.md"
+_TROUBLESHOOTING_DOC = "docs/TROUBLESHOOTING.md#translation-package-missing"
+
+
+def argos_unavailable(exc: BaseException) -> AppErrorException:
+    """The error for an Argos Translate that cannot be imported.
+
+    In a source checkout that means it is not installed, and pip is the fix. In
+    the installed app (a frozen build) it is bundled, so failing to import means
+    a broken install, and "pip install" is advice no user can follow: the 0.11.0
+    test build showed exactly that, next to "DLL load failed".
+    """
+    if getattr(sys, "frozen", False):
+        return AppErrorException.make(
+            code="TRANSLATION_PACKAGE_MISSING",
+            message="VideoDubber's offline translation engine (Argos Translate) failed to load.",
+            status_code=503,
+            cause=str(exc),
+            remediation=(
+                "This is a fault in this copy of VideoDubber, not in your settings. "
+                "1. Quit VideoDubber and install the latest version over it (your projects are kept). "
+                "2. If it still fails, report it from Help → Copy diagnostics, including the cause shown here. "
+                "Until then you can translate with the local AI translator (Settings → Engines) "
+                "or a cloud provider (Settings → Cloud API keys)."
+            ),
+            docs_ref=_TROUBLESHOOTING_DOC,
+        )
+    return AppErrorException.make(
+        code="TRANSLATION_PACKAGE_MISSING",
+        message="Argos Translate is not installed in this environment.",
+        status_code=503,
+        cause=str(exc),
+        remediation=(
+            "Install the translation engine: `pip install argostranslate`, then install at "
+            f"least one language package. See {_MODEL_SETUP_DOC}."
+        ),
+        docs_ref=_MODEL_SETUP_DOC,
+    )
 
 
 @runtime_checkable
@@ -99,18 +137,7 @@ class ArgosBackend:
         try:
             from argostranslate import translate as argos_translate  # type: ignore
         except Exception as exc:  # pragma: no cover - import failure path
-            raise AppErrorException.make(
-                code="TRANSLATION_PACKAGE_MISSING",
-                message="Argos Translate is not installed in this environment.",
-                status_code=503,
-                cause=str(exc),
-                remediation=(
-                    "Install the translation engine: `pip install argostranslate`, "
-                    "then install at least one language package. See "
-                    f"{_MODEL_SETUP_DOC}."
-                ),
-                docs_ref=_MODEL_SETUP_DOC,
-            ) from exc
+            raise argos_unavailable(exc) from exc
 
         self._languages = list(argos_translate.get_installed_languages())
         self._loaded = True
@@ -160,14 +187,7 @@ class ArgosBackend:
 
             installed = argos_package.get_installed_packages()
         except Exception as exc:  # noqa: BLE001
-            raise AppErrorException.make(
-                code="TRANSLATION_PACKAGE_MISSING",
-                message="Argos Translate is not installed in this environment.",
-                status_code=503,
-                cause=str(exc),
-                remediation="Install the translation engine: `pip install argostranslate`.",
-                docs_ref=_MODEL_SETUP_DOC,
-            ) from exc
+            raise argos_unavailable(exc) from exc
 
         match = next(
             (
@@ -279,17 +299,7 @@ class ArgosBackend:
         try:
             from argostranslate import package as argos_package  # type: ignore
         except Exception as exc:  # pragma: no cover - import failure path
-            raise AppErrorException.make(
-                code="TRANSLATION_PACKAGE_MISSING",
-                message="Argos Translate is not installed in this environment.",
-                status_code=503,
-                cause=str(exc),
-                remediation=(
-                    "Install the translation engine: `pip install argostranslate`. "
-                    f"See {_MODEL_SETUP_DOC}."
-                ),
-                docs_ref=_MODEL_SETUP_DOC,
-            ) from exc
+            raise argos_unavailable(exc) from exc
 
         # Already installed? -> idempotent no-op.
         if (from_lang, to_lang) in set(self.installed_pairs()):

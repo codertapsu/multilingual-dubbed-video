@@ -34,6 +34,8 @@ REPO_ROOT = os.path.abspath(os.path.join(os.getcwd()))
 WORKER_DIR = os.path.join(REPO_ROOT, "workers", "stt-worker")
 ENTRY = os.path.join(REPO_ROOT, "scripts", "package", "entry_worker.py")
 RT_HOOK = os.path.join(REPO_ROOT, "scripts", "package", "rthook_stt.py")
+# First: makes delvewheel's renamed DLLs findable (see the hook).
+DLL_HOOK = os.path.join(REPO_ROOT, "scripts", "package", "rthook_dlldirs.py")
 
 datas = []
 binaries = []
@@ -78,7 +80,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    runtime_hooks=[RT_HOOK],
+    runtime_hooks=[DLL_HOOK, RT_HOOK],
     excludes=[
         "tkinter",
         "matplotlib",

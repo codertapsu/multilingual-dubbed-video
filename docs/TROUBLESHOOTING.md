@@ -205,7 +205,7 @@ contract points at this page.
 | `FFMPEG_FILTER_MISSING` | Your ffmpeg lacks a needed filter | Build without libass, for burned-in subs | Use a libass build, or pick a non-burned subtitle mode | [#ffmpeg_filter_missing](#ffmpeg_filter_missing) |
 | `PYTHON_NOT_FOUND` | Python interpreter missing | No Python / wrong `PYTHON_PATH` | Install Python 3.12 or set `PYTHON_PATH` | [LOCAL_SETUP](LOCAL_SETUP.md#2-python-workers-per-worker-venvs) |
 | `STT_MODEL_MISSING` | faster-whisper model unavailable | Not cached and can't download | Pre-cache the model; check `FASTER_WHISPER_MODEL` | [MODEL_SETUP](MODEL_SETUP.md#1-faster-whisper-speech-to-text) |
-| `TRANSLATION_PACKAGE_MISSING` | No Argos package for the pair | Pair not installed / not published | Install it from Settings → Translation packs (dev: `argospm install translate-<from>_<to>`) | [MODEL_SETUP](MODEL_SETUP.md#2-argos-translate-machine-translation) |
+| `TRANSLATION_PACKAGE_MISSING` | No Argos package for the pair, or the engine could not load | Pair not installed / not published; a damaged install | Install it from Settings → Translation packs (dev: `argospm install translate-<from>_<to>`); reinstall the app if the engine failed to load | [#translation-package-missing](#translation-package-missing) |
 | `PIPER_MISSING` | Piper binary not usable | `PIPER_BINARY_PATH` unset/invalid | Install the Piper binary + set the path, or use the fallback engine | [MODEL_SETUP](MODEL_SETUP.md#3-piper-text-to-speech) |
 | `TTS_VOICE_MISSING` | No voice for the language | No matching `.onnx` in `PIPER_VOICES_DIR` / bad `PIPER_VOICE_MODEL_PATH` | Download a voice `.onnx`+`.onnx.json` for the target language | [MODEL_SETUP](MODEL_SETUP.md#3-piper-text-to-speech) |
 | `UNSUPPORTED_MEDIA` | Input can't be probed/decoded | Corrupt / unsupported container or codec | Re-encode to a standard MP4/MKV; verify with `ffprobe` | [#unsupported_media](#unsupported_media) |
@@ -277,10 +277,26 @@ The faster-whisper model isn't cached and couldn't be downloaded. Pre-cache it
 <a id="translation-package-missing"></a>
 
 ### `TRANSLATION_PACKAGE_MISSING`
-No Argos Translate package is installed for the requested pair. The error includes the
-exact command, e.g. `argospm install translate-en_vi`. Install it
-([MODEL_SETUP §2](MODEL_SETUP.md#2-argos-translate-machine-translation)) or choose a
-supported pair. Confirm with `curl http://127.0.0.1:5102/languages`.
+Offline translation (Argos Translate) has no language pack for the pair, or its engine
+could not load.
+
+**In the installed app:**
+
+- *No pack for the pair.* Open **Settings → Translation packs** and install it. A
+  non-English pair goes through English, so Chinese → Vietnamese needs both
+  Chinese → English and English → Vietnamese. The first-run wizard and a new project
+  download them for you.
+- *"VideoDubber's offline translation engine (Argos Translate) failed to load."* This
+  copy of the app is damaged; your settings are fine. 1. Quit VideoDubber and install
+  the latest version over it (your projects are kept). 2. If it still fails, report it
+  from Help → **Copy diagnostics**, with the cause the banner shows. Until then,
+  translate with the local AI translator (Settings → Engines) or a cloud provider.
+  The 0.11.0 test build failed exactly this way ("DLL load failed while importing
+  _sentencepiece"). Builds now refuse to ship a worker that cannot load its engines.
+
+**From source:** `argospm install translate-en_vi`, or see
+[MODEL_SETUP §2](MODEL_SETUP.md#2-argos-translate-machine-translation). Confirm with
+`curl http://127.0.0.1:5102/languages`.
 
 <a id="piper-missing"></a>
 

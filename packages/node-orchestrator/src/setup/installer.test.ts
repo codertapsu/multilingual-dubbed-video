@@ -330,6 +330,48 @@ describe('SetupInstaller', () => {
     expect(installer.isRunning()).toBe(false);
   });
 
+  it('still installs the items after one that fails, and names the failure', async () => {
+    // The 0.11.0 test build: the translation engine could not load, and the
+    // first failure ended the run, so the voice queued behind it never came.
+    const onnxBytes = new Uint8Array(2048).fill(7);
+    setWorkerTransport(async (_method, url) => {
+      if (url.endsWith('/models/ensure')) return rawJson({ ok: true, model: 'base', alreadyCached: false });
+      if (url.endsWith('/packages/ensure')) {
+        return rawJson(
+          { error: { code: 'TRANSLATION_PACKAGE_MISSING', message: 'Argos failed to load.', remediation: 'Reinstall.' } },
+          503,
+        );
+      }
+      throw new Error(`unexpected worker call: ${url}`);
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL): Promise<Response> =>
+      String(input).endsWith('.onnx') ? fileResponse(onnxBytes) : fileResponse(new Uint8Array([123, 125])),
+    );
+    const installer = new SetupInstaller({ config: config(), store, bus, fetchImpl: fetchMock as unknown as typeof fetch });
+
+    await installer.run({
+      whisperModel: 'base',
+      argosPairs: [
+        { from: 'zh', to: 'en' },
+        { from: 'en', to: 'vi' },
+      ],
+      piperVoices: ['vi_VN-vais1000-medium'],
+    });
+
+    const status = await store.getStatus();
+    expect(status.installed.whisperModels).toEqual(['base']);
+    expect(status.installed.piperVoices).toEqual(['vi_VN-vais1000-medium']); // tried despite the packs failing
+    expect(status.installed.argosPairs).toEqual([]);
+    const error = events.find((e): e is Extract<SetupEvent, { type: 'error' }> => e.type === 'error');
+    expect(error?.error.code).toBe('TRANSLATION_PACKAGE_MISSING');
+    expect(error?.error.message).toBe(
+      '2 of 4 downloads failed. First: Argos failed to load. The other downloads finished.',
+    );
+    expect(error?.error.remediation).toBe('Reinstall.');
+    // Still an error run: the wizard offers Retry, which skips what is there.
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
   it('rejects an unknown piper voice id with a TTS_VOICE_MISSING error event', async () => {
     const installer = new SetupInstaller({ config: config(), store, bus });
     await installer.run({ piperVoices: ['does-not-exist'] });

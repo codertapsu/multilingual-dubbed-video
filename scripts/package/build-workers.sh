@@ -312,6 +312,14 @@ build_one() {
       echo "ERROR: expected ${produced_exe} but it was not produced." >&2
       exit 1
     fi
+    # Load everything the worker imports lazily, in the FROZEN binary. /health
+    # never touches those, so a bundle missing a DLL used to ship looking fine
+    # (0.11.0's translation worker could not import sentencepiece).
+    echo "    - import check (frozen binary)"
+    if ! "${produced_exe}" --vd-import-check; then
+      echo "ERROR: [${key}] the frozen worker cannot import what it needs at run time (see above). Refusing to ship it." >&2
+      exit 1
+    fi
     local target_dir="${RES_WORKERS}/${base}"
     mkdir -p "${RES_WORKERS}"
     rm -rf "${target_dir}"
@@ -324,6 +332,15 @@ build_one() {
       echo "ERROR: expected ${produced} but it was not produced." >&2
       exit 1
     fi
+    # vd-piper is checked by asking it, as the TTS worker does: a broken one
+    # never fails a dub, it silently runs one process per line (2.3x slower).
+    local probe
+    probe="$("${produced}" --vd-batch-probe 2>/dev/null || true)"
+    if [[ "${probe}" != *"vd-batch/1"* ]]; then
+      echo "ERROR: [${key}] ${base} did not answer its batch probe (got: ${probe:-nothing}). Refusing to ship it." >&2
+      exit 1
+    fi
+    echo "    - batch probe: ${probe}"
     local target="${BIN_DIR}/${base}-${TRIPLE}${EXE_SUFFIX}"
     cp -f "${produced}" "${target}"
     chmod +x "${target}" || true

@@ -25,6 +25,7 @@ import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
 import {
   AppErrorException,
   toAppError,
+  type AppError,
   type ArgosPair,
   type SetupInstallRequest,
 } from '@videodubber/shared';
@@ -272,16 +273,41 @@ export class SetupInstaller {
 
   // ----- Steps -------------------------------------------------------------
 
+  /**
+   * Every item is attempted even when an earlier one fails. The first failure
+   * used to end the run, so one broken component cost the user everything
+   * after it: the 0.11.0 test build's translation engine could not load, and
+   * the Vietnamese voice queued behind its packs was never even tried. What
+   * succeeds is recorded as it lands; the run still ends in `error` (so the
+   * wizard offers Retry, which skips what is already there) naming the item
+   * that failed.
+   */
   private async installAll(request: SetupInstallRequest): Promise<void> {
-    if (request.whisperModel) {
-      await this.installWhisperModel(request.whisperModel);
+    const steps: (() => Promise<void>)[] = [];
+    const whisperModel = request.whisperModel;
+    if (whisperModel) steps.push(() => this.installWhisperModel(whisperModel));
+    for (const pair of request.argosPairs ?? []) steps.push(() => this.installArgosPair(pair));
+    for (const voiceId of request.piperVoices ?? []) steps.push(() => this.installPiperVoice(voiceId));
+
+    const failures: AppError[] = [];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (err) {
+        failures.push(toAppError(err));
+      }
     }
-    for (const pair of request.argosPairs ?? []) {
-      await this.installArgosPair(pair);
-    }
-    for (const voiceId of request.piperVoices ?? []) {
-      await this.installPiperVoice(voiceId);
-    }
+    const first = failures[0];
+    if (!first) return;
+    const succeeded = steps.length - failures.length;
+    const message =
+      failures.length === 1
+        ? first.message
+        : `${failures.length} of ${steps.length} downloads failed. First: ${first.message}`;
+    throw new AppErrorException({
+      ...first,
+      message: succeeded > 0 ? `${message} The other downloads finished.` : message,
+    });
   }
 
   /** Ensure a whisper model is cached via the STT worker. */

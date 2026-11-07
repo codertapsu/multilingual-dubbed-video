@@ -28,6 +28,8 @@ from PyInstaller.utils.hooks import collect_data_files
 
 REPO_ROOT = os.path.abspath(os.path.join(os.getcwd()))
 ENTRY = os.path.join(REPO_ROOT, "scripts", "package", "entry_piper.py")
+# Makes delvewheel's renamed DLLs findable (numpy, onnxruntime deps; see the hook).
+DLL_HOOK = os.path.join(REPO_ROOT, "scripts", "package", "rthook_dlldirs.py")
 
 datas = []
 binaries = []
@@ -56,7 +58,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
-    runtime_hooks=[],
+    runtime_hooks=[DLL_HOOK],
     excludes=[
         "piper.train",
         "torch",

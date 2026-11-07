@@ -6,11 +6,25 @@ suite passes on any machine with zero TTS software installed.
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
+
+# Before ANY test module imports `app`: app.config builds its module-level
+# `settings` at import, and load_settings() creates the cache dir eagerly. The
+# autouse fixture below only redirects it per test, after collection has already
+# imported the module with the real environment, so every run (`pnpm check`, each
+# release build) created ~/VideoDubber/cache/tts in the developer's REAL profile,
+# reappearing right after a clean uninstall had removed the app's data.
+_SESSION_DIR = Path(tempfile.mkdtemp(prefix="vd-tts-tests-"))
+atexit.register(shutil.rmtree, _SESSION_DIR, ignore_errors=True)
+os.environ["VIDEODUBBER_CACHE_DIR"] = str(_SESSION_DIR / "cache_root")
+os.environ["VIDEODUBBER_CONFIG_DIR"] = str(_SESSION_DIR / "config")
 
 # Ensure the package root (the dir containing `app/`) is importable when pytest
 # is run from anywhere.

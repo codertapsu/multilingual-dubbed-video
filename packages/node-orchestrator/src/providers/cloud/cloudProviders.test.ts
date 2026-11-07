@@ -138,13 +138,19 @@ describe('LlmTranslationProvider', () => {
   });
 
   it('throws CLOUD_CREDENTIALS_MISSING without a key', async () => {
-    const empty = new CredentialsStore(await mkdtemp(path.join(os.tmpdir(), 'vd-nokey-')));
-    delete process.env.GEMINI_API_KEY;
-    delete process.env.GOOGLE_API_KEY;
-    const provider = new LlmTranslationProvider('gemini', empty, 5000, async () => ({}) as never);
-    await expect(
-      provider.translateSegments({ sourceLanguage: 'en', targetLanguage: 'vi', segments: [] }),
-    ).rejects.toMatchObject({ appError: { code: 'CLOUD_CREDENTIALS_MISSING' } });
+    // Removed afterwards: every run used to leave one vd-nokey-* dir in the temp folder.
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-nokey-'));
+    try {
+      const empty = new CredentialsStore(dir);
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.GOOGLE_API_KEY;
+      const provider = new LlmTranslationProvider('gemini', empty, 5000, async () => ({}) as never);
+      await expect(
+        provider.translateSegments({ sourceLanguage: 'en', targetLanguage: 'vi', segments: [] }),
+      ).rejects.toMatchObject({ appError: { code: 'CLOUD_CREDENTIALS_MISSING' } });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   const tenSegments = Array.from({ length: 10 }, (_, i) => ({

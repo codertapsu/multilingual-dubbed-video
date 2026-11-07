@@ -170,6 +170,26 @@ function New-WorkerVenv {
                 Write-Warn "${Dir}: test deps failed; 'pnpm test:workers' will skip this suite."
             }
         }
+        # The TTS worker speaks Vietnamese through the piper CLI, which ships to
+        # users as the frozen vd-piper sidecar and is deliberately NOT in
+        # requirements.txt (that set is frozen into the worker). Dev had no piper
+        # at all unless someone installed it by hand, so on a fresh clone
+        # `pnpm dev` dubbed every line with the silent fallback. Install the SAME
+        # pinned version the release freezes, into this dev venv only.
+        if ($Dir -eq 'tts-worker') {
+            $pinFile = Join-Path $RootDir 'scripts\package\build-requirements-piper.txt'
+            $pin = (Select-String -Path $pinFile -Pattern '^piper-tts==' -ErrorAction SilentlyContinue | Select-Object -First 1).Line
+            if ($pin) {
+                Write-Info "${Dir}: pip install $pin (dev only; releases bundle vd-piper)"
+                & $vpy -m pip install $pin 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Ok "${Dir}: Piper installed; pnpm dev finds it automatically."
+                } else {
+                    Write-Warn "${Dir}: Piper install failed; Vietnamese TTS will be silent in dev."
+                    Write-Warn "    retry with: `"$vpy`" -m pip install $pin"
+                }
+            }
+        }
     } elseif (Test-Path (Join-Path $wdir 'pyproject.toml')) {
         # The engine-pack sources (vd_tts_engine, vd_omnivoice) carry no
         # requirements.txt: their runtime closure is installed into a uv venv on the

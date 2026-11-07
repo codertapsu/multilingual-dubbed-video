@@ -100,7 +100,15 @@ processes.
 - **Python engine packs** (neural TTS, and any future separation/alignment
   packs) — materialized into a `uv`-managed virtual environment on the user's
   machine from pinned requirements; the packages install from PyPI at that
-  point, not from us.
+  point, not from us. The GPU voice pack (`tts-neural-cuda`) also installs
+  **PyTorch** (BSD-3-Clause) from PyTorch's own wheel index
+  (`download.pytorch.org`); those wheels contain NVIDIA CUDA runtime libraries
+  distributed under the **NVIDIA CUDA Toolkit EULA**.
+- **Microsoft Visual C++ Redistributable** (Windows) — when an engine pack needs
+  it and it is missing, the app downloads Microsoft's own installer from
+  Microsoft's permalink, checks Microsoft's Authenticode signature, and runs it.
+  The user accepts Microsoft's license terms in that installer; nothing from it
+  is copied into the app.
 
 If you redistribute VideoDubber **together with** any of the above (for example
 by pre-seeding a machine image), review and comply with each component's own
@@ -137,11 +145,15 @@ community **GGUF requants** of Google's `google/translategemma-*-it` models.
 > shipping a build that bundles the weights. (A future Gemma-4-based TranslateGemma
 > would move to Apache-2.0 and drop these obligations.)
 
-### VieNeu-TTS (`tts-neural` engine pack)
+### VieNeu-TTS (`tts-neural` and `tts-neural-cuda` engine packs)
 
 The shipping Vietnamese neural voice pack is **Apache-2.0** (engine code and v3
 weights), and uses the MOSS-Audio-Tokenizer-Nano codec and the sea-g2p
-phonemizer — verify those components' licenses if you redistribute. Output is
+phonemizer — verify those components' licenses if you redistribute. The GPU
+build loads the PyTorch checkpoints of the same model and codec
+(`pnnbao-ump/VieNeu-TTS-v3-Turbo`, `OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano`) at
+pinned revisions, and adds PyTorch (BSD-3-Clause) with NVIDIA's CUDA runtime
+libraries (NVIDIA CUDA Toolkit EULA). Output is
 **not** watermarked: earlier versions of this notice said it was, but the pinned
 `vieneu` 3.0.5 depends on an unrelated PyPI package called `perth` rather than
 Resemble AI's `resemble-perth`, so its watermarker never initializes (details in

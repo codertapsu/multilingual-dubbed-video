@@ -76,6 +76,103 @@ Everything lives in `~/VideoDubber` (macOS) or `%USERPROFILE%\VideoDubber`
 [`USER_GUIDE.md`](USER_GUIDE.md#7-where-your-files-live) and
 [Uninstalling](USER_GUIDE.md#11-uninstalling).
 
+<a id="engines-need-the-microsoft-visual-c-runtime"></a>
+
+### Engines need the Microsoft Visual C++ Runtime
+
+**Windows only.** Every downloadable engine pack (the VieNeu voices, whisper.cpp,
+llama.cpp) is native code that needs Microsoft's free C++ runtime. None of them
+ship it, and a clean Windows install does not have it. The base app carries its
+own copy, which is why everything else works without it.
+
+**Normally you do nothing.** When you click **Install** on a pack, VideoDubber
+checks for the runtime first. If it is missing, or older than version 14.40, the
+app downloads Microsoft's installer, checks Microsoft's signature on it, and runs
+it. Windows then asks *"Do you want to allow this app to make changes to your
+device?"* for the **Microsoft Visual C++ Redistributable**, publisher *Microsoft
+Corporation*. Click **Yes**. That is the only click, and nothing is downloaded for
+the engine until the runtime is in place.
+
+If you clicked **No**, have no administrator account, or the download failed, the
+error banner shows these steps:
+
+1. Download the **Microsoft Visual C++ Redistributable (x64)** from Microsoft's
+   permanent link: <https://aka.ms/vc14/vc_redist.x64.exe>.
+2. Open the downloaded file, tick **I agree to the license terms** and click
+   **Install**. If it offers **Repair** instead, click **Repair**. Allow the Windows
+   permission prompt. An administrator account is needed; on a work PC, your IT
+   team can install it for you.
+3. When it says **Setup Successful**, go back to VideoDubber and click **Install**
+   on the pack again. VideoDubber does not need a restart. If the Microsoft
+   installer asks to restart Windows, do that first.
+
+**Why it checks a version, not just "installed":** programs built with Visual
+Studio 2022 17.10 or later crash inside `std::mutex` when an older `msvcp140.dll`
+is loaded. onnxruntime and Apache Arrow both had to work around it in their own
+builds. So a PC with a 2019-era runtime counts as "needs an update", and the steps
+above update it.
+
+**An engine that was installed before this check existed**, or whose runtime was
+removed since, fails at start with the same message and steps, worded "retry the
+step". The app no longer reports it as the generic "engine did not become healthy"
+after a one-minute wait.
+
+<a id="the-gpu-voice-pack-cannot-use-the-graphics-card"></a>
+
+### The GPU voice pack cannot use the graphics card
+
+The **VieNeu Neural TTS v3 — NVIDIA GPU** pack runs the Vietnamese voice on an
+NVIDIA graphics card. On an RTX 3050 it voiced a 21-minute video (593 s of speech)
+in 2 min 24 s, against about 9½ minutes for the CPU pack. After installing it,
+VideoDubber runs a self-check that does real work on the card. A pack that cannot
+use the GPU is therefore reported at install time; you never discover it later as
+CPU speed. What the message says, and what to do:
+
+| The message says | Do this |
+|---|---|
+| …*cannot see an NVIDIA graphics card* | The NVIDIA driver is too old or missing. 1. Open the **NVIDIA App** (or GeForce Experience) → **Drivers**, or download the latest driver for your card from <https://www.nvidia.com/Download>. 2. Install it and restart the computer. 3. Click **Install** on the pack again. The download is cached, so it is quick. On a laptop, also plug it in and turn off any power-saving mode that disables the NVIDIA GPU. |
+| …*could not load the Microsoft Visual C++ runtime* | Follow [Engines need the Microsoft Visual C++ Runtime](#engines-need-the-microsoft-visual-c-runtime), then install the pack again. |
+| …*this PyTorch build cannot run your …* | Your card is outside what the pack's builds support. Use the CPU pack (**VieNeu Neural TTS v3**), which has the same voices, and report the message (Help → **Copy diagnostics**). |
+| …*PyTorch failed to start* | Click **Install** again. If it fails twice, use the CPU pack and report the message. |
+
+The PyTorch build is chosen for your card and driver:
+
+- **GTX 16-series and any RTX card on driver 580 or newer:** CUDA 13.0, which was
+  twice as fast as 12.6 in our measurements.
+- **Older cards, or older drivers:** CUDA 12.6.
+- **RTX 50-series (Blackwell):** always CUDA 13.0, so these cards need driver 580
+  or newer.
+
+The pack is offered from driver **560.76** up. Settings → Engines says when your
+driver is below that.
+
+**If the GPU cannot be used when the voice engine starts** (a driver update in the
+meantime, or another program holding the video memory), the engine falls back to
+the CPU on its own. The Processing log then says *"Voice engine is running on the
+CPU: …"* with the reason. The dub still finishes, more slowly. Restart the app to
+try the GPU again.
+
+<a id="not-enough-disk-space-for-an-engine-pack"></a>
+
+### Not enough disk space for an engine pack
+
+Before downloading anything, the installer checks the drive that holds your
+`VideoDubber` folder. If space is short, it stops with *"needs about X GB … Y GB is
+free"* instead of failing halfway through. It asks for more than the download
+size because packs unpack and need working room:
+
+| Pack type | Space needed |
+|---|---|
+| Python-based (the VieNeu voices) | about 1.25× its size, plus 0.5 GB |
+| Archives (whisper.cpp, llama.cpp) | about 3× its size, plus 0.5 GB |
+| Single model files | about 1.1× its size, plus 0.5 GB |
+
+1. Open **Settings → Storage** to see what VideoDubber has downloaded. Remove
+   engine packs you no longer use in **Settings → Engines**.
+2. Free space on the drive: Windows **Settings → System → Storage**, or on macOS
+   **System Settings → General → Storage**.
+3. Click **Install** again.
+
 ---
 
 ## Developing from source
@@ -121,7 +218,7 @@ contract points at this page.
 | `CLOUD_CREDENTIALS_MISSING` | A cloud phase has no API key | Provider selected but key not set | Add the key in Settings → Cloud API keys, or switch the phase back to local | [PROVIDERS](PROVIDERS.md#cloud-api-keys) |
 | `CLOUD_REQUEST_FAILED` | The cloud provider rejected the call | Invalid key, no quota, network/TLS | Check the key and quota, retry, or switch to a local provider | [PROVIDERS](PROVIDERS.md#cloud-troubleshooting) |
 | `ENGINE_PACK_MISSING` | The phase's engine pack isn't installed | Provider chosen before installing the pack | Install it in Settings → Engines, or pick another provider | [PROVIDERS](PROVIDERS.md#engine-packs) |
-| `ENGINE_PACK_FAILED` | The pack couldn't be downloaded/verified | Network, disk space, or checksum mismatch | Retry the install — corrupt downloads are discarded automatically | [PROVIDERS](PROVIDERS.md#engine-packs) |
+| `ENGINE_PACK_FAILED` | The pack couldn't be downloaded, verified or used | Network, [disk space](#not-enough-disk-space-for-an-engine-pack), checksum mismatch, the [Windows C++ runtime](#engines-need-the-microsoft-visual-c-runtime), or the [GPU self-check](#the-gpu-voice-pack-cannot-use-the-graphics-card) | Follow the numbered steps in the banner, then retry the install. Corrupt downloads are discarded automatically | [PROVIDERS](PROVIDERS.md#engine-packs) |
 | `ENGINE_UNAVAILABLE` | A pack's engine process won't start/respond | Crash, missing runtime, driver too old | Retry; reinstall the pack; or fall back to a CPU provider | [#engine_unavailable](#engine_unavailable) |
 | `ENGINE_BUSY` | Another dub already owns this engine | Heavy local engines serve one project at a time | Wait for that dub (or cancel it), then retry | [#engine_busy](#engine_busy) |
 | `CANCELLED` | Job was cancelled | User cancelled the pipeline | Expected — re-run when ready (resumes/skips done steps) | [#cancelled](#cancelled) |
@@ -262,10 +359,43 @@ curl -s http://127.0.0.1:5100/workers/health
 <a id="worker-timeout"></a>
 
 ### `WORKER_TIMEOUT`
-A worker call exceeded its time budget — usually a large file or a heavy model on CPU.
-Try a smaller `FASTER_WHISPER_MODEL`, retry just that step
-(`POST /projects/:id/retry { "stepId": "stt" }`), or inspect the worker log in
-`.dev-logs/`.
+One request to a local engine ran longer than its time limit (30 minutes by default).
+The engine was usually **still working**, just slower than the limit allows: a long
+video on a heavy model, on a CPU. Nothing is broken, and finished work is not lost.
+
+**What to do**
+
+1. On the processing screen, click **Retry from this step** (*Chạy lại từ bước này*).
+   The work already done is kept: transcription resumes from its saved 10-minute
+   chunks, and the neural voice reuses every clip it already finished, so a retry
+   carries on where it stopped instead of starting over.
+2. If the same step times out again, make that step lighter. In the editor, open the
+   project settings, change the engine for the failing step (table below), then click
+   that step under **Re-dub from:** (*Lồng tiếng lại từ:*). Earlier steps are reused.
+
+| Step that timed out | Make it lighter | Make it faster on an NVIDIA GPU |
+|---|---|---|
+| 3 · Speech-to-text | A smaller Whisper model (`large-v3-turbo` → `small`) | **whisper.cpp (CUDA)** from Settings → Engines |
+| 4 · Translation | TranslateGemma 4B instead of 12B, or Argos | The llama.cpp **CUDA** pack, so the model runs on the GPU |
+| 6 · Speech (TTS) | **Piper**: *Text to Speech* → *Engine* → Piper | — (VieNeu runs on the CPU; see below) |
+
+3. Close other heavy programs while dubbing (another dub, a game, many browser tabs):
+   every step here runs on your own machine and competes with them.
+
+**About the VieNeu neural voice.** It runs on the CPU and is the slowest step on most
+machines. Two things used to make long videos impossible with it, both fixed: the
+whole dub went to the engine as one request under the 30-minute limit, and the engine
+ran ONNX Runtime on its default thread pool, measured at 5.4× slower than the 2-thread
+setting it now uses. Speech is now sent in small batches with progress in the log, so
+no single request comes near the limit. Roughly, expect the voice step to take about
+as long as the speech it produces: a 20-minute video with 9 minutes of dialogue needs
+around 10 minutes.
+
+**For developers.** The limit is `WORKER_REQUEST_TIMEOUT_MS` (milliseconds; default
+`1800000`). Raising it only hides a slow engine: prefer fixing whatever made one
+request that long. Worker logs are in `.dev-logs/` (`<worker>.log`, `<worker>.err.log`),
+and each project keeps its own run log in `<project>/logs/pipeline.log`. Retry one
+step over HTTP with `POST /projects/:id/retry { "stepId": "tts" }`.
 
 <a id="engine-unavailable"></a>
 
@@ -277,7 +407,9 @@ switch that phase to a CPU provider (Piper for TTS, faster-whisper for STT, Argo
 for translation) to unblock the dub. On Windows with an NVIDIA GPU, see
 [The CUDA engine pack won't start](#the-cuda-engine-pack-wont-start-nvidia-driver-too-old)
 — an out-of-date driver produces exactly this shape of failure, late and with no
-mention of a driver in the message.
+mention of a driver in the message. An engine that cannot load the Microsoft
+Visual C++ runtime fails at once with its own message instead; see
+[Engines need the Microsoft Visual C++ Runtime](#engines-need-the-microsoft-visual-c-runtime).
 
 <a id="engine-busy"></a>
 
@@ -394,8 +526,8 @@ Implementation notes that belong to a developer rather than a user:
   check. The downloader only reaches what an anonymous visitor can already play.
 
 ### worker timeout
-Heavy model or large file — see [`WORKER_TIMEOUT`](#worker_timeout). Prefer a smaller
-whisper model on CPU-only machines.
+Heavy model or large file — see [`WORKER_TIMEOUT`](#worker-timeout) for what to do at
+each step.
 
 ### CORS / SSE issues
 - **Browser dev:** workers and the orchestrator enable CORS for localhost. If the UI

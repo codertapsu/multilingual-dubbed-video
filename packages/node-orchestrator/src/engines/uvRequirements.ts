@@ -14,12 +14,16 @@
  * pins. See `workers/tts-engine-neural/README.md`.
  */
 
+import type { GpuInfo } from '@videodubber/shared';
+
 /** A resolved, install-ready requirement set for one pack on this machine. */
 export interface ResolvedUvRequirements {
   /** Pinned requirement specifiers, written verbatim to requirements.txt. */
   requirements: string[];
   /** Extra pip index URLs (passed as `--extra-index-url`), de-duplicated. */
   extraIndexUrls: string[];
+  /** The PyTorch CUDA build chosen for this machine's GPU, for GPU packs. */
+  torchCudaBuild?: TorchCudaBuild;
 }
 
 /** A pack's requirement spec: a common base plus per-platform overlays. */
@@ -30,6 +34,54 @@ interface UvRequirementSpec {
   extraIndexUrls?: string[];
   /** Platform-specific additions (merged onto `base`). */
   perPlatform?: Partial<Record<NodeJS.Platform, { requirements?: string[]; extraIndexUrls?: string[] }>>;
+  /** For GPU packs: add PyTorch in the CUDA build that can run this machine's GPU. */
+  torchCuda?: true;
+}
+
+/**
+ * The PyTorch release the GPU pack installs, and its CUDA builds.
+ *
+ * No single build runs every NVIDIA card that matters here. `cu126` carries
+ * kernels for sm_50-sm_90 (GTX 9xx/10xx through RTX 40xx and H100; the RTX 40's
+ * sm_89 runs the sm_86 kernels) but NOT Blackwell, so an RTX 50xx (sm_120) fails
+ * with "no kernel image is available". `cu130` adds Blackwell but CUDA 13
+ * dropped every pre-Turing GPU, and needs a driver from the R580 branch
+ * (2025-08+) where cu126 is happy from 560.76. Measured on 2026-11-07: torch
+ * 2.14.1+cu126 lists ['sm_50', ..., 'sm_86', 'sm_90'] with no PTX.
+ *
+ * cu130 is also simply FASTER where it runs: on the same RTX 3050, VieNeu in
+ * 24-line batches ran at RTF 0.18 on cu130 against 0.34 on cu126 (same audio
+ * lengths, same VRAM). So cu130 is the default wherever the card is Turing or
+ * newer AND the driver is R580+; cu126 is for older cards and older drivers.
+ *
+ * torchaudio is deliberately absent: VieNeu imports it only to clone a voice
+ * from reference audio, which the app does not offer, and leaving it out avoids
+ * pinning a second wheel whose versions lag torch's.
+ */
+export const TORCH_GPU_VERSION = '2.14.1';
+export type TorchCudaBuild = 'cu126' | 'cu130';
+
+/** CUDA 13.0 needs an R580-branch driver (NVIDIA release notes, Table 2). */
+const CU130_MIN_DRIVER_MAJOR = 580;
+
+/** Blackwell names, for when nvidia-smi cannot report a capability. */
+const BLACKWELL_NAME_RE = /RTX\s*50\d\d|RTX PRO \d{4}\s*Blackwell|\bB[12]00\b|\bGB[12]\d{2}\b/i;
+/** Turing-or-newer names (RTX anything, GTX 16xx), same purpose. */
+const TURING_PLUS_NAME_RE = /\bRTX\b|GTX\s*16\d\d/i;
+
+/** The CUDA build of PyTorch that can run, and runs best on, this machine's NVIDIA GPU. Pure. */
+export function torchCudaBuildFor(gpus: readonly GpuInfo[]): TorchCudaBuild {
+  const nvidia = gpus.filter((g) => /nvidia|geforce|quadro|tesla|rtx/i.test(g.name));
+  const capabilityOf = (g: GpuInfo): number | undefined => {
+    const cap = g.computeCapability ? Number.parseFloat(g.computeCapability) : Number.NaN;
+    return Number.isFinite(cap) ? cap : undefined;
+  };
+  // Blackwell runs ONLY on cu130, whatever the driver says.
+  if (nvidia.some((g) => (capabilityOf(g) ?? (BLACKWELL_NAME_RE.test(g.name) ? 12 : 0)) >= 10)) return 'cu130';
+  const driverMajor = Math.max(0, ...nvidia.map((g) => Number.parseInt(g.driverVersion ?? '', 10) || 0));
+  const turingPlus =
+    nvidia.length > 0 && nvidia.every((g) => (capabilityOf(g) ?? (TURING_PLUS_NAME_RE.test(g.name) ? 7.5 : 0)) >= 7.5);
+  return turingPlus && driverMajor >= CU130_MIN_DRIVER_MAJOR ? 'cu130' : 'cu126';
 }
 
 const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
@@ -63,6 +115,29 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
       'onnxruntime==1.31.1',
       'huggingface_hub==2.4.0',
     ],
+  },
+  // The same VieNeu v3 on an NVIDIA GPU: its original PyTorch checkpoint instead
+  // of the ONNX export. Everything the CPU pack has (so the engine can fall back
+  // to the ONNX path in the same venv when the GPU is unusable), plus the three
+  // things the PyTorch path imports: torch (CUDA build chosen per GPU, see
+  // torchCudaBuildFor), transformers (Qwen3 backbone) and safetensors. NOT
+  // vieneu[gpu]: that extra pulls lmdeploy, triton, NeuCodec and a pinned
+  // llama-cpp-python that must compile from source on Windows, all for OTHER
+  // VieNeu models. This exact set was installed and run on an RTX 3050 on
+  // 2026-11-07 (4.3 GB venv, 283 s install; see vd_tts_engine/engine.py).
+  'tts-neural-cuda': {
+    base: [
+      'vieneu==3.0.5',
+      'soundfile==0.14.0',
+      'numpy==2.5.4',
+      'fastapi==0.162.0',
+      'uvicorn==0.54.0',
+      'onnxruntime==1.31.1',
+      'huggingface_hub==2.4.0',
+      'transformers==5.22.2',
+      'safetensors==0.8.0',
+    ],
+    torchCuda: true,
   },
   // VieNeu-TTS v2 (24 kHz): pin vieneu 2.7.0, the last release where v2 is the
   // native default and llama-cpp-python + the ONNX NeuCodec decoder are CORE deps
@@ -124,13 +199,29 @@ export function resolveUvRequirements(
   packId: string,
   platform: NodeJS.Platform = process.platform,
   _arch: string = process.arch,
+  gpus: readonly GpuInfo[] = [],
 ): ResolvedUvRequirements | undefined {
   const spec = UV_REQUIREMENTS[packId];
   if (!spec) return undefined;
   const overlay = spec.perPlatform?.[platform];
-  const extraIndexUrls = [...new Set([...(spec.extraIndexUrls ?? []), ...(overlay?.extraIndexUrls ?? [])])];
+  const torchCudaBuild = spec.torchCuda ? torchCudaBuildFor(gpus) : undefined;
+  const extraIndexUrls = [
+    ...new Set([
+      ...(spec.extraIndexUrls ?? []),
+      ...(overlay?.extraIndexUrls ?? []),
+      ...(torchCudaBuild ? [`https://download.pytorch.org/whl/${torchCudaBuild}`] : []),
+    ]),
+  ];
   return {
-    requirements: [...spec.base, ...(overlay?.requirements ?? [])],
+    requirements: [
+      ...spec.base,
+      ...(overlay?.requirements ?? []),
+      // The exact local version: `torch==2.14.1` would also match the CPU wheel
+      // on PyPI, and with best-match resolution across both indexes the build
+      // that wins would be an accident.
+      ...(torchCudaBuild ? [`torch==${TORCH_GPU_VERSION}+${torchCudaBuild}`] : []),
+    ],
     extraIndexUrls,
+    ...(torchCudaBuild ? { torchCudaBuild } : {}),
   };
 }

@@ -27,6 +27,11 @@ import type { EnginePackStore } from './enginePackStore.js';
 import { findPack, packRunsOn } from './enginePackCatalog.js';
 import { ensureUvPath, resolveBundledPythonDir, UV_PYTHON_VERSION } from './uv.js';
 import { resolveUvRequirements } from './uvRequirements.js';
+import { judgeTorchProbe, TORCH_PROBE } from './gpuVerify.js';
+import { freeBytes, requiredFreeMb } from './diskSpace.js';
+import { ensureVcRuntime, vcRuntimeNeeded, type VcInstallDeps } from './vcRuntime.js';
+import { getSystemProfile } from '../system/systemProfile.js';
+import type { SystemProfile } from '@videodubber/shared';
 
 /**
  * The locked, per-platform Python requirement sets live in `uvRequirements.ts`
@@ -42,6 +47,18 @@ export interface EngineInstallerDeps {
   fetchImpl?: typeof fetch;
   /** Injected timestamp factory (Date is unavailable in some sandboxes/tests). */
   now?: () => string;
+  /** Injected machine profile (tests); defaults to the real probe. */
+  systemProfile?: () => Promise<SystemProfile>;
+  /** Injected free-space probe in bytes (tests); defaults to statfs. */
+  freeBytes?: (dir: string) => Promise<number | undefined>;
+  /**
+   * Windows: puts the Microsoft Visual C++ runtime in place before a native pack
+   * downloads (see vcRuntime.ts). Wired in production only. Without it no check
+   * runs, so a test can never query the registry or launch Microsoft's installer.
+   */
+  vcRuntime?: (progress: (message: string) => void) => VcInstallDeps;
+  /** Injected platform (tests); defaults to process.platform. */
+  platform?: NodeJS.Platform;
 }
 
 export class EngineInstaller {
@@ -75,6 +92,40 @@ export class EngineInstaller {
 
     this.running.add(packId);
     const packDir = this.deps.store.packDir(packId);
+    // Room first: a GPU pack is a ~4.3 GB environment, and a disk that fills up
+    // mid-install surfaces as an opaque uv write error minutes in.
+    const needMb = requiredFreeMb(pack);
+    const freeB = await (this.deps.freeBytes ?? freeBytes)(path.dirname(packDir)).catch(() => undefined);
+    if (freeB !== undefined && freeB / 2 ** 20 < needMb) {
+      const gb = (mb: number): string => (mb / 1024).toFixed(1);
+      this.deps.bus.emit({
+        type: 'error',
+        packId,
+        error: {
+          code: 'ENGINE_PACK_FAILED',
+          message: `Not enough free disk space for ${pack.displayName}: it needs about ${gb(needMb)} GB on the drive that holds ${path.dirname(packDir)}, and ${gb(freeB / 2 ** 20)} GB is free.`,
+          remediation:
+            'Free up space on that drive (Settings → Storage shows what this app has downloaded; Windows Settings → System → Storage shows the rest), or remove engine packs you no longer use, then click Install again.',
+          docsRef: 'docs/TROUBLESHOOTING.md#not-enough-disk-space-for-an-engine-pack',
+        },
+      });
+      this.running.delete(packId);
+      return;
+    }
+    // Also before any download: on Windows every native pack needs the Microsoft
+    // Visual C++ runtime, and without it a 4.5 GB GPU pack would install "fine"
+    // and then die at its first start with "DLL load failed".
+    if (this.deps.vcRuntime && vcRuntimeNeeded(pack, this.deps.platform ?? process.platform)) {
+      const vc = await ensureVcRuntime(
+        this.deps.vcRuntime((message) => this.deps.bus.emit({ type: 'progress', packId, percent: null, message })),
+        pack.displayName,
+      );
+      if (!vc.ok) {
+        this.deps.bus.emit({ type: 'error', packId, error: vc.error });
+        this.running.delete(packId);
+        return;
+      }
+    }
     // Keep the working copy until the new one is proven.
     //
     // Install used to `rm -rf` the pack dir before fetching the first byte, so a
@@ -243,11 +294,21 @@ export class EngineInstaller {
         { remediation: 'This engine has no build for your platform/architecture. Use a cloud provider for this phase instead.' },
       );
     }
-    // Per-platform pinned set (e.g. tts-neural routes torch to the CPU index on
-    // Linux/Windows). Resolved for the current platform/arch.
-    const resolved = resolveUvRequirements(pack.id, process.platform, process.arch);
+    // Per-platform pinned set, resolved for this machine. GPU packs also need
+    // the GPUs: which CUDA build of PyTorch can run the card (torchCudaBuildFor).
+    const gpus = (await (this.deps.systemProfile ?? getSystemProfile)().catch(() => undefined))?.gpus ?? [];
+    const resolved = resolveUvRequirements(pack.id, process.platform, process.arch, gpus);
     if (!resolved) {
       throw new AppErrorException('ENGINE_PACK_FAILED', `No requirement set defined for uv pack "${pack.id}".`);
+    }
+    if (resolved.torchCudaBuild) {
+      const card = gpus.find((g) => /nvidia|geforce|rtx|quadro/i.test(g.name))?.name ?? 'your NVIDIA GPU';
+      this.deps.bus.emit({
+        type: 'progress',
+        packId: pack.id,
+        percent: null,
+        message: `Using the PyTorch ${resolved.torchCudaBuild} build for ${card}…`,
+      });
     }
     // Prefer the bundled uv (VIDEODUBBER_UV_PATH), then a previously downloaded
     // managed copy, then PATH — and if none exists, DOWNLOAD our pinned build
@@ -310,6 +371,49 @@ export class EngineInstaller {
     }
     this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `Installing ${pack.displayName} dependencies (this can take a few minutes)…` });
     await this.run(uv, ['pip', 'install', '--python', venvDir, ...indexArgs, '-r', reqFile], uvEnv);
+
+    // A GPU pack is only installed when it can actually USE the GPU here; see
+    // gpuVerify.ts for the three ways it silently cannot.
+    if (resolved.torchCudaBuild) {
+      this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: 'Checking that your graphics card works with it…' });
+      const python =
+        process.platform === 'win32' ? path.join(venvDir, 'Scripts', 'python.exe') : path.join(venvDir, 'bin', 'python');
+      const out = await this.runCapture(python, ['-c', TORCH_PROBE], uvEnv, 240_000).catch((err: unknown) =>
+        JSON.stringify({ error: err instanceof Error ? err.message : String(err) }),
+      );
+      const verdict = judgeTorchProbe(out);
+      if (!verdict.ok) throw new AppErrorException(verdict.error);
+      this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: verdict.summary });
+    }
+  }
+
+  /** Like {@link run}, but resolves with stdout; bounded by `timeoutMs`. */
+  private runCapture(cmd: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env });
+      let stdout = '';
+      let stderr = '';
+      const timer = setTimeout(() => {
+        child.kill();
+        reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s`));
+      }, timeoutMs);
+      child.stdout?.on('data', (d: Buffer) => {
+        stdout += d.toString();
+      });
+      child.stderr?.on('data', (d: Buffer) => {
+        stderr = (stderr + d.toString()).slice(-2000);
+      });
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        // The probe catches its own exceptions, so any exit still has its JSON
+        // on stdout; a crash before printing leaves stderr as the evidence.
+        resolve(stdout.trim() ? stdout : JSON.stringify({ error: `exited ${code}: ${stderr.trim()}` }));
+      });
+    });
   }
 
   /** Run a subprocess, rejecting on non-zero exit (stderr captured into the error). */

@@ -26,6 +26,7 @@ import { AppErrorException } from '@videodubber/shared';
 import type { EnginePackStore } from './enginePackStore.js';
 import { findPack } from './enginePackCatalog.js';
 import { currentEngineOwner } from './engineOwner.js';
+import { looksLikeVcRuntimeFailure, vcRuntimeError, type VcRuntimeState } from './vcRuntime.js';
 
 /**
  * Directory holding the bundled first-party engine-pack worker source (e.g. the
@@ -49,13 +50,16 @@ function prependPath(dir: string, existing: string | undefined): string {
 }
 
 /** Env for a VieNeu `vd_tts_engine` sidecar: bundled module on PYTHONPATH, the
- * model cache pinned to the pack dir, and the variant (v2/v3) selector. */
-function neuralTtsEnv(packDir: string, variant: 'v2' | 'v3'): Record<string, string> {
+ * model cache pinned to the pack dir, the variant (v2/v3) selector, and the
+ * device: the GPU pack runs the PyTorch checkpoint on CUDA, everything else the
+ * ONNX export on the CPU (vd_tts_engine/engine.py). */
+function neuralTtsEnv(packDir: string, variant: 'v2' | 'v3', packId?: string): Record<string, string> {
   return {
     PYTHONPATH: prependPath(engineSrcDir(), process.env.PYTHONPATH),
     VD_PACK_DIR: packDir,
     HF_HOME: path.join(packDir, 'hf'),
     VIENEU_VARIANT: variant,
+    VIENEU_DEVICE: packId && isGpuPack(packId) ? 'cuda' : 'cpu',
     // huggingface_hub >= 1.33 (2026-09-24) stores Xet files in a cache-wide
     // shared store, symlinking each repo's blobs into `<hub>/blobs/<2-hex>/`.
     // VieNeu's .onnx graphs and their external .data weights then resolve into
@@ -116,7 +120,7 @@ export interface EngineLaunchSpec {
    */
   args: (ctx: { exe: string; port: number; packDir: string; model?: string }) => string[];
   /** Extra environment for the child. */
-  env?: (ctx: { port: number; packDir: string }) => Record<string, string>;
+  env?: (ctx: { port: number; packDir: string; packId: string }) => Record<string, string>;
   /** Health URL builder; polled until it resolves ok. */
   healthPath?: string;
   /** Whether this engine is "heavy" (subject to the exclusive unload policy). */
@@ -210,8 +214,8 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     // the orchestrator itself calls server-side (no Origin header at all).
     //
     // It goes in the ENVIRONMENT, not argv, on purpose. `--cors-origins` does
-    // not exist in b9592, and an installed pack is never upgraded when the
-    // catalog pin moves, so on every machine still running the old binary the
+    // not exist in b9592, and an installed pack is upgraded only when its user
+    // clicks Update in Settings → Engines, so on every machine still running the old binary the
     // flag would abort startup ("invalid argument") and take local translation
     // down with it. llama-server reads LLAMA_ARG_CORS_ORIGINS where the option
     // exists and older builds never look at it; the key below is what actually
@@ -230,8 +234,10 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
   'neural-tts': {
     pythonModule: 'vd_tts_engine',
     args: ({ port }) => ['--port', String(port)],
-    env: ({ packDir }) => neuralTtsEnv(packDir, 'v3'),
+    env: ({ packDir, packId }) => neuralTtsEnv(packDir, 'v3', packId),
     healthPath: '/health',
+    // The CPU pack is light. The GPU pack (tts-neural-cuda) is heavy anyway:
+    // isHeavyPack() counts every CUDA pack, since it holds VRAM.
     heavy: false,
   },
   'neural-tts-v2': {
@@ -288,6 +294,23 @@ export function isHeavyEngineFamily(family: string | undefined): boolean {
   return family !== undefined && ENGINE_LAUNCH_SPECS[family]?.heavy === true;
 }
 
+/** A pack that runs on an NVIDIA GPU (and so holds VRAM while it is up). */
+export function isGpuPack(packId: string): boolean {
+  return findPack(packId)?.accel === 'cuda';
+}
+
+/**
+ * Heavy at the PACK level: its family's spec says so, or it lives on the GPU.
+ *
+ * VieNeu has a light CPU pack and a GPU pack under one launch spec. The GPU one
+ * must count as heavy: loaded next to a resident llama.cpp on an 8 GB card, one
+ * of the two runs out of VRAM, and that surfaces as a crash mid-run (or, for the
+ * voice, as silent lines), never as "out of memory".
+ */
+export function isHeavyPack(packId: string, family: string): boolean {
+  return ENGINE_LAUNCH_SPECS[family]?.heavy === true || isGpuPack(packId);
+}
+
 /** Owner recorded for heavy work that runs outside any {@link withEngineOwner}. */
 const ANONYMOUS_OWNER = 'anonymous';
 
@@ -304,6 +327,12 @@ export interface EngineManagerDeps {
   logger?: { info: (m: string) => void; warn: (m: string) => void };
   /** Health-wait timeout (ms). */
   startTimeoutMs?: number;
+  /**
+   * Windows: the Microsoft Visual C++ runtime's state (vcRuntime.ts), consulted only
+   * when an engine dies at start the way a missing runtime makes it die. Wired in
+   * production; tests that do not set it never touch the registry.
+   */
+  vcRuntimeState?: () => Promise<VcRuntimeState>;
 }
 
 export class EngineManager {
@@ -385,7 +414,11 @@ export class EngineManager {
         return await this.ensureRunning(packId, opts);
       } catch (err) {
         lastError = err;
-        this.unusablePacks.add(packId);
+        // Busy is not broken. Another dub holding the heavy lane (the GPU, say)
+        // means "not now": fall through to the next pack for THIS call, but do
+        // not write the pack off for the rest of the session.
+        const busy = err instanceof AppErrorException && err.code === 'ENGINE_BUSY';
+        if (!busy) this.unusablePacks.add(packId);
         if (order.length > 1) {
           this.deps.logger?.warn(
             `Engine pack "${packId}" could not start; falling back to the next installed runtime. ` +
@@ -409,7 +442,7 @@ export class EngineManager {
     // Claim/verify the heavy lane BEFORE touching any process, so a refused
     // caller changes nothing (in particular it must not restart-for-model-swap
     // an engine the current holder is using).
-    const wantsHeavyLane = opts.exclusive === true && spec.heavy === true;
+    const wantsHeavyLane = opts.exclusive === true && isHeavyPack(packId, this.providerOf(packId));
     /** Set when THIS call took a previously-free lane (so it can hand it back). */
     let claimedLane: string | undefined;
     if (wantsHeavyLane) {
@@ -469,7 +502,14 @@ export class EngineManager {
       // (e.g. TranslateGemma vs the Gemma-instruct chat model on llama.cpp):
       // restart with the requested GGUF instead of silently serving the wrong
       // weights.
-      if (opts.model === undefined || existing.model === opts.model) return existing.baseUrl;
+      if (opts.model === undefined || existing.model === opts.model) {
+        // Exclusive means exclusive even when this engine is already up. The
+        // GPU voice is started without the lane just to list voices; its first
+        // synthesis then arrives here, and returning early would leave a
+        // resident llama.cpp holding the VRAM its model is about to need.
+        if (wantsHeavyLane) await this.unloadHeavyExcept(packId);
+        return existing.baseUrl;
+      }
       this.deps.logger?.info(`Restarting engine "${packId}" to swap its model.`);
       await existing.stop();
     }
@@ -504,7 +544,7 @@ export class EngineManager {
       PYTHONUTF8: '1',
       PYTHONIOENCODING: 'utf-8',
       ...process.env,
-      ...(spec.env ? spec.env({ port, packDir: rec.path }) : {}),
+      ...(spec.env ? spec.env({ port, packDir: rec.path, packId }) : {}),
       ...(spec.apiKeyEnv && apiKey ? { [spec.apiKeyEnv]: apiKey } : {}),
     } as Record<string, string>;
 
@@ -521,9 +561,14 @@ export class EngineManager {
       stderrTail = (stderrTail + d.toString()).slice(-4000);
     });
     let exitNote = '';
+    let exitCode: number | null = null;
+    /** Died before ever answering: waiting out the start timeout cannot help. */
+    let crashed = false;
     child.on?.('exit', (code: number | null, signal: string | null) => {
+      exitCode = code;
       if (code != null && code !== 0) exitNote = ` (process exited with code ${code})`;
       else if (signal) exitNote = ` (process killed by ${signal})`;
+      crashed = exitNote !== '';
       this.running.delete(packId);
     });
 
@@ -567,12 +612,32 @@ export class EngineManager {
     // Wait for health (the engine may take a moment to load its model).
     const probe = this.deps.healthProbe ?? httpHealthProbe;
     const healthUrl = `${baseUrl}${spec.healthPath ?? '/health'}`;
-    const ready = await waitFor(() => probe(healthUrl), this.deps.startTimeoutMs ?? 60_000);
+    // A crash ends the wait at once: an engine whose native library will not load
+    // used to hold the user on a spinner for the full minute before saying so.
+    const ready =
+      (await waitFor(async () => crashed || (await probe(healthUrl)), this.deps.startTimeoutMs ?? 60_000)) && !crashed;
     if (!ready) {
       await stop();
       const tail = stderrTail.trim();
       const detail = tail ? ` Last engine output:\n${tail.slice(-1200)}` : exitNote;
       this.deps.logger?.warn(`Engine "${packId}" failed to become healthy.${detail}`);
+      // On Windows a native library that will not load is nearly always the
+      // Microsoft Visual C++ runtime, missing or older than the pack was built
+      // against. "Reinstall the pack" cannot fix that; installing the runtime does.
+      if (this.deps.vcRuntimeState && looksLikeVcRuntimeFailure(exitCode, tail)) {
+        const vc = await this.deps.vcRuntimeState().catch(() => undefined);
+        if (vc && vc.state !== 'ok') {
+          const packName = findPack(packId)?.displayName;
+          throw new AppErrorException({
+            ...vcRuntimeError(vc.state, {
+              context: 'run',
+              ...(packName ? { packName } : {}),
+              ...(vc.state === 'outdated' ? { version: vc.version } : {}),
+            }),
+            cause: tail.slice(-600) || exitNote.trim(),
+          });
+        }
+      }
       throw new AppErrorException(
         'ENGINE_UNAVAILABLE',
         `Engine "${packId}" did not become healthy in time.${detail}`,
@@ -610,8 +675,7 @@ export class EngineManager {
   private async unloadHeavyExcept(keepPackId: string): Promise<void> {
     for (const [id, inst] of this.running) {
       if (id === keepPackId) continue;
-      const spec = ENGINE_LAUNCH_SPECS[this.providerOf(id)];
-      if (spec?.heavy) {
+      if (isHeavyPack(id, this.providerOf(id))) {
         this.deps.logger?.info(`Unloading heavy engine "${id}" to free memory for "${keepPackId}".`);
         await inst.stop();
       }

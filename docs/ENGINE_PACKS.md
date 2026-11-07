@@ -101,6 +101,7 @@ this is the class of breakage that actually happens. See §3.
 | Pack | Platform | Status |
 |---|---|---|
 | `tts-neural` | all | ships — VieNeu-TTS v3-Turbo, Vietnamese |
+| `tts-neural-cuda` | Windows x64 + NVIDIA | ships — the same voices on the GPU via PyTorch; listed before `tts-neural` so NVIDIA machines are recommended it |
 | `tts-neural-v2` | Windows | **disabled** (`DISABLED_PACK_IDS`) — unvalidated path, Windows-only wheels, CC BY-NC voices; superseded by `tts-neural` |
 | `tts-omnivoice` | macOS arm64 | **ON HOLD** (`DISABLED_PACK_IDS`) pending output-quality work; see [OMNIVOICE.md](OMNIVOICE.md) |
 | `separation-audio` | all | **disabled** — its `vd_separator` worker is an unimplemented stub |
@@ -205,6 +206,37 @@ separation/alignment checkpoints) download from their hubs on first use, like th
 Whisper models. `tts-neural` is VieNeu‑TTS v3‑Turbo via the `vieneu` PyPI package
 (torch‑free ONNX); end‑user setup is in
 [`VIENEU_TTS_SETUP.md`](VIENEU_TTS_SETUP.md). uv docs: <https://docs.astral.sh/uv/>.
+
+**`tts-neural-cuda` is the one Python pack resolved per machine.**
+`resolveUvRequirements(packId, platform, arch, gpus)` appends
+`torch==2.14.1+<build>` plus that build's wheel index, and `torchCudaBuildFor`
+picks the build from the detected GPUs. The two builds were measured on an
+RTX 3050 (sm_86) on 2026-11-07:
+
+| Build | Kernels | Driver | Gets it | VieNeu RTF (24-line batch) |
+|---|---|---|---|---|
+| `cu130` | sm_75 … sm_120 | R580+ | Blackwell always; every NVIDIA GPU at compute 7.5+ on a 580+ driver | 0.18 |
+| `cu126` | sm_50 … sm_90, no PTX | 560.76+ | everything else (GTX 900/10-series, or an older driver) | 0.34 |
+
+Bump `TORCH_GPU_VERSION` and the pack's `version` together, and re-measure:
+the cu126 build ships no PTX, so a card newer than its newest kernel cannot run
+it at all. That is why Blackwell must never get cu126, whatever its driver.
+
+Three things a plain requirement set cannot express live in code instead:
+
+- **The models are pinned in the engine, not here.** Both Hugging Face repos the
+  GPU path loads with `trust_remote_code` (that flag executes the repo's Python)
+  are fetched at exact revisions by `workers/tts-engine-neural/vd_tts_engine/pinned.py`.
+  A `.vd-revision` marker is written last, so a half-finished download is never
+  mistaken for a complete one. Moving a pin means re-validating the audio.
+- **The install proves the card works.** After `uv pip install`, the installer runs
+  `TORCH_PROBE` (`gpuVerify.ts`) in the new venv. The probe runs a real kernel,
+  because `is_available()` says yes on cards the build has no kernels for. A
+  failure becomes numbered steps instead of a silently CPU-speed "GPU" pack.
+- **Windows needs the Microsoft Visual C++ runtime first.** Every native pack
+  imports `msvcp140.dll` and none ships it. `vcRuntime.ts` installs Microsoft's
+  redistributable (signature-checked, one UAC prompt) before any download; see
+  [TROUBLESHOOTING](TROUBLESHOOTING.md#engines-need-the-microsoft-visual-c-runtime).
 
 ---
 

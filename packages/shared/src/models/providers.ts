@@ -245,6 +245,11 @@ export interface TtsResult {
    * errored at runtime. Non-zero output deserves a user-facing warning.
    */
   fallbackSegments?: number;
+  /**
+   * Segments the engine answered from its clip cache (text and voice unchanged
+   * since an earlier run) without synthesizing them again.
+   */
+  reusedSegments?: number;
 }
 
 /** A pluggable text-to-speech provider. */
@@ -263,6 +268,23 @@ export interface TtsProvider {
    * Absent/false = the engine speaks at its natural rate only (e.g. VieNeu).
    */
   supportsSpeedControl?: boolean;
+  /**
+   * The most units one {@link synthesizeSegments} call may carry. The pipeline
+   * splits a longer run into consecutive calls of at most this many and
+   * reports progress between them, so no single request has to outlast the
+   * worker timeout however long the video is. Absent = the pipeline default.
+   * Slow engines (CPU neural TTS) set a small value.
+   */
+  maxSegmentsPerRequest?: number;
+  /**
+   * Start and warm the engine before the first request (optional). Lets a
+   * provider learn what it is running on, e.g. whether a GPU took the job, so
+   * {@link maxSegmentsPerRequest} is right from the first batch.
+   */
+  prepare?(signal?: AbortSignal): Promise<void>;
+  /** Where synthesis actually runs, once prepared: "cuda" | "cpu", the GPU's
+   * name, and why a GPU engine fell back to the CPU. For the run log. */
+  readonly activeDevice?: { device?: string; name?: string; note?: string };
   /** Synthesize a batch of segments to audio clips. */
   synthesizeSegments(input: TtsInput): Promise<TtsResult>;
 }

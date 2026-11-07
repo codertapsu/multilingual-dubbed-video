@@ -20,9 +20,9 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
@@ -189,10 +189,15 @@ function run(cmd: string, args: readonly string[], timeoutMs = 5000): Promise<Ru
       // reads as "not found" here even though it works in the terminal. Use the
       // shell on Windows, and quote the command + any space-containing args
       // (e.g. `C:\Program Files\…\ffmpeg.exe`) so the shell parses them intact.
+      //
+      // The shell gets ONE pre-quoted command line, not (command, args[]): Node
+      // 24 deprecates passing an args array with `shell: true` (DEP0190, printed
+      // at the top of every `pnpm doctor` on Windows) because it concatenates
+      // them unescaped anyway. Every probe here is a fixed command of ours.
       const useShell = process.platform === 'win32';
       const q = (s: string): string => (useShell && /\s/.test(s) ? `"${s}"` : s);
       child = useShell
-        ? spawn(q(cmd), args.map(q), { windowsHide: true, shell: true })
+        ? spawn([cmd, ...args].map(q).join(' '), { windowsHide: true, shell: true })
         : spawn(cmd, args, { windowsHide: true });
     } catch {
       finish({ code: null, stdout: '', stderr: '', spawnError: true });
@@ -484,24 +489,51 @@ async function checkArgosLanguages(): Promise<CheckResult> {
   };
 }
 
+/**
+ * Where the dev stack will find Piper, resolved the way it actually does.
+ *
+ * This check used to look ONLY at PIPER_BINARY_PATH / PIPER_VOICE_MODEL_PATH, so
+ * on a stock `pnpm bootstrap` it warned "unset ... TTS falls back to system TTS /
+ * silent dev WAV" while `pnpm dev` (scripts/dev.*) finds the venv's piper on its
+ * own and the TTS worker picks voices from PIPER_VOICES_DIR. A doctor that warns
+ * about a working setup teaches people to ignore it.
+ */
+function resolvePiper(): { binary?: string; binaryFrom: string; voice?: string; voiceFrom: string } {
+  const venvBin =
+    process.platform === 'win32'
+      ? join(REPO_ROOT, 'workers', 'tts-worker', '.venv', 'Scripts', 'piper.exe')
+      : join(REPO_ROOT, 'workers', 'tts-worker', '.venv', 'bin', 'piper');
+  const binary = PIPER_BINARY_PATH ? PIPER_BINARY_PATH : existsSync(venvBin) ? venvBin : undefined;
+  const binaryFrom = PIPER_BINARY_PATH ? 'PIPER_BINARY_PATH' : 'the tts-worker venv';
+
+  if (PIPER_VOICE_MODEL_PATH) return { binary, binaryFrom, voice: PIPER_VOICE_MODEL_PATH, voiceFrom: 'PIPER_VOICE_MODEL_PATH' };
+  // Mirrors scripts/dev.* (PIPER_VOICES_DIR, else <dev home>/models/piper).
+  const devHome = ENV.VIDEODUBBER_DEV_HOME ?? join(homedir(), 'VideoDubber-dev');
+  const voicesDir = ENV.PIPER_VOICES_DIR ?? join(ENV.VIDEODUBBER_MODELS_DIR ?? join(devHome, 'models'), 'piper');
+  let names: string[] = [];
+  try {
+    names = readdirSync(voicesDir);
+  } catch {
+    /* no voices dir yet */
+  }
+  const voice = names.find((n) => n.endsWith('.onnx') && names.includes(`${n}.json`));
+  return { binary, binaryFrom, voice: voice ? join(voicesDir, voice) : undefined, voiceFrom: voicesDir };
+}
+
 /** Piper is purely filesystem/env based — the TTS worker degrades gracefully without it. */
 function checkPiper(): CheckResult {
-  const binSet = typeof PIPER_BINARY_PATH === 'string' && PIPER_BINARY_PATH.length > 0;
-  const voiceSet = typeof PIPER_VOICE_MODEL_PATH === 'string' && PIPER_VOICE_MODEL_PATH.length > 0;
-
-  const binOk = binSet && existsSync(PIPER_BINARY_PATH as string);
-  const voiceOk = voiceSet && existsSync(PIPER_VOICE_MODEL_PATH as string);
-  const voiceJsonOk = voiceOk && existsSync(`${PIPER_VOICE_MODEL_PATH as string}.json`);
+  const { binary, binaryFrom, voice, voiceFrom } = resolvePiper();
+  const binOk = binary !== undefined && existsSync(binary);
+  const voiceOk = voice !== undefined && existsSync(voice);
+  const voiceJsonOk = voiceOk && existsSync(`${voice as string}.json`);
 
   if (binOk && voiceOk) {
-    const sizeMb = voiceOk
-      ? (statSync(PIPER_VOICE_MODEL_PATH as string).size / (1024 * 1024)).toFixed(1)
-      : '?';
+    const sizeMb = (statSync(voice as string).size / (1024 * 1024)).toFixed(1);
     const jsonNote = voiceJsonOk ? '' : ' (warning: missing .onnx.json config)';
     return {
       name: 'Piper TTS',
       status: voiceJsonOk ? 'ok' : 'warn',
-      detail: `binary + voice present (${sizeMb} MB)${jsonNote}`,
+      detail: `binary from ${binaryFrom}; voice ${basename(voice as string)} (${sizeMb} MB)${jsonNote}`,
       remediation: voiceJsonOk ? undefined : 'Download the matching .onnx.json next to the voice.',
       docs: voiceJsonOk ? undefined : 'docs/MODEL_SETUP.md',
       criticality: 'optional',
@@ -509,17 +541,18 @@ function checkPiper(): CheckResult {
   }
 
   const missing: string[] = [];
-  if (!binSet) missing.push('PIPER_BINARY_PATH unset');
-  else if (!binOk) missing.push(`PIPER_BINARY_PATH not found (${PIPER_BINARY_PATH})`);
-  if (!voiceSet) missing.push('PIPER_VOICE_MODEL_PATH unset');
-  else if (!voiceOk) missing.push(`voice not found (${PIPER_VOICE_MODEL_PATH})`);
+  if (!binary) missing.push('no piper binary (PIPER_BINARY_PATH unset, none in the tts-worker venv)');
+  else if (!binOk) missing.push(`piper binary not found (${binary})`);
+  if (!voice) missing.push(`no voice in ${voiceFrom}`);
+  else if (!voiceOk) missing.push(`voice not found (${voice})`);
 
   return {
     name: 'Piper TTS',
     status: 'warn',
     detail: missing.join('; '),
     remediation:
-      'Optional. Without Piper, TTS falls back to system TTS / silent dev WAV. Run scripts/setup-local-models.sh to install.',
+      'Optional. Without Piper, TTS falls back to system TTS or a silent placeholder. Run `pnpm bootstrap` ' +
+      '(it installs piper into the tts-worker venv and downloads the default Vietnamese voice).',
     docs: 'docs/MODEL_SETUP.md',
     criticality: 'optional',
   };

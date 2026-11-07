@@ -51,6 +51,14 @@ export interface ClassifyOptions {
   separationAvailable?: boolean;
   /** An alignment engine is actually wired (else forced alignment is skipped). */
   alignmentAvailable?: boolean;
+  /**
+   * Engine families that will run on a GPU pack on THIS machine (the GPU voice
+   * pack is installed, say). Their launch spec is light because the CPU pack is,
+   * but the GPU build holds VRAM and takes the heavy lane at runtime
+   * (engineManager isHeavyPack), so a run using one must be admitted like any
+   * other heavy run. Computed with I/O by the caller; absent = none.
+   */
+  gpuFamilies?: ReadonlySet<string>;
 }
 
 /** The pipeline step each heavy-capable phase runs in. */
@@ -86,7 +94,9 @@ export function classifyWorkload(
     providers.push(registry.getTranslation(settings.refineProviderId));
   }
 
-  let heavyFamily = providers.find((p) => isHeavyEngineFamily(p.requiresEnginePack))?.requiresEnginePack;
+  const heavy = (family: string | undefined): boolean =>
+    isHeavyEngineFamily(family) || (family !== undefined && opts.gpuFamilies?.has(family) === true);
+  let heavyFamily = providers.find((p) => heavy(p.requiresEnginePack))?.requiresEnginePack;
   // Two pipeline options pull in heavy engine packs without going through a
   // provider id: vocal separation (audio-mix) and forced alignment/diarization
   // (inside the STT step). Both degrade gracefully when their engine isn't
@@ -139,6 +149,8 @@ export function heavyFamilyLabel(family: string | undefined): string {
       return 'forced alignment / diarization';
     case 'omnivoice':
       return 'OmniVoice speech synthesis';
+    case 'neural-tts':
+      return 'the VieNeu voice on the GPU';
     default:
       return 'a downloadable local engine';
   }

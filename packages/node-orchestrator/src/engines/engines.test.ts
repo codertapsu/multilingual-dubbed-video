@@ -31,6 +31,7 @@ import {
 } from './engineRecommendation.js';
 import { ENGINE_LAUNCH_SPECS, EngineManager, findFile, waitFor } from './engineManager.js';
 import { _resetUvCache, resolveUvPath, uvAvailable } from './uv.js';
+import { resolveUvRequirements } from './uvRequirements.js';
 import { recommendSetup } from '../system/systemProfile.js';
 
 /** A machine big enough that every pack fits — ranking tests must not depend
@@ -752,12 +753,22 @@ describe('NVIDIA driver gate on CUDA packs', () => {
       // pack against a newer CUDA without moving its floor would re-open this
       // exact bug silently, so tie the two together here rather than trusting a
       // comment. (CUDA 12.4 -> 551.61; extend the table when a pack moves.)
-      const TOOLKIT_TO_DRIVER: Record<string, string> = { '12.4': '551.61' };
+      const TOOLKIT_TO_DRIVER: Record<string, string> = { '12.4': '551.61', '12.6': '560.76' };
       // Upstream names the toolkit either way: llama.cpp ships "…-cuda-12.4-…",
-      // whisper.cpp "…-cublas-12.4.0-…".
-      const toolkit = pack.artifacts
-        .map((a) => /(?:cuda|cublas)[-.]?(\d+\.\d+)/i.exec(a.url)?.[1])
-        .find((v): v is string => typeof v === 'string');
+      // whisper.cpp "…-cublas-12.4.0-…". A uv-env GPU pack has no toolkit in its
+      // URL: it installs a PyTorch CUDA build chosen per machine, so its floor
+      // must match the OLDEST build it can pick (an old card / old driver).
+      const isUvEnv = pack.artifacts.some((a) => a.url.startsWith('uv-env://'));
+      const oldestTorch = isUvEnv
+        ? resolveUvRequirements(pack.id, 'win32', 'x64', [
+            { name: 'NVIDIA GeForce GTX 1060', computeCapability: '6.1', driverVersion: '560.76' },
+          ])?.requirements.find((r) => r.startsWith('torch=='))
+        : undefined;
+      const toolkit = isUvEnv
+        ? /\+cu(\d+)(\d)$/.exec(oldestTorch ?? '')?.slice(1, 3).join('.')
+        : pack.artifacts
+            .map((a) => /(?:cuda|cublas)[-.]?(\d+\.\d+)/i.exec(a.url)?.[1])
+            .find((v): v is string => typeof v === 'string');
       expect(toolkit, `${pack.id}: no CUDA toolkit version in its artifact URLs`).toBeDefined();
       expect(TOOLKIT_TO_DRIVER[toolkit as string], `unmapped CUDA toolkit ${toolkit}`).toBeDefined();
       expect(pack.minNvidiaDriver).toBe(TOOLKIT_TO_DRIVER[toolkit as string]);

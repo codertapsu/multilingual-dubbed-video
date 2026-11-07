@@ -52,6 +52,7 @@ import type {
 } from '../models/download';
 import type {
   EnginePrerequisites,
+  EngineRecommendationsResponse,
   EnginesResponse,
   StorageClearRequest,
   StorageClearResult,
@@ -603,11 +604,8 @@ export class IpcService {
   }
 
   /** GET /engines/recommended — hardware-aware suggested packs. */
-  getRecommendedEngines(): Promise<{ recommendations: { packId: string; reason: string }[]; fits?: string[] }> {
-    return this.http<{ recommendations: { packId: string; reason: string }[]; fits?: string[] }>(
-      'GET',
-      '/engines/recommended',
-    );
+  getRecommendedEngines(): Promise<EngineRecommendationsResponse> {
+    return this.http<EngineRecommendationsResponse>('GET', '/engines/recommended');
   }
 
   /** GET /engines/prerequisites — uv (bundled?) + Ollama availability. */

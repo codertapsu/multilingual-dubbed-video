@@ -39,7 +39,8 @@ import { testCloudCredential } from './credentials/testConnection.js';
 import { buildSystemResponse, getSystemProfile } from './system/systemProfile.js';
 import { EngineEventBus } from './engines/engineBus.js';
 import { EngineInstaller } from './engines/engineInstaller.js';
-import { EngineManager } from './engines/engineManager.js';
+import { EngineManager, isGpuPack } from './engines/engineManager.js';
+import { systemVcDeps } from './engines/vcRuntime.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
 import { isPackUsable, resolveActivePackSelections } from './engines/packSelection.js';
@@ -217,6 +218,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // Where a self-downloaded ("managed") uv lives when neither the bundled
   // sidecar nor a PATH uv exists — dev/source builds and corrupt installs.
   configureUvHome(config.configDir);
+  // Windows only: every native engine pack needs the Microsoft Visual C++ runtime,
+  // which a clean Windows does not have (vcRuntime.ts).
+  const onWindows = process.platform === 'win32';
   const engineManager =
     options.engineManager ??
     new EngineManager({
@@ -225,9 +229,16 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         info: (m) => console.log(`[engines] ${m}`),
         warn: (m) => console.warn(`[engines] ${m}`),
       },
+      ...(onWindows ? { vcRuntimeState: () => systemVcDeps(() => undefined).detect() } : {}),
     });
   const engineBus = options.engineBus ?? new EngineEventBus();
-  const engineInstaller = options.engineInstaller ?? new EngineInstaller({ store: enginePackStore, bus: engineBus });
+  const engineInstaller =
+    options.engineInstaller ??
+    new EngineInstaller({
+      store: enginePackStore,
+      bus: engineBus,
+      ...(onWindows ? { vcRuntime: (progress: (message: string) => void) => systemVcDeps(progress) } : {}),
+    });
   const separation =
     options.separation ?? new AudioSeparatorProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
   const alignment = new WhisperxAlignmentProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
@@ -308,6 +319,16 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // Engine lifecycle + preferences: the scheduler releases a finished run's
       // heavy-engine lane, and reads the user's simultaneous-dub limit.
       engines: engineManager,
+      // An installed GPU pack is also the one its provider prefers (cuda ranks
+      // first), so its family will run on the GPU and must be admitted as heavy.
+      // Over-counting only queues a dub; under-counting fails one at step 6.
+      gpuEngineFamilies: async () =>
+        new Set(
+          (await enginePackStore.list())
+            .filter((rec) => isGpuPack(rec.id))
+            .map((rec) => findPack(rec.id)?.providerId)
+            .filter((family): family is string => family !== undefined),
+        ),
       setup: setupStore,
       // Gate runs on provider readiness so an unready provider (e.g. Ollama with
       // no daemon, a missing engine pack, or an unconfigured cloud key) fails

@@ -63,6 +63,8 @@ export type {
   InstalledEnginePack,
   EnginePrerequisites,
   EnginesResponse,
+  EnginePackRecommendation,
+  EngineRecommendationsResponse,
   ActivePackSelection,
   EnginePackInstallRequest,
   EnginePackUninstallRequest,

@@ -344,6 +344,13 @@
         </div>
       </details>
 
+      <!-- The mandatory set is in; now say what THIS machine's hardware could
+           gain from the optional engines, and let the user choose. Hidden when
+           there is nothing to recommend. -->
+      @if (installDone()) {
+        <vd-recommended-engines [compact]="true" [hideWhenEmpty]="true" />
+      }
+
       <div class="row row-between">
         <span class="hint">
           @if (installDone()) {

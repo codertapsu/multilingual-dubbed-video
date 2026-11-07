@@ -73,6 +73,11 @@ engine-pack system plus hardware-aware recommendations — see
   Qwen3-TTS"; none of Kokoro, Chatterbox or Qwen3-TTS exists anywhere in this
   repo, and a non-Vietnamese user who installed the ~1.5 GB pack on the strength
   of that sentence got an engine that only speaks Vietnamese.)
+- **GPU neural TTS** — `tts-neural-cuda`, the same VieNeu voices batched on an
+  NVIDIA card through PyTorch. The CUDA build (12.6 or 13.0) is picked per card
+  and driver. It is about 4× the tuned CPU pack on an RTX 3050 (a 21-minute video
+  voiced in 2 min 24 s). It installs only after a self-check that runs real work
+  on the card.
 - **Render** — opt-in hardware encode (VideoToolbox/NVENC); Rubber Band
   time-stretch helpers for natural speech above ~1.3×.
 
@@ -133,16 +138,32 @@ project-built, signed, hosted artifact. See [`NATIVE_STRATEGY.md`](NATIVE_STRATE
 The timeline moves, trims and re-voices lines but cannot yet split one cue in two or
 merge two cues: both change segment ids, which name the clips on disk.
 
-### Engine-pack updates
+### Automatic engine-pack updates
 
-An installed pack is never upgraded when the catalog pin moves. `engines.json`
-records each pack's version at install time, but nothing compares it with the
-catalog, so a machine that installed llama.cpp b9592 keeps running b9592 after
-the pin moves to b12110. That is also why launch options newer than the oldest
-pinned build must reach llama-server through the environment (older builds
-ignore unknown variables but reject unknown flags). Wanted: a per-pack "update
-available" in Settings → Engines, driven by that recorded version. Until then,
-removing and reinstalling a pack is how a user gets the new build.
+Updates exist but are **manual**. Settings → Engines compares each installed
+pack's version (recorded in `engines.json` at install time) with the catalog,
+badges the pack **update available**, and offers an **Update** button. The update
+keeps the working copy until the new one is proven: the old copy is moved aside
+and restored if anything fails. (This entry used to say nothing compared the
+versions. That was wrong; `GET /engines` returns them as `updatable`.)
+
+Not built: applying an update without that click, or telling the user anywhere
+but Settings. So a machine that installed llama.cpp b9592 keeps running b9592
+after the pin moves to b12110 until someone clicks Update. That is why launch
+options newer than the oldest pinned build must reach llama-server through the
+environment: older builds ignore unknown variables but reject unknown flags.
+
+### GPU voice on macOS (VieNeu on Apple's GPU)
+
+The GPU voice pack (`tts-neural-cuda`) is Windows + NVIDIA only. On Apple Silicon
+VieNeu runs on the CPU through ONNX. PyTorch's MPS backend could run the same
+batched path (`V3TurboBatchEngine`), but nothing about it is measured. Shipping
+it needs the same evidence the CUDA pack had:
+
+- a speed-up over the tuned CPU path on real projects;
+- an audio comparison (speech length, speaking rate, longest pause) against the
+  CPU output;
+- the batching size that fits unified memory alongside a resident llama.cpp.
 
 ### Windows code signing
 

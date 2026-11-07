@@ -225,6 +225,54 @@ interface GroupSynthesisOutcome {
   engine?: string;
   sawFallbackEngine: boolean;
   fallbackSegments: number;
+  /** Units the engine served from its clip cache instead of re-synthesizing. */
+  reusedSegments: number;
+}
+
+/**
+ * Units per TTS request when the provider states no limit of its own.
+ *
+ * Synthesis used to go out as ONE request per voice: every utterance of the
+ * dub in a single call, under the single 30-minute worker timeout. A 21-minute
+ * video (120 utterances) on the CPU neural engine needed ~48 minutes, so it
+ * could never finish: two attempts, both cut off at exactly 30 minutes while
+ * the engine was still working, with no progress shown for any of it. Batches
+ * bound every request, show progress between them, and let a retry resume
+ * (the engines reuse finished clips). Piper does ~8 lines/s, so 48 per call
+ * still costs it nothing.
+ */
+const DEFAULT_TTS_UNITS_PER_REQUEST = 48;
+/**
+ * Share of the TTS step's progress bar given to the first synthesis pass; the
+ * drift pass (re-speaking drifting groups cue by cue) gets the rest. It was
+ * 0.95, until the same dub re-spoke 99 cues after its 120 utterances: three
+ * minutes of a bar crawling from 95 to 100. When there is no drift pass the bar
+ * jumps forward at the end, which reads better than one that seems stuck.
+ */
+const TTS_FIRST_PASS_SHARE = 0.8;
+
+/**
+ * A synthesizeGroups progress callback: maps (done, total) onto [from, to] of
+ * the step's bar and logs "<verb> done/total <noun>..." at most once per tenth
+ * of the run, so a long synthesis reads as progress in the log, not a hang.
+ */
+function ttsProgress(
+  onProgress: StepProgress,
+  from: number,
+  to: number,
+  log: (message: string) => void,
+  verb: string,
+  noun: string,
+): (done: number, total: number) => Promise<void> {
+  let loggedTenths = 0;
+  return async (done, total) => {
+    await onProgress(from + ((to - from) * done) / total);
+    const tenths = Math.floor((done / total) * 10);
+    if (done < total && tenths > loggedTenths) {
+      loggedTenths = tenths;
+      log(`${verb} ${done}/${total} ${noun}...`);
+    }
+  };
 }
 
 /** Parse a positive-int env var with a fallback (local, to avoid a config import). */
@@ -521,7 +569,7 @@ export class PipelineRunner {
       case 'refine':
         return this.stepRefine(project, paths, signal);
       case 'tts':
-        return this.stepTts(project, paths, signal);
+        return this.stepTts(project, paths, signal, onProgress);
       case 'alignment':
         return this.stepAlignment(project, paths, signal, onProgress);
       case 'audio-mix':
@@ -902,7 +950,12 @@ export class PipelineRunner {
     );
   }
 
-  private async stepTts(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
+  private async stepTts(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress: StepProgress,
+  ): Promise<void> {
     throwIfCancelled(signal);
     const provider = this.deps.registry.getTts(project.settings.ttsProviderId);
     const segments = await readSegments(paths.translatedJson);
@@ -919,7 +972,24 @@ export class PipelineRunner {
     this.deps.logger.info(
       `Synthesizing ${groups.length} utterance(s) covering ${segments.length} segment(s) with provider "${provider.id}"...`,
     );
-    const first = await this.synthesizeGroups(project, paths, groups, signal);
+    if (provider.prepare) {
+      await provider.prepare(signal);
+      const where = provider.activeDevice;
+      if (where?.device === 'cuda') {
+        this.deps.logger.info(`Voice engine running on the GPU (${where.name ?? 'NVIDIA'}).`);
+      } else if (where?.note) {
+        // A GPU pack that had to fall back: say so, or a slow run looks like a bug.
+        this.deps.logger.warn(`Voice engine is running on the CPU: ${where.note}`);
+      }
+    }
+    const log = (message: string): void => this.deps.logger.info(message);
+    const first = await this.synthesizeGroups(
+      project,
+      paths,
+      groups,
+      signal,
+      ttsProgress(onProgress, 0, TTS_FIRST_PASS_SHARE, log, 'Synthesized', 'utterance(s)'),
+    );
 
     // Drift-bounded grouping: a group is read as ONE continuous utterance from
     // its start, so when the translated pace deviates from the original cue
@@ -979,7 +1049,19 @@ export class PipelineRunner {
           `(estimated drift exceeded ${driftCap}ms in ${degroupedGroupCount} merged group(s)).`,
       );
       await writeGroups(paths.synthesisGroupsJson, finalGroups);
-      second = await this.synthesizeGroups(project, paths, degrouped, signal);
+      second = await this.synthesizeGroups(
+        project,
+        paths,
+        degrouped,
+        signal,
+        ttsProgress(onProgress, TTS_FIRST_PASS_SHARE, 1, log, 'Re-synthesized', 'cue(s)'),
+      );
+    }
+    const reused = first.reusedSegments + (second?.reusedSegments ?? 0);
+    if (reused > 0) {
+      this.deps.logger.info(
+        `Reused ${reused} clip(s) finished by an earlier run (same text and voice); only the rest were synthesized.`,
+      );
     }
 
     // Surface incompleteness: if the worker returned fewer segments than asked,
@@ -1035,8 +1117,13 @@ export class PipelineRunner {
     paths: WorkspacePaths,
     groups: readonly SynthesisGroup[],
     signal: AbortSignal,
+    onBatch?: (done: number, total: number) => Promise<void>,
   ): Promise<GroupSynthesisOutcome> {
     const provider = this.deps.registry.getTts(project.settings.ttsProviderId);
+    // Read per batch, not once: a provider can only size its requests after its
+    // engine reports the device (24 lines a request on a GPU, 6 on a CPU).
+    const perRequestNow = (): number =>
+      Math.max(1, Math.floor(provider.maxSegmentsPerRequest ?? DEFAULT_TTS_UNITS_PER_REQUEST));
     // `voiceId` and `speed` are BATCH-level TTS parameters, so units are
     // partitioned by the (voice, rate) pair they resolve to: a per-line rate or
     // voice from the editor gets its own call instead of being flattened into
@@ -1056,26 +1143,35 @@ export class PipelineRunner {
       durations: new Map<string, number>(),
       sawFallbackEngine: false,
       fallbackSegments: 0,
+      reusedSegments: 0,
     };
+    let done = 0;
     for (const { voiceId, speed, groups: voiceGroups } of byVoice.values()) {
-      throwIfCancelled(signal);
-      const result = await provider.synthesizeSegments(
-        {
-          language: project.settings.targetLanguage,
-          voiceId,
-          segments: voiceGroups.map((g) => ({ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs })),
-          outputDir: paths.ttsSegmentsDir,
-          speed,
-        },
-        signal,
-      );
-      for (const s of result.segments) {
-        outcome.synthesizedIds.add(s.segmentId);
-        outcome.durations.set(s.segmentId, s.durationMs);
+      for (let at = 0; at < voiceGroups.length; ) {
+        throwIfCancelled(signal);
+        const batch = voiceGroups.slice(at, at + perRequestNow());
+        at += batch.length;
+        const result = await provider.synthesizeSegments(
+          {
+            language: project.settings.targetLanguage,
+            voiceId,
+            segments: batch.map((g) => ({ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs })),
+            outputDir: paths.ttsSegmentsDir,
+            speed,
+          },
+          signal,
+        );
+        for (const s of result.segments) {
+          outcome.synthesizedIds.add(s.segmentId);
+          outcome.durations.set(s.segmentId, s.durationMs);
+        }
+        if (result.engine === 'fallback') outcome.sawFallbackEngine = true;
+        else outcome.engine ??= result.engine;
+        outcome.fallbackSegments += result.fallbackSegments ?? 0;
+        outcome.reusedSegments += result.reusedSegments ?? 0;
+        done += batch.length;
+        await onBatch?.(done, groups.length);
       }
-      if (result.engine === 'fallback') outcome.sawFallbackEngine = true;
-      else outcome.engine ??= result.engine;
-      outcome.fallbackSegments += result.fallbackSegments ?? 0;
     }
     return outcome;
   }

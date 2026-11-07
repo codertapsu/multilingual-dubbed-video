@@ -121,6 +121,23 @@ artifact URL carries a pinned `sha256`. `DISABLED_PACK_IDS` gates packs out of r
 `docs/OMNIVOICE.md` is canonical). Recommend by measured hardware fit, but **never restrict a
 backend**: the user can always pick anything.
 
+Two rules from a dub that could never finish (step 6, 21-minute video, `WORKER_TIMEOUT` twice):
+**never trust a runtime's default thread count** for an autoregressive model. ONNX Runtime's
+default ran VieNeu 5.4× slower than 2 threads, and the SDK exposes no setting, so
+`vd_tts_engine/engine.py` wraps its constructor (measurements there). And **long synthesis must
+be batched and resumable**: the runner splits TTS into requests of `maxSegmentsPerRequest`
+(neural: 6) with progress between them, and the engine reuses unchanged clips from
+`.vieneu-cache/`, so a retry continues instead of starting over.
+
+`tts-neural-cuda` (Windows + NVIDIA) is the one uv pack resolved **per machine**:
+`torchCudaBuildFor` picks PyTorch cu126 or cu130 from the detected GPUs and driver (cu126 has no
+PTX, so Blackwell must never get it). On the GPU, batching is the whole speed-up: one line at a
+time is slower than the tuned CPU, so requests carry 24 lines when `/health` says `cuda`. Its
+install ends with a real-kernel probe (`gpuVerify.ts`) because `is_available()` says yes on cards
+the build cannot run. Both HF repos it loads with `trust_remote_code` are pinned to commits in
+`vd_tts_engine/pinned.py`. Don't load them from `main`: that flag executes the repo's Python.
+GPU packs are heavy at pack level (`isHeavyPack`), so they evict a resident llama.cpp.
+
 ### Dev vs production runtime
 
 `apps/desktop/src-tauri/src/sidecar.rs` has two paths. Dev (a `pnpm-workspace.yaml` is found) runs
@@ -154,6 +171,16 @@ on the target** (a concurrent `pipeline.json` read, the studio preview streaming
 Defender scanning a fresh file). Every atomic write goes through `renameReplacing`
 (`node-orchestrator/src/fsRename.ts`; media-worker `atomic.ts` carries the same) — never a bare
 `fsp.rename` onto an existing file.
+
+**Every native engine pack on Windows needs the Microsoft Visual C++ runtime, and none ships
+it.** A PE import scan found `msvcp140.dll` in onnxruntime, PyTorch, whisper.cpp and llama.cpp.
+The base app hides this: the frozen workers bundle their own copy, and the bundled CPython has
+`vcruntime140` but not `msvcp140`. So a clean Windows runs the app, then every recommended engine
+dies at first start. `engines/vcRuntime.ts` installs Microsoft's redistributable (version ≥ 14.40,
+Authenticode-checked, one UAC prompt) before any download. It is wired only in `server.ts`, on
+Windows; tests inject fakes and must never reach the real registry or installer. When Node spawns Windows PowerShell 5.1, drop
+`PSModulePath`: inherited from a PowerShell 7 parent, it stops 5.1 loading its own cmdlets, which
+made every genuine Microsoft signature read as unsigned.
 
 ## Releases
 

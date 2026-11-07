@@ -87,6 +87,12 @@ export interface OrchestratorDeps {
   alignment?: AlignmentService;
   /** Engine lifecycle manager, so a finished run releases its heavy-engine lane. */
   engines?: EngineManager;
+  /**
+   * Engine families that will run on a GPU pack here (see ClassifyOptions
+   * `gpuFamilies`). Optional: without it, runs are classified from the launch
+   * specs alone, as before.
+   */
+  gpuEngineFamilies?: () => Promise<ReadonlySet<string>>;
   /** Preferences store (the user's concurrency limit / queue-paused flag). */
   setup?: Pick<SetupStore, 'getPreferences'>;
   /**
@@ -1057,10 +1063,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     project: Project,
     retryFromStep: PipelineStepId | undefined,
   ): Promise<RunScheduleResult> {
+    const gpuFamilies = await this.gpuFamilies();
     const workload = classifyWorkload(project.settings, this.deps.registry, {
       fromStep: retryFromStep,
       separationAvailable: this.deps.separation !== undefined,
       alignmentAvailable: this.deps.alignment !== undefined,
+      gpuFamilies,
     });
 
     const capacity = await this.effectiveCapacity();
@@ -1306,6 +1314,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * `paused` (conservative — the runner's artifact writes are not atomic, so
    * auto-resuming could treat a truncated artifact as complete). Best-effort.
    */
+  /** GPU-backed engine families on this machine; never throws (classification must not fail). */
+  private async gpuFamilies(): Promise<ReadonlySet<string>> {
+    return (await this.deps.gpuEngineFamilies?.().catch(() => undefined)) ?? new Set<string>();
+  }
+
   async reconcileQueue(): Promise<void> {
     let projects: Project[];
     try {
@@ -1316,6 +1329,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const queued = projects
       .filter((p) => p.status === 'queued' && p.queue)
       .sort((a, b) => (a.queue!.queuedAt < b.queue!.queuedAt ? -1 : 1));
+    const gpuFamilies = await this.gpuFamilies();
     for (const p of queued) {
       if (this.queued.has(p.id) || this.running.has(p.id)) continue;
       this.workloads.set(
@@ -1324,6 +1338,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
           ...(p.queue?.fromStep ? { fromStep: p.queue.fromStep } : {}),
           separationAvailable: this.deps.separation !== undefined,
           alignmentAvailable: this.deps.alignment !== undefined,
+          gpuFamilies,
         }),
       );
       this.queue.push(p.id);

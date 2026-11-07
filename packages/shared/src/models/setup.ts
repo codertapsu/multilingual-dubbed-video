@@ -248,6 +248,13 @@ export interface GpuInfo {
    * establish it, which callers must treat as "unknown", never as "too old".
    */
   driverVersion?: string;
+  /**
+   * CUDA compute capability, e.g. "8.6" (RTX 30xx), "8.9" (RTX 40xx), "12.0"
+   * (RTX 50xx), via nvidia-smi's `compute_cap` (drivers from 2022 on). It
+   * decides which CUDA build of an engine can run the card at all: no single
+   * PyTorch build covers both a GTX 10xx and an RTX 50xx. Absent = unknown.
+   */
+  computeCapability?: string;
 }
 
 /** Best-effort hardware/OS profile of this machine (GET /system). */

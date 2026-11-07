@@ -12,6 +12,7 @@ import { IpcService } from '../../core/ipc/ipc.service';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
+import { RecommendedEnginesComponent } from '../../shared/recommended-engines/recommended-engines.component';
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import { environment } from '../../core/environment';
 // Runtime helper (not a type), so it comes straight from the shared package per
@@ -79,7 +80,7 @@ const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> =
   selector: 'vd-settings',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent, TranslatePipe],
+  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent, TranslatePipe, RecommendedEnginesComponent],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
 })
@@ -495,6 +496,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
       });
       this.error.set(toAppError(err));
     }
+  }
+
+  /** A pack installed from the recommendations panel: refresh the full list and what can run. */
+  protected onRecommendedInstalled(): void {
+    void this.loadEngines();
+    void this.loadProcessingSetup();
   }
 
   protected async uninstallEngine(packId: string): Promise<void> {

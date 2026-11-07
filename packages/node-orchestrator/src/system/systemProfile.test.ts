@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { SystemProfile } from '@videodubber/shared';
 import {
+  NVIDIA_SMI_QUERIES,
   detectGpus,
   parseNvidiaSmi,
   parseSystemProfiler,
@@ -179,5 +180,53 @@ describe('GPU probe order and fail-open verdict', () => {
     const r = await detectGpus('linux', probe({}));
     expect(r).toEqual({ gpus: [], probe: 'failed' });
     expect(calls).toEqual(['nvidia-smi']);
+  });
+});
+
+describe('compute capability (picks the CUDA build an engine can run)', () => {
+  it('reads the fourth column when the driver supports it', () => {
+    expect(parseNvidiaSmi('NVIDIA GeForce RTX 3050, 8192, 616.92, 8.6')).toEqual([
+      { name: 'NVIDIA GeForce RTX 3050', vramMb: 8192, driverVersion: '616.92', computeCapability: '8.6' },
+    ]);
+    expect(parseNvidiaSmi('NVIDIA GeForce RTX 5090, 32607, 620.10, 12.0')[0]!.computeCapability).toBe('12.0');
+    expect('computeCapability' in parseNvidiaSmi('NVIDIA X, 4096, 500.00, [N/A]')[0]!).toBe(false);
+  });
+
+  /** nvidia-smi whose answer depends on the query, like the real one. */
+  const smi = (byQuery: (query: string) => string | Error): ExecProbe & { queries: string[] } => {
+    const queries: string[] = [];
+    const exec = (async (cmd: string, args: string[]) => {
+      if (cmd !== 'nvidia-smi') throw new Error(`ENOENT ${cmd}`);
+      queries.push(args[0]!);
+      const out = byQuery(args[0]!);
+      if (out instanceof Error) throw out;
+      return out;
+    }) as ExecProbe & { queries: string[] };
+    exec.queries = queries;
+    return exec;
+  };
+
+  it('retries without it when the driver reports the field on stdout (exit 0)', async () => {
+    // Measured on driver 616.92: an unknown field prints this and exits 0, so
+    // without the check the sentence itself is parsed as a GPU name.
+    const exec = smi((q) =>
+      q.includes('compute_cap') ? 'Field "compute_cap" is not a valid field to query.\n' : 'NVIDIA GeForce GTX 1060, 6144, 471.11',
+    );
+    const r = await detectGpus('win32', exec);
+    expect(r.gpus).toEqual([{ name: 'NVIDIA GeForce GTX 1060', vramMb: 6144, driverVersion: '471.11' }]);
+    expect(exec.queries).toEqual([...NVIDIA_SMI_QUERIES]);
+  });
+
+  it('retries without it when the driver rejects the field with an exit code', async () => {
+    const exec = smi((q) =>
+      q.includes('compute_cap') ? Object.assign(new Error('exit 2'), { code: 2 }) : 'NVIDIA GeForce GTX 1060, 6144, 471.11',
+    );
+    expect((await detectGpus('win32', exec)).gpus[0]!.name).toBe('NVIDIA GeForce GTX 1060');
+  });
+
+  it('does not re-run a missing or hung nvidia-smi', async () => {
+    const exec = smi(() => Object.assign(new Error('timed out'), { killed: true, signal: 'SIGTERM' }));
+    await detectGpus('linux', exec);
+    expect(exec.queries).toHaveLength(1);
   });
 });

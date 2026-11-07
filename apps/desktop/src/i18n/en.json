@@ -902,5 +902,27 @@
     "report-issue": "Report a problem on GitHub",
     "privacy": "Your home folder is replaced with ~ and any API keys are removed before copying. Nothing leaves this machine until you paste it somewhere yourself.",
     "copy-manual": "Copying to the clipboard was blocked. Select this text and copy it manually:"
+  },
+  "engines": {
+    "rec": {
+      "heading": "Recommended for this computer",
+      "intro": "Optional engines that would make dubbing faster or better on this computer's hardware. Nothing is downloaded unless you choose it.",
+      "install": "Install ({{ size }})",
+      "installed": "Installed",
+      "all-installed": "Everything recommended for this computer is installed.",
+      "later": "You can install or remove these at any time in Settings → Engines. An install keeps running while you use the app; closing the app stops it, and Install picks it up again."
+    },
+    "why": {
+      "whisper-metal": "Your Mac's Apple Silicon chip can transcribe speech with Metal, far faster than the CPU build.",
+      "whisper-gpu": "Your {{ gpu }} can transcribe speech much faster than the CPU.",
+      "llm-runtime": "Runs TranslateGemma on this computer: a big step up in translation quality over the offline Argos default.",
+      "tg-cpu": "The 4B TranslateGemma (~{{ size }} GB): much better than Argos, and light enough to run without a GPU.",
+      "tg-4b-gpu": "The 4B TranslateGemma (~{{ size }} GB) runs about {{ pct }}% on your GPU. A larger model would spill into system memory and translate at CPU speed, so this is the faster choice here; the 12B and 27B stay installable if you prefer the quality.",
+      "tg-gpu": "The {{ model }} TranslateGemma (~{{ size }} GB) fits your GPU (about {{ pct }}% on the card): the best quality this computer can run at GPU speed.",
+      "vieneu-gpu": "Natural Vietnamese voices generated on your {{ gpu }}: about 4× faster than on the CPU (a 21-minute video took 2½ minutes on an RTX 3050), with the same voices.",
+      "vieneu-cpu": "Far more natural Vietnamese voices than the built-in Piper voice, generated on the CPU.",
+      "separator": "Keeps the original music and sound effects under the dub instead of turning everything down.",
+      "whisperx": "Word-accurate timing, and a separate voice for each speaker in videos with several people talking."
+    }
   }
 }

@@ -134,8 +134,11 @@ export const REMEDIATIONS: Record<ErrorCode, { remediation: string; docsRef: str
     docsRef: 'docs/TROUBLESHOOTING.md#worker-unavailable',
   },
   WORKER_TIMEOUT: {
+    // Was "...consider a smaller STT model", shown for EVERY timeout, including
+    // a neural voice (step 6) that a speech-to-text model has nothing to do with.
     remediation:
-      'A worker did not respond in time. Retry the step; for large media consider a smaller STT model or more resources.',
+      'A local engine took longer than its time limit. Retry the step: finished work is kept. If it keeps ' +
+      'happening, the troubleshooting guide lists what to change for each step (transcription, translation, voice).',
     docsRef: 'docs/TROUBLESHOOTING.md#worker-timeout',
   },
   CLOUD_CREDENTIALS_MISSING: {

@@ -76,7 +76,8 @@ on `huggingface_hub` 2.4.0 + onnxruntime 1.31.1.
 
 ## HTTP contract (mirrors the bundled tts-worker)
 
-- `GET /health` → `{ status, engines: { vieneu, fallback } }`
+- `GET /health` → `{ status, engines: { vieneu, fallback }, device, deviceName, deviceNote }`
+- `POST /warmup` → starts loading the model in the background; answers like `/health`
 - `GET /voices?language=vi-VN` → `{ voices: [{ id, language, displayName, engine }] }`
 - `POST /synthesize-segments` → `{ segments: [...], engine, fallbackSegments }`
 
@@ -93,15 +94,83 @@ to `vieneu`'s `infer(voice=…)`.
   with the SDK's default voice so one stale name can't silence the whole dub.
 - Synthesis is at the model's natural rate (`speedRatio: 1.0`); the
   orchestrator's alignment/ffmpeg stage time-stretches each clip to its window.
+- **Retries resume.** Every clip is also kept under a hash of what decides its
+  audio (variant, voice, text, SDK version) in `<outputDir>/.vieneu-cache/`; a
+  request for an unchanged line is answered by copying that clip into place
+  (`reusedSegments` counts them). Clips are written to `*.partial.wav` and
+  renamed, so a killed engine never leaves a truncated clip behind. See
+  `clipcache.py`.
+- The orchestrator sends at most 6 utterances per request
+  (`NEURAL_TTS_UNITS_PER_REQUEST`), so no request comes near the worker timeout
+  and the progress bar moves during a long dub.
 
-## ⚠️ Validation status
+## Speed on CPU (measured 2026-11-07)
 
-The HTTP contract, voice catalog, batching, WAV I/O and silent-fallback are
-unit-tested (`tests/`, no heavy deps). The **neural inference path** (the
-`vieneu` SDK loading the v3-Turbo ONNX model + MOSS codec on first use) requires
-the pack venv + a model download (~0.5–1 GB) and has **not** been executed in CI.
-Before relying on it: confirm `vieneu==3.0.5` installs and its bare `Vieneu()`
-default is v3-Turbo on each OS/arch, **benchmark CPU latency** for long videos
-(v3-Turbo is early-access and publishes no real-time-factor), verify the SDK
-preset names match `voices.py`, and confirm the MOSS-Audio-Tokenizer-Nano codec
-and sea-g2p licenses alongside VieNeu's Apache-2.0.
+The SDK never sets ONNX Runtime's thread count, and its default was the slowest
+setting measured. The engine now uses **2 intra-op threads**
+(`engine.py`, override with `VIENEU_ONNX_THREADS=<n>`). Real-time factor (seconds
+of compute per second of speech, lower is faster) on an i5-13400F (6P + 4E):
+
+| ONNX threads | default | 16 | 10 | 8 | 6 | 4 | 3 | **2** | 1 |
+|---|---|---|---|---|---|---|---|---|---|
+| RTF | 5.29 | 8.55 | 5.43 | 4.37 | 3.15 | 2.02 | 1.35 | **0.97** | 1.28 |
+
+The decoder makes thousands of tiny ONNX calls per line, so extra threads only
+add synchronisation, and the pool's idle threads spin between calls. On a real
+21-minute dub (120 utterances, 9 min of speech) that is 12 utterances/min instead
+of 2.4: about 10 minutes instead of 48. Several engines side by side top out at a
+combined RTF of 0.63 (1.4 GB RAM each, a shared memory-bandwidth limit), so there
+is no process pool. Going substantially faster needs the GPU, which on this SDK
+means its PyTorch backend: the separate `tts-neural-cuda` pack below.
+
+## On an NVIDIA GPU (`tts-neural-cuda`, measured 2026-11-07)
+
+The same server, started with `VIENEU_DEVICE=cuda` (the engine manager sets it
+from the pack's `accel`). `_load_v3_cuda` checks that this PyTorch build has
+kernels for the card (`cuda_build_supports`: same-major binary compatibility, or
+PTX), loads the PyTorch backbone + codec from **pinned revisions**
+(`pinned.py`), and wraps the SDK's batched serving engine
+(`vieneu.v3_turbo_serve.V3TurboBatchEngine`). Any failure there leaves
+`deviceNote` in `/health` and falls back to the CPU path in the same process, so
+the dub still finishes.
+
+**Batching is the whole speed-up.** One line at a time, the GPU is *slower* than
+the tuned CPU. RTF on an RTX 3050 8 GB (i5-13400F host):
+
+| Path | RTF |
+|---|---|
+| CPU, ONNX, 2 threads | 0.66–0.97 |
+| GPU, one line at a time (cu126) | 1.36 |
+| GPU, batch 8 / 16 / 24 (cu126) | 0.48 / 0.40 / 0.34 |
+| GPU, batch 24 (cu130) | **0.18–0.20** |
+
+So the orchestrator sends up to 24 lines per request when `/health` reports
+`device: "cuda"` (`NEURAL_TTS_GPU_UNITS_PER_REQUEST`), and `synth_many`
+generates them in one `generate_batch` call, sorted by phoneme length so a batch
+does not pad short lines to the longest. A 24-line batch peaked at 571 MB of
+tensors. On the real 21-minute project the app-installed pack voiced 192
+utterances (593 s of speech) in 143.9 s, RTF 0.243, against about 9½ minutes on
+the CPU.
+
+Sampling matches the SDK's own defaults (`_V3_SAMPLING`). The CUDA-graph mode
+was rejected: it requires `repetition_penalty=1.0`, which produced runaway audio.
+Quality was compared on the same 24 lines (CPU vs GPU): total speech 66.7 vs
+67.8 s, 15.4 vs 15.2 characters/s, longest pause 0.74 vs 0.72 s.
+
+**`POST /warmup`.** Loading the GPU model takes about 8 s once it is cached, and
+about 40 s the first time, including the pinned download. So the lifespan does
+not warm it on every engine start. The provider calls `/warmup`, then polls `/health` until it is ready,
+before the first request. The CPU path still warms at start as before. The clip
+cache key leaves the device out on purpose: a clip voiced on the CPU is reused on
+the GPU and the other way round, because the voices are the same.
+
+## Validation status
+
+Unit-tested without the SDK (`tests/`): the HTTP contract, voice catalog, WAV I/O,
+silent fallback, clip reuse and atomic writes, the thread limit, the model pins,
+the CUDA kernel check, and the GPU batching route with a fake batcher. The neural
+path itself has run real dubs on Windows 11 (i5-13400F, the numbers above) with
+`vieneu==3.0.5`, on the CPU and on an RTX 3050 with both PyTorch builds. Still
+unverified: other OS/arch combinations' speed, Blackwell (RTX 50) cards on real
+hardware, and the MOSS-Audio-Tokenizer-Nano codec and sea-g2p licenses alongside
+VieNeu's Apache-2.0.

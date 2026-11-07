@@ -5,15 +5,26 @@ sounds far more natural than the built‑in Piper voice. It's **optional**: Pipe
 the fast, always‑available default, and you only need this for a higher‑quality
 Vietnamese voice.
 
-There is **one** VieNeu pack, installed in one click from Settings → Engines:
+There are **two** builds of the same voice, each installed in one click from
+Settings → Engines. The app recommends the one that suits your machine (it heads
+the page as **Recommended for this computer**), but you can install either:
 
-| | **VieNeu Neural TTS v3 (Vietnamese)** |
-|---|---|
-| Pack id | `tts-neural` |
-| Quality / rate | 48 kHz |
-| Voices | 10 preset Vietnamese voices |
-| **License** | **Apache‑2.0** — commercial use OK |
-| Runs on | CPU only, every platform (no GPU, no torch) |
+| | **VieNeu Neural TTS v3 (Vietnamese)** | **VieNeu Neural TTS v3 — NVIDIA GPU (Vietnamese)** |
+|---|---|---|
+| Pack id | `tts-neural` | `tts-neural-cuda` |
+| Runs on | The processor, every platform | An NVIDIA graphics card, Windows x64 |
+| Speed (21-min video, 593 s of speech) | about 9½ min | **2 min 24 s** on an RTX 3050 |
+| On disk (measured, Windows) | ~0.35 GB environment + ~0.5 GB model | 3.4–4.5 GB environment (PyTorch with CUDA, a ~2.5 GB download; the size depends on the CUDA build your card gets) + ~0.35 GB model |
+| Needs | nothing | NVIDIA driver 560.76+; 2 GB of video memory (it used 0.6 GB) |
+| Quality / rate | 48 kHz | identical voices and output |
+| Voices | 10 preset Vietnamese voices | the same 10 |
+| **License** | **Apache‑2.0** — commercial use OK | Apache‑2.0 (the voice); PyTorch BSD‑3, NVIDIA CUDA runtime under NVIDIA's license |
+
+Install both if you like: the app uses the GPU build, and falls back to the CPU
+build on its own if the GPU one cannot start. On Windows, both need the Microsoft
+Visual C++ Runtime, which the app installs for you before the download (Windows
+asks once for permission;
+[details](TROUBLESHOOTING.md#engines-need-the-microsoft-visual-c-runtime)).
 
 > **History — where did "v2" go?** An earlier VieNeu v2 pack (`tts-neural-v2`) is
 > still defined in the catalog but is in `DISABLED_PACK_IDS`, so it never appears
@@ -32,10 +43,10 @@ There is **one** VieNeu pack, installed in one click from Settings → Engines:
 |---|---|
 | **What it is** | VieNeu‑TTS v3‑Turbo — a Vietnamese neural voice at 48 kHz with 10 preset voices. |
 | **Cost** | Free; runs **fully offline after a one‑time download**. |
-| **Disk** | ~1.5 GB for the Python environment, plus ~0.5–1 GB for the voice model. |
-| **RAM** | ~1.5–2 GB while dubbing. CPU‑only — no GPU needed. |
+| **Disk** | CPU build: under 1 GB with its voice model. GPU build: 3.7–4.9 GB. (Settings → Engines shows a larger figure on purpose: the installer asks for working room on top.) |
+| **RAM** | ~1.5–2 GB while dubbing. The GPU build also uses ~0.6 GB of video memory. |
 | **Languages** | Vietnamese (it also code‑switches English). |
-| **Default?** | For Vietnamese projects the wizard pre‑selects `tts-neural` **once its pack is installed**; otherwise Piper, so dubbing works out of the box. |
+| **Default?** | For Vietnamese projects the wizard pre‑selects VieNeu **once either pack is installed**; otherwise Piper, so dubbing works out of the box. |
 
 > Output is **not** watermarked. This page used to say every clip carried an
 > inaudible AI-speech watermark; the pinned `vieneu` 3.0.5 never applies one (it
@@ -95,12 +106,19 @@ uv --version
 
 ## Step 2 — Install the VieNeu engine
 
-1. Open **Settings → Engines**.
-2. Find **“VieNeu Neural TTS v3 (Vietnamese)”**. Read the license note shown
-   right there before installing.
+1. Open **Settings → Engines**. If VieNeu is in **Recommended for this
+   computer**, that is the build for your machine: click its **Install** button
+   and skip to step 4.
+2. Otherwise find **“VieNeu Neural TTS v3 (Vietnamese)”**, or the
+   **“— NVIDIA GPU”** build on a Windows PC with an NVIDIA card. Read the license
+   note shown right there before installing.
 3. Click **Install**. A progress bar appears while it builds the Python
-   environment and downloads the packages (a few minutes the first time).
-4. When it flips to **“installed”**, you're done here.
+   environment and downloads the packages (a few minutes the first time; the GPU
+   build downloads about 2.5 GB of PyTorch).
+4. The GPU build then checks that your card really works with it ("Runs on NVIDIA
+   GeForce …"). If it cannot, the install stops with steps to follow; see
+   [The GPU voice pack cannot use the graphics card](TROUBLESHOOTING.md#the-gpu-voice-pack-cannot-use-the-graphics-card).
+5. When it flips to **“installed”**, you're done here.
 
 > The voice **model** itself (~0.5–1 GB) is downloaded the **first time you
 > actually dub** with VieNeu, not during this step — so the first dub takes a bit
@@ -130,9 +148,13 @@ detect speakers on its own).
 
 - **First run:** a one‑time model download (~0.5–1 GB). After that it's **fully
   offline**.
-- **Speed:** CPU‑only; quality is excellent but neural TTS is slower than Piper.
-  For a long video with many lines, the first pass can take a while. If it feels
-  too slow on your machine, switch that project back to **Piper** (it's instant).
+- **Speed:** quality is excellent but neural TTS is slower than Piper. On the
+  processor, a 21‑minute video takes about 9½ minutes to voice; the NVIDIA GPU
+  build did it in 2 min 24 s. The Processing log says which one is in use
+  ("Voice engine running on the GPU (…)" or "…on the CPU"). If it feels too slow
+  on your machine, switch that project back to **Piper** (it's instant).
+- **Long videos are resumable:** lines are voiced in batches and finished lines
+  are cached, so a retry after an interruption continues instead of starting over.
 - **If a line can't be synthesized** (e.g. the model isn't ready), that line is
   filled with **silence** rather than failing the whole dub — you'll see it flagged
   so you can regenerate it.
@@ -162,13 +184,22 @@ Try again once (the model finishes downloading), or switch the project's Text‑
 speech to **Piper** to unblock yourself. The app logs the reason.
 
 **It's very slow on a long video**
-That's expected for neural TTS on CPU. Use Piper for long videos, or split the
-work into shorter projects.
+That's expected for neural TTS on CPU. On a Windows PC with an NVIDIA card,
+install the GPU build (about 4× faster). Otherwise use Piper for long videos, or
+split the work into shorter projects.
+
+**The install stops with “needs the Microsoft Visual C++ Runtime” (Windows)**
+See [Engines need the Microsoft Visual C++ Runtime](TROUBLESHOOTING.md#engines-need-the-microsoft-visual-c-runtime).
+
+**The GPU build installed, but the log says “running on the CPU”**
+The reason follows the message. See
+[The GPU voice pack cannot use the graphics card](TROUBLESHOOTING.md#the-gpu-voice-pack-cannot-use-the-graphics-card).
 
 **Where is everything stored? / How do I remove it?**
 The engine + its model live under your VideoDubber folder
-(`…/engines/tts-neural/`). To remove it, open **Settings → Engines** and click
-**Remove** on VieNeu — that frees the disk space. Re‑installing re‑downloads it.
+(`…/engines/tts-neural/`, or `…/engines/tts-neural-cuda/` for the GPU build). To
+remove it, open **Settings → Engines** and click **Remove** on VieNeu — that frees
+the disk space. Re‑installing re‑downloads it.
 
 ---
 
@@ -184,6 +215,11 @@ The engine + its model live under your VideoDubber folder
   and [`uvRequirements.ts`](../packages/node-orchestrator/src/engines/uvRequirements.ts);
   the engine server is [`workers/tts-engine-neural`](../workers/tts-engine-neural/).
   A cross‑OS install + synth check runs in CI ([`vieneu-smoke.yml`](../.github/workflows/vieneu-smoke.yml)).
+  The GPU build adds `torch==2.14.1` from PyTorch's cu126 or cu130 wheel index
+  (chosen per machine by `torchCudaBuildFor`), and pins both Hugging Face repos it
+  loads with `trust_remote_code` to exact revisions (`vd_tts_engine/pinned.py`):
+  that flag executes the repo's Python, so an unpinned download would run whatever
+  was pushed last.
   The `vieneu` SDK is pinned at **3.0.5** while upstream is several minors ahead;
   `uvRequirements.ts` still carries a "validated candidates, not yet verified"
   caveat, and the extras reorganised after 3.0.5 (the Perth watermarker moved to

@@ -18,6 +18,7 @@ import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { DownloadProgressListComponent } from '../../shared/download-progress-list/download-progress-list.component';
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
+import { RecommendedEnginesComponent } from '../../shared/recommended-engines/recommended-engines.component';
 import { FALLBACK_COMMON_LANGUAGES } from '../../core/models/view-models';
 import type { AppError, LanguageCode } from '../../core/models';
 import type {
@@ -53,7 +54,14 @@ type OnboardingStep = 1 | 2 | 3 | 4;
   selector: 'vd-onboarding',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, DownloadProgressListComponent, BusyIndicatorComponent, TranslatePipe],
+  imports: [
+    FormsModule,
+    ErrorBannerComponent,
+    DownloadProgressListComponent,
+    BusyIndicatorComponent,
+    TranslatePipe,
+    RecommendedEnginesComponent,
+  ],
   templateUrl: './onboarding.component.html',
   styleUrl: './onboarding.component.scss',
 })

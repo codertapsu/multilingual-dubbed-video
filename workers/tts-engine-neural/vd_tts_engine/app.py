@@ -12,6 +12,10 @@ loadable (deps/weights missing) or a segment errors, a placeholder SILENT WAV is
 written for that segment and `fallbackSegments` is incremented — so a run never
 hard-fails on TTS. The orchestrator's alignment/ffmpeg stage stretches each clip
 to its timing window, so reported durations are the real measured WAV durations.
+
+Resumability: a clip whose text and voice are unchanged since an earlier request
+is copied from the per-project clip cache instead of re-synthesized
+(`reusedSegments`), and every clip is written atomically. See clipcache.py.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import voices
+from . import clipcache, voices
 from .engine import VieNeuEngine
 from .wavio import read_wav_duration_ms, write_silent_wav
 
@@ -47,13 +51,38 @@ def _warmup() -> None:
         logger.error("VieNeu %s warm-up failed: %s", _engine.variant, exc)
 
 
+_warmup_started = threading.Event()
+
+
+def _start_warmup() -> None:
+    """Start the background model load once (idempotent)."""
+    if not _warmup_started.is_set():
+        _warmup_started.set()
+        threading.Thread(target=_warmup, name="vieneu-warmup", daemon=True).start()
+
+
 @asynccontextmanager
 async def _lifespan(_app: "FastAPI"):
     # Kick off the load AFTER uvicorn binds the port (so /health is reachable at
     # once) but as early as possible — typically when the wizard lists voices,
     # well before a run starts.
-    threading.Thread(target=_warmup, name="vieneu-warmup", daemon=True).start()
+    #
+    # Except on the GPU. There the engine also starts just to LIST voices, and
+    # loading then would put the model on the card wherever the orchestrator
+    # happened to be (next to a resident 12B llama.cpp, say); an out-of-memory
+    # there drops this process to the CPU for its whole life. The orchestrator
+    # calls POST /warmup once it holds the GPU for synthesis instead.
+    if _engine_wants_gpu():
+        logger.info("GPU pack: model loads on POST /warmup, not at startup.")
+    else:
+        _start_warmup()
     yield
+
+
+def _engine_wants_gpu() -> bool:
+    from .engine import vieneu_device  # noqa: PLC0415
+
+    return vieneu_device() == "cuda"
 
 
 app = FastAPI(title="VideoDubber Neural TTS (VieNeu)", version="0.1.0", lifespan=_lifespan)
@@ -92,6 +121,9 @@ class SynthesizeResponse(BaseModel):
     segments: list[SegmentOut]
     engine: str = "neural-tts"
     fallbackSegments: int = 0
+    # Clips answered from the clip cache (unchanged text + voice since an
+    # earlier request) without running the model. See clipcache.py.
+    reusedSegments: int = 0
 
 
 class Voice(BaseModel):
@@ -115,6 +147,11 @@ class HealthResponse(BaseModel):
     loaded: bool = False
     # Set if the background warm-up failed, so callers fail fast vs. timing out.
     loadError: str | None = None
+    # Where synthesis runs once loaded ("cuda" | "cpu"), the GPU's name, and why
+    # a GPU pack is running on the CPU instead (old driver, unsupported card...).
+    device: str | None = None
+    deviceName: str | None = None
+    deviceNote: str | None = None
 
 
 # ---- routes ----------------------------------------------------------------
@@ -126,7 +163,17 @@ def health() -> HealthResponse:
         engines={voices.ENGINE_NAME: _engine.available(), "fallback": True},
         loaded=_engine.loaded(),
         loadError=_engine.load_error,
+        device=_engine.device,
+        deviceName=_engine.device_name,
+        deviceNote=_engine.device_note,
     )
+
+
+@app.post("/warmup", response_model=HealthResponse)
+def warmup() -> HealthResponse:
+    """Start loading the model now (idempotent); poll /health for `loaded`."""
+    _start_warmup()
+    return health()
 
 
 @app.get("/voices", response_model=VoicesResponse)
@@ -143,20 +190,61 @@ def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
     out_dir = Path(req.outputDir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    results: list[SegmentOut] = []
     fallback_count = 0
+    reused_count = 0
+    outs = [out_dir / segment_filename(seg.id, ordinal) for ordinal, seg in enumerate(req.segments, start=1)]
+    failed: dict[int, BaseException] = {}
+    # (segment index, cache-entry path) for every line that needs the model.
+    misses: list[tuple[int, Path]] = []
 
-    for ordinal, seg in enumerate(req.segments, start=1):
-        out_path = out_dir / segment_filename(seg.id, ordinal)
-        window_ms = max(0, seg.endMs - seg.startMs)
+    # 1. Reuse before synthesizing: a retry after a timeout or a crash resumes
+    #    instead of redoing every finished clip (clipcache.py).
+    for i, seg in enumerate(req.segments):
         try:
-            _engine.synth(seg.text, str(out_path), req.voiceId, req.speed)
-        except Exception as exc:  # noqa: BLE001
-            # Graceful fallback: silence sized to the segment window.
-            logger.warning("Neural synth failed for %s (%s); writing silence.", seg.id, exc)
-            write_silent_wav(out_path, window_ms or 1000, sample_rate=_engine.sample_rate)
-            fallback_count += 1
+            key = _engine.clip_key(seg.text, req.voiceId)
+            cached = clipcache.lookup(out_dir, key)
+            if cached is not None:
+                clipcache.materialize(cached, outs[i])
+                reused_count += 1
+            else:
+                misses.append((i, clipcache.cached_clip(out_dir, key)))
+        except Exception as exc:  # noqa: BLE001 - empty text, unloadable SDK...
+            failed[i] = exc
 
+    # 2. Synthesize every miss in ONE call, so the GPU build can generate the
+    #    lines together (engine.synth_many); each into a unique partial file.
+    if misses:
+        clipcache.cache_dir(out_dir).mkdir(parents=True, exist_ok=True)
+        partials = [clipcache.partial_for(final) for _, final in misses]
+        try:
+            errors = _engine.synth_many(
+                [req.segments[i].text for i, _ in misses], [str(p) for p in partials], req.voiceId, req.speed
+            )
+        except Exception as exc:  # noqa: BLE001 - e.g. the model failed to load
+            errors = [exc] * len(misses)
+        for (i, final), partial, error in zip(misses, partials, errors):
+            try:
+                if error is not None:
+                    raise error
+                clipcache.publish(partial, final)
+                clipcache.materialize(final, outs[i])
+            except Exception as exc:  # noqa: BLE001
+                partial.unlink(missing_ok=True)
+                failed[i] = exc
+
+    # 3. Graceful fallback: silence sized to the segment window. Never cached,
+    #    so the line is synthesized for real once the engine works.
+    for i, exc in failed.items():
+        seg = req.segments[i]
+        window_ms = max(0, seg.endMs - seg.startMs)
+        logger.warning("Neural synth failed for %s (%s); writing silence.", seg.id, exc)
+        clipcache.write_atomically(
+            outs[i], lambda tmp, ms=window_ms: write_silent_wav(tmp, ms or 1000, sample_rate=_engine.sample_rate)
+        )
+        fallback_count += 1
+
+    results: list[SegmentOut] = []
+    for seg, out_path in zip(req.segments, outs):
         results.append(
             SegmentOut(
                 segmentId=seg.id,
@@ -170,7 +258,9 @@ def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
         )
 
     engine_name = "neural-tts" if fallback_count < len(results) else "fallback"
-    return SynthesizeResponse(segments=results, engine=engine_name, fallbackSegments=fallback_count)
+    return SynthesizeResponse(
+        segments=results, engine=engine_name, fallbackSegments=fallback_count, reusedSegments=reused_count
+    )
 
 
 # Pull the TRAILING digits out of an id like "seg_0001" -> 1, falling back to the

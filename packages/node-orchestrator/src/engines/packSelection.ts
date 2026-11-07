@@ -353,9 +353,10 @@ export async function resolveActivePackSelections(
     });
   }
 
-  // Runtime/binary families (llama.cpp, whisper.cpp): the best ACCELERATOR
-  // build installed wins, via the same resolution the providers use.
-  for (const providerId of ['local-llm', 'whisper-cpp']) {
+  // Runtime/binary families (llama.cpp, whisper.cpp, and VieNeu's CPU and GPU
+  // builds): the best ACCELERATOR build installed wins, via the same resolution
+  // the providers use.
+  for (const providerId of ['local-llm', 'whisper-cpp', 'neural-tts']) {
     const installedInFamily = await installedIdsFor(store, providerId);
     if (installedInFamily.length < 2) continue;
     const packId = await pickInstalledPack(store, providerId);

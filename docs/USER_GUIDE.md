@@ -106,6 +106,13 @@ instead of the projects list. This runs once.
    the window open. If the connection drops, **Retry download** picks up the
    models that are still missing rather than starting over.
 
+Once the download is done, the same screen shows **Recommended for this
+computer**. These are optional engine packs that would make dubbing faster or
+better on *this* machine's hardware, for example the GPU voice on a PC with an
+NVIDIA card. Each one says what it buys you and how big it is. Nothing installs
+unless you click its **Install** button, and you can ignore the list entirely: it
+also heads **Settings → Engines** ([What an engine pack is](#what-an-engine-pack-is)).
+
 When it finishes, click **Finish & start dubbing**. You will not see the wizard
 again; you can add more languages, voices and models later from **Settings**.
 
@@ -274,11 +281,45 @@ GPU-accelerated transcriber, a local LLM translator, a more natural neural voice
 Packs are downloaded on demand and only run while a project is using them, which
 is why the base installer stays small.
 
-Settings → Engines only lists packs that can actually run on your machine, and
-marks the ones that suit it "recommended". A pack that your machine cannot run is
-shown disabled with the reason, rather than failing after you install it. Some
-packs are hidden entirely because they are not finished — see
+**What installs by itself.** The installer carries everything a dub needs: the
+video tools, a private Python runtime, and the transcription, offline translation
+and voice services. The first-run wizard then downloads the models you chose.
+None of that asks you anything beyond the wizard.
+
+**What is recommended, and why.** The top of Settings → Engines, **Recommended
+for this computer**, is worked out from what the app measured about your machine
+(the graphics card and its video memory, the RAM and the processor). Each entry
+says, in your language, what it would improve, and its **Install** button shows
+the download size. Typical entries:
+
+| Pack | What it gives you | Offered when |
+|---|---|---|
+| **VieNeu Neural TTS v3 — NVIDIA GPU** | The natural Vietnamese neural voice, about 4× faster than on the CPU (a 21-minute video took 2½ minutes instead of 9½ on an RTX 3050) | Windows with an NVIDIA card and a recent driver; 3.4–4.5 GB |
+| **VieNeu Neural TTS v3** | The same voices on the processor, far more natural than the built-in Piper voice | Every other machine |
+| **whisper.cpp (GPU)** | Faster transcription on the graphics card | An NVIDIA card, or Apple Silicon |
+| **llama.cpp + TranslateGemma** | Local AI translation that reads context, better than the offline language packs | Sized to your machine: the largest model that fits your video memory (or RAM) well is suggested |
+
+Installs run in the background while the app is open, with a progress bar; you
+can keep working. **Every pack is your choice.** The list recommends, it never
+restricts: the full catalogue below it lets you install any pack your machine can
+run at all, recommended or not. A pack that your machine cannot run is shown
+disabled with the reason, rather than failing after you install it. Some packs
+are hidden entirely because they are not finished — see
 [What VideoDubber cannot do yet](#9-what-videodubber-cannot-do-yet).
+
+**When you may be asked to do something** (each comes with numbered steps on
+screen):
+
+- **Windows: the Microsoft Visual C++ Runtime.** Every engine pack needs it, and a
+  new Windows PC may not have it. The app installs it for you before the pack
+  downloads; Windows asks once for permission (click **Yes**).
+  [Details](TROUBLESHOOTING.md#engines-need-the-microsoft-visual-c-runtime).
+- **GPU packs: the NVIDIA driver.** If the driver is too old for a GPU pack,
+  Settings → Engines says which version is needed, and the GPU voice's
+  install-time self-check gives the update steps.
+  [Details](TROUBLESHOOTING.md#the-gpu-voice-pack-cannot-use-the-graphics-card).
+- **Disk space.** The installer checks before downloading and says how much to
+  free. [Details](TROUBLESHOOTING.md#not-enough-disk-space-for-an-engine-pack).
 
 The one most Vietnamese users want is the neural Vietnamese voice: see
 [`VIENEU_TTS_SETUP.md`](VIENEU_TTS_SETUP.md).
@@ -355,6 +396,9 @@ Stated plainly, so you are not hunting for a feature that is not there:
   review rather than silently overlapping the next one.
 - **Translation quality varies by language pair**, especially for pairs that have
   to route through English.
+- **No GPU voice on a Mac yet.** On Apple Silicon the VieNeu voice runs on the
+  processor. Apple's GPU backend for PyTorch has not been validated with VieNeu,
+  so no Mac GPU voice pack is offered rather than one of unknown quality.
 
 ### Machines that are not supported
 

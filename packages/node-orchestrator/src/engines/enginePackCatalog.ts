@@ -28,6 +28,7 @@
  *    engines/uvRequirements.ts).
  */
 import type { EnginePackInfo } from '@videodubber/shared';
+import { TORCH_GPU_VERSION } from './uvRequirements.js';
 
 // Pinned upstream releases (single source of truth for the URL templates).
 // Verified against the GitHub releases on 2026-11-05.
@@ -59,6 +60,10 @@ const WHISPER_DL = `https://github.com/ggml-org/whisper.cpp/releases/download/${
  */
 const CUDA_TOOLKIT = '12.4';
 const CUDA_MIN_DRIVER_WIN = '551.61';
+
+/** CUDA 12.6 GA's Windows driver (NVIDIA release notes, Table 4): the GPU voice
+ * pack's cu126 PyTorch build. */
+const TORCH_CU126_MIN_DRIVER_WIN = '560.76';
 
 /**
  * TranslateGemma GGUF weights (the `local-llm-model` packs).
@@ -539,6 +544,52 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     ],
     licenseNote:
       'Engine code + backbone weights Apache-2.0, BUT the 7 bundled reference voices are CC BY-NC 4.0 — NON-COMMERCIAL use only, attribution to pnnbao-ump. For commercial dubbing use your own voices or VieNeu v3.',
+  },
+
+  // --- neural TTS: VieNeu v3-Turbo on an NVIDIA GPU (uv-managed, PyTorch) --
+  // Listed BEFORE the CPU pack: recommendEnginePacks takes the first pack of a
+  // provider that fits the machine, so NVIDIA machines are offered this one and
+  // everything else falls through to the CPU pack below.
+  {
+    id: 'tts-neural-cuda',
+    kind: 'tts',
+    packKind: 'python-uv',
+    displayName: 'VieNeu Neural TTS v3 — NVIDIA GPU (Vietnamese)',
+    description:
+      'The same VieNeu v3 voices, generated on your NVIDIA graphics card, many lines at a time: on an RTX 3050 it voiced a 21-minute video (593 s of speech) in 2 min 24 s, about 4× faster than the CPU pack. If the card cannot be used (an old driver, say) it keeps working on the CPU. Needs an NVIDIA GPU from the GTX 900 series or newer; downloads PyTorch with CUDA (~2.5 GB, the right build for your card is picked automatically; 3.4–4.5 GB on disk) and the model (~340 MB) on first use.',
+    providerId: 'neural-tts',
+    // Bump with the pins in uvRequirements['tts-neural-cuda'] so installed
+    // copies are offered the update.
+    version: `3.0.5+torch${TORCH_GPU_VERSION}`,
+    platforms: ['win32'],
+    arch: ['x64'],
+    accel: 'cuda',
+    tier: 'performance',
+    // Measured peak 571 MB of tensors for a 24-line batch, ~1.2 GB for the whole
+    // process with the CUDA context; 2 GB leaves room for the desktop.
+    minVramMb: 2048,
+    // The cu126 build's floor (CUDA 12.6 GA, Windows 560.76 per NVIDIA's
+    // release notes). Blackwell cards get the cu130 build (R580+), but a
+    // Blackwell card implies a 570+ driver already, and an older one falls back
+    // to the CPU with the reason in /health rather than failing.
+    minNvidiaDriver: TORCH_CU126_MIN_DRIVER_WIN,
+    minRamMb: 4096,
+    // The larger of the two builds on disk, measured: cu126 4,467 MB (it carries
+    // kernels back to Maxwell), cu130 3,344 MB. The disk check must fit either.
+    approxSizeMb: 4500,
+    artifacts: [
+      {
+        // uv venv per uvRequirements['tts-neural-cuda']: torch in the CUDA build
+        // chosen for this machine's GPU (torchCudaBuildFor), transformers,
+        // safetensors, and everything the CPU pack has. The model is fetched on
+        // first use at PINNED revisions (vd_tts_engine/pinned.py).
+        url: 'uv-env://tts-neural-cuda',
+        approxSizeMb: 4500,
+        destPath: 'venv',
+      },
+    ],
+    licenseNote:
+      'Apache-2.0 — VieNeu-TTS v3 code + weights, with the MOSS-Audio-Tokenizer-Nano codec (pinned revision; verify its license). PyTorch (BSD-3-Clause) ships NVIDIA CUDA runtime libraries under NVIDIA’s CUDA EULA. Preset voices only. Output is NOT watermarked (see the CPU pack).',
   },
 
   // --- neural TTS: VieNeu v3-Turbo (uv-managed Python env) -----------------

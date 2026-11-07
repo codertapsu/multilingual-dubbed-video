@@ -23,7 +23,8 @@ import {
 import { getWorkerJson, postWorkerJson } from '../workerHttp.js';
 import type { EngineManager } from '../../engines/engineManager.js';
 import type { EnginePackStore } from '../../engines/enginePackStore.js';
-import { requireInstalledPack } from '../../engines/packSelection.js';
+import { installedPacksForProvider, requireInstalledPack } from '../../engines/packSelection.js';
+import { getSystemProfile } from '../../system/systemProfile.js';
 import type { WorkerVoicesResponse } from './localTtsProvider.js';
 
 interface WorkerSynthesizeResponse {
@@ -37,10 +38,50 @@ interface WorkerSynthesizeResponse {
   }[];
   engine?: string;
   fallbackSegments?: number;
+  reusedSegments?: number;
 }
+
+/** GET /health of a VieNeu engine (fields absent on older engines). */
+interface WorkerHealth {
+  loaded?: boolean;
+  loadError?: string | null;
+  device?: string | null;
+  deviceName?: string | null;
+  deviceNote?: string | null;
+}
+
+/**
+ * Utterances per /synthesize-segments call. The pipeline used to send a whole
+ * dub in one request: 120 utterances for a 21-minute video, which this engine
+ * (then ~5x slower than real time on CPU) needed ~48 minutes for, against a
+ * 30-minute request timeout. Six keeps one request to about half a minute at
+ * the engine's current speed and under ten minutes even on a machine where the
+ * thread fix in vd_tts_engine/engine.py does not take, while still updating
+ * the progress bar every few lines.
+ */
+export const NEURAL_TTS_UNITS_PER_REQUEST = 6;
+
+/**
+ * Utterances per request when the engine runs on the GPU: one batch of its
+ * batched path (vd_tts_engine `_GPU_BATCH_LINES`). One line at a time the GPU
+ * was SLOWER than the CPU (RTF 1.36 vs 0.97); 24 together ran at 0.18.
+ */
+export const NEURAL_TTS_GPU_UNITS_PER_REQUEST = 24;
 
 export class NeuralTtsProvider implements TtsProvider {
   readonly isLocal = true;
+  /** Where the running engine synthesizes ("cuda" | "cpu"), from its /health. */
+  private device: string | undefined;
+
+  get maxSegmentsPerRequest(): number {
+    return this.device === 'cuda' ? NEURAL_TTS_GPU_UNITS_PER_REQUEST : NEURAL_TTS_UNITS_PER_REQUEST;
+  }
+
+  /** The device the engine reported at its last warm-up, for the run log. */
+  get activeDevice(): { device?: string; name?: string; note?: string } {
+    return { ...this.deviceInfo };
+  }
+  private deviceInfo: { device?: string; name?: string; note?: string } = {};
 
   constructor(
     readonly id: string,
@@ -59,9 +100,23 @@ export class NeuralTtsProvider implements TtsProvider {
     private readonly exclusive = false,
   ) {}
 
+  /**
+   * Start the engine on the best installed pack (the GPU build first), falling
+   * back down the list when one cannot start: installing the GPU pack must never
+   * make synthesis WORSE than the CPU pack alone. `exclusive` is for synthesis:
+   * a GPU pack then takes the heavy lane and evicts a resident llama.cpp first.
+   */
   private async baseUrl(exclusive = false): Promise<string> {
-    const packId = await requireInstalledPack(this.store, this.id);
-    return this.engines.ensureRunning(packId, exclusive ? { exclusive: true } : {});
+    const profile = await getSystemProfile().catch(() => undefined);
+    const ids = await installedPacksForProvider(this.store, this.id, process.platform, process.arch, profile);
+    if (ids.length === 0) await requireInstalledPack(this.store, this.id); // throws ENGINE_PACK_MISSING
+    return this.engines.ensureRunningFirstUsable(ids, exclusive || this.exclusive ? { exclusive: true } : {});
+  }
+
+  /** Start + warm the engine before the first batch, so the batch size fits the device. */
+  async prepare(signal?: AbortSignal): Promise<void> {
+    const base = (await this.baseUrl(true)).replace(/\/$/, '');
+    await this.waitUntilWarm(base, signal);
   }
 
   /**
@@ -74,11 +129,19 @@ export class NeuralTtsProvider implements TtsProvider {
    */
   private async waitUntilWarm(base: string, signal?: AbortSignal): Promise<void> {
     const deadline = Date.now() + this.timeoutMs;
+    // The GPU build loads only when asked (vd_tts_engine POST /warmup), so the
+    // model reaches the card while this run holds the GPU. Engines that load at
+    // startup treat it as a no-op; one too old to have the route just 404s.
+    await postWorkerJson(`${base}/warmup`, {}, { timeoutMs: 10_000, workerName: 'Neural TTS engine', signal }).catch(
+      (err: unknown) => {
+        if (signal?.aborted) throw err;
+      },
+    );
     for (;;) {
       if (signal?.aborted) throw new AppErrorException('CANCELLED', 'Cancelled while loading the neural TTS model.');
-      let health: { loaded?: boolean; loadError?: string | null } | undefined;
+      let health: WorkerHealth | undefined;
       try {
-        health = await getWorkerJson<{ loaded?: boolean; loadError?: string | null }>(`${base}/health`, {
+        health = await getWorkerJson<WorkerHealth>(`${base}/health`, {
           timeoutMs: 5_000,
           workerName: 'Neural TTS engine',
           signal,
@@ -87,7 +150,16 @@ export class NeuralTtsProvider implements TtsProvider {
         if (signal?.aborted) throw err; // run cancelled — propagate
         // else: engine still booting / transient — keep polling until the deadline
       }
-      if (health && health.loaded !== false) return; // loaded, or a backend that omits the field
+      if (health && health.loaded !== false) {
+        // loaded, or a backend that omits the field
+        this.device = health.device ?? undefined;
+        this.deviceInfo = {
+          ...(health.device ? { device: health.device } : {}),
+          ...(health.deviceName ? { name: health.deviceName } : {}),
+          ...(health.deviceNote ? { note: health.deviceNote } : {}),
+        };
+        return;
+      }
       if (health?.loadError) {
         throw new AppErrorException(
           'ENGINE_UNAVAILABLE',
@@ -112,24 +184,50 @@ export class NeuralTtsProvider implements TtsProvider {
     // Synthesis is the heavy phase: load exclusively (for OmniVoice) so a resident
     // llama.cpp/whisper.cpp is evicted before the ~2 GB MLX model loads — otherwise
     // co-resident models pressure RAM and can OOM-kill the bundled workers.
-    const base = (await this.baseUrl(this.exclusive)).replace(/\/$/, '');
+    // Exclusive for synthesis: a GPU pack takes the heavy lane and evicts a
+    // resident llama.cpp before its model claims VRAM. (The CPU pack is not
+    // heavy, so for it this changes nothing.)
+    const base = (await this.baseUrl(true)).replace(/\/$/, '');
     // The engine loads its (large, first-run-downloaded) model lazily. Wait for it
     // to become RESIDENT before the synth request, so the one-time load isn't
     // charged to the synth timeout — over 200+ segments that overrun would abort
     // the whole run with WORKER_TIMEOUT. /voices does NOT wait, so the wizard's
     // voice picker stays responsive (and starts this warm-up early).
     await this.waitUntilWarm(base, signal);
-    const data = await postWorkerJson<WorkerSynthesizeResponse>(
-      `${base}/synthesize-segments`,
-      {
-        language: input.language,
-        voiceId: input.voiceId,
-        segments: input.segments,
-        outputDir: input.outputDir,
-        speed: input.speed ?? 1.0,
-      },
-      { timeoutMs: this.timeoutMs, workerName: 'Neural TTS engine', signal },
-    );
+    let data: WorkerSynthesizeResponse;
+    try {
+      data = await postWorkerJson<WorkerSynthesizeResponse>(
+        `${base}/synthesize-segments`,
+        {
+          language: input.language,
+          voiceId: input.voiceId,
+          segments: input.segments,
+          outputDir: input.outputDir,
+          speed: input.speed ?? 1.0,
+        },
+        { timeoutMs: this.timeoutMs, workerName: 'Neural TTS engine', signal },
+      );
+    } catch (err) {
+      // The generic WORKER_TIMEOUT advice is about speech-to-text models. Say
+      // what is true here: the engine was slow, not broken; finished clips are
+      // kept; and there is a fast alternative if this machine can't keep up.
+      if (err instanceof AppErrorException && err.code === 'WORKER_TIMEOUT' && !signal?.aborted) {
+        throw new AppErrorException(
+          'WORKER_TIMEOUT',
+          `${this.displayName} was still working on ${input.segments.length} line(s) when the ` +
+            `${Math.round(this.timeoutMs / 60_000)}-minute limit for one batch ran out.`,
+          {
+            cause: err.appError.cause,
+            remediation:
+              'Retry the step: clips that were already finished are kept and reused, so it continues where it ' +
+              'stopped. If it keeps happening, close other heavy apps (another dub, a game, a browser with many ' +
+              'tabs) or switch Speech (TTS) to Piper in the project settings, which is many times faster on CPU.',
+            docsRef: 'docs/TROUBLESHOOTING.md#worker-timeout',
+          },
+        );
+      }
+      throw err;
+    }
 
     const textById = new Map(input.segments.map((s) => [s.id, s.text]));
     const segments: TtsSegment[] = (data.segments ?? []).map((s) => ({
@@ -141,7 +239,12 @@ export class NeuralTtsProvider implements TtsProvider {
       endMs: s.endMs,
       speedRatio: s.speedRatio,
     }));
-    return { segments, engine: data.engine ?? this.id, fallbackSegments: data.fallbackSegments };
+    return {
+      segments,
+      engine: data.engine ?? this.id,
+      fallbackSegments: data.fallbackSegments,
+      ...(data.reusedSegments ? { reusedSegments: data.reusedSegments } : {}),
+    };
   }
 
   /** List voices the engine offers for a language (UI voice picker). */

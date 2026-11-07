@@ -238,6 +238,11 @@
       {{ 'settings.engines.intro' | translate }}
     </p>
 
+    <!-- What this machine's hardware would gain, in plain words, with the
+         download size: the list below only badges it. -->
+    <vd-recommended-engines (changed)="onRecommendedInstalled()" />
+    <hr class="sep" />
+
     @if (prerequisites(); as pre) {
       @if (pre.uv.available) {
         <p class="hint test-ok">

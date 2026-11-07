@@ -32,6 +32,9 @@ export type {
   EnginePrerequisites,
   EnginesResponse,
   EngineInstallEvent,
+  EnginePackRecommendation,
+  EngineRecommendationsResponse,
+  LocalizedText,
   // Storage management
   StorageCategory,
   StorageLocation,

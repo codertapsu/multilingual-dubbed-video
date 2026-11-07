@@ -18,16 +18,15 @@ import {
   outdatedNvidiaDriver,
   type EngineAccel,
   type EnginePackInfo,
+  type EnginePackRecommendation,
   type HardwareRecommendation,
+  type LocalizedText,
   type SystemProfile,
 } from '@videodubber/shared';
 import { availablePacks, findPack } from './enginePackCatalog.js';
 
-/** One recommended pack with a human reason. */
-export interface EnginePackRecommendation {
-  packId: string;
-  reason: string;
-}
+/** One recommended pack with a human reason (the shared contract the UI reads). */
+export type { EnginePackRecommendation } from '@videodubber/shared';
 
 /**
  * Is this machine's NVIDIA driver new enough for a pack's CUDA build?
@@ -155,21 +154,35 @@ export function recommendEnginePacks(
 ): EnginePackRecommendation[] {
   const fitting = availablePacks(platform, arch).filter((p) => packFitsMachine(p, profile));
   const out: EnginePackRecommendation[] = [];
-  const takeBest = (providerId: string, reason: string): void => {
+  const why = (key: string, params?: Record<string, string | number>): LocalizedText => ({
+    key: `engines.why.${key}`,
+    ...(params ? { params } : {}),
+  });
+  const takeBest = (providerId: string, reason: string, reasonText: LocalizedText): EnginePackInfo | undefined => {
     const pack = fitting.find((p) => p.providerId === providerId);
-    if (pack) out.push({ packId: pack.id, reason });
+    if (pack) out.push({ packId: pack.id, reason, reasonText });
+    return pack;
   };
 
   // "Workstation-class" is the top of the performance tier: 32 GB+ of memory
   // (unified on Apple Silicon, or system RAM with a strong discrete GPU).
   const workstation = profile.totalRamMb >= 32 * 1024;
+  const nvidiaName = profile.gpus.find((g) => NVIDIA_GPU_RE.test(g.name))?.name;
 
   // STT acceleration: always worth it on Apple Silicon (CPU-only otherwise);
   // worth it on machines with a capable GPU too.
   if (profile.appleSilicon) {
-    takeBest('whisper-cpp', 'Apple Silicon: Metal-accelerated transcription is far faster than the CPU build.');
+    takeBest(
+      'whisper-cpp',
+      'Apple Silicon: Metal-accelerated transcription is far faster than the CPU build.',
+      why('whisper-metal'),
+    );
   } else if (profile.gpus.length > 0) {
-    takeBest('whisper-cpp', 'A GPU was detected: accelerated transcription is much faster than CPU.');
+    takeBest(
+      'whisper-cpp',
+      'A GPU was detected: accelerated transcription is much faster than CPU.',
+      why('whisper-gpu', { gpu: nvidiaName ?? profile.gpus[0]!.name }),
+    );
   }
 
   // Local LLM translation (TranslateGemma): the runtime binary PLUS the largest
@@ -214,30 +227,65 @@ export function recommendEnginePacks(
     out.push({
       packId: runtimePack.id,
       reason: 'Runs TranslateGemma locally — a big translation-quality jump over the offline Argos default.',
+      reasonText: why('llm-runtime'),
     });
     // Say WHY in hardware terms. The old copy ("your GPU can drive the 12B")
     // was a claim the app never checked, and on a 4 GB card it was false.
     const budget = gpuWeightBudgetMb(profile);
     const pct = Math.round(gpuResidentFraction(modelPack.approxSizeMb, profile) * 100);
     const sizeGb = (modelPack.approxSizeMb / 1024).toFixed(1);
-    const why =
+    const model = modelPack.id === 'translategemma-12b' ? '12B' : '27B';
+    const [reason, reasonText] =
       budget <= 0
-        ? `The CPU-friendly 4B TranslateGemma (~${sizeGb} GB) — much better than Argos, light enough to run without a GPU.`
+        ? [
+            `The CPU-friendly 4B TranslateGemma (~${sizeGb} GB) — much better than Argos, light enough to run without a GPU.`,
+            why('tg-cpu', { size: sizeGb }),
+          ]
         : modelPack.id === 'translategemma-4b'
-          ? `The 4B TranslateGemma (~${sizeGb} GB) runs ~${pct}% on your GPU. A larger model would spill into system RAM and translate at CPU speed, so this is the faster choice here — the 12B/27B stay installable if you want the quality instead.`
-          : `The ${modelPack.id === 'translategemma-12b' ? '12B' : '27B'} TranslateGemma (~${sizeGb} GB) fits your GPU (~${pct}% resident) — the best quality this machine can run at GPU speed.`;
-    out.push({ packId: modelPack.id, reason: why });
+          ? [
+              `The 4B TranslateGemma (~${sizeGb} GB) runs ~${pct}% on your GPU. A larger model would spill into system RAM and translate at CPU speed, so this is the faster choice here — the 12B/27B stay installable if you want the quality instead.`,
+              why('tg-4b-gpu', { size: sizeGb, pct }),
+            ]
+          : [
+              `The ${model} TranslateGemma (~${sizeGb} GB) fits your GPU (~${pct}% resident) — the best quality this machine can run at GPU speed.`,
+              why('tg-gpu', { model, size: sizeGb, pct }),
+            ];
+    out.push({ packId: modelPack.id, reason, reasonText });
   }
 
-  // Neural TTS: better voices (incl. the Vietnamese VieNeu upgrade) on capable machines.
+  // Neural TTS: better voices (incl. the Vietnamese VieNeu upgrade) on capable
+  // machines. The catalog lists the GPU build first, so an NVIDIA machine that
+  // fits it is offered that one, with the speed-up in the reason; everyone else
+  // gets the CPU build.
   if (rec.tier !== 'constrained') {
-    takeBest('neural-tts', 'More natural neural voices, including a better Vietnamese voice than Piper.');
+    const gpuPack = fitting.find((p) => p.providerId === 'neural-tts' && p.accel === 'cuda');
+    if (gpuPack && nvidiaName) {
+      out.push({
+        packId: gpuPack.id,
+        reason: `Natural Vietnamese voices generated on your ${nvidiaName}: about 4× faster than on the CPU (a 21-minute video took 2½ minutes on an RTX 3050), with the same voices.`,
+        reasonText: why('vieneu-gpu', { gpu: nvidiaName }),
+      });
+    } else {
+      takeBest(
+        'neural-tts',
+        'More natural neural voices, including a better Vietnamese voice than Piper.',
+        why('vieneu-cpu'),
+      );
+    }
   }
 
   // Separation + alignment: workstation-class machines can afford the extra passes.
   if (workstation) {
-    takeBest('audio-separator', 'Keep the original music & effects under the dub instead of ducking everything.');
-    takeBest('alignment-whisperx', 'Word-accurate timing and per-speaker voices for multi-speaker videos.');
+    takeBest(
+      'audio-separator',
+      'Keep the original music & effects under the dub instead of ducking everything.',
+      why('separator'),
+    );
+    takeBest(
+      'alignment-whisperx',
+      'Word-accurate timing and per-speaker voices for multi-speaker videos.',
+      why('whisperx'),
+    );
   }
 
   return out;

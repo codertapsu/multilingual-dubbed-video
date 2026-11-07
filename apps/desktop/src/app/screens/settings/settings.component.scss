@@ -177,3 +177,11 @@
   min-width: 0;
   max-width: 22rem;
 }
+
+// Divider between the recommendations panel and the full engine list.
+hr.sep {
+  border: 0;
+  border-top: 1px solid var(--vd-border);
+  margin: 4px 0;
+  width: 100%;
+}

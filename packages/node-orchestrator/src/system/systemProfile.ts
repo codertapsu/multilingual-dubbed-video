@@ -53,22 +53,37 @@ const WMI_TIMEOUT_MS = 8000;
  * Name, a driver that prints no VRAM) be tested anywhere.
  */
 
-/** `nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits` */
+/**
+ * `nvidia-smi --query-gpu=name,memory.total,driver_version[,compute_cap] --format=csv,noheader,nounits`
+ * (the fourth column only when the driver supports it; see NVIDIA_SMI_QUERIES).
+ */
 export function parseNvidiaSmi(stdout: string): GpuInfo[] {
   return stdout
     .trim()
     .split('\n')
     .filter(Boolean)
     .map((line) => {
-      const [name, mem, driver] = line.split(',').map((s) => s.trim());
+      const [name, mem, driver, cap] = line.split(',').map((s) => s.trim());
       const vramMb = Number.parseInt(mem ?? '', 10);
       return {
         name: name || 'GPU',
         ...(Number.isFinite(vramMb) ? { vramMb } : {}),
         ...(driver ? { driverVersion: driver } : {}),
+        ...(cap && /^\d+\.\d+$/.test(cap) ? { computeCapability: cap } : {}),
       };
     });
 }
+
+/**
+ * The query with `compute_cap` first, then without it. Drivers before ~2022
+ * reject the unknown field and exit non-zero; asking for it unconditionally
+ * would turn "no compute capability" into "no NVIDIA GPU at all" and lose the
+ * VRAM and driver readings with it.
+ */
+export const NVIDIA_SMI_QUERIES: readonly string[] = [
+  '--query-gpu=name,memory.total,driver_version,compute_cap',
+  '--query-gpu=name,memory.total,driver_version',
+];
 
 /** `system_profiler SPDisplaysDataType -json` */
 export function parseSystemProfiler(stdout: string): GpuInfo[] {
@@ -155,11 +170,29 @@ export async function detectGpus(
     }
     // nvidia-smi's --query-gpu is a stable machine-readable contract; its banner
     // is not (the "CUDA Version:" line is absent entirely on driver 610.x).
-    const out = await exec(
-      'nvidia-smi',
-      ['--query-gpu=name,memory.total,driver_version', '--format=csv,noheader,nounits'],
-      DETECT_TIMEOUT_MS,
-    );
+    let out: string | undefined;
+    let lastError: unknown;
+    for (const query of NVIDIA_SMI_QUERIES) {
+      try {
+        const text = await exec('nvidia-smi', [query, '--format=csv,noheader,nounits'], DETECT_TIMEOUT_MS);
+        // A field the driver doesn't know is reported on STDOUT with exit code 0
+        // (driver 616.92: `Field "x" is not a valid field to query.`), so the
+        // catch below never sees it. Parsed as CSV, that sentence becomes a GPU.
+        if (/not a valid field/i.test(text)) {
+          lastError = new Error(text.trim());
+          continue;
+        }
+        out = text;
+        break;
+      } catch (err) {
+        lastError = err;
+        // Only an nvidia-smi that RAN and rejected the query (a numeric exit
+        // code) is worth a second try. Missing (ENOENT) or hung (a timeout kill)
+        // would fail again, and a cold card would pay the budget twice.
+        if (typeof (err as { code?: unknown }).code !== 'number') break;
+      }
+    }
+    if (out === undefined) throw lastError;
     const gpus = parseNvidiaSmi(out);
     if (gpus.length === 0 && platform === 'win32') return await wmi();
     return { gpus, probe: 'ok' };

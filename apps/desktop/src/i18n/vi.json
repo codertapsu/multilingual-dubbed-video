@@ -902,5 +902,27 @@
     "report-issue": "Báo lỗi trên GitHub",
     "privacy": "Đường dẫn thư mục cá nhân được thay bằng ~ và mọi khoá API đều bị xoá trước khi sao chép. Không có gì rời khỏi máy này cho tới khi chính bạn dán nó đi đâu đó.",
     "copy-manual": "Trình duyệt chặn thao tác sao chép. Hãy bôi đen đoạn dưới đây và tự sao chép:"
+  },
+  "engines": {
+    "rec": {
+      "heading": "Khuyến nghị cho máy tính này",
+      "intro": "Các engine tùy chọn giúp lồng tiếng nhanh hơn hoặc hay hơn với phần cứng của máy này. Không có gì được tải về nếu bạn không chọn.",
+      "install": "Cài đặt ({{ size }})",
+      "installed": "Đã cài",
+      "all-installed": "Đã cài đủ mọi engine được khuyến nghị cho máy này.",
+      "later": "Bạn có thể cài thêm hoặc gỡ bỏ bất cứ lúc nào trong Cài đặt → Engine. Việc cài đặt vẫn chạy trong khi bạn dùng ứng dụng; nếu đóng ứng dụng, quá trình sẽ dừng và bạn chỉ cần bấm Cài đặt lại."
+    },
+    "why": {
+      "whisper-metal": "Chip Apple Silicon trên máy Mac của bạn nhận dạng giọng nói bằng Metal, nhanh hơn nhiều so với bản chạy CPU.",
+      "whisper-gpu": "Card {{ gpu }} của bạn nhận dạng giọng nói nhanh hơn nhiều so với CPU.",
+      "llm-runtime": "Chạy TranslateGemma ngay trên máy: bản dịch tốt hơn hẳn so với Argos mặc định.",
+      "tg-cpu": "TranslateGemma 4B (~{{ size }} GB): dịch tốt hơn Argos nhiều, đủ nhẹ để chạy không cần GPU.",
+      "tg-4b-gpu": "TranslateGemma 4B (~{{ size }} GB) chạy khoảng {{ pct }}% trên GPU của bạn. Mô hình lớn hơn sẽ tràn sang bộ nhớ hệ thống và dịch chậm như CPU, nên đây là lựa chọn nhanh hơn ở máy này; bản 12B và 27B vẫn cài được nếu bạn ưu tiên chất lượng.",
+      "tg-gpu": "TranslateGemma {{ model }} (~{{ size }} GB) vừa với GPU của bạn (khoảng {{ pct }}% nằm trên card): chất lượng tốt nhất mà máy này chạy được ở tốc độ GPU.",
+      "vieneu-gpu": "Giọng tiếng Việt tự nhiên được tạo ngay trên {{ gpu }}: nhanh hơn khoảng 4 lần so với chạy bằng CPU (một video 21 phút chỉ mất 2,5 phút trên RTX 3050), vẫn các giọng đọc như cũ.",
+      "vieneu-cpu": "Giọng tiếng Việt tự nhiên hơn hẳn giọng Piper có sẵn, chạy bằng CPU.",
+      "separator": "Giữ nguyên nhạc nền và hiệu ứng âm thanh gốc dưới giọng lồng tiếng, thay vì vặn nhỏ tất cả.",
+      "whisperx": "Căn thời gian chính xác đến từng từ, và giọng riêng cho từng người nói trong video có nhiều người."
+    }
   }
 }

@@ -14,6 +14,7 @@
  */
 
 import type { AppError } from '../errors.js';
+import type { LocalizedText } from './setup.js';
 
 /** The pipeline capability an engine pack provides. */
 export type EngineKind = 'stt' | 'translation' | 'tts' | 'separation' | 'alignment';
@@ -197,6 +198,22 @@ export interface EnginesResponse {
   updatable: string[];
   /** Per-function winner when several installed packs compete (see above). */
   activeSelections?: ActivePackSelection[];
+}
+
+/** One pack recommended for this machine, and why (GET /engines/recommended). */
+export interface EnginePackRecommendation {
+  packId: string;
+  /** English reason (logs, and the fallback when a translation is missing). */
+  reason: string;
+  /** The same reason as a translation key + values, shown in the user's language. */
+  reasonText: LocalizedText;
+}
+
+/** GET /engines/recommended response. */
+export interface EngineRecommendationsResponse {
+  recommendations: EnginePackRecommendation[];
+  /** Ids of packs that run WELL here (accelerator present, enough RAM/VRAM). */
+  fits?: string[];
 }
 
 /** Body for POST /engines/install. */

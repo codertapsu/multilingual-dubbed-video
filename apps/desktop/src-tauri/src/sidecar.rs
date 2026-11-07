@@ -1196,6 +1196,9 @@ fn sweep_service_ports() {
                      ForEach-Object {{ taskkill /PID $_.OwningProcess /T /F }}"
                 ),
             ])
+            // Same as export_system_ca_bundle: 7's module path breaks 5.1's own
+            // modules, here NetTCPIP's Get-NetTCPConnection.
+            .env_remove("PSModulePath")
             .creation_flags(CREATE_NO_WINDOW)
             .status();
     }
@@ -1216,13 +1219,41 @@ fn system_ca_bundle(app: &AppHandle) -> Option<&'static str> {
     BUNDLE.get().and_then(|b| b.as_deref())
 }
 
-/// Locate a bundled worker's `certifi/cacert.pem` (all three ship the same
-/// Mozilla root bundle, so the first one found will do).
+/// Locate a Mozilla root bundle (`cacert.pem`) inside the app's resources.
 fn bundled_certifi(app: &AppHandle) -> Option<PathBuf> {
-    let res = app.path().resource_dir().ok()?;
-    for base in [res.join("workers"), res.join("resources").join("workers")] {
+    find_root_bundle(&app.path().resource_dir().ok()?)
+}
+
+/// A frozen worker's `certifi` first (what 0.9.0 shipped), then the bundled
+/// CPython's pip-vendored certifi. Pure, for the tests.
+///
+/// WHY THE SECOND PLACE: the 0.11.0 workers carry no `certifi/cacert.pem` at
+/// all. huggingface_hub 2.x moved to httpx2 + truststore and dropped certifi,
+/// and PyInstaller no longer collects the translation worker's copy. The merge
+/// below then fell back to the OS-only export without a sound, which is the
+/// fresh-machine CERTIFICATE_VERIFY_FAILED it exists to prevent. The bundled
+/// CPython ships in every build (engine packs are built with it), and its pip
+/// vendors an up-to-date certifi.
+fn find_root_bundle(res: &Path) -> Option<PathBuf> {
+    let bases = [res.to_path_buf(), res.join("resources")];
+    for base in &bases {
         for worker in ["vd-stt-worker", "vd-translation-worker", "vd-tts-worker"] {
-            let p = base.join(worker).join("_internal").join("certifi").join("cacert.pem");
+            let p = base.join("workers").join(worker).join("_internal").join("certifi").join("cacert.pem");
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    for base in &bases {
+        let Ok(entries) = std::fs::read_dir(base.join("python")) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if !entry.file_name().to_string_lossy().starts_with("cpython-") {
+                continue;
+            }
+            // Windows layout; the merge only runs on Windows (see export_system_ca_bundle).
+            let p = entry.path().join("Lib").join("site-packages").join("pip").join("_vendor").join("certifi").join("cacert.pem");
             if p.is_file() {
                 return Some(p);
             }
@@ -1289,6 +1320,11 @@ foreach($s in 'Cert:\\LocalMachine\\Root','Cert:\\CurrentUser\\Root','Cert:\\Loc
 
     let ok = Command::new("powershell")
         .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        // Started from a PowerShell 7 terminal (`pnpm app`), the app inherits 7's
+        // PSModulePath, and Windows PowerShell 5.1 then cannot load its own
+        // Microsoft.PowerShell.Security, which provides the Cert: drive: the
+        // export came back empty ("could not export the OS trust store").
+        .env_remove("PSModulePath")
         .creation_flags(CREATE_NO_WINDOW)
         .status()
         .map(|s| s.success())
@@ -1443,5 +1479,62 @@ fn log_info(msg: &str) {
         if let Some(sink) = guard.as_mut() {
             sink.write_line(msg);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh scratch resource dir per test (tests run in parallel).
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("vd-sidecar-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "-----BEGIN CERTIFICATE-----").unwrap();
+    }
+
+    fn pip_certifi(res: &Path) -> PathBuf {
+        res.join("python")
+            .join("cpython-3.12.16-windows-x86_64-none")
+            .join("Lib")
+            .join("site-packages")
+            .join("pip")
+            .join("_vendor")
+            .join("certifi")
+            .join("cacert.pem")
+    }
+
+    /// The 0.11.0 layout: no worker carries certifi, so without this fallback the
+    /// Python workers trusted only the sparse Windows root store again.
+    #[test]
+    fn finds_the_bundled_pythons_certifi_when_no_worker_has_one() {
+        let res = scratch("pip-certifi");
+        touch(&pip_certifi(&res));
+        assert_eq!(find_root_bundle(&res), Some(pip_certifi(&res)));
+        let _ = std::fs::remove_dir_all(&res);
+    }
+
+    #[test]
+    fn prefers_a_workers_own_certifi() {
+        let res = scratch("worker-certifi");
+        touch(&pip_certifi(&res));
+        let worker = res.join("workers").join("vd-translation-worker").join("_internal").join("certifi").join("cacert.pem");
+        touch(&worker);
+        assert_eq!(find_root_bundle(&res), Some(worker));
+        let _ = std::fs::remove_dir_all(&res);
+    }
+
+    #[test]
+    fn finds_nothing_in_an_empty_resource_dir() {
+        let res = scratch("no-certifi");
+        std::fs::create_dir_all(res.join("python").join("not-cpython")).unwrap();
+        assert_eq!(find_root_bundle(&res), None);
+        let _ = std::fs::remove_dir_all(&res);
     }
 }

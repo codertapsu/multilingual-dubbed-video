@@ -110,8 +110,26 @@ fn next_backoff(current: Duration) -> Duration {
     (current * 2).min(MAX_BACKOFF)
 }
 
+/// Installs rustls' process-wide crypto provider (ring) if nothing has yet.
+///
+/// This client only speaks plain HTTP to the loopback orchestrator, but reqwest
+/// is one crate shared with tauri-plugin-updater, which enables its
+/// `rustls-no-provider` feature. Cargo unifies features, so this client is built
+/// with rustls as well, and reqwest panics when it builds a client while no
+/// process default exists. The updater installs ring for itself, but only when
+/// an update check runs, and this client is built first, at launch. With
+/// `panic = "abort"` that closed the 0.11.0 test build about a second after
+/// every start. Ring is the updater's own choice and already compiled in.
+pub(crate) fn ensure_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        // Err only means another thread installed one first, which is fine.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 /// Builds a `reqwest` client with a per-operation timeout.
 fn client(timeout: Duration) -> Result<reqwest::Client, String> {
+    ensure_crypto_provider();
     reqwest::Client::builder()
         .timeout(timeout)
         // Talking to localhost only — no proxy.
@@ -334,6 +352,15 @@ mod tests {
     fn long_operations_get_a_much_larger_ceiling() {
         assert_eq!(DEFAULT_TIMEOUT, Duration::from_secs(120));
         assert!(LONG_OPERATION_TIMEOUT >= Duration::from_secs(30 * 60));
+    }
+
+    /// The 0.11.0 test build closed itself a second after every launch. Building
+    /// this client panicked: "No rustls crypto provider is configured", an abort in
+    /// release. It is the first reqwest client the app builds, before any update
+    /// check, so it must be buildable on its own.
+    #[test]
+    fn the_loopback_client_builds_before_the_updater_ever_runs() {
+        client(DEFAULT_TIMEOUT).expect("the orchestrator client must build");
     }
 
     #[test]

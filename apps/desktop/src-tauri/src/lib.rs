@@ -34,6 +34,10 @@ use sidecar::SidecarManager;
 /// when targeting iOS/Android.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Before anything can build a reqwest client: without a process-wide rustls
+    // provider every client panics, and in release that aborts the app (see
+    // orchestrator_client::ensure_crypto_provider; it also runs there).
+    orchestrator_client::ensure_crypto_provider();
     tauri::Builder::default()
         // --- Plugins ----------------------------------------------------
         // single-instance MUST be registered first (Tauri's own guidance): it

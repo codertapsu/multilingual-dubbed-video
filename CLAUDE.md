@@ -159,12 +159,14 @@ publish no Apple-Silicon wheels below `macosx_14_0`, so no build flag can go low
 `commands.rs` (the updater's OS gate) is kept in sync by the `min_macos_matches_config` test.
 Moving the floor = change one number + `cargo test min_macos`.
 
-**On macOS, never let rustc strip a Mach-O that dyld must load.** rustc strips Apple targets
+**On macOS, never let rustc strip a library that dyld must load.** rustc strips Apple targets
 with its bundled rust-objcopy, whose LINKEDIT string pool is 8-byte aligned only by luck of the
-sizes, and macOS 27.2's dyld rejects a misaligned one ("mis-aligned LINKEDIT string pool"). The
-first clean 0.11.0 build died with E0463 on serde_derive / phf_macros, whose stripped dylibs the
-compiler could no longer load. So `[profile.release.build-override] strip = false`, and
-`release-macos.sh` builds the app binary with `CARGO_PROFILE_RELEASE_STRIP=false`.
+sizes, and macOS 27.2's dyld refuses to LOAD a library whose pool is misaligned ("mis-aligned
+LINKEDIT string pool"). The first clean 0.11.0 build died with E0463 on serde_derive /
+phf_macros, whose stripped dylibs the compiler could no longer load. So
+`[profile.release.build-override] strip = false`. Executables are not checked today (the
+postject-built orchestrator has a 4-aligned pool and runs), but `release-macos.sh` builds the
+app binary unstripped anyway, in case that changes.
 
 **Windows installers are unsigned, by standing decision** — not a missing step. SmartScreen is
 expected; in-app updates are unaffected (they carry the updater's own signature).

@@ -71,13 +71,16 @@ if [ "${SIDECARS:-}" = "1" ]; then
 fi
 
 echo "==> build the app — notary creds withheld so tauri build does NOT notarize"
-# The app binary is NOT stripped on macOS. rustc strips Apple targets with its
-# bundled rust-objcopy, whose output only sometimes has the 8-byte-aligned LINKEDIT
-# string pool that macOS 27.2's dyld requires ("mis-aligned LINKEDIT string pool"),
-# so a stripped binary could build fine and then refuse to launch, depending on
-# nothing more than the sizes inside it. Apple's linker always aligns it. The cost
-# is a few MB, and crash reports gain symbols. (Build scripts and proc macros: see
-# [profile.release.build-override] in apps/desktop/src-tauri/Cargo.toml.)
+# The app binary is not stripped on macOS either, as a precaution. rustc strips
+# Apple targets with its bundled rust-objcopy, which leaves the LINKEDIT string
+# pool 8-byte aligned only by luck of the sizes, and macOS 27.2's dyld refuses a
+# misaligned one when it loads a LIBRARY ("mis-aligned LINKEDIT string pool"):
+# that is what broke the build (see [profile.release.build-override] in
+# apps/desktop/src-tauri/Cargo.toml). Executables are not checked today (the
+# postject-built orchestrator has a 4-aligned pool and launches fine), but if
+# dyld ever starts checking them, a stripped app binary would fail to launch on
+# nothing more than its sizes. Apple's linker always aligns it. Unstripped it is
+# a little larger, and crash reports gain symbols.
 env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID CARGO_PROFILE_RELEASE_STRIP=false pnpm app:build
 
 echo "==> deep-sign every Mach-O + notarize + staple"

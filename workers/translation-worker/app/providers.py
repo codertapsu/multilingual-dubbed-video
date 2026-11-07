@@ -65,6 +65,42 @@ def argos_unavailable(exc: BaseException) -> AppErrorException:
     )
 
 
+def _drop_argos_translation_cache() -> None:
+    """Make Argos rebuild every package translation on the next language load.
+
+    get_installed_languages() caches each package's translation module-wide
+    (``installed_translates``), and the cached object keeps pointing at the
+    Language objects of the call that first built it. Pivots (zh -> en -> vi) are
+    then built from those stale objects: install zh->en, then en->vi, in one
+    process, which is exactly what first-run setup does for a Chinese source, and
+    the old English has no route on to Vietnamese. zh->vi failed until the app
+    restarted. Dropping the cache costs one model reload after an install.
+    Best-effort: if Argos ever reorganises this, translate() still chains
+    through English on its own (see _route).
+    """
+    try:
+        from argostranslate import translate as argos_translate  # type: ignore  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 - the caller reports an import failure properly
+        return
+    cache = getattr(argos_translate, "installed_translates", None)
+    if isinstance(cache, list):
+        cache.clear()
+    cache_clear = getattr(getattr(argos_translate, "get_installed_languages", None), "cache_clear", None)
+    if callable(cache_clear):
+        cache_clear()
+
+
+class _Chained:
+    """Two translations in a row: through English when Argos offers no route."""
+
+    def __init__(self, first, second) -> None:  # noqa: ANN001 - Argos ITranslation objects
+        self._first = first
+        self._second = second
+
+    def translate(self, text: str) -> str:
+        return self._second.translate(self._first.translate(text))
+
+
 @runtime_checkable
 class TranslationBackend(Protocol):
     """Protocol every translation backend implements.
@@ -152,6 +188,7 @@ class ArgosBackend:
         """Force a reload of installed languages (after installing packages)."""
         self._loaded = False
         self._languages = []
+        _drop_argos_translation_cache()
         self._ensure_loaded()
 
     def refresh_index(self) -> None:
@@ -486,16 +523,37 @@ class ArgosBackend:
         if not text.strip():
             return text  # nothing to do; preserve empty/whitespace segments
 
-        from_obj = self._find_language(from_lang)
-        to_obj = self._find_language(to_lang)
-        translation = None
-        if from_obj is not None and to_obj is not None:
-            translation = from_obj.get_translation(to_obj)
-
+        translation = self._route(from_lang, to_lang)
         if translation is None:
             raise self._missing_package_error(from_lang, to_lang)
 
         return translation.translate(text)
+
+    def _route(self, from_lang: str, to_lang: str):  # noqa: ANN202 - an Argos ITranslation or _Chained
+        """Argos's own route for the pair (direct or its pivot), else via English.
+
+        Argos publishes almost no direct pair between two non-English languages,
+        and the app installs the English legs instead (argosPivotLegs). Argos
+        normally joins them itself; this chains them when it does not, so a stale
+        Argos graph can never again cost a whole dub (see
+        _drop_argos_translation_cache).
+        """
+        from_obj = self._find_language(from_lang)
+        to_obj = self._find_language(to_lang)
+        if from_obj is None or to_obj is None:
+            return None
+        direct = from_obj.get_translation(to_obj)
+        if direct is not None or "en" in (from_lang, to_lang):
+            return direct
+        english = self._find_language("en")
+        if english is None:
+            return None
+        first = from_obj.get_translation(english)
+        second = english.get_translation(to_obj)
+        if first is None or second is None:
+            return None
+        logger.info("Argos: no %s->%s route; translating through English.", from_lang, to_lang)
+        return _Chained(first, second)
 
     # -- helpers ----------------------------------------------------------
 
@@ -508,6 +566,26 @@ class ArgosBackend:
     @staticmethod
     def _missing_package_error(from_lang: str, to_lang: str) -> AppErrorException:
         """Build the structured TRANSLATION_PACKAGE_MISSING error."""
+        if getattr(sys, "frozen", False):
+            # The installed app: say which packs, in the app's terms. Non-English
+            # pairs need both English legs (Argos publishes no zh->vi package).
+            legs = (
+                [(from_lang, to_lang)]
+                if "en" in (from_lang, to_lang)
+                else [(from_lang, "en"), ("en", to_lang)]
+            )
+            packs = " and ".join(f"{a} → {b}" for a, b in legs)
+            return AppErrorException.make(
+                code="TRANSLATION_PACKAGE_MISSING",
+                message=f"No offline translation pack is installed for {from_lang} → {to_lang}.",
+                status_code=422,
+                remediation=(
+                    f"Open Settings → Translation packs and install {packs}, then retry the step. "
+                    "Or choose another translator for this project (the local AI translator or a "
+                    "cloud provider)."
+                ),
+                docs_ref=_TROUBLESHOOTING_DOC,
+            )
         return AppErrorException.make(
             code="TRANSLATION_PACKAGE_MISSING",
             message=(

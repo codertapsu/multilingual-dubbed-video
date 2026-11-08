@@ -293,6 +293,22 @@ function Test-Tool {
   }
 }
 
+# WiX: `tauri build` does not look on PATH. It uses its own copy, downloaded on
+# first use into %LOCALAPPDATA%\tauri\WixTools314, and that is what has built
+# every .msi on this machine. Checking PATH alone warned on a box that builds the
+# .msi fine, which teaches people to ignore the one warning that matters.
+function Test-Wix {
+  $cached = Join-Path $env:LOCALAPPDATA 'tauri\WixTools314\candle.exe'
+  $onPath = Get-Command candle -ErrorAction SilentlyContinue
+  if (Test-Path $cached) {
+    Write-Check 'OK' 'WiX (for the .msi)' "Tauri's copy: $(Split-Path $cached)"
+  } elseif ($onPath) {
+    Write-Check 'OK' 'WiX (for the .msi)' $onPath.Source
+  } else {
+    Write-Check 'WARN' 'WiX (for the .msi)' 'not downloaded yet' 'tauri build fetches it on first use (needs internet); the .msi is optional but 26 users have one'
+  }
+}
+
 function Invoke-Preflight {
   param([switch]$EnvironmentOnly)
   Write-Host ''
@@ -302,7 +318,7 @@ function Invoke-Preflight {
     Test-Tool 'node'  'node'  'winget install --id OpenJS.NodeJS.LTS -e'
     Test-Tool 'pnpm'  'pnpm'  'corepack enable; corepack prepare pnpm@latest --activate'
     Test-Tool 'cargo' 'cargo' 'install Rust (MSVC toolchain): https://rustup.rs'
-    Test-Tool 'WiX (candle.exe, for the .msi)' 'candle' 'see docs/WINDOWS.md - the .msi is optional but 26 users have one' -Optional
+    Test-Wix
     Test-VersionConsistency
     Test-WorkerSuites
   }

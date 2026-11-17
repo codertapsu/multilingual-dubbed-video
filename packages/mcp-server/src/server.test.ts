@@ -152,8 +152,8 @@ describe('VideoDubber MCP server', () => {
         'adjust_lines', 'cancel_dubbing', 'create_project', 'download_video', 'get_download', 'get_project',
         'get_status', 'get_transcript', 'get_translation_context', 'get_translation_report', 'install_engine', 'list_engines',
         'list_languages', 'list_projects', 'list_providers', 'list_voices', 'open_output_folder',
-        'regenerate_voices', 'render_video', 'set_translation_context', 'set_translations', 'start_dubbing',
-        'update_settings',
+        'regenerate_voices', 'render_video', 'set_save_folder', 'set_translation_context', 'set_translations',
+        'start_dubbing', 'update_settings',
       ].sort(),
     );
     for (const t of tools) {
@@ -250,6 +250,58 @@ describe('VideoDubber MCP server', () => {
     expect(r.text).toContain('proj_9');
     expect(r.text).toContain('Note: Using whisper.cpp on the GPU.');
     expect(r.text).toContain('whisper-model-large-v3-turbo');
+  });
+
+  it('create_project saves where Claude is told to, and get_project says where that is', async () => {
+    fake.routes.set('GET /project-defaults', () => ({ settings: project().settings, notes: [] }));
+    fake.routes.set('POST /projects', (_q, body) => ({
+      ...project(),
+      id: 'proj_9',
+      outputDir: (body as { outputDir: string }).outputDir,
+      outputFileName: 'wukong 3.vi',
+    }));
+    fake.routes.set('POST /projects/proj_9/probe', () => ({ durationMs: 90_000 }));
+    fake.routes.set('POST /projects/proj_9/ensure-resources', () => ({ installing: false }));
+    fake.routes.set('GET /projects/proj_9', () => ({
+      project: project({ id: 'proj_9', outputDir: 'D:/Dubs', outputFileName: 'wukong 3.vi' }),
+      pipeline: pipeline(),
+    }));
+    await connect();
+
+    const r = await call('create_project', { videoPath: 'D:/videos/wukong 3.mp4', targetLanguage: 'vi-VN', saveTo: ' D:/Dubs ' });
+    expect(r.isError).toBe(false);
+    const body = fake.calls.find((c) => c.method === 'POST' && c.path === '/projects')!.body as { outputDir?: string };
+    expect(body.outputDir).toBe('D:/Dubs');
+    expect(r.text).toContain('Saves to: D:/Dubs/wukong 3.vi.mp4');
+
+    const g = await call('get_project', { projectId: 'proj_9' });
+    expect(g.text).toContain('Saves to: D:/Dubs/wukong 3.vi.mp4');
+  });
+
+  it('create_project leaves the folder to the app when Claude names none', async () => {
+    fake.routes.set('GET /project-defaults', () => ({ settings: project().settings, notes: [] }));
+    fake.routes.set('POST /projects', () => ({ ...project(), id: 'proj_9' }));
+    fake.routes.set('POST /projects/proj_9/probe', () => ({ durationMs: 90_000 }));
+    fake.routes.set('POST /projects/proj_9/ensure-resources', () => ({ installing: false }));
+    await connect();
+    await call('create_project', { videoPath: 'D:/videos/wukong.mp4', targetLanguage: 'vi-VN' });
+    const body = fake.calls.find((c) => c.method === 'POST' && c.path === '/projects')!.body as Record<string, unknown>;
+    expect('outputDir' in body).toBe(false);
+  });
+
+  it('set_save_folder moves a project to a folder, or back to the default', async () => {
+    fake.routes.set('PUT /projects/proj_1/output-dir', (_q, body) => {
+      const dir = (body as { outputDir: string | null }).outputDir;
+      return dir ? project({ outputDir: dir, outputFileName: 'wukong.vi' }) : project();
+    });
+    await connect();
+
+    const chosen = await call('set_save_folder', { projectId: 'proj_1', folder: 'D:/Dubs' });
+    expect(chosen.text).toContain('Saves to: D:/Dubs/wukong.vi.mp4');
+    const back = await call('set_save_folder', { projectId: 'proj_1' });
+    expect(back.text).toContain('Saves to: C:/nonexistent/proj_1/render/output.mp4');
+    const bodies = fake.calls.filter((c) => c.method === 'PUT').map((c) => c.body);
+    expect(bodies).toEqual([{ outputDir: 'D:/Dubs' }, { outputDir: null }]);
   });
 
   describe('translation work', () => {

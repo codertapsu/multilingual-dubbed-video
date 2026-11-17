@@ -115,7 +115,7 @@ http://127.0.0.1:5100` or set `VIDEODUBBER_URL`.
 | `install_engine` | Install an engine pack (reports download progress). Claude is asked to tell you the size first. |
 | `download_video`, `get_download` | Fetch a video from a link and follow the download. |
 | `list_projects`, `get_project` | Projects, and one project's progress, step by step, with the end of its log. `waitSeconds` (up to 50) waits for progress. |
-| `create_project` | Create a project from a video file, starting from the same automatic settings the New Project wizard uses (the best engines installed here), with any overrides. Can start the dub at once. |
+| `create_project` | Create a project from a video file, starting from the same automatic settings the New Project wizard uses (the best engines installed here), with any overrides. `saveTo` chooses the folder for the finished video. Can start the dub at once. |
 | `start_dubbing`, `cancel_dubbing` | Start, continue, redo from a step, or stop. |
 | `update_settings` | Change project settings; reports which step must re-run for the change to take effect. |
 | `get_transcript` | The lines with timing, source text, translation, and each line's speaking budget (e.g. `≤13 syllables`) and current length. Can page and show only lines that need attention. |
@@ -125,6 +125,7 @@ http://127.0.0.1:5100` or set `VIDEODUBBER_URL`.
 | `get_translation_report` | What the app's own passes did to the translation: whether the character sheet was built (and why not), lines that failed the checks (repaired or still flagged), what the review model changed or was refused, what auto-fit shortened. |
 | `get_translation_context`, `set_translation_context` | The character sheet: synopsis, cast, glossary and forms of address, used by every translation pass. |
 | `render_video` | Mix and render the final video (optionally changing the subtitle mode). |
+| `set_save_folder` | Choose the folder a project saves its finished video and subtitles in, or go back to the default. A video already made moves along. |
 | `open_output_folder` | Open the folder with the finished video. |
 
 Two prompts are included: **Dub a video with the best quality** and **Review and improve a dub's

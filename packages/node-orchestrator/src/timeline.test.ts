@@ -337,6 +337,49 @@ describe('HTTP: /file byte ranges and the timeline routes', () => {
     expect(bad.headers['content-range']).toBe('bytes */10');
   });
 
+  it("serves a project's finished video from the folder chosen for it, and nothing else there", async () => {
+    const dubs = path.join(tmp, 'Dubs');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/projects',
+      payload: createProjectInput(await writeDummyVideo(tmp), { name: 'Clip', outputDir: dubs }),
+    });
+    expect(created.statusCode).toBe(201);
+    const video = path.join(dubs, 'Clip.vi.mp4');
+    await fsp.writeFile(video, 'dub');
+    await fsp.writeFile(path.join(dubs, 'private.txt'), "someone else's file");
+
+    const ok = await app.inject({ method: 'GET', url: `/file?path=${encodeURIComponent(video)}` });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.body).toBe('dub');
+    const refused = await app.inject({
+      method: 'GET',
+      url: `/file?path=${encodeURIComponent(path.join(dubs, 'private.txt'))}`,
+    });
+    expect(refused.statusCode).toBe(403);
+  });
+
+  it('changes where a project is saved through PUT /projects/:id/output-dir', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/projects',
+      payload: createProjectInput(await writeDummyVideo(tmp), { name: 'Clip' }),
+    });
+    const { id } = created.json() as { id: string };
+    const dubs = path.join(tmp, 'Dubs');
+
+    const chosen = await app.inject({ method: 'PUT', url: `/projects/${id}/output-dir`, payload: { outputDir: dubs } });
+    expect(chosen.statusCode).toBe(200);
+    expect(chosen.json()).toMatchObject({ outputDir: dubs, outputFileName: 'Clip.vi' });
+
+    const relative = await app.inject({ method: 'PUT', url: `/projects/${id}/output-dir`, payload: { outputDir: 'Dubs' } });
+    expect(relative.statusCode).toBeGreaterThanOrEqual(400);
+    expect(relative.json()).toMatchObject({ error: { code: 'OUTPUT_NOT_WRITABLE' } });
+
+    const reset = await app.inject({ method: 'PUT', url: `/projects/${id}/output-dir`, payload: { outputDir: null } });
+    expect(reset.statusCode).toBe(200);
+    expect((reset.json() as { outputFileName?: string }).outputFileName).toBeUndefined();
+  });
   it('round-trips a PATCH through the timeline route, and maps a bad edit to 400', async () => {
     const created = await app.inject({
       method: 'POST',

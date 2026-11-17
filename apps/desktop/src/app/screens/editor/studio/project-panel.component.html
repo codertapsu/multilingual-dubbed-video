@@ -45,6 +45,19 @@
     </section>
   }
 
+  <!-- Where this project saves its finished video: shown before the first
+       render too, so the user knows where it will go and can choose. -->
+  @if (store.project(); as project) {
+    <section class="panel-block stack">
+      <h2>{{ 'output-folder.title' | translate }}</h2>
+      <vd-output-folder
+        [project]="project"
+        [locked]="project.status === 'running' || project.status === 'queued'"
+        (changed)="onOutputFolderChanged($event)"
+      />
+    </section>
+  }
+
   <!-- All applied settings + change-and-re-dub. Lets the user swap an engine,
        model or voice and re-render from the affected stage (earlier stages are
        reused, so e.g. changing the voice does NOT redo STT + translation). -->

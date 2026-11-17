@@ -131,7 +131,9 @@ Click **+ New project** and work through the wizard:
 3. **Subtitle mode** — none, a separate `.srt` or `.vtt` file next to the video,
    a soft subtitle track inside the video that players can switch on and off, or
    subtitles burned permanently into the picture.
-4. **Start.**
+4. **Save to** — where the finished video goes (see
+   [Choosing where a project is saved](#choosing-where-a-project-is-saved)).
+5. **Start.**
 
 The engines start from the best ones **installed on this computer**: if you have
 installed the GPU transcription engine, the local AI translator or the neural
@@ -225,6 +227,36 @@ Press **?** in the editor for the full list of keyboard shortcuts.
 The **Export** screen shows the finished video, its output path, and an
 **Open output folder** button. **Re-render** produces the video again with a
 different subtitle treatment without redoing any of the dubbing work.
+
+<a id="choosing-where-a-project-is-saved"></a>
+
+### Choosing where a project is saved
+
+Each project has its own **Save to** folder, shown on the last page of the
+new-project wizard, in the studio's project panel and on the Export screen.
+
+- **By default** the finished video is `render/output.mp4` inside the project's
+  own folder in VideoDubber's data (see [Where your files live](#7-where-your-files-live)).
+- **Choose folder…** picks any other folder, for example `D:\Dubs` or a folder
+  in Movies. There the files are named after the project and its language,
+  `My video.vi.mp4` (and `My video.vi.srt` / `.vtt` beside it), so several
+  projects can share one folder without overwriting each other: a second
+  project with the same name becomes `My video (2).vi.mp4`.
+- **Different projects can use different folders.** New projects start in the
+  folder you chose last; **Use the default folder** in the wizard goes back to
+  the default for new projects too.
+- **Changing the folder later** moves a video that is already made (and its
+  subtitle files) to the new folder. It is refused while the project is
+  processing, and if a file cannot be moved (on Windows, usually because the
+  video is open in a player) nothing moves: close the player and try again.
+- Only the finished files go there. The working files (audio, voice clips,
+  drafts) always stay in the project's folder in VideoDubber's data.
+
+If the folder you chose last time is gone (a USB drive that is not plugged in),
+the new project is saved to the default folder instead and the wizard says so;
+new projects then start in the default folder until you choose one again.
+In the browser version there is no folder picker: type or paste the folder's
+full path.
 
 ---
 
@@ -368,7 +400,7 @@ Inside it:
 
 | Folder / file | Contents |
 |---|---|
-| `projects/` | One folder per dubbing project: the working files and the finished video. |
+| `projects/` | One folder per dubbing project: the working files, and the finished video unless you chose another folder for it ([Save to](#choosing-where-a-project-is-saved)). |
 | `models/` | The downloaded AI models — transcription models, translation packs, voices. This is usually the biggest folder. |
 | `engines/` | Installed engine packs. |
 | `setup.json`, `preferences.json` | Your first-run state and settings. |

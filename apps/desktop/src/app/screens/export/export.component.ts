@@ -9,12 +9,14 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { projectOutputVideoPath } from '@videodubber/shared';
 
 import { environment } from '../../core/environment';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
+import { OutputFolderComponent } from '../../shared/output-folder/output-folder.component';
 import {
   ALL_SUBTITLE_EXPORT_MODES,
   SUBTITLE_EXPORT_MODE_LABELS,
@@ -22,6 +24,7 @@ import {
 } from '../../core/util/format';
 import type {
   AppError,
+  Project,
   RenderFinalVideoResult,
   SubtitleExportMode,
 } from '../../core/models';
@@ -37,7 +40,7 @@ import { TranslatePipe } from '../../core/i18n';
   selector: 'vd-export',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent, TranslatePipe],
+  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent, OutputFolderComponent, TranslatePipe],
   templateUrl: './export.component.html',
   styleUrl: './export.component.scss',
 })
@@ -62,7 +65,8 @@ export class ExportComponent implements OnInit {
     const r = this.result();
     if (r) return r.outputPath;
     const proj = this.store.current();
-    return proj ? `${proj.outputDir}/output.mp4` : null;
+    // Named after the project in a folder the user chose (pipeline/output.ts).
+    return proj ? projectOutputVideoPath(proj) : null;
   });
 
   /**
@@ -126,6 +130,13 @@ export class ExportComponent implements OnInit {
     } finally {
       this.opening.set(false);
     }
+  }
+
+  /** "Save to" changed: the files moved, so the last render's paths are stale. */
+  protected onOutputFolderChanged(project: Project): void {
+    this.store.setCurrent(project);
+    this.result.set(null);
+    this.previewFailed.set(false);
   }
 
   protected onPreviewError(): void {

@@ -93,3 +93,69 @@ describe('ProjectStore round-trip', () => {
     ).rejects.toMatchObject({ appError: { code: 'UNSUPPORTED_MEDIA' } });
   });
 });
+
+describe('ProjectStore — the folder chosen for the finished files', () => {
+  it('saves to the project render/ folder when none is chosen', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    expect(project.outputDir).toBe(store.paths(project.id).renderDir);
+    expect(project.outputFileName).toBeUndefined();
+  });
+
+  it('names the files after the project in a chosen folder, never over another project', async () => {
+    const video = await writeDummyVideo(tmp);
+    const dubs = path.join(tmp, 'My Dubs');
+    await fsp.mkdir(dubs);
+    await fsp.writeFile(path.join(dubs, 'Clip.vi.mp4'), 'another project');
+
+    const project = await store.createProject(createProjectInput(video, { name: 'Clip', outputDir: dubs }));
+    expect(project.outputDir).toBe(dubs);
+    expect(project.outputFileName).toBe('Clip (2).vi');
+    expect((await store.getProject(project.id)).outputFileName).toBe('Clip (2).vi');
+  });
+
+  it('refuses a folder it cannot write in before creating anything', async () => {
+    const video = await writeDummyVideo(tmp);
+    const file = path.join(tmp, 'a-file');
+    await fsp.writeFile(file, 'x');
+    await expect(
+      store.createProject(createProjectInput(video, { outputDir: path.join(file, 'Dubs') })),
+    ).rejects.toMatchObject({ appError: { code: 'OUTPUT_NOT_WRITABLE' } });
+    // Not even an empty workspace folder.
+    expect(await fsp.readdir(path.join(tmp, 'projects')).catch(() => [])).toEqual([]);
+  });
+});
+
+describe('ProjectStore — names in a shared folder (review findings)', () => {
+  it('two projects with the same name in one folder get different names before either renders', async () => {
+    const video = await writeDummyVideo(tmp);
+    const dubs = path.join(tmp, 'Dubs');
+    const a = await store.createProject(createProjectInput(video, { name: 'Clip', outputDir: dubs }));
+    const b = await store.createProject(createProjectInput(video, { name: 'Clip', outputDir: dubs }));
+    expect(a.outputFileName).toBe('Clip.vi');
+    expect(b.outputFileName).toBe('Clip (2).vi');
+  });
+
+  it('two projects created at the same moment cannot take the same free name', async () => {
+    const video = await writeDummyVideo(tmp);
+    const dubs = path.join(tmp, 'Dubs');
+    const made = await Promise.all(
+      [1, 2, 3].map(() => store.createProject(createProjectInput(video, { name: 'Clip', outputDir: dubs }))),
+    );
+    expect(new Set(made.map((p) => p.outputFileName)).size).toBe(3);
+  });
+
+  it('reads an old project that names another folder without a file name of its own as saving to its render/ folder', async () => {
+    // The old wizard's text field could set outputDir; the render ignored it
+    // and always wrote render/output.mp4.
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    await writeJsonFile(store.paths(project.id).projectJson, { ...project, outputDir: path.join(tmp, 'elsewhere') });
+    expect((await store.getProject(project.id)).outputDir).toBe(store.paths(project.id).renderDir);
+    expect((await store.listProjects())[0]!.outputDir).toBe(store.paths(project.id).renderDir);
+  });
+});
+
+async function writeJsonFile(file: string, value: unknown): Promise<void> {
+  await fsp.writeFile(file, JSON.stringify(value), 'utf8');
+}

@@ -364,6 +364,28 @@ export class IpcService {
     return res?.path ?? null;
   }
 
+  /**
+   * Native choose-folder dialog, titled `title`, opening in `start` when that
+   * folder exists. Only inside Tauri: in the browser there is no native
+   * dialog, so this resolves `null` and the UI offers a text field instead.
+   * Also `null` when the user cancels.
+   */
+  async pickFolder(title?: string, start?: string): Promise<string | null> {
+    if (!this.tauri) return null;
+    const res = await this.invoke<{ path: string | null }>('pick_folder', { title, start });
+    return res?.path ?? null;
+  }
+
+  /**
+   * PUT /projects/:id/output-dir — where this project saves its finished video
+   * and subtitles: a folder, or `null` for its own folder in VideoDubber's
+   * data. Files already rendered move along. HTTP in both modes (no Rust
+   * command needed).
+   */
+  setProjectOutputDir(projectId: string, outputDir: string | null): Promise<Project> {
+    return this.http<Project>('PUT', `/projects/${encodeURIComponent(projectId)}/output-dir`, { outputDir });
+  }
+
   getWorkersHealth(): Promise<WorkersHealth> {
     return this.call<WorkersHealth>('get_workers_health', {}, 'GET', '/workers/health');
   }

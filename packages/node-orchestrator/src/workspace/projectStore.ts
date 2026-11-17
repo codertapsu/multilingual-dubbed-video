@@ -25,6 +25,8 @@ import {
   type ProjectSettings,
 } from '@videodubber/shared';
 import { ensureWorkspaceDirs, fileExists, workspacePaths, type WorkspacePaths } from './paths.js';
+import { acceptOutputDir, freeOutputBaseName, samePath } from './outputFolder.js';
+import { KeyedMutex } from '../keyedMutex.js';
 
 /** Generate a URL-safe, filesystem-safe project id. */
 export function generateProjectId(): string {
@@ -72,6 +74,46 @@ async function readJson<T>(filePath: string): Promise<T | undefined> {
 export class ProjectStore {
   constructor(private readonly projectsDir: string) {}
 
+  /** Serializes choosing a file name in a shared folder with saving it (withOutputName). */
+  private readonly outputNames = new KeyedMutex();
+
+  /**
+   * Choose a free base name for a project's finished files in `dir`, and run
+   * `save` with it, as one step. A name counts as taken when a file there
+   * uses it, or another project saving to that folder holds it before it has
+   * rendered anything: two projects named "Clip" in one folder both got
+   * "Clip.vi", and the second render replaced the first one's video. Locked,
+   * so two projects choosing at once cannot take the same free name.
+   */
+  async withOutputName<T>(
+    dir: string,
+    projectName: string,
+    targetLanguage: string,
+    excludeProjectId: string | undefined,
+    save: (baseName: string) => Promise<T>,
+  ): Promise<T> {
+    return this.outputNames.run('output-names', async () => {
+      const held = new Set(
+        (await this.listProjects())
+          .filter((p) => p.id !== excludeProjectId && p.outputFileName && samePath(p.outputDir, dir))
+          .map((p) => p.outputFileName!.toLowerCase()),
+      );
+      return save(freeOutputBaseName(dir, projectName, targetLanguage, held));
+    });
+  }
+
+  /**
+   * A project as it reads: one that saves to its own render/ folder says so.
+   * Older ones may name another folder without a file name of their own
+   * (the old wizard's ignored text field; a moved projects folder): the
+   * render always wrote to render/, so that is where their video is.
+   */
+  private withOutputFolder(project: Project): Project {
+    if (project.outputFileName) return project;
+    const renderDir = this.paths(project.id).renderDir;
+    return project.outputDir === renderDir ? project : { ...project, outputDir: renderDir };
+  }
+
   /** Resolve the workspace paths for a project id. */
   paths(projectId: string): WorkspacePaths {
     return workspacePaths(this.projectsDir, projectId);
@@ -102,6 +144,11 @@ export class ProjectStore {
     }
     const settings: ProjectSettings = { ...input.settings, sourceLanguage, targetLanguage };
 
+    // A folder the user chose for the finished files: checked BEFORE anything
+    // is created, so a folder VideoDubber cannot write to leaves no half-made
+    // project behind.
+    const chosenDir = input.outputDir?.trim() ? await acceptOutputDir(input.outputDir) : undefined;
+
     const id = generateProjectId();
     const paths = this.paths(id);
     await ensureWorkspaceDirs(paths);
@@ -124,26 +171,24 @@ export class ProjectStore {
     }
 
     const now = new Date().toISOString();
-    const outputDir = input.outputDir ?? paths.renderDir;
-
     const project: Project = {
       id,
       name: input.name,
       inputVideoPath: internalInput,
       workspaceDir: paths.root,
-      outputDir,
+      outputDir: chosenDir ?? paths.renderDir,
       settings,
       status: 'created',
       createdAt: now,
       updatedAt: now,
     };
 
-    const pipeline = createInitialPipelineState(id);
-
-    await this.saveProject(project);
-    await this.savePipeline(pipeline);
-
-    return project;
+    await this.savePipeline(createInitialPipelineState(id));
+    // In a chosen folder the files are named after the project, uniquely there.
+    if (!chosenDir) return this.saveProject(project);
+    return this.withOutputName(chosenDir, input.name, targetLanguage, id, (outputFileName) =>
+      this.saveProject({ ...project, outputFileName }),
+    );
   }
 
   /** Persist `project.json`, bumping `updatedAt`. */
@@ -163,12 +208,13 @@ export class ProjectStore {
         remediation: 'Confirm the project id; list projects to see valid ids.',
       });
     }
-    return project;
+    return this.withOutputFolder(project);
   }
 
   /** Load a project or undefined if missing (non-throwing variant). */
   async tryGetProject(projectId: string): Promise<Project | undefined> {
-    return readJson<Project>(this.paths(projectId).projectJson);
+    const project = await readJson<Project>(this.paths(projectId).projectJson);
+    return project ? this.withOutputFolder(project) : undefined;
   }
 
   /** Persist the pipeline state for a project. */
@@ -207,7 +253,7 @@ export class ProjectStore {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const project = await readJson<Project>(this.paths(entry.name).projectJson).catch(() => undefined);
-      if (project) projects.push(project);
+      if (project) projects.push(this.withOutputFolder(project));
     }
 
     // Most-recently-updated first.

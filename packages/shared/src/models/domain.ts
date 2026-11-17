@@ -279,8 +279,18 @@ export interface Project {
   inputVideoPath: string;
   /** Absolute path to the per-project workspace directory. */
   workspaceDir: string;
-  /** Absolute path to the directory that receives final outputs. */
+  /**
+   * Absolute path to the directory that receives the finished video and its
+   * subtitle files: the workspace's render/ folder by default, or a folder the
+   * user chose for this project (pipeline/output.ts).
+   */
   outputDir: string;
+  /**
+   * Base name of the finished files in a folder the user chose ("My video.vi"
+   * for "My video.vi.mp4"), fixed when the folder is chosen so projects that
+   * share a folder never overwrite each other. Absent: "output".
+   */
+  outputFileName?: string;
   /** Project settings. */
   settings: ProjectSettings;
   /** Current lifecycle status. */
@@ -460,6 +470,9 @@ export interface CreateProjectInput {
   inputVideoPath: string;
   /** Initial project settings. */
   settings: ProjectSettings;
-  /** Optional explicit output directory. */
+  /**
+   * Where to save the finished video and subtitles (an absolute folder path).
+   * Absent or empty: the project's own render/ folder inside the app's data.
+   */
   outputDir?: string;
 }

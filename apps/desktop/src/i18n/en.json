@@ -341,6 +341,29 @@
     "rendering": "Rendering…",
     "rendering-label": "Encoding the final video — this can take a few minutes"
   },
+  "output-folder": {
+    "title": "Save to",
+    "file-label": "Finished video:",
+    "default-place": "This is the project's own folder inside VideoDubber's data (the default). You can choose any other folder.",
+    "chosen-place": "A folder you chose for this project.",
+    "choose": "Choose folder…",
+    "change": "Change folder…",
+    "use-default": "Use the default folder",
+    "open": "Open folder",
+    "saving": "Saving…",
+    "dialog-title": "Choose where to save this project's finished video",
+    "locked": "The folder can be changed once this project stops processing.",
+    "hint": "Only the finished video and its subtitle files (.srt, .vtt) are saved here. VideoDubber's working files (audio, voice clips, drafts) stay in its own data folder. Each project can be saved to a different folder.",
+    "more": "How files are named and moved",
+    "naming-hint": "In a folder you choose, the files are named after the project and its language, for example “{{ example }}”, so several projects can share one folder without overwriting each other.",
+    "moved-hint": "If the video has already been made, changing the folder moves it (and its subtitle files) to the new folder.",
+    "path-label": "Folder path",
+    "path-ph": "e.g. D:\\Dubs or /Users/you/Movies/Dubs",
+    "apply": "Use this folder",
+    "browser-hint": "Type or paste the full path of a folder on this computer. In the desktop app, “Choose folder…” opens a folder picker instead.",
+    "change-failed": "VideoDubber couldn't change where this project is saved.",
+    "change-failed-fix": "Choose a folder you can write to (not a read-only or protected location) and give its full path. If the video is open in another app, such as a video player, close it and try again."
+  },
   "processing": {
     "title": "Processing",
     "stream-offline": "Stream offline",
@@ -759,9 +782,6 @@
     "video-codec": "Video codec",
     "audio": "Audio",
     "probe-failed": "Media could not be probed automatically. You can still start — the pipeline probes the file as its first step.",
-    "output-folder": "Output folder",
-    "output-folder-ph": "(defaults to the project workspace render/ folder)",
-    "output-folder-hint": "Final video and any sidecar subtitles are written here.",
     "preparing-hint": "Downloading the AI models for your selected languages — Start unlocks once they're ready (this continues in the background).",
     "preparing-label": "Preparing models…",
     "back": "← Back",
@@ -789,7 +809,13 @@
       "translation": "translation (sends the transcript text)",
       "refine": "review & refine (sends the transcript and the translations)",
       "tts": "text-to-speech (sends the translated text)"
-    }
+    },
+    "output-folder-fallback": "The folder you used last time ({{ dir }}) can't be used right now (is that drive connected?), so this project is saved in VideoDubber's default folder, and so are new projects until you choose a folder again.",
+    "output-folder-remember": "New projects start in the folder you chose last.",
+    "browse": "Browse…",
+    "browse-title": "Choose a video file on this computer",
+    "browse-title-browser": "The file picker is only in the desktop app. Paste the video's full path instead.",
+    "output-folder-remember-reset": "“Use the default folder” here makes them start in the default folder again."
   },
   "status": {
     "created": "Created",

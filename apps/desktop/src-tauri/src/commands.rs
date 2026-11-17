@@ -246,6 +246,44 @@ pub async fn pick_video_file(app: AppHandle) -> Result<Value, String> {
     Ok(json!({ "path": picked }))
 }
 
+/// `pick_folder` opens a native choose-folder dialog and returns
+/// `{ path: string | null }` (null if the user cancels). Used to choose where
+/// a project saves its finished video. `title` comes from the UI so it is in
+/// the user's language; `start` opens the dialog in the folder the project
+/// saves to now, when that folder still exists. New folders can be made from
+/// the dialog (macOS hides that button unless asked).
+#[tauri::command]
+pub async fn pick_folder(
+    app: AppHandle,
+    title: Option<String>,
+    start: Option<String>,
+) -> Result<Value, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<String>>();
+
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title(title.unwrap_or_else(|| "Choose a folder".to_string()))
+        .set_can_create_directories(true);
+    if let Some(dir) = start.filter(|d| std::path::Path::new(d).is_dir()) {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.pick_folder(move |maybe_path| {
+        // Receiver may be gone if the command future was cancelled.
+        let _ = tx.send(maybe_path.map(|p| p.to_string()));
+    });
+
+    let picked = rx.await.map_err(|e| {
+        app_error_json(
+            "UNKNOWN",
+            &format!("folder dialog channel closed before a selection was made: {e}"),
+            None,
+        )
+    })?;
+
+    Ok(json!({ "path": picked }))
+}
+
 // ---------------------------------------------------------------------------
 // Workers / languages (handy proxies the UI uses on startup)
 // ---------------------------------------------------------------------------

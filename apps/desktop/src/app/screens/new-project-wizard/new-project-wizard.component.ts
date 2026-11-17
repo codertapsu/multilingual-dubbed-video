@@ -17,6 +17,8 @@ import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { DownloadProgressListComponent } from '../../shared/download-progress-list/download-progress-list.component';
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
+import { OutputFolderComponent } from '../../shared/output-folder/output-folder.component';
+import { forgetLastOutputDir, readLastOutputDir, rememberOutputDir } from '../../core/util/last-output-folder';
 import {
   ALL_SUBTITLE_EXPORT_MODES,
   SUBTITLE_EXPORT_MODE_HINTS,
@@ -34,6 +36,7 @@ import type {
   LanguageCode,
   MediaInfo,
   OriginalAudioMode,
+  Project,
   ProjectSettings,
   RenderQuality,
   SubtitleExportMode,
@@ -97,7 +100,14 @@ function defaultSettings(): ProjectSettings {
   selector: 'vd-new-project-wizard',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, DownloadProgressListComponent, BusyIndicatorComponent, TranslatePipe],
+  imports: [
+    FormsModule,
+    ErrorBannerComponent,
+    DownloadProgressListComponent,
+    BusyIndicatorComponent,
+    OutputFolderComponent,
+    TranslatePipe,
+  ],
   templateUrl: './new-project-wizard.component.html',
   styleUrl: './new-project-wizard.component.scss',
 })
@@ -138,7 +148,6 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   protected readonly step = signal<WizardStep>(1);
   protected readonly name = signal('');
   protected readonly inputVideoPath = signal('');
-  protected readonly outputDir = signal('');
   protected readonly languages = signal<CommonLanguage[]>([
     ...FALLBACK_COMMON_LANGUAGES,
   ]);
@@ -241,6 +250,10 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   });
   protected readonly error = signal<AppError | null>(null);
   protected readonly createdProjectId = signal<string | null>(null);
+  /** The project step 2 shows (its "Save to" folder changes it in place). */
+  protected readonly createdProject = signal<Project | null>(null);
+  /** The folder remembered from the last project could not be used for this one. */
+  protected readonly outputFolderFallback = signal<string | null>(null);
   protected readonly mediaInfo = signal<MediaInfo | null>(null);
 
   /** Step 1 is valid once we have a video path and distinct languages. */
@@ -667,11 +680,10 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
           this.translate.instant('misc.untitled-project'),
         inputVideoPath: this.inputVideoPath().trim(),
         settings: this.settings(),
-        outputDir: this.outputDir().trim() || undefined,
       };
-      const project = await this.ipc.createProject(input);
+      const project = await this.createWithLastFolder(input);
       this.createdProjectId.set(project.id);
-      this.outputDir.set(project.outputDir);
+      this.createdProject.set(project);
       this.store.setCurrent(project);
 
       // Pre-fetch any required local models (whisper/Argos pair/Piper voice) now
@@ -706,6 +718,34 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  /**
+   * Create the project in the folder the last one was saved to. That folder
+   * may be gone since (an unplugged drive): then the project is created in
+   * the default folder rather than not at all, step 2 says why, and the
+   * folder is no longer offered.
+   */
+  private async createWithLastFolder(input: CreateProjectInput): Promise<Project> {
+    this.outputFolderFallback.set(null);
+    const last = readLastOutputDir();
+    if (!last) return this.ipc.createProject(input);
+    try {
+      return await this.ipc.createProject({ ...input, outputDir: last });
+    } catch (err) {
+      if (toAppError(err).code !== 'OUTPUT_NOT_WRITABLE') throw err;
+      forgetLastOutputDir();
+      this.outputFolderFallback.set(last);
+      return this.ipc.createProject(input);
+    }
+  }
+
+  /** "Save to" changed on step 2: show it, and offer it to the next project. */
+  protected onOutputFolderChanged(project: Project): void {
+    this.createdProject.set(project);
+    this.store.setCurrent(project);
+    this.outputFolderFallback.set(null);
+    rememberOutputDir(project);
   }
 
   // ----------------------------- Step 2 -----------------------------

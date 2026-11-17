@@ -38,6 +38,7 @@ import {
   PIPELINE_STEP_IDS,
   pipelineStepIndex,
   pipelineStepLabel,
+  projectOutputVideoPath,
   type AlignedSegment,
   type PipelineState,
   type PipelineStepId,
@@ -501,7 +502,7 @@ export class PipelineRunner {
         const forceRun = pipelineStepIndex(stepId) >= retryIndex;
 
         // Resumability: skip a previously-completed step whose outputs exist.
-        if (!forceRun && stepState?.status === 'completed' && (await this.outputsExist(stepId, paths))) {
+        if (!forceRun && stepState?.status === 'completed' && (await this.outputsExist(stepId, paths, project))) {
           logger.info(`Skipping "${pipelineStepLabel(stepId)}" — already completed.`);
           state = await transition(this.deps, state, stepId, 'skipped');
           continue;
@@ -518,7 +519,7 @@ export class PipelineRunner {
         // artifact really is a complete one; this is the second lock on the same
         // door, for artifacts written by an older version of the app.
         const interrupted = stepState?.status === 'failed' || stepState?.status === 'running';
-        if (!forceRun && !interrupted && stepState?.status !== 'completed' && (await this.outputsExist(stepId, paths))) {
+        if (!forceRun && !interrupted && stepState?.status !== 'completed' && (await this.outputsExist(stepId, paths, project))) {
           logger.info(`Skipping "${pipelineStepLabel(stepId)}" — outputs already present.`);
           state = await transition(this.deps, state, stepId, 'skipped');
           continue;
@@ -617,7 +618,7 @@ export class PipelineRunner {
    * Whether the expected output artifact(s) for a step already exist on disk
    * (used for resumability skip decisions).
    */
-  private async outputsExist(stepId: PipelineStepId, paths: WorkspacePaths): Promise<boolean> {
+  private async outputsExist(stepId: PipelineStepId, paths: WorkspacePaths, project: Project): Promise<boolean> {
     switch (stepId) {
       case 'probe-video': {
         // probe-video's "artifact" is persisted mediaInfo on project.json.
@@ -669,7 +670,8 @@ export class PipelineRunner {
       case 'audio-mix':
         return fileExistsNonEmpty(paths.finalMixWav);
       case 'render':
-        return fileExistsNonEmpty(paths.outputMp4);
+        // The finished video is in the project's output folder (pipeline/output.ts).
+        return fileExistsNonEmpty(projectOutputVideoPath(project));
       default:
         return false;
     }
@@ -2268,12 +2270,16 @@ export class PipelineRunner {
           ? paths.translatedSrt
           : undefined;
 
-    this.deps.logger.info(`Rendering final video (subtitle mode: ${mode})...`);
+    // Into the folder chosen for this project (its own render/ folder by
+    // default); it may have been removed since it was chosen.
+    const outputPath = projectOutputVideoPath(project);
+    await fsp.mkdir(project.outputDir, { recursive: true });
+    this.deps.logger.info(`Rendering final video (subtitle mode: ${mode}) to ${outputPath}...`);
     const result = await this.deps.media.renderFinalVideo(
       {
         inputVideoPath: project.inputVideoPath,
         audioPath: paths.finalMixWav,
-        outputPath: paths.outputMp4,
+        outputPath,
         subtitleExportMode: mode,
         subtitlePath,
         burnSubtitleStyle: project.settings.burnSubtitleStyle,

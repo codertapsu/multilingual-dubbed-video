@@ -15,6 +15,8 @@ import {
   toAppError,
   segmentsToSrt,
   segmentsToVtt,
+  projectOutputFiles,
+  projectOutputVideoPath,
   type AlignedSegment,
   type CreateProjectInput,
   type JobOrchestrator,
@@ -80,6 +82,7 @@ import { PipelineRunner, type RunnerDeps } from './pipeline/runner.js';
 import type { SpeechMapService } from './pipeline/speechMap.js';
 import type { ProjectStore } from './workspace/projectStore.js';
 import { segmentIdToIndex, type WorkspacePaths } from './workspace/paths.js';
+import { acceptOutputDir, moveOutputFiles, samePath } from './workspace/outputFolder.js';
 import { clearCueOverridesFor, displayCuesFor, readCueOverrides } from './workspace/subtitleTiming.js';
 import { writeJsonAtomic, writeTextAtomic } from './workspace/projectStore.js';
 import {
@@ -268,6 +271,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   private readonly workloads = new Map<string, RunWorkload>();
   /** Serializes {@link pump}; `pumpAgain` coalesces requests that arrive mid-pump. */
   private pumping = false;
+  /** Projects whose finished files are moving to another folder (setProjectOutputDir). */
+  private readonly movingOutput = new Set<string>();
+  /** Projects being re-rendered from the Export screen (renderFinalVideo), which no run tracks. */
+  private readonly rendering = new Set<string>();
   private pumpAgain = false;
   /** Memoized hardware capacity (specs don't change while the app runs). */
   private capacityPromise: Promise<CapacityRecommendation> | undefined;
@@ -331,6 +338,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * second call while a run is active is a no-op.
    */
   async runPipeline(projectId: string): Promise<RunScheduleResult> {
+    this.assertNotMoving(projectId);
     if (this.running.has(projectId)) return { started: true, queued: false };
     if (this.queued.has(projectId)) return { started: false, queued: true, position: this.queuePosition(projectId) };
     const project = await this.deps.store.getProject(projectId);
@@ -373,6 +381,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
   /** Reset a step + downstream and re-run from there (resumable retry). */
   async retryStep(projectId: string, stepId: PipelineStepId): Promise<RunScheduleResult> {
+    this.assertNotMoving(projectId);
     if (this.running.has(projectId)) {
       // Cancel the current run before retrying to avoid overlap.
       await this.cancelJob(projectId);
@@ -580,7 +589,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         ...(project.mediaInfo?.durationMs !== undefined ? { durationMs: project.mediaInfo.durationMs } : {}),
         ...(video ? { width: video.width, height: video.height, fps: video.fps } : {}),
         ...((await exists(paths.originalWav)) ? { originalAudioPath: paths.originalWav } : {}),
-        ...((await exists(paths.outputMp4)) ? { outputPath: paths.outputMp4 } : {}),
+        ...((await exists(projectOutputVideoPath(project))) ? { outputPath: projectOutputVideoPath(project) } : {}),
       },
       ...(rate?.perSecond !== undefined && rate.source !== 'language-default'
         ? { speechRate: { perSecond: rate.perSecond, source: rate.source } }
@@ -1164,6 +1173,19 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     projectId: string,
     opts: { subtitleExportMode?: Project['settings']['subtitleExportMode']; burnSubtitleStyle?: Project['settings']['burnSubtitleStyle'] },
   ): Promise<RenderFinalVideoResult> {
+    this.assertNotMoving(projectId);
+    this.rendering.add(projectId);
+    try {
+      return await this.renderNow(projectId, opts);
+    } finally {
+      this.rendering.delete(projectId);
+    }
+  }
+
+  private async renderNow(
+    projectId: string,
+    opts: { subtitleExportMode?: Project['settings']['subtitleExportMode']; burnSubtitleStyle?: Project['settings']['burnSubtitleStyle'] },
+  ): Promise<RenderFinalVideoResult> {
     let project = await this.deps.store.getProject(projectId);
     const paths = this.deps.store.paths(projectId);
 
@@ -1187,10 +1209,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
           ? paths.translatedSrt
           : undefined;
 
+    await fsp.mkdir(project.outputDir, { recursive: true });
     return this.deps.media.renderFinalVideo({
       inputVideoPath: project.inputVideoPath,
       audioPath: paths.finalMixWav,
-      outputPath: paths.outputMp4,
+      outputPath: projectOutputVideoPath(project),
       subtitleExportMode: mode,
       subtitlePath,
       burnSubtitleStyle: project.settings.burnSubtitleStyle,
@@ -1759,6 +1782,69 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     });
     await writeTextAtomic(paths.translatedSrt, segmentsToSrt(cues));
     await writeTextAtomic(paths.translatedVtt, segmentsToVtt(cues));
+  }
+
+  /**
+   * Choose where a project saves its finished video and subtitles: a folder
+   * (absolute path), or null for its own render/ folder in the app's data.
+   * Files already rendered move with it, so the project stays complete; in a
+   * chosen folder they are named after the project, uniquely there. Refused
+   * while the project runs (the render may be writing them).
+   */
+  async setProjectOutputDir(projectId: string, dir: string | null): Promise<Project> {
+    this.assertOutputIdle(projectId);
+    const paths = this.deps.store.paths(projectId);
+    const target = dir?.trim() ? await acceptOutputDir(dir) : paths.renderDir;
+    const current = await this.deps.store.getProject(projectId);
+    if (samePath(target, current.outputDir)) return current;
+    if (!dir?.trim()) await fsp.mkdir(target, { recursive: true });
+    // Again after the awaits, then held: no run or render may start (and
+    // write to the old folder) while the files move.
+    this.assertOutputIdle(projectId);
+    this.movingOutput.add(projectId);
+    try {
+      const relocate = async (outputFileName: string | undefined): Promise<Project> => {
+        const before = await this.deps.store.getProject(projectId);
+        const where = { outputDir: target, ...(outputFileName ? { outputFileName } : {}) };
+        const to = projectOutputFiles(where);
+        await moveOutputFiles(projectOutputFiles(before).map((from, i) => [from, to[i]!] as const));
+        // Only where it saves changes here: read again, so nothing saved
+        // during a long cross-drive copy is overwritten.
+        const { outputFileName: _old, ...latest } = await this.deps.store.getProject(projectId);
+        return this.deps.store.saveProject({ ...latest, ...where });
+      };
+      if (samePath(target, paths.renderDir)) return await relocate(undefined);
+      return await this.deps.store.withOutputName(target, current.name, current.settings.targetLanguage, projectId, relocate);
+    } finally {
+      this.movingOutput.delete(projectId);
+    }
+  }
+
+  /** Changing where a project saves needs it idle: not running, waiting, rendering or already moving. */
+  private assertOutputIdle(projectId: string): void {
+    this.assertNotRunning(projectId, 'change where the project is saved');
+    if (this.queued.has(projectId)) {
+      throw new AppErrorException(
+        'RUN_IN_PROGRESS',
+        'This project is waiting in the dubbing queue. Remove it from the queue to change where it is saved.',
+      );
+    }
+    if (this.rendering.has(projectId) || this.movingOutput.has(projectId)) {
+      throw new AppErrorException(
+        'RUN_IN_PROGRESS',
+        'This project is rendering or moving its files right now. Try again when that has finished.',
+      );
+    }
+  }
+
+  /** A run or render would write to the folder the project is leaving. */
+  private assertNotMoving(projectId: string): void {
+    if (this.movingOutput.has(projectId)) {
+      throw new AppErrorException(
+        'RUN_IN_PROGRESS',
+        "VideoDubber is moving this project's finished files to another folder. Try again in a moment.",
+      );
+    }
   }
 
   /** True if a project currently has an active run. */

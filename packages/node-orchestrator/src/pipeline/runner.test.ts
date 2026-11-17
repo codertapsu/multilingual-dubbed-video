@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   AppErrorException,
   type AlignedSegment,
+  type CreateProjectInput,
   type Project,
   type SttProvider,
   type TranscriptSegment,
@@ -38,9 +39,11 @@ let tmp: string;
 let store: ProjectStore;
 let buses: EventBusRegistry;
 
-async function buildProject(): Promise<{ project: Project; deps: RunnerDeps; media: FakeMediaService }> {
+async function buildProject(
+  input: Partial<CreateProjectInput> = {},
+): Promise<{ project: Project; deps: RunnerDeps; media: FakeMediaService }> {
   const video = await writeDummyVideo(tmp);
-  const project = await store.createProject(createProjectInput(video));
+  const project = await store.createProject(createProjectInput(video, input));
 
   const segments = makeSegments([
     [0, 1000, 'Hello'],
@@ -1382,5 +1385,39 @@ describe('PipelineRunner — chunked STT (long audio)', () => {
     };
     expect(source.segments).toHaveLength(4);
     expect(source.segments[0]!.sourceText).toBe('cached');
+  });
+});
+
+describe('PipelineRunner — a folder chosen for the finished video', () => {
+  it('renders into the chosen folder under the project name, and finds it there next time', async () => {
+    const dubs = path.join(tmp, 'My Dubs');
+    const { project, deps, media } = await buildProject({ name: 'Trip: day 1', outputDir: dubs });
+    expect(project.outputFileName).toBe('Trip day 1.vi');
+
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    const video = path.join(dubs, 'Trip day 1.vi.mp4');
+    expect(media.calls).toContain(`renderFinalVideo:${video}`);
+    await expect(fsp.stat(video)).resolves.toBeTruthy();
+    // Nothing in the workspace's render/ folder.
+    await expect(fsp.stat(store.paths(project.id).outputMp4)).rejects.toThrow();
+
+    const renders = (): number => media.calls.filter((c) => c.startsWith('renderFinalVideo:')).length;
+    const before = renders();
+    await new PipelineRunner(deps).run(await store.getProject(project.id), { signal: new AbortController().signal });
+    expect(renders()).toBe(before);
+
+    // Deleted from the folder: the next run renders it again (the artifact is the proof).
+    await fsp.rm(video);
+    await new PipelineRunner(deps).run(await store.getProject(project.id), { signal: new AbortController().signal });
+    expect(renders()).toBe(before + 1);
+  });
+
+  it('makes the chosen folder again if it was removed after it was chosen', async () => {
+    const dubs = path.join(tmp, 'Dubs');
+    const { project, deps } = await buildProject({ name: 'Clip', outputDir: dubs });
+    await fsp.rm(dubs, { recursive: true });
+
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    await expect(fsp.stat(path.join(dubs, 'Clip.vi.mp4'))).resolves.toBeTruthy();
   });
 });

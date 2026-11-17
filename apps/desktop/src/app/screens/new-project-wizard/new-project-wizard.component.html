@@ -48,13 +48,9 @@
               class="btn"
               (click)="pickVideo()"
               [disabled]="!inTauri"
-              [title]="
-                inTauri
-                  ? 'Open a native file picker'
-                  : 'Native picker is only available in the desktop app — paste a path instead'
-              "
+              [title]="(inTauri ? 'wizard.browse-title' : 'wizard.browse-title-browser') | translate"
             >
-              Browse…
+              {{ 'wizard.browse' | translate }}
             </button>
           </div>
         </div>
@@ -550,20 +546,23 @@
         </p>
       }
 
-      <fieldset>
-        <legend>{{ 'wizard.output-folder' | translate }}</legend>
-        <input
-          type="text"
-          [ngModel]="outputDir()"
-          (ngModelChange)="outputDir.set($event)"
-          name="outputDir"
-          [attr.aria-label]="'wizard.output-folder' | translate"
-          [placeholder]="'wizard.output-folder-ph' | translate"
-        />
-        <p class="hint">
-          {{ 'wizard.output-folder-hint' | translate }}
-        </p>
-      </fieldset>
+      @if (createdProject(); as created) {
+        <fieldset>
+          <legend>{{ 'output-folder.title' | translate }}</legend>
+          @if (outputFolderFallback(); as lastDir) {
+            <div class="badge badge-warning audio-warn" role="status">
+              {{ 'wizard.output-folder-fallback' | translate: { dir: lastDir } }}
+            </div>
+          }
+          <vd-output-folder [project]="created" (changed)="onOutputFolderChanged($event)" />
+          <p class="hint output-remember">
+            {{ 'wizard.output-folder-remember' | translate }}
+            @if (created.outputFileName) {
+              {{ 'wizard.output-folder-remember-reset' | translate }}
+            }
+          </p>
+        </fieldset>
+      }
 
       @if (preparingModels()) {
         <div class="stack">

@@ -25,8 +25,7 @@
     <h2>{{ 'export.final-video' | translate }}</h2>
     @if (outputPath(); as path) {
       <p>
-        <span class="label">{{ 'export.output-label' | translate }}</span>
-        <span class="mono">{{ path }}</span>
+        <span class="label">{{ 'export.output-label' | translate }}</span> <span class="mono">{{ path }}</span>
       </p>
     } @else {
       <p class="muted">{{ 'export.no-output' | translate }}</p>
@@ -63,6 +62,18 @@
       }
     }
   </div>
+
+  <!-- Where the finished files go; changing it moves the ones already made. -->
+  @if (store.current(); as proj) {
+    <div class="card stack">
+      <h2>{{ 'output-folder.title' | translate }}</h2>
+      <vd-output-folder
+        [project]="proj"
+        [locked]="rendering() || proj.status === 'running' || proj.status === 'queued'"
+        (changed)="onOutputFolderChanged($event)"
+      />
+    </div>
+  }
 
   <!-- Re-render with a different subtitle mode -->
   <div class="card stack">

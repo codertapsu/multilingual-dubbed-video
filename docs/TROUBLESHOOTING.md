@@ -411,9 +411,20 @@ the whisper base subtag (`vi-VN → vi`); translation uses the Argos base subtag
 <a id="output-not-writable"></a>
 
 ### `OUTPUT_NOT_WRITABLE`
-The workspace or output path can't be written. Ensure `VIDEODUBBER_PROJECTS_DIR`
-(default `~/VideoDubber/projects`) and the chosen output directory exist and are
-writable, and that the disk isn't full:
+The workspace or output path can't be written.
+
+**A folder you chose with "Save to".** VideoDubber tries a real write there
+before it accepts the folder, so this means it could not save in it: a
+read-only or protected location (a system folder, a CD, a network share without
+write access), a drive that is no longer connected, or a path that is not a
+full path (`Dubs` instead of `D:\Dubs`). Choose another folder. When a project
+**moves** to a new folder and this appears, a file could not be moved: on
+Windows that is almost always the video being open in a player. Close it and
+try again; nothing was moved.
+
+**The app's own data folder.** Ensure `VIDEODUBBER_PROJECTS_DIR`
+(default `~/VideoDubber/projects`) exists and is writable, and that the disk
+isn't full:
 ```bash
 mkdir -p ~/VideoDubber/projects && touch ~/VideoDubber/projects/.write-test && rm ~/VideoDubber/projects/.write-test
 df -h ~

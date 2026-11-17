@@ -192,6 +192,14 @@ export {
 } from './language/normalize.js';
 export type { CommonLanguage } from './language/normalize.js';
 export {
+  PROJECT_OUTPUT_EXTENSIONS,
+  chosenOutputBaseName,
+  projectOutputBaseName,
+  projectOutputFiles,
+  projectOutputVideoPath,
+  safeFileStem,
+} from './pipeline/output.js';
+export {
   speechBudget,
   languageSpeechRate,
   budgetUnitLabel,

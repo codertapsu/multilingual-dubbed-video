@@ -12,10 +12,11 @@
  * call open for minutes — MCP clients time those out. They work for at most
  * ~50 s, report where they got to, and can simply be called again.
  */
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer, type CallToolResult, type ServerContext } from '@modelcontextprotocol/server';
 import * as z from 'zod';
+import { projectOutputFiles, projectOutputVideoPath } from '@videodubber/shared';
 import type {
   PipelineState,
   PipelineStepId,
@@ -515,6 +516,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const lines = [
         `"${project.name}" (${project.id}) — ${project.status}`,
         `Video: ${project.inputVideoPath}${project.mediaInfo?.durationMs ? ` (${clock(project.mediaInfo.durationMs)})` : ''}`,
+        `Saves to: ${projectOutputVideoPath(project)} (and subtitle files beside it)`,
         `Settings: ${settingsSummary(project.settings)}`,
         renderPipeline(pipeline),
       ];
@@ -528,13 +530,15 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     }),
   );
 
+  /**
+   * This project's finished files. Only its own: a folder the user chose may be
+   * shared with other projects (and their videos are none of this one's).
+   */
   async function listOutputs(project: Project): Promise<string[]> {
-    try {
-      const names = await readdir(project.outputDir);
-      return names.filter((n) => !n.includes('.partial')).map((n) => path.join(project.outputDir, n));
-    } catch {
-      return [];
-    }
+    const present = await Promise.all(
+      projectOutputFiles(project).map((f) => stat(f).then((s) => (s.size > 0 ? f : undefined), () => undefined)),
+    );
+    return present.filter((f): f is string => f !== undefined);
   }
 
   server.registerTool(
@@ -548,12 +552,18 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         targetLanguage: z.string().describe('Dub language, e.g. "vi-VN".'),
         sourceLanguage: z.string().optional().describe('Spoken language, e.g. "zh". Omit to auto-detect.'),
         name: z.string().optional(),
+        saveTo: z
+          .string()
+          .optional()
+          .describe(
+            'Absolute folder for the finished video and subtitles, e.g. "D:\\Dubs". They are named after the project ("<name>.<lang>.mp4"), so projects can share a folder. Omit to keep them in the project\'s own folder in the app\'s data.',
+          ),
         settings: editableSettings.optional(),
         start: z.boolean().default(false),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    guarded(async ({ videoPath, targetLanguage, sourceLanguage, name, settings, start }, ctx) => {
+    guarded(async ({ videoPath, targetLanguage, sourceLanguage, name, saveTo, settings, start }, ctx) => {
       const signal = ctx.mcpReq.signal;
       const q = new URLSearchParams({ targetLanguage, sourceLanguage: sourceLanguage ?? '' });
       const defaults = await api.get<{ settings: ProjectSettings; notes?: string[] }>(`/project-defaults?${q}`, { signal });
@@ -565,7 +575,12 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       };
       const project = await api.post<Project>(
         '/projects',
-        { name: name ?? path.parse(videoPath).name, inputVideoPath: videoPath, settings: merged },
+        {
+          name: name ?? path.parse(videoPath).name,
+          inputVideoPath: videoPath,
+          settings: merged,
+          ...(saveTo?.trim() ? { outputDir: saveTo.trim() } : {}),
+        },
         { signal },
       );
       const id = encodeURIComponent(project.id);
@@ -573,6 +588,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const ensured = await api.post<{ installing: boolean; enginePacks?: string[] }>(`/projects/${id}/ensure-resources`, {}, { signal });
       const lines = [
         `Created "${project.name}" (${project.id}).`,
+        `Saves to: ${projectOutputVideoPath(project)}`,
         `Settings: ${settingsSummary(merged)}`,
         ...(defaults.notes ?? []).map((n) => `Note: ${n}`),
       ];
@@ -649,6 +665,31 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
             ? `To apply, call start_dubbing with fromStep="${earliest}".`
             : 'This takes effect on the next run.'),
       );
+    }),
+  );
+
+  server.registerTool(
+    'set_save_folder',
+    {
+      title: 'Choose where a project is saved',
+      description:
+        "Choose the folder a project saves its finished video and subtitle files in (a full path), or leave folder out to go back to the project's own folder in the app's data. Files already rendered move along. In a chosen folder the files are named after the project (\"<name>.<lang>.mp4\"), so projects can share a folder. Not while the project is running.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        folder: z
+          .string()
+          .optional()
+          .describe('Full folder path, e.g. "D:\\Dubs" or "/Users/me/Movies/Dubs". Leave out for the default folder.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, folder }, ctx) => {
+      const project = await api.put<Project>(
+        `/projects/${encodeURIComponent(projectId)}/output-dir`,
+        { outputDir: folder?.trim() || null },
+        { signal: ctx.mcpReq.signal },
+      );
+      return text(`Saves to: ${projectOutputVideoPath(project)} (and subtitle files beside it).`);
     }),
   );
 

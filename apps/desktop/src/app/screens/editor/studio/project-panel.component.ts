@@ -21,6 +21,7 @@ import {
 import type {
   OriginalAudioMode,
   PipelineStepId,
+  Project,
   ProjectSettings,
   RenderQuality,
   SubtitleExportMode,
@@ -28,6 +29,7 @@ import type {
   TranslationDocContext,
 } from '../../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, WhisperModelInfo } from '../../../core/models/setup';
+import { OutputFolderComponent } from '../../../shared/output-folder/output-folder.component';
 import { StudioStore } from './studio.store';
 
 /** Fully-populated editable copy of the translation character sheet. */
@@ -66,7 +68,7 @@ const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libret
   selector: 'vd-project-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, TranslatePipe],
+  imports: [FormsModule, RouterLink, OutputFolderComponent, TranslatePipe],
   templateUrl: './project-panel.component.html',
   styleUrl: './project-panel.component.scss',
 })
@@ -99,7 +101,6 @@ export class ProjectPanelComponent implements OnInit {
   readonly awaitingReview = signal(false);
   protected readonly continuing = signal(false);
   readonly rendered = signal(false);
-  protected readonly opening = signal(false);
   protected readonly resultPreviewFailed = signal(false);
 
   protected readonly originalAudioModes = computed<readonly OriginalAudioMode[]>(() =>
@@ -308,17 +309,14 @@ export class ProjectPanelComponent implements OnInit {
     }
   }
 
-  async openFolder(): Promise<void> {
-    const dir = this.store.project()?.outputDir;
-    if (!dir || this.opening()) return;
-    this.opening.set(true);
-    try {
-      await this.ipc.openOutputFolder(dir);
-    } catch (err) {
-      this.store.error.set(toAppError(err));
-    } finally {
-      this.opening.set(false);
-    }
+  /**
+   * "Save to" changed: the finished files moved, so re-read the timeline,
+   * whose media block names the video the result card previews.
+   */
+  protected onOutputFolderChanged(project: Project): void {
+    this.store.project.set(project);
+    this.resultPreviewFailed.set(false);
+    void this.store.reload();
   }
 
   // ---------------- character sheet ----------------

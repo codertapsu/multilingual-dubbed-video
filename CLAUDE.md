@@ -111,6 +111,13 @@ voice ends, merged within a synthesis group rather than flashed. Never write
 `transcriptSegmentsToCues` output to a file directly: that is how cues shipped at 102 cps, 99 s
 long, or out of order.
 
+**The finished video is where the user chose: `projectOutputVideoPath(project)`** (shared
+`pipeline/output.ts`), never `paths.outputMp4`, for rendering it, checking it exists, and playing or
+serving it. In a chosen folder the files are `<name>.<lang>.mp4/.srt/.vtt`, named once when the
+folder is chosen and unique there, counting the names other projects hold before they render
+(`ProjectStore.withOutputName`, locked with the save); `/file` serves exactly a project's own files
+from such a folder, never the folder.
+
 ### The lazy media proxy
 
 `createLazyMediaService()` in `server.ts` generates its forwarders from `MEDIA_SERVICE_METHODS`,

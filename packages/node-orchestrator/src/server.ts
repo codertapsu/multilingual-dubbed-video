@@ -19,6 +19,7 @@ import {
   ALL_CLOUD_SERVICES,
   AppErrorException,
   COMMON_LANGUAGES,
+  projectOutputFiles,
   type ArgosPair,
   type CloudServiceId,
   type CreateProjectInput,
@@ -85,6 +86,7 @@ import {
   setClaudeDesktopConnection,
   type ClaudeCodeAction,
 } from './integrations/claude.js';
+import { samePath } from './workspace/outputFolder.js';
 import { MEDIA_SERVICE_METHODS, type PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog, findPiperVoice, translatableLanguages } from './setup/catalog.js';
@@ -1304,6 +1306,19 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
+  // Where a project saves its finished video and subtitles: a folder, or null
+  // for its own folder in the app's data. Moves already-rendered files along.
+  app.put(
+    '/projects/:id/output-dir',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { outputDir?: string | null } }>, reply) => {
+      try {
+        return await orchestrator.setProjectOutputDir(req.params.id, req.body?.outputDir ?? null);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
   app.get('/projects', async (_req, reply) => {
     try {
       return await orchestrator.listProjects();
@@ -1613,10 +1628,17 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           .status(400)
           .send({ error: { code: 'UNKNOWN', message: 'Missing "path" query parameter.' } });
       }
-      // Path-traversal guard: only files inside the projects directory.
+      // Path-traversal guard: only files inside the projects directory, and a
+      // project's own finished files in the folder chosen for it — exactly
+      // those files, not that whole folder (it may be D:\ or Downloads).
       const root = resolvePath(config.projectsDir);
       const resolved = resolvePath(target);
-      if (resolved !== root && !resolved.startsWith(root + sep)) {
+      let permitted = resolved === root || resolved.startsWith(root + sep);
+      if (!permitted) {
+        const projects = await store.listProjects().catch(() => []);
+        permitted = projects.some((p) => projectOutputFiles(p).some((f) => samePath(f, resolved)));
+      }
+      if (!permitted) {
         return reply
           .status(403)
           .send({ error: { code: 'UNKNOWN', message: 'Path is outside the projects directory.' } });

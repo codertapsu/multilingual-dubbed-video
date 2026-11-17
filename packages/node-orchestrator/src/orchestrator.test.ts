@@ -300,6 +300,10 @@ describe('run readiness gate', () => {
     await expect(gated.refitSegment(project.id, 'seg_0001')).rejects.toMatchObject({
       appError: { code: 'RUN_IN_PROGRESS' },
     });
+    // The render may be writing the very files a folder change would move.
+    await expect(gated.setProjectOutputDir(project.id, path.join(tmp, 'Dubs'))).rejects.toMatchObject({
+      appError: { code: 'RUN_IN_PROGRESS' },
+    });
 
     await gated.cancelJob(project.id);
   });
@@ -588,5 +592,109 @@ describe('run queue — review-finding regressions', () => {
     });
     await s.cancelJob(p.id);
     s.stopScheduler();
+  });
+});
+
+describe('LocalJobOrchestrator — choosing where a project is saved', () => {
+  it('moves the finished files to a chosen folder under the project name, and back', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video, { name: 'Clip' }));
+    const paths = store.paths(project.id);
+    await fsp.writeFile(paths.outputMp4, 'video');
+    await fsp.writeFile(path.join(paths.renderDir, 'output.srt'), 'subs');
+
+    // Another project already saved "Clip.vi.mp4" in the folder.
+    const dubs = path.join(tmp, 'Dubs');
+    await fsp.mkdir(dubs);
+    await fsp.writeFile(path.join(dubs, 'Clip.vi.mp4'), 'another project');
+
+    const moved = await orchestrator.setProjectOutputDir(project.id, dubs);
+    expect(moved.outputDir).toBe(dubs);
+    expect(moved.outputFileName).toBe('Clip (2).vi');
+    expect(await fsp.readFile(path.join(dubs, 'Clip (2).vi.mp4'), 'utf8')).toBe('video');
+    expect(await fsp.readFile(path.join(dubs, 'Clip (2).vi.srt'), 'utf8')).toBe('subs');
+    expect(await fsp.readFile(path.join(dubs, 'Clip.vi.mp4'), 'utf8')).toBe('another project');
+    await expect(fsp.stat(paths.outputMp4)).rejects.toThrow();
+    expect((await store.getProject(project.id)).outputDir).toBe(dubs);
+
+    const back = await orchestrator.setProjectOutputDir(project.id, null);
+    expect(back.outputDir).toBe(paths.renderDir);
+    expect(back.outputFileName).toBeUndefined();
+    expect(await fsp.readFile(paths.outputMp4, 'utf8')).toBe('video');
+    expect((await fsp.readdir(dubs)).sort()).toEqual(['Clip.vi.mp4']);
+  });
+
+  it('renders straight into the chosen folder', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video, { name: 'Clip' }));
+    const dubs = path.join(tmp, 'Dubs');
+    await orchestrator.setProjectOutputDir(project.id, dubs);
+    await fsp.writeFile(store.paths(project.id).finalMixWav, 'mix');
+
+    const result = await orchestrator.renderFinalVideo(project.id, {});
+    expect(result.outputPath).toBe(path.join(dubs, 'Clip.vi.mp4'));
+    await expect(fsp.stat(result.outputPath)).resolves.toBeTruthy();
+  });
+
+  it('refuses a folder it cannot use, and leaves the project as it was', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+    await fsp.writeFile(paths.outputMp4, 'video');
+    const file = path.join(tmp, 'a-file');
+    await fsp.writeFile(file, 'x');
+
+    await expect(orchestrator.setProjectOutputDir(project.id, path.join(file, 'Dubs'))).rejects.toMatchObject({
+      appError: { code: 'OUTPUT_NOT_WRITABLE' },
+    });
+    await expect(orchestrator.setProjectOutputDir(project.id, 'Dubs')).rejects.toMatchObject({
+      appError: { code: 'OUTPUT_NOT_WRITABLE' },
+    });
+    expect((await store.getProject(project.id)).outputDir).toBe(paths.renderDir);
+    expect(await fsp.readFile(paths.outputMp4, 'utf8')).toBe('video');
+  });
+});
+
+describe('LocalJobOrchestrator — moving a project while it is busy (review findings)', () => {
+  it('refuses to move a project that waits in the queue', async () => {
+    const video = await writeDummyVideo(tmp);
+    const sched = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media: new FakeMediaService(),
+      registry: fakeRegistry(new FakeSttProvider(makeSegments([[0, 1000, 'hi']])), new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+      setup: { getPreferences: async () => ({ autoUpdate: true, concurrency: { mode: 'manual' as const, maxProjects: 1, paused: true } }) },
+    });
+    const project = await sched.createProject(createProjectInput(video));
+    expect((await sched.runPipeline(project.id)).queued).toBe(true);
+    await expect(sched.setProjectOutputDir(project.id, path.join(tmp, 'Dubs'))).rejects.toMatchObject({
+      appError: { code: 'RUN_IN_PROGRESS' },
+    });
+    await sched.cancelJob(project.id);
+  });
+
+  it('keeps what was saved while the files moved (it changes only where the project saves)', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video, { name: 'Clip' }));
+    // A settings change lands after the move began reading the project.
+    const originalGet = store.getProject.bind(store);
+    let reads = 0;
+    store.getProject = async (id: string) => {
+      reads += 1;
+      if (reads === 3) {
+        const p = await originalGet(id);
+        await store.saveProject({ ...p, settings: { ...p.settings, ttsGainDb: 4 } });
+      }
+      return originalGet(id);
+    };
+    try {
+      await orchestrator.setProjectOutputDir(project.id, path.join(tmp, 'Dubs'));
+    } finally {
+      store.getProject = originalGet;
+    }
+    const saved = await store.getProject(project.id);
+    expect(saved.outputFileName).toBe('Clip.vi');
+    expect(saved.settings.ttsGainDb).toBe(4);
   });
 });

@@ -118,15 +118,27 @@ if (!release) die(`no release found for tag ${tag} (create the draft first: rele
 console.log(`release ${tag} -> id ${release.id}${release.draft ? ' (draft)' : ''}`);
 
 // --- 2. fetch the existing latest.json (asset downloads on drafts need the API url + octet-stream) ---
+// The new copy is uploaded under a temporary `latest.json.next-<time>` name and
+// renamed once the old one is gone (step 5). A run interrupted between the
+// delete and the rename leaves only that copy: merge into the newest one, or
+// this run would start from nothing and drop every other platform's entry.
+const NEXT_PREFIX = 'latest.json.next';
 const assets = await (await gh(`${API}/releases/${release.id}/assets?per_page=100`)).json();
 const existing = assets.find((a) => a.name === 'latest.json');
+const leftovers = assets
+  .filter((a) => a.name.startsWith(NEXT_PREFIX))
+  .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+const leftover = leftovers[0];
+const source = existing ?? leftover;
 let manifest = { version: '', notes: '', pub_date: '', platforms: {} };
-if (existing) {
-  const res = await gh(`${API}/releases/assets/${existing.id}`, {
+if (source) {
+  const res = await gh(`${API}/releases/assets/${source.id}`, {
     headers: { Accept: 'application/octet-stream' },
   });
   manifest = JSON.parse(Buffer.from(await res.arrayBuffer()).toString('utf8'));
-  console.log(`merging into existing latest.json (platforms: ${Object.keys(manifest.platforms ?? {}).join(', ') || 'none'})`);
+  console.log(
+    `merging into existing ${source.name}${source === leftover ? ' (left by an interrupted run)' : ''} (platforms: ${Object.keys(manifest.platforms ?? {}).join(', ') || 'none'})`,
+  );
 } else {
   console.log('no existing latest.json on the release — creating a fresh one');
 }
@@ -148,13 +160,27 @@ const body = `${JSON.stringify(manifest, null, 2)}\n`;
 console.log(`\nmerged latest.json:\n${body}`);
 if (has('dry-run')) { console.log('(dry-run: not uploaded)'); process.exit(0); }
 
-// --- 5. replace the asset ---
-if (existing) {
-  await gh(`${API}/releases/assets/${existing.id}`, { method: 'DELETE' });
-}
-await gh(`https://uploads.github.com/repos/${repo}/releases/${release.id}/assets?name=latest.json`, {
-  method: 'POST',
+// --- 5. replace the asset: upload first, delete second, rename last ---
+// This used to DELETE latest.json and then upload the new one. A failure in
+// between — GitHub was answering 500/504 on the very day 0.11.0 was published —
+// leaves the release with no latest.json: on a published release every
+// installed app's update check 404s, and on a draft the next merge starts from
+// nothing and loses the other platforms. Now the live file stays until its
+// replacement is safely uploaded, and step 2 recovers an interrupted run. The
+// temporary name is unique per run (GitHub refuses a second asset of the same
+// name), so an earlier run's leftover is kept until this run has finished.
+const uploaded = await (
+  await gh(`https://uploads.github.com/repos/${repo}/releases/${release.id}/assets?name=${NEXT_PREFIX}-${Date.now()}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  })
+).json();
+if (existing) await gh(`${API}/releases/assets/${existing.id}`, { method: 'DELETE' });
+await gh(`${API}/releases/assets/${uploaded.id}`, {
+  method: 'PATCH',
   headers: { 'Content-Type': 'application/json' },
-  body,
+  body: JSON.stringify({ name: 'latest.json' }),
 });
+for (const old of leftovers) await gh(`${API}/releases/assets/${old.id}`, { method: 'DELETE' }); // merged above
 console.log(`uploaded latest.json (${platform} entry set). Remember: the artifact itself (+ its .sig if you upload sigs as assets) must be on the same release, and the draft's tag must be ${tag} before publishing.`);

@@ -320,6 +320,17 @@ export async function collectStatus({ token, repo, tag }) {
     }
   }
 
+  // merge-latest-json.mjs uploads its new manifest as `latest.json.next-<time>`
+  // and renames it when done; one still here means a run was interrupted. It
+  // would sit in the public asset list, so it blocks publishing until a re-run
+  // (which merges it and removes it) finishes the job.
+  const leftovers = assets.filter((a) => a.name.startsWith(`${SHARED_ASSET}.next`));
+  if (leftovers.length > 0) {
+    status.outstanding.push(
+      `interrupted latest.json update (${leftovers.map((a) => a.name).join(', ')}) — re-run merge-latest-json.mjs; it recovers and removes it`,
+    );
+  }
+
   status.ready = status.outstanding.length === 0;
   return status;
 }

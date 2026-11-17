@@ -7,12 +7,14 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 
 import { IpcService } from '../../core/ipc/ipc.service';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { RecommendedEnginesComponent } from '../../shared/recommended-engines/recommended-engines.component';
+import { ClaudeConnectionsComponent } from '../../shared/claude-connections/claude-connections.component';
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import { environment } from '../../core/environment';
 // Runtime helper (not a type), so it comes straight from the shared package per
@@ -29,7 +31,6 @@ import type {
 } from '../../core/models';
 import type {
   ArgosPair,
-  ClaudeIntegration,
   CloudCredentialInfo,
   ConcurrencyPreferences,
   CloudServiceId,
@@ -84,7 +85,15 @@ const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> =
   selector: 'vd-settings',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent, TranslatePipe, RecommendedEnginesComponent],
+  imports: [
+    FormsModule,
+    RouterLink,
+    ErrorBannerComponent,
+    BusyIndicatorComponent,
+    TranslatePipe,
+    RecommendedEnginesComponent,
+    ClaudeConnectionsComponent,
+  ],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
 })
@@ -654,46 +663,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
         .getAppPreferences()
         .then((prefs) => this.defaults.set(prefs.providerDefaults ?? {}))
         .catch(() => undefined),
-      this.ipc
-        .getClaudeIntegration()
-        .then((c) => this.claude.set(c))
-        .catch(() => undefined),
     ]);
-  }
-
-  // ----------------------------- Claude (MCP) -----------------------------
-
-  /** How Claude Desktop / Claude Code start VideoDubber's MCP server here. */
-  protected readonly claude = signal<ClaudeIntegration | null>(null);
-  protected readonly claudeBusy = signal(false);
-  /** Set after connecting/disconnecting: Claude Desktop only reads its config at start. */
-  protected readonly claudeJustChanged = signal(false);
-  protected readonly claudeCopied = signal(false);
-
-  protected async connectClaudeDesktop(connect: boolean): Promise<void> {
-    if (this.claudeBusy()) return;
-    this.claudeBusy.set(true);
-    this.error.set(null);
-    try {
-      this.claude.set(await this.ipc.setClaudeDesktopConnection(connect));
-      this.claudeJustChanged.set(true);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.claudeBusy.set(false);
-    }
-  }
-
-  protected async copyClaudeCodeCommand(): Promise<void> {
-    const command = this.claude()?.claudeCode?.command;
-    if (!command) return;
-    try {
-      await navigator.clipboard.writeText(command);
-      this.claudeCopied.set(true);
-      setTimeout(() => this.claudeCopied.set(false), 2500);
-    } catch {
-      // No clipboard access: the command is on screen and selectable.
-    }
   }
 
   protected patchDefault<K extends keyof ProviderDefaults>(key: K, value: ProviderDefaults[K]): void {

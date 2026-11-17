@@ -436,7 +436,7 @@ worker and setting them does nothing. See [`docs/PROVIDERS.md`](docs/PROVIDERS.m
 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Every error code, plus common failures — split into "using the app" and "developing". |
 | [`docs/VIENEU_TTS_SETUP.md`](docs/VIENEU_TTS_SETUP.md) | The optional neural Vietnamese voice (VieNeu v3): install it and use it. |
 | [`docs/PROVIDERS.md`](docs/PROVIDERS.md) | Every engine you can pick per phase — local defaults, engine packs, optional cloud adapters + what data they send. |
-| [`docs/MCP.md`](docs/MCP.md) | Let Claude Desktop or Claude Code run the whole dub: connecting, the tools, the best-quality review workflow. |
+| [`docs/MCP.md`](docs/MCP.md) | Let Claude Desktop, Claude Code or Mother Claude run the whole dub: one-click connecting, the tools, the best-quality review workflow. |
 | [`docs/MODEL_SETUP.md`](docs/MODEL_SETUP.md) | Whisper / Argos / Piper models: download, storage, troubleshooting. |
 
 **For contributors** — building and running from source.

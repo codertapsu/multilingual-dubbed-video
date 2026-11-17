@@ -35,6 +35,7 @@ import type {
   PreflightResult,
   ProvidersResponse,
   RunPreflightResult,
+  ClaudeCodeAction,
   ClaudeIntegration,
   SaveCredentialRequest,
   SetupCatalog,
@@ -519,6 +520,15 @@ export class IpcService {
   /** GET /integrations/claude — Claude Desktop / Claude Code connection status. */
   getClaudeIntegration(): Promise<ClaudeIntegration> {
     return this.http<ClaudeIntegration>('GET', '/integrations/claude');
+  }
+
+  /**
+   * POST /integrations/claude/code — connect, reconnect or disconnect Claude
+   * Code. The orchestrator runs Claude Code's own CLI (`claude mcp add|remove`);
+   * it never writes Claude Code's files itself.
+   */
+  setClaudeCodeConnection(action: ClaudeCodeAction): Promise<ClaudeIntegration> {
+    return this.http<ClaudeIntegration>('POST', '/integrations/claude/code', { action });
   }
 
   /** POST /integrations/claude/desktop — add (or remove) VideoDubber in Claude Desktop's config. */

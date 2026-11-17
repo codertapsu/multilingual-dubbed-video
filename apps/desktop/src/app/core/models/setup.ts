@@ -213,13 +213,35 @@ export interface RunPreflightResult {
 }
 
 /** GET /integrations/claude — how Claude starts VideoDubber's MCP server here. */
+/**
+ * Claude Code's view of VideoDubber (orchestrator integrations/claude.ts):
+ * connected; not connected; `other-copy` = our name points to another copy of
+ * VideoDubber (a reinstall or move); `unreadable` = its .claude.json could not
+ * be read; `cli-missing` = no entry, and no `claude` CLI found to make one.
+ */
+export type ClaudeCodeState = 'connected' | 'not-connected' | 'other-copy' | 'unreadable' | 'cli-missing';
+
 export interface ClaudeIntegration {
   /** The command a client runs (this app's binary + `--mcp`), or null if this build cannot. */
   mcp: { command: string; args: string[] } | null;
-  /** The one-line `claude mcp add …` for Claude Code. */
-  claudeCode: { command: string } | null;
+  claudeCode: {
+    state: ClaudeCodeState;
+    /** The one-line `claude mcp add …`, for doing it by hand. */
+    command: string;
+    /** The CLI the buttons run, or null when Claude Code was not found. */
+    cli: string | null;
+    configPath: string;
+    /** What our name points to now, when it is not this app. */
+    registered: { command: string; args: string[] } | null;
+    detail?: string;
+  } | null;
   claudeDesktop: { installed: boolean; configPath: string | null; connected: boolean };
+  /** Mother Claude (it starts Claude Code sessions, so it uses the Claude Code connection). */
+  motherClaude: { running: boolean; version: string | null };
 }
+
+/** What the Claude Code buttons do. */
+export type ClaudeCodeAction = 'connect' | 'reconnect' | 'disconnect';
 
 /** A detected GPU (best-effort). */
 export interface GpuInfo {

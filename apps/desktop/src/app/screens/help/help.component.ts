@@ -1,5 +1,6 @@
 import type { OnDestroy, OnInit } from '@angular/core';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 
 import { IpcService } from '../../core/ipc/ipc.service';
 import { recentErrors, toAppError } from '../../core/state/project.store';
@@ -42,7 +43,7 @@ const NEW_ISSUE_URL =
   selector: 'vd-help',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ErrorBannerComponent, TranslatePipe],
+  imports: [ErrorBannerComponent, RouterLink, TranslatePipe],
   templateUrl: './help.component.html',
   styleUrl: './help.component.scss',
 })

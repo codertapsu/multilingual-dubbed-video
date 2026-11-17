@@ -1,9 +1,13 @@
 # Controlling VideoDubber from Claude (MCP)
 
-VideoDubber includes an [MCP](https://modelcontextprotocol.io) server, so Claude Desktop or
-Claude Code can run the whole dubbing process for you: check what this computer can do, download
-a video, create a project, start and watch the dub, read and rewrite the translation, re-time or
-re-voice lines, and render the final video.
+VideoDubber includes an [MCP](https://modelcontextprotocol.io) server, so Claude Desktop, Claude
+Code, or a Claude Code session started in Mother Claude can run the whole dubbing process for you:
+check what this computer can do, download a video, create a project, start and watch the dub, read
+and rewrite the translation, re-time or re-voice lines, and render the final video.
+
+The app walks you through it: **Settings → Claude → Step-by-step guide** (also under **Help**, and
+offered once on the home screen) shows each client's status, connects it with one click, and lists
+what to ask.
 
 The server runs **on your computer** and talks only to the VideoDubber app on `127.0.0.1`. The
 dubbing itself still happens locally with the engines you chose; Claude sees what its tools return
@@ -26,16 +30,74 @@ opens from **Settings → Developer → Edit Config**.
 
 ## Connect Claude Code
 
-Settings → Claude shows the exact command for this installation, with a **Copy** button. It
-looks like this:
+1. Open VideoDubber → **Settings → Claude**.
+2. In the **Claude Code** row, click **Connect**. VideoDubber runs Claude Code's own command for
+   you, at user scope, so every folder and every session sees it:
+   `claude mcp add --scope user videodubber -- <VideoDubber's server> --mcp`.
+3. Start a **new** Claude Code session: a session that was already open does not get the tools
+   until it is restarted.
+
+The row shows the state Claude Code is in, read from its `.claude.json` (VideoDubber never edits
+Claude Code's files itself; every change goes through the `claude` CLI):
+
+| Status | What it means | The button |
+|---|---|---|
+| Connected | `videodubber` starts this copy of VideoDubber. | Disconnect (`claude mcp remove videodubber -s user`) |
+| Not connected | No `videodubber` entry. | Connect |
+| Points to another copy of VideoDubber | The entry starts a different copy: after a reinstall or a move, or a source checkout. The row shows its path. | Reconnect (remove, then add) |
+| Couldn't read Claude Code's settings | `.claude.json` exists but could not be read or parsed. | Reconnect |
+| Claude Code not found | No `claude` CLI on PATH or where its installers put it. | Install Claude Code; the command to run by hand is shown |
+
+VideoDubber looks for the CLI on PATH first, then in `%USERPROFILE%\.local\bin\claude.exe`
+(the native installer) and `%APPDATA%\npm\claude.cmd` on Windows, and in `~/.local/bin`,
+`/opt/homebrew/bin` and `/usr/local/bin` on macOS, where an app started from Finder gets only a
+minimal PATH. It reads `$CLAUDE_CONFIG_DIR/.claude.json` when that variable is set, else
+`~/.claude.json`.
+
+To do it by hand, the row's **Or run it yourself in a terminal** shows the exact command for this
+installation, with a **Copy** button. It looks like this:
 
 ```bash
-# Installed app (Windows)
-claude mcp add --scope user videodubber -- "C:\Program Files\VideoDubber\videodubber-orchestrator.exe" --mcp
+# Installed app (Windows: installed per user)
+claude mcp add --scope user videodubber -- "C:\Users\<you>\AppData\Local\VideoDubber\videodubber-orchestrator.exe" --mcp
+
+# Installed app (macOS)
+claude mcp add --scope user videodubber -- /Applications/VideoDubber.app/Contents/MacOS/videodubber-orchestrator --mcp
 
 # Source checkout (after pnpm build)
 claude mcp add --scope user videodubber -- node /path/to/repo/packages/mcp-server/dist/cli.js
 ```
+
+`claude mcp get videodubber` shows the entry and whether Claude Code can start it.
+
+## Use it with Mother Claude
+
+[Mother Claude](https://github.com/codertapsu/mother-claude/releases) is a desktop app for Windows
+and macOS that starts and drives Claude Code sessions, from its window or from a paired phone. Its
+sessions read Claude Code's user settings, so **connecting Claude Code above is the whole setup**:
+every new Mother Claude session, in any folder, has VideoDubber's tools.
+
+1. Install Mother Claude and open it. The guide in VideoDubber shows whether it is running.
+2. In VideoDubber, **Settings → Claude → Claude Code → Connect** (once).
+3. In Mother Claude, click **New session**, pick any folder, and start it.
+4. Ask, for example *"Dub C:\…\video.mp4 from Chinese into Vietnamese"*, *"How is my project
+   doing?"*, *"Show me the lines that need attention and fix them"*, *"Re-voice line 12 and
+   render"*.
+5. Approve the cards. Every VideoDubber tool call shows one, on the desktop and on a paired phone.
+   **Allow for…** on a card remembers that one tool for the session, the project folder or the
+   whole computer. Allowing every VideoDubber tool at once is Claude Code's own allow rule
+   `mcp__videodubber`: that is your choice, and it also lets engine downloads start without
+   asking.
+
+Good to know:
+
+- Only sessions started after connecting get the tools; restart one that was already open.
+- From a phone, a new session can only be started in a folder Claude Code has already worked in.
+- Several Claude accounts: an account that shares the default Claude Code folder sees the
+  connection; an account with its own folder (`CLAUDE_CONFIG_DIR`) needs its own connection.
+- In Claude Code (and so in Mother Claude) the tools are `mcp__videodubber__<tool>`, and the two
+  prompts below are the slash commands `/mcp__videodubber__dub_video` and
+  `/mcp__videodubber__improve_translation`.
 
 ## The app must be running — or startable
 
@@ -66,7 +128,8 @@ http://127.0.0.1:5100` or set `VIDEODUBBER_URL`.
 | `open_output_folder` | Open the folder with the finished video. |
 
 Two prompts are included: **Dub a video with the best quality** and **Review and improve a dub's
-translation**. In Claude Desktop they appear under the attachment (+) menu.
+translation**. In Claude Desktop they appear under the attachment (+) menu; in Claude Code and
+Mother Claude they are `/mcp__videodubber__dub_video` and `/mcp__videodubber__improve_translation`.
 
 ## The best-quality workflow
 
@@ -84,10 +147,20 @@ more than literal completeness: a line over budget is sped up or overflows into 
 
 ## Troubleshooting
 
-- **Claude does not list the VideoDubber tools.** Restart Claude Desktop after connecting. In
+- **Claude does not list the VideoDubber tools.** The session or app started before you
+  connected: start a new Claude Code / Mother Claude session, or restart Claude Desktop. In a
+  terminal, `claude mcp get videodubber` shows Claude Code's entry and whether it starts; in
   Claude Desktop, Settings → Developer shows the server's state and its log.
-- **"VideoDubber is not running".** Open the app and wait until the home screen shows; then ask
-  again. A source checkout needs `pnpm dev`.
+- **"VideoDubber is not running".** The server opens the installed app itself and waits up to two
+  minutes for it. If it still does not answer, open the app, wait until the home screen shows,
+  and ask again. A source checkout cannot start itself: run `pnpm dev`.
+- **"Points to another copy of VideoDubber"** in Settings → Claude, after a reinstall or a move:
+  click **Reconnect**.
+- **"Claude Code not found".** Install Claude Code ([setup](https://code.claude.com/docs/en/setup)),
+  then connect. If it is installed somewhere VideoDubber does not look, run the command shown in
+  the row yourself.
+- **Claude seems stuck in Mother Claude.** A tool call is probably waiting for your approval: look
+  for the card on the desktop or on your phone.
 - **"This build cannot start the MCP server"** in Settings: in a source checkout, run
   `pnpm build` first (the server is `packages/mcp-server/dist/cli.js`).
 - **Nothing appears on stdout when you run the server by hand.** That is expected: MCP speaks

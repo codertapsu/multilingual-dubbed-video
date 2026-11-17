@@ -262,6 +262,9 @@ previous binary. Verify the artifact (`GET /health` reports version + build stam
   per-request timeout used to surface as `CANCELLED`, and the passes that rethrow cancels threw
   away a translation step whose lines were all done. It is `WORKER_TIMEOUT` now, the context
   engine fails fast after one, and callers check `signal.aborted`.
+- Claude Code is connected only through its own CLI (`claude mcp add|remove --scope user`,
+  `integrations/claude.ts`): VideoDubber reads `.claude.json` for the status and never writes Claude
+  Code's files. Claude Desktop's config is the one file it edits, with a backup beside it.
 - Admission must count every engine a run will start, not just its provider ids: the context
   engine (`contextEngine.ts`, the Gemma chat model for repairs and auto-fit) takes the heavy
   lane in a run whose providers are all light (`ClassifyOptions.contextEngine`).

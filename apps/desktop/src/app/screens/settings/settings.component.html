@@ -256,60 +256,13 @@
     <h2>{{ 'settings.claude.heading' | translate }}</h2>
     <p class="muted">{{ 'settings.claude.intro' | translate }}</p>
     <p class="hint">{{ 'settings.claude.privacy' | translate }}</p>
-    @if (claude(); as c) {
-      @if (!c.mcp) {
-        <p class="hint test-fail">{{ 'settings.claude.no-server' | translate }}</p>
-      } @else {
-        <div class="cred-row stack-sm">
-          <div class="cred-head">
-            <span class="cred-name">Claude Desktop</span>
-            @if (c.claudeDesktop.connected) {
-              <span class="badge badge-completed">{{ 'settings.claude.connected' | translate }}</span>
-            } @else if (c.claudeDesktop.installed) {
-              <span class="badge">{{ 'settings.claude.not-connected' | translate }}</span>
-            } @else {
-              <span class="badge">{{ 'settings.claude.not-installed' | translate }}</span>
-            }
-          </div>
-          <div class="cred-controls">
-            @if (c.claudeDesktop.connected) {
-              <button type="button" class="btn btn-ghost btn-sm" (click)="connectClaudeDesktop(false)" [disabled]="claudeBusy()">
-                {{ 'settings.claude.disconnect' | translate }}
-              </button>
-            } @else {
-              <button
-                type="button"
-                class="btn btn-sm"
-                (click)="connectClaudeDesktop(true)"
-                [disabled]="claudeBusy() || !c.claudeDesktop.installed || !c.claudeDesktop.configPath"
-              >
-                {{ 'settings.claude.connect' | translate }}
-              </button>
-            }
-          </div>
-          @if (claudeJustChanged()) {
-            <p class="hint test-ok">{{ 'settings.claude.restart' | translate }}</p>
-          }
-        </div>
-        @if (c.claudeCode; as code) {
-          <div class="cred-row stack-sm">
-            <div class="cred-head">
-              <span class="cred-name">Claude Code</span>
-            </div>
-            <p class="hint">{{ 'settings.claude.code-hint' | translate }}</p>
-            <div class="cred-controls">
-              <code class="grow">{{ code.command }}</code>
-              <button type="button" class="btn btn-sm" (click)="copyClaudeCodeCommand()">
-                {{ (claudeCopied() ? 'settings.claude.copied' : 'settings.claude.copy') | translate }}
-              </button>
-            </div>
-          </div>
-        }
-        <p class="hint">{{ 'settings.claude.try' | translate }}</p>
-      }
-    } @else {
-      <p class="hint">{{ 'settings.defaults.unavailable' | translate }}</p>
-    }
+    <!-- Claude Desktop and Claude Code: status + the button that fixes it
+         (shared with the guide, so the two always agree). -->
+    <vd-claude-connections />
+    <p class="hint">{{ 'settings.claude.try' | translate }}</p>
+    <div class="row">
+      <a routerLink="/claude" class="btn btn-sm">{{ 'settings.claude.guide' | translate }}</a>
+    </div>
   </div>
 
   <!-- ============================ Engines ============================ -->

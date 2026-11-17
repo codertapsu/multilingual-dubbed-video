@@ -38,7 +38,9 @@ export function findDesktopApp(
     return exists(explicit) ? { command: explicit, args: [], label: explicit } : undefined;
   }
   // Only the packaged sidecar knows where the app is; under `node` this is node.exe.
-  if (!path.basename(execPath).toLowerCase().startsWith('videodubber-orchestrator')) return undefined;
+  // Split on both separators: path.basename on macOS keeps a Windows path whole.
+  const name = execPath.split(/[\\/]/).pop() ?? execPath;
+  if (!name.toLowerCase().startsWith('videodubber-orchestrator')) return undefined;
   if (platform === 'darwin') {
     const bundle = /^(.*?\.app)\/Contents\/MacOS\//.exec(execPath)?.[1];
     return bundle && exists(bundle) ? { command: 'open', args: [bundle], label: bundle } : undefined;

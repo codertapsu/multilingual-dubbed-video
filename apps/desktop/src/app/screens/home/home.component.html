@@ -35,6 +35,21 @@
     </div>
   }
 
+  <!-- One-time tip: Claude can run VideoDubber. Gone once dismissed or the
+       guide is opened; never shown to a user already connected. -->
+  @if (showClaudeTip()) {
+    <div class="card claude-tip" role="status">
+      <strong>{{ 'home.claude-tip-title' | translate }}</strong>
+      <p class="hint">{{ 'home.claude-tip-body' | translate }}</p>
+      <div class="row">
+        <a routerLink="/claude" class="btn btn-sm btn-primary">{{ 'home.claude-tip-open' | translate }}</a>
+        <button type="button" class="btn btn-sm btn-ghost" (click)="dismissClaudeTip()">
+          {{ 'common.dismiss' | translate }}
+        </button>
+      </div>
+    </div>
+  }
+
   <!-- Capacity summary: only surfaces once dubbing is actually happening, so
        the limit is explained at the first moment it costs the user something. -->
   @if (queue(); as q) {

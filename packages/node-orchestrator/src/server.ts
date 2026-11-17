@@ -79,7 +79,12 @@ import { computeRequiredResources, hasRequiredResources } from './setup/required
 import { recommendProjectSettings } from './projectDefaults.js';
 import { sttWorkerSpeechMap } from './pipeline/speechMap.js';
 import { performanceCoresFromSttWorker } from './system/performanceCores.js';
-import { claudeIntegrationStatus, setClaudeDesktopConnection } from './integrations/claude.js';
+import {
+  claudeIntegrationStatus,
+  setClaudeCodeConnection,
+  setClaudeDesktopConnection,
+  type ClaudeCodeAction,
+} from './integrations/claude.js';
 import { MEDIA_SERVICE_METHODS, type PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog, findPiperVoice, translatableLanguages } from './setup/catalog.js';
@@ -1142,6 +1147,20 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     async (req: FastifyRequest<{ Body: { connect?: boolean } }>, reply) => {
       try {
         return await setClaudeDesktopConnection(req.body?.connect !== false);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // Claude Code: connect / reconnect / disconnect through its own CLI (its
+  // .claude.json is only ever read here). Answers with the whole status.
+  app.post(
+    '/integrations/claude/code',
+    async (req: FastifyRequest<{ Body: { action?: ClaudeCodeAction } }>, reply) => {
+      try {
+        await setClaudeCodeConnection(req.body?.action ?? 'connect');
+        return await claudeIntegrationStatus();
       } catch (err) {
         return sendError(reply, err);
       }

@@ -1,0 +1,102 @@
+<section class="page stack">
+  <header>
+    <h1>{{ 'claude-guide.title' | translate }}</h1>
+    <p class="muted">{{ 'claude-guide.subtitle' | translate }}</p>
+  </header>
+
+  <!-- ===================== 1. Which Claude ===================== -->
+  <div class="card stack">
+    <h2>{{ 'claude-guide.choose-heading' | translate }}</h2>
+    <div class="clients">
+      <div class="client stack-sm">
+        <h3>Claude Desktop</h3>
+        <p class="hint">{{ 'claude-guide.desktop-body' | translate }}</p>
+      </div>
+      <div class="client stack-sm">
+        <h3>Claude Code</h3>
+        <p class="hint">{{ 'claude-guide.code-body' | translate }}</p>
+      </div>
+      <div class="client stack-sm">
+        <h3>Mother Claude</h3>
+        <p class="hint">{{ 'claude-guide.mother-body' | translate }}</p>
+      </div>
+    </div>
+    <h3>{{ 'claude-guide.connect-heading' | translate }}</h3>
+    <vd-claude-connections />
+  </div>
+
+  <!-- ===================== 2. Mother Claude, step by step ===================== -->
+  <div class="card stack">
+    <h2>{{ 'claude-guide.steps-heading' | translate }}</h2>
+    @if (motherClaude()?.running) {
+      <p class="hint test-ok">✓ {{ 'claude-guide.mother-running' | translate: { version: motherClaude()?.version ?? '' } }}</p>
+    } @else {
+      <div class="row">
+        <p class="hint grow">{{ 'claude-guide.mother-not-running' | translate }}</p>
+        <button type="button" class="btn btn-sm" (click)="downloadMotherClaude()">
+          {{ 'claude-guide.mother-download' | translate }}
+        </button>
+      </div>
+    }
+    <ol class="steps">
+      <li>{{ 'claude-guide.step-install' | translate }}</li>
+      <li>{{ 'claude-guide.step-connect' | translate }}</li>
+      <li>{{ 'claude-guide.step-session' | translate }}</li>
+      <li>{{ 'claude-guide.step-ask' | translate }}</li>
+      <li>{{ 'claude-guide.step-approve' | translate }}</li>
+    </ol>
+
+    <h3>{{ 'claude-guide.approve-heading' | translate }}</h3>
+    <p class="hint">{{ 'claude-guide.approve-allow-for' | translate }}</p>
+    <!-- One line: no whitespace may separate the rule from the text after it. -->
+    <p class="hint">{{ 'claude-guide.approve-all-before' | translate }} <code>mcp__videodubber</code>{{ 'claude-guide.approve-all-after' | translate }}</p>
+
+    <h3>{{ 'claude-guide.notes-heading' | translate }}</h3>
+    <ul class="notes">
+      <li>{{ 'claude-guide.note-new-sessions' | translate }}</li>
+      <li>{{ 'claude-guide.note-phone' | translate }}</li>
+      <li>{{ 'claude-guide.note-accounts' | translate }}</li>
+    </ul>
+  </div>
+
+  <!-- ===================== 3. What to ask ===================== -->
+  <div class="card stack">
+    <h2>{{ 'claude-guide.ask-heading' | translate }}</h2>
+    <ul class="examples">
+      @for (key of examples; track key) {
+        <li>“{{ key | translate }}”</li>
+      }
+    </ul>
+    <p class="hint">{{ 'claude-guide.prompts-intro' | translate }}</p>
+    <ul class="prompts">
+      <li><code>/mcp__videodubber__dub_video</code> — {{ 'claude-guide.prompt-dub' | translate }}</li>
+      <li><code>/mcp__videodubber__improve_translation</code> — {{ 'claude-guide.prompt-improve' | translate }}</li>
+    </ul>
+    <p class="hint">{{ 'claude-guide.prompts-desktop' | translate }}</p>
+  </div>
+
+  <!-- ===================== 4. What leaves the computer ===================== -->
+  <div class="card stack">
+    <h2>{{ 'claude-guide.privacy-heading' | translate }}</h2>
+    <p class="hint">{{ 'settings.claude.privacy' | translate }}</p>
+  </div>
+
+  <!-- ===================== 5. Troubleshooting ===================== -->
+  <div class="card stack">
+    <h2>{{ 'claude-guide.trouble-heading' | translate }}</h2>
+    <dl class="trouble">
+      <dt>{{ 'claude-guide.trouble-tools' | translate }}</dt>
+      <dd>
+        {{ 'claude-guide.trouble-tools-fix' | translate }} <code>claude mcp get videodubber</code>
+      </dd>
+      <dt>{{ 'claude-guide.trouble-not-running' | translate }}</dt>
+      <dd>{{ 'claude-guide.trouble-not-running-fix' | translate }}</dd>
+      <dt>{{ 'claude-guide.trouble-other-copy' | translate }}</dt>
+      <dd>{{ 'claude-guide.trouble-other-copy-fix' | translate }}</dd>
+      <dt>{{ 'claude-guide.trouble-cli' | translate }}</dt>
+      <dd>{{ 'claude-guide.trouble-cli-fix' | translate }}</dd>
+      <dt>{{ 'claude-guide.trouble-approvals' | translate }}</dt>
+      <dd>{{ 'claude-guide.trouble-approvals-fix' | translate }}</dd>
+    </dl>
+  </div>
+</section>

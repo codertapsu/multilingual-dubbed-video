@@ -79,6 +79,15 @@ export const APP_ROUTES: Routes = [
       ),
   },
   {
+    // "Use VideoDubber from Claude": connect Claude Desktop / Claude Code and
+    // drive VideoDubber from Mother Claude, step by step. Linked from
+    // Settings → Claude, Help, and a one-time tip on Home.
+    path: 'claude',
+    title: 'VideoDubber — Use from Claude',
+    loadComponent: () =>
+      import('./screens/claude-guide/claude-guide.component').then((m) => m.ClaudeGuideComponent),
+  },
+  {
     // The end-user entry point for "it didn't work": a re-runnable self-check,
     // the service health rows and a copyable diagnostics bundle. Added because
     // the only route that sounded like help was /support — a donation page —

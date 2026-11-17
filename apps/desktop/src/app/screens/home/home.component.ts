@@ -4,11 +4,14 @@ import type {
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   inject,
   signal,
 } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
 
+import { ClaudeIntegrationService } from '../../core/claude/claude-integration.service';
+import { CLAUDE_TIP_DISMISSED_KEY, shouldShowClaudeTip } from '../../core/claude/claude-view';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { ProjectStore } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
@@ -59,10 +62,31 @@ export class HomeComponent implements OnInit, OnDestroy {
    */
   protected readonly modelsMissing = signal(false);
 
+  /**
+   * A one-time tip that Claude can run VideoDubber: nothing outside Settings
+   * said so. Hidden for good once dismissed or the guide is opened, and never
+   * shown to a user who already connected a Claude client.
+   */
+  private readonly claude = inject(ClaudeIntegrationService);
+  private readonly claudeTipDismissed = signal(readFlag(CLAUDE_TIP_DISMISSED_KEY));
+  protected readonly showClaudeTip = computed(() =>
+    shouldShowClaudeTip(this.claudeTipDismissed(), this.claude.status()),
+  );
+
+  protected dismissClaudeTip(): void {
+    this.claudeTipDismissed.set(true);
+    try {
+      localStorage.setItem(CLAUDE_TIP_DISMISSED_KEY, '1');
+    } catch {
+      /* storage unavailable: the tip may come back next launch, harmlessly */
+    }
+  }
+
   ngOnInit(): void {
     void this.store.refreshProjects();
     void this.refreshQueue();
     void this.refreshSetupStatus();
+    if (!this.claudeTipDismissed()) void this.claude.refresh();
     this.queueTimer = setInterval(() => void this.refreshQueue(), QUEUE_POLL_MS);
   }
 
@@ -141,5 +165,14 @@ export class HomeComponent implements OnInit, OnDestroy {
   protected dubLabel(project: Project): string {
     const { sourceLanguage, targetLanguage } = project.settings;
     return `${sourceLanguage} → ${targetLanguage}`;
+  }
+}
+
+/** A '1' flag in localStorage (false when storage is unavailable). */
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
   }
 }

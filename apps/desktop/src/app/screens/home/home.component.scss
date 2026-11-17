@@ -85,3 +85,19 @@
 .models-missing a.btn:hover {
   text-decoration: none;
 }
+
+/* The one-time "use VideoDubber from Claude" tip: informational, not a warning. */
+.claude-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--vd-sp-2);
+  border-color: var(--vd-info);
+  background: var(--vd-info-bg);
+}
+.claude-tip .hint {
+  margin: 0;
+}
+.claude-tip a.btn:hover {
+  text-decoration: none;
+}

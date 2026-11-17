@@ -82,6 +82,13 @@ export interface DubbingTranslationExtras {
    * analysis itself so a failure is reported instead of swallowed.
    */
   skipAnalysis?: boolean;
+  /**
+   * Lines translated so far, out of all of them, called as batches (or, line
+   * by line, requests) finish. The step reported nothing of its own: a
+   * 31-minute dub sat at "translation 0%" for 11.5 minutes, with no log line
+   * for nine, which reads as stuck to a user and to Claude (get_project).
+   */
+  onProgress?: (done: number, total: number) => void;
 }
 
 /** A {@link TranslationInput} with the pipeline's extras. */
@@ -708,6 +715,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
       }
       rolling = collectRollingPairs(batch, byId);
       previousBatch = batch;
+      input.onProgress?.(results.length, input.segments.length);
     }
 
     return { segments: results, ...(generated ? { analysis: generated } : {}) };

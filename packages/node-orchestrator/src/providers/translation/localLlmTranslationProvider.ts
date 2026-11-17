@@ -408,6 +408,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       }
       rolling = collectRollingPairs(batch, byId);
       previousBatch = batch;
+      input.onProgress?.(results.length, input.segments.length);
     }
     return { segments: results, ...(generated ? { analysis: generated } : {}) };
   }
@@ -421,6 +422,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     signal: AbortSignal | undefined,
   ): Promise<TranslationResult> {
     const perSecond = input.speechRate;
+    let done = 0;
     // Bounded concurrency: still one request per segment (preserving the strict
     // 1:1 mapping dubbing needs), but overlapped so a long video isn't
     // translated strictly one segment at a time. Result order is preserved.
@@ -448,6 +450,8 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
         // Still empty: return it EMPTY. The pipeline's per-line check flags it
         // ('untranslated') and repairs it with a context model when one exists,
         // instead of this provider quietly substituting the source.
+        done += 1;
+        input.onProgress?.(done, input.segments.length);
         return { id: seg.id, translatedText: text } satisfies TranslationResultSegment;
       },
     );

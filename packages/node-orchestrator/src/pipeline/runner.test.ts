@@ -15,7 +15,7 @@ import {
   type TtsProvider,
   type TtsResult,
 } from '@videodubber/shared';
-import { PipelineRunner, planSttChunks, type RunnerDeps } from './runner.js';
+import { PipelineRunner, planSttChunks, translationProgress, type RunnerDeps } from './runner.js';
 import type { SpeechMapService } from './speechMap.js';
 import type { PipelineMediaService } from '../media.js';
 import { ProjectStore } from '../workspace/projectStore.js';
@@ -1117,6 +1117,56 @@ describe('PipelineRunner — speech-to-text timing and fallback', () => {
     expect(stt?.status).toBe('failed');
     expect(stt?.error).toContain('stopped while starting');
     expect((await store.getProject(project.id)).settings.sttProviderId).toBe('whisper-cpp');
+  });
+});
+
+describe('translation progress', () => {
+  it('maps lines done to the step (up to 90%), only on whole percents that moved, in order', async () => {
+    const fractions: number[] = [];
+    const logged: string[] = [];
+    const report = translationProgress(
+      async (f) => {
+        fractions.push(f);
+      },
+      (done, total) => logged.push(`${done}/${total}`),
+    );
+    for (const done of [1, 1, 2, 50, 51, 100, 200]) report(done, 200);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fractions).toEqual([0, 0.22, 0.45, 0.9]);
+    // A log line per tenth of the lines; none for the last (the step says it is done).
+    expect(logged).toEqual(['50/200', '100/200']);
+  });
+
+  it('reaches the pipeline: the translation step moves, and the log says so', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+    const segments = makeSegments(Array.from({ length: 10 }, (_, i) => [i * 1000, i * 1000 + 900, `line ${i}`] as [number, number, string]));
+    const seen: number[] = [];
+    const translation: TranslationProvider = {
+      id: 'argos',
+      displayName: 'progressive-mt',
+      isLocal: true,
+      async translateSegments(input: TranslationInput): Promise<TranslationResult> {
+        const report = (input as { onProgress?: (done: number, total: number) => void }).onProgress;
+        report?.(5, 10);
+        report?.(10, 10);
+        return { segments: input.segments.map((s) => ({ id: s.id, translatedText: `[vi] ${s.sourceText}` })) };
+      },
+    };
+    const bus = buses.get(project.id);
+    bus.subscribe((e) => {
+      if (e.type === 'step' && e.step.id === 'translation' && e.step.status === 'running') seen.push(e.step.progressPercent);
+    });
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(20_000) }),
+      registry: fakeRegistry(new FakeSttProvider(segments), translation, new FakeTtsProvider()),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+    expect(seen).toEqual(expect.arrayContaining([45, 90]));
+    expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toContain('Translated 5/10 lines...');
   });
 });
 

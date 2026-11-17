@@ -241,6 +241,35 @@ async function writeGroups(path: string, groups: SynthesisGroup[]): Promise<void
   await writeJsonAtomic(path, artifact);
 }
 
+/**
+ * A translation provider's `onProgress(done, total)` as the step's progress:
+ * up to 90% (the character sheet and the line repairs follow), only on a whole
+ * percent that moved, and in order (a line-by-line provider reports from
+ * several requests at once). `log` gets every tenth of the lines.
+ */
+export function translationProgress(
+  step: StepProgress,
+  log: (done: number, total: number) => void,
+): (done: number, total: number) => void {
+  let lastPct = -1;
+  let lastTenth = 0;
+  let chain: Promise<unknown> = Promise.resolve();
+  return (done, total) => {
+    if (!(total > 0)) return;
+    const fraction = Math.min(1, done / total);
+    const pct = Math.floor(fraction * 90);
+    if (pct > lastPct) {
+      lastPct = pct;
+      chain = chain.then(() => step(pct / 100)).catch(() => undefined);
+    }
+    const tenth = Math.floor(fraction * 10);
+    if (tenth > lastTenth && done < total) {
+      lastTenth = tenth;
+      log(done, total);
+    }
+  };
+}
+
 /** What a unit's clip says: its members' current texts, in order. */
 function unitText(group: SynthesisGroup, segById: ReadonlyMap<string, TranscriptSegment>): string {
   return group.segmentIds
@@ -662,7 +691,7 @@ export class PipelineRunner {
       case 'stt':
         return this.stepStt(project, paths, signal, onProgress);
       case 'translation':
-        return this.stepTranslation(project, paths, signal);
+        return this.stepTranslation(project, paths, signal, onProgress);
       case 'refine':
         return this.stepRefine(project, paths, signal);
       case 'tts':
@@ -1028,7 +1057,12 @@ export class PipelineRunner {
     return { status: { status: 'failed', ...(engine ? { engine } : {}), attempts: outcome.attempts, at: at() } };
   }
 
-  private async stepTranslation(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
+  private async stepTranslation(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress: StepProgress = async () => {},
+  ): Promise<void> {
     throwIfCancelled(signal);
     const { settings } = project;
     let provider = this.deps.registry.getTranslation(settings.translationProviderId);
@@ -1092,6 +1126,9 @@ export class PipelineRunner {
       ...(documentContext ? { documentContext } : {}),
       ...(rate.perSecond !== undefined ? { speechRate: rate.perSecond } : {}),
       skipAnalysis: true,
+      onProgress: translationProgress(onProgress, (done, total) =>
+        this.deps.logger.info(`Translated ${done}/${total} lines...`),
+      ),
     };
     let result: Awaited<ReturnType<TranslationProviderRef['translateSegments']>>;
     try {

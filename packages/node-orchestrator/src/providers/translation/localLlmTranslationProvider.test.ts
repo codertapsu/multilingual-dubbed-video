@@ -53,6 +53,25 @@ describe('LocalLlmTranslationProvider transport', () => {
     await expect(pending).rejects.not.toMatchObject({ appError: { code: 'WORKER_TIMEOUT' } });
   });
 
+  it('reports each translated line as it lands (TranslateGemma, line by line)', async () => {
+    const { post } = spy({ content: 'Xin chào.<end_of_turn>' });
+    const provider = new LocalLlmTranslationProvider({
+      id: 'llama-cpp',
+      backend: 'llama-cpp',
+      model: 'translategemma',
+      resolveBaseUrl: async () => 'http://127.0.0.1:8080',
+      timeoutMs: 1000,
+      postJson: post,
+    });
+    const progress: string[] = [];
+    await provider.translateSegments({
+      ...oneSeg,
+      segments: [0, 1, 2].map((i) => ({ id: `seg_${i}`, sourceText: `Hello ${i}.` })),
+      onProgress: (done: number, total: number) => progress.push(`${done}/${total}`),
+    } as TranslationInput);
+    expect(progress).toEqual(['1/3', '2/3', '3/3']);
+  });
+
   it('samples a retry when asked to (temperature)', async () => {
     const { post, calls } = spy({ content: '{}' });
     await chatModel(post).chatComplete(undefined, 'hi', undefined, { temperature: 0.4 });

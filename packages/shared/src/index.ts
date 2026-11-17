@@ -82,6 +82,7 @@ export type { GpuBudgetInput } from './models/engines.js';
 export {
   gpuWeightBudgetMb,
   gpuResidentFraction,
+  gpuWorkingSetMb,
   MIN_GPU_RESIDENT_FRACTION,
 } from './models/engines.js';
 
@@ -126,6 +127,7 @@ export type {
   SystemProfile,
   CapacityRecommendation,
   ConcurrencyPreferences,
+  LocalModelPreferences,
   QueueReason,
   QueueEntry,
   RunningEntry,
@@ -166,12 +168,15 @@ export { toSrtTimestamp, toVttTimestamp } from './subtitles/timestamps.js';
 export {
   splitSubtitleLines,
   wrapSubtitleText,
+  subtitleTextWidth,
   DEFAULT_MAX_CHARS_PER_LINE,
   DEFAULT_MAX_LINES,
 } from './subtitles/lines.js';
 export type { SubtitleOverflowPolicy } from './subtitles/lines.js';
 export type { SubtitleCue, IndexedCue } from './subtitles/cues.js';
 export { transcriptSegmentsToCues } from './subtitles/cues.js';
+export { planDisplayCues } from './subtitles/plan.js';
+export type { DisplayCueInput, DisplayCueOptions } from './subtitles/plan.js';
 export { segmentsToSrt } from './subtitles/srt.js';
 export type { SubtitleSegmentInput, SubtitleWriteOptions } from './subtitles/srt.js';
 export { segmentsToVtt } from './subtitles/vtt.js';
@@ -186,6 +191,18 @@ export {
   COMMON_LANGUAGES,
 } from './language/normalize.js';
 export type { CommonLanguage } from './language/normalize.js';
+export {
+  speechBudget,
+  languageSpeechRate,
+  budgetUnitLabel,
+  countSpeechUnits,
+  fitWindowMs,
+  fitBudget,
+  FIT_COMFORT_RATIO,
+  GAP_BREATH_MS,
+  MAX_GAP_CREDIT_MS,
+} from './language/speechBudget.js';
+export type { BudgetUnit, FitBudget, SpeechBudgetOptions } from './language/speechBudget.js';
 
 // ---- Pipeline utilities ----------------------------------------------------
 export {

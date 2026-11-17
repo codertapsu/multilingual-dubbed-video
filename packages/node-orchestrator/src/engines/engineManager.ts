@@ -118,9 +118,9 @@ export interface EngineLaunchSpec {
    * Build argv given the resolved executable, port, pack dir, and (for the
    * local-llm runtime) the absolute path of the GGUF model to load.
    */
-  args: (ctx: { exe: string; port: number; packDir: string; model?: string }) => string[];
+  args: (ctx: { exe: string; port: number; packDir: string; model?: string; threads?: number }) => string[];
   /** Extra environment for the child. */
-  env?: (ctx: { port: number; packDir: string; packId: string }) => Record<string, string>;
+  env?: (ctx: { port: number; packDir: string; packId: string; threads?: number }) => Record<string, string>;
   /** Health URL builder; polled until it resolves ok. */
   healthPath?: string;
   /** Whether this engine is "heavy" (subject to the exclusive unload policy). */
@@ -137,7 +137,39 @@ export interface EngineLaunchSpec {
 export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
   'whisper-cpp': {
     binaryNames: ['whisper-server', 'whisper-server.exe'],
-    args: ({ exe: _exe, port }) => ['--host', '127.0.0.1', '--port', String(port), '--inference-path', '/inference'],
+    // The ggml model lives in a SEPARATE `whisper-cpp-model` pack, chosen by the
+    // project's speech model; the provider resolves it (resolveWhisperCppModel)
+    // and threads it in as `model`. This spec used to pass no `-m` at all, and
+    // whisper-server then loads its compiled-in default
+    // `models/ggml-base.en.bin` from its working directory, which never exists:
+    // every whisper.cpp transcription since 0.3.0 failed that way.
+    //
+    // Measured on an RTX 3050 (a 10-minute Chinese chunk, large-v3-turbo):
+    //   `-l auto`  whisper-server's default language is `en`, so a project left
+    //              to auto-detect was transcribed as English. Requests still
+    //              send the project's language when it has one.
+    //   `-bs 5`    beam search, faster-whisper's default decoding: 16.0 s
+    //              against 14.7 s greedy, and it gets proper nouns greedy
+    //              missed ("青丘", where greedy wrote "青秋").
+    // Deliberately NOT passed: `--vad` (both VAD settings tried left the long
+    // spans and garbled names, "托哥" for "猴哥") and `-sns` (it produced a
+    // Russian hallucination in a Chinese fight scene).
+    // `-t`: the performance cores (system/performanceCores.ts); whisper-server
+    // otherwise uses 4 threads on every machine.
+    args: ({ port, model, threads }) => [
+      '--host',
+      '127.0.0.1',
+      '--port',
+      String(port),
+      '--inference-path',
+      '/inference',
+      '-l',
+      'auto',
+      '-bs',
+      '5',
+      ...(threads ? ['-t', String(threads)] : []),
+      ...(model ? ['-m', model] : []),
+    ],
     healthPath: '/',
     heavy: true,
   },
@@ -221,7 +253,17 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     // exists and older builds never look at it; the key below is what actually
     // keeps a web page out, on every build (LLAMA_API_KEY and the public /health
     // are both in b9592 too).
-    env: () => ({ LLAMA_ARG_CORS_ORIGINS: 'localhost' }),
+    // LLAMA_ARG_THREADS, for the same reason in the environment: the
+    // performance cores (system/performanceCores.ts). On Windows llama.cpp
+    // otherwise takes every physical core, E-cores included. Measured on an
+    // i5-13400F + RTX 3050 (2026-11-17): 6 threads ran a part-offloaded 12B and
+    // the 26B-A4B at the same speed as llama.cpp's 10 (8.8 vs 8.6, 24.1 vs 24.5
+    // tokens/s), so this is not a speed-up here; it keeps llama.cpp off the
+    // E-cores, which the overlapping dub's mix and render can use.
+    env: ({ threads }) => ({
+      LLAMA_ARG_CORS_ORIGINS: 'localhost',
+      ...(threads ? { LLAMA_ARG_THREADS: String(threads) } : {}),
+    }),
     healthPath: '/health',
     heavy: true,
     // ...and requests without the per-launch key are refused (401) before any
@@ -333,6 +375,11 @@ export interface EngineManagerDeps {
    * production; tests that do not set it never touch the registry.
    */
   vcRuntimeState?: () => Promise<VcRuntimeState>;
+  /**
+   * How many threads CPU-bound engines should use (the performance cores, see
+   * system/performanceCores.ts); undefined leaves each engine's own default.
+   */
+  cpuThreads?: () => Promise<number | undefined>;
 }
 
 export class EngineManager {
@@ -530,7 +577,8 @@ export class EngineManager {
     // (e.g. --port), so prepend `-m <module>` here — without it the worker is
     // launched as `python --port <n>`, which Python rejects ("unknown option")
     // and exits instantly, surfacing as "engine did not become healthy in time".
-    const specArgs = spec.args({ exe, port, packDir: rec.path, model: opts.model });
+    const threads = await this.deps.cpuThreads?.().catch(() => undefined);
+    const specArgs = spec.args({ exe, port, packDir: rec.path, model: opts.model, ...(threads ? { threads } : {}) });
     const args = spec.pythonModule ? ['-m', spec.pythonModule, ...specArgs] : specArgs;
     // Force UTF-8 stdio for the Python worker: on Windows the default console
     // encoding (cp1252) raises UnicodeEncodeError when the worker or its deps
@@ -544,7 +592,7 @@ export class EngineManager {
       PYTHONUTF8: '1',
       PYTHONIOENCODING: 'utf-8',
       ...process.env,
-      ...(spec.env ? spec.env({ port, packDir: rec.path, packId }) : {}),
+      ...(spec.env ? spec.env({ port, packDir: rec.path, packId, ...(threads ? { threads } : {}) }) : {}),
       ...(spec.apiKeyEnv && apiKey ? { [spec.apiKeyEnv]: apiKey } : {}),
     } as Record<string, string>;
 
@@ -619,8 +667,12 @@ export class EngineManager {
     if (!ready) {
       await stop();
       const tail = stderrTail.trim();
-      const detail = tail ? ` Last engine output:\n${tail.slice(-1200)}` : exitNote;
-      this.deps.logger?.warn(`Engine "${packId}" failed to become healthy.${detail}`);
+      const detail = tail ? ` Last engine output:\n${tail.slice(-1200)}` : '';
+      // Say what happened. A process that exited in seconds was reported as
+      // "did not become healthy in time" — as if it were slow — including the
+      // whisper.cpp engine that died at once for want of a model (2026-11-16).
+      const what = crashed ? `stopped while starting${exitNote}` : 'did not become healthy in time';
+      this.deps.logger?.warn(`Engine "${packId}" ${what}.${detail}`);
       // On Windows a native library that will not load is nearly always the
       // Microsoft Visual C++ runtime, missing or older than the pack was built
       // against. "Reinstall the pack" cannot fix that; installing the runtime does.
@@ -640,7 +692,7 @@ export class EngineManager {
       }
       throw new AppErrorException(
         'ENGINE_UNAVAILABLE',
-        `Engine "${packId}" did not become healthy in time.${detail}`,
+        `Engine "${packId}" ${what}.${detail}`,
         {
           remediation:
             'The local engine process failed to start or respond. Reinstall the engine pack in Settings → Engines, or switch this phase to a local CPU provider (e.g. Piper for TTS).',

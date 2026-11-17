@@ -38,6 +38,14 @@
 </header>
 
 <vd-error-banner [error]="store.error()" (dismiss)="store.dismissError()" />
+@if (store.tightenKept(); as kept) {
+  <div class="tighten-kept" role="status">
+    <span>{{ 'studio.tighten-kept' | translate: { n: kept.line, reason: kept.reason } }}</span>
+    <button type="button" class="btn btn-ghost btn-sm" (click)="store.tightenKept.set(null)">
+      {{ 'common.dismiss' | translate }}
+    </button>
+  </div>
+}
 
 @if (showHelp()) {
   <div class="help" role="dialog" [attr.aria-label]="'studio.shortcuts' | translate">

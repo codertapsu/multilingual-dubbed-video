@@ -66,6 +66,69 @@ const CUDA_MIN_DRIVER_WIN = '551.61';
 const TORCH_CU126_MIN_DRIVER_WIN = '560.76';
 
 /**
+ * whisper.cpp's speech models (the `whisper-cpp-model` packs): the official ggml
+ * conversions, pinned to a commit of ggerganov/whisper.cpp on Hugging Face
+ * (2024-10-29; sizes and sha256 read from its API on 2026-11-17).
+ *
+ * The whisper.cpp pack used to be the runtime alone, and nothing anywhere
+ * downloaded a model or told whisper-server where one was. Started without `-m`,
+ * it loads its compiled-in default `models/ggml-base.en.bin` relative to its
+ * working directory, which never exists, so every whisper.cpp transcription
+ * since the provider shipped (0.3.0) died with "failed to open
+ * 'models/ggml-base.en.bin'". Not a rare path: the Recommended panel suggests
+ * this engine to every NVIDIA machine.
+ *
+ * One pack per Whisper size the app's model picker offers, because whisper.cpp
+ * must run the model the PROJECT picked; substituting another size would be
+ * exactly the silent wrong-weights swap EngineManager refuses for llama.cpp.
+ * PhoWhisper and distil-large-v3.5 have no official ggml build, so they have no
+ * pack (see whisperCppModelPackFor).
+ */
+const WHISPER_GGML_REV = '5359861c739e955e79d9a303bcbc70fb988958b1';
+const WHISPER_GGML_DL = `https://huggingface.co/ggerganov/whisper.cpp/resolve/${WHISPER_GGML_REV}`;
+
+/** Fixed filename every `whisper-cpp-model` pack installs (see packSelection). */
+export const WHISPER_CPP_MODEL_FILE = 'model.bin';
+
+function whisperCppModelPack(
+  size: string,
+  sha256: string,
+  approxSizeMb: number,
+  extra: Partial<EnginePackInfo> = {},
+): EnginePackInfo {
+  return {
+    id: `whisper-model-${size}`,
+    kind: 'stt',
+    packKind: 'model',
+    displayName: `Whisper ${size} (whisper.cpp model)`,
+    description:
+      `The ${size} Whisper speech model in whisper.cpp's format (~${(approxSizeMb / 1024).toFixed(1)} GB). ` +
+      'whisper.cpp transcribes with the model each project picks, so it needs this one for projects set to ' +
+      `${size}. Downloaded once; offline afterwards. Installs the whisper.cpp engine with it if that is missing.`,
+    providerId: 'whisper-cpp-model',
+    version: 'ggml-f16',
+    // Offered exactly where a whisper.cpp runtime is, and today that is the
+    // CUDA build alone. `cuda` hides these on machines without an NVIDIA GPU,
+    // like the runtime; if a Vulkan or Metal runtime is ever added, this must
+    // widen with it (engines.test.ts checks the two stay in step).
+    platforms: ['win32'],
+    arch: ['x64'],
+    accel: 'cuda',
+    approxSizeMb,
+    artifacts: [
+      {
+        url: `${WHISPER_GGML_DL}/ggml-${size}.bin`,
+        sha256,
+        approxSizeMb,
+        destPath: WHISPER_CPP_MODEL_FILE,
+      },
+    ],
+    licenseNote: 'MIT (OpenAI Whisper weights, converted to ggml by the whisper.cpp project).',
+    ...extra,
+  };
+}
+
+/**
  * TranslateGemma GGUF weights (the `local-llm-model` packs).
  *
  * Google ships TranslateGemma as safetensors ONLY — there is no official Google
@@ -197,6 +260,19 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     ],
     licenseNote: 'MIT. Requires an NVIDIA GPU + driver.',
   },
+  // ...and the models it runs, largest first. large-v3-turbo is the one the
+  // Recommended panel installs with the runtime: near large-v3 accuracy at a
+  // fraction of the cost, and the app's own recommended speech model.
+  whisperCppModelPack('large-v3', '64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2', 2952, {
+    // whisper.cpp's README puts large at ~3.9 GB of memory, and a 4 GB card
+    // also holds the desktop. A soft gate: the row is badged, never hidden.
+    minVramMb: 6144,
+  }),
+  whisperCppModelPack('large-v3-turbo', '1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69', 1549),
+  whisperCppModelPack('medium', '6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208', 1463),
+  whisperCppModelPack('small', '1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b', 465),
+  whisperCppModelPack('base', '60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe', 141),
+  whisperCppModelPack('tiny', 'be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21', 74),
 
   // --- llama.cpp server (local LLM translation) ----------------------------
   // All upstream: ggml-org publishes prebuilt llama-server binaries per platform.
@@ -510,6 +586,9 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     tier: 'workstation',
     minRamMb: 24576,
     approxSizeMb: 14618,
+    // ~4B of 26B parameters per token: judged on those for the GPU fit (see
+    // EnginePackInfo.activeParamsShare). 24.5 tokens/s on an 8 GB RTX 3050.
+    activeParamsShare: 0.15,
     artifacts: [
       {
         url: G4_26B_A4B_URL,

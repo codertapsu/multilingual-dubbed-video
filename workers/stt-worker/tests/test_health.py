@@ -23,6 +23,8 @@ def test_health_ok() -> None:
     assert body["device"] in ("cpu", "cuda")
     assert body["compute_type"]  # e.g. "int8"
     assert body["loaded"] is False  # nothing loaded in a fresh test process.
+    # The performance-core count the orchestrator gives llama.cpp / whisper.cpp.
+    assert isinstance(body["cpu_threads"], int) and body["cpu_threads"] >= 1
 
 
 def test_health_does_not_load_model() -> None:

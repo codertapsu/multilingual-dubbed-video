@@ -168,3 +168,15 @@
     grid-template-columns: 220px minmax(0, 1fr) 300px;
   }
 }
+
+/* "Tighten to fit" kept the line: say why, until dismissed. */
+.tighten-kept {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.25rem 0.75rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--vd-border);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}

@@ -86,4 +86,11 @@ describe('buildFittedClipArgs', () => {
   it('is a plain copy-to-PCM at 1x', () => {
     expect(buildFittedClipArgs('/seg.wav', '/o.wav', 1)).not.toContain('-filter:a');
   });
+
+  it('trims a clip exactly like the mix, before the tempo change', () => {
+    const args = buildFittedClipArgs('/seg.wav', '/o.wav', 1.3, { startMs: 35, endMs: 646 });
+    expect(args[args.indexOf('-filter:a') + 1]).toBe('atrim=start=0.035:end=0.646,asetpts=PTS-STARTPTS,atempo=1.3000');
+    const plain = buildFittedClipArgs('/seg.wav', '/o.wav', 1, { startMs: 35, endMs: 646 });
+    expect(plain[plain.indexOf('-filter:a') + 1]).toBe('atrim=start=0.035:end=0.646,asetpts=PTS-STARTPTS');
+  });
 });

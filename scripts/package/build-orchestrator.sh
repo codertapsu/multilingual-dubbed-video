@@ -64,7 +64,24 @@ mkdir -p "${SEA_DIR}"
 
 # 1. Compile the orchestrator + its workspace deps to dist/.
 echo "==> [1/4] pnpm build (orchestrator + deps)"
-( cd "${REPO_ROOT}" && pnpm --filter @videodubber/node-orchestrator... build )
+# The MCP server ships inside the same binary (`--mcp`), so build it too.
+( cd "${REPO_ROOT}" && pnpm --filter @videodubber/node-orchestrator... --filter @videodubber/mcp-server... build )
+
+# The build stamp GET /health reports (read by orchestrator-entry.mjs). Without
+# it every shipped build said version "unknown". A JSON file the entry imports,
+# like the PowerShell twin (a JSON --define does not survive esbuild.cmd quoting).
+STAMP_VERSION="$(node -p "require('${REPO_ROOT}/apps/desktop/src-tauri/tauri.conf.json').version")"
+STAMP_COMMIT="$(git -C "${REPO_ROOT}" rev-parse --short=7 HEAD 2>/dev/null || true)"
+if [ -n "${STAMP_COMMIT}" ] && [ -n "$(git -C "${REPO_ROOT}" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  STAMP_COMMIT="${STAMP_COMMIT}-dirty"
+fi
+node -e '
+  const [version, commit, out] = process.argv.slice(1);
+  const stamp = { version, builtAt: new Date().toISOString().replace(/\.\d+Z$/, "Z") };
+  if (commit) stamp.commit = commit;
+  require("fs").writeFileSync(out, JSON.stringify(stamp, null, 2) + "\n");
+' "${STAMP_VERSION}" "${STAMP_COMMIT}" "${SCRIPT_DIR}/build-stamp.json"
+echo "    build stamp: ${STAMP_VERSION}${STAMP_COMMIT:+ (${STAMP_COMMIT})}"
 
 # 2. Bundle dist/server.js into a single CJS file with esbuild.
 #    --platform=node keeps Node built-ins external; we bundle the JS workspace

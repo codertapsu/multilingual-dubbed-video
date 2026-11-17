@@ -66,7 +66,9 @@ function defaultSettings(): ProjectSettings {
     duckOriginalAudio: true,
     duckingLevelDb: -12,
     originalAudioMode: 'keep',
-    renderQuality: 'quality',
+    // The hardware encoder when one works here, else x264 (media-worker encoder.ts):
+    // as sharp as x264 in the VMAF test and 4-5x faster on a burned-in render.
+    renderQuality: 'auto',
     timeStretchEngine: 'auto',
     ttsGainDb: 0,
     // Translations (esp. EN->VI) are usually longer than the source. Combined
@@ -299,10 +301,16 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
    */
   private async loadProvidersAndDefaults(): Promise<void> {
     try {
-      const [provs, prefs, engines] = await Promise.all([
+      const s0 = this.settings();
+      const [provs, prefs, engines, recommended] = await Promise.all([
         this.ipc.getProviders(),
         this.ipc.getAppPreferences(),
         this.ipc.getEngines().catch(() => null),
+        // The orchestrator decides the engines (projectDefaults.ts): saved
+        // choices where usable, else the best INSTALLED engines. Before this,
+        // a user who installed the recommended GPU engines still dubbed on the
+        // CPU unless they also changed their Settings defaults.
+        this.ipc.getProjectDefaults(s0.sourceLanguage, s0.targetLanguage).catch(() => null),
       ]);
       this.providers.set(provs);
       if (engines) {
@@ -310,6 +318,22 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
         this.offeredPacks.set(new Set(engines.available.map((p) => p.id)));
         this.resetUnavailableFeatureToggles();
       }
+      if (recommended) {
+        const r = recommended.settings;
+        this.settings.update((s) => ({
+          ...s,
+          sttProviderId: r.sttProviderId,
+          sttModel: r.sttModel ?? s.sttModel,
+          translationProviderId: r.translationProviderId,
+          refineProviderId: r.refineProviderId,
+          ttsProviderId: r.ttsProviderId,
+          autoSelectedPhases: r.autoSelectedPhases,
+        }));
+        this.syncProcessingMode();
+        this.applyVietnameseNeuralDefault();
+        return;
+      }
+      // Older orchestrator (no /project-defaults): the saved defaults alone.
       const d = prefs.providerDefaults;
       if (d) {
         const usable = (list: ProviderInfo[], id?: string) =>
@@ -475,6 +499,11 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     providerId: string,
   ): void {
     this.patchSettings(key, providerId);
+    // The user picked this engine: it is no longer the app's choice, so a run
+    // must fail loudly rather than fall back from it.
+    const phase = key === 'sttProviderId' ? 'stt' : key === 'translationProviderId' ? 'translation' : 'tts';
+    const auto = (this.settings().autoSelectedPhases ?? []).filter((p) => p !== phase);
+    this.patchSettings('autoSelectedPhases', auto.length > 0 ? auto : undefined);
     this.syncProcessingMode();
     // Switching the TTS engine to Piper or a VieNeu engine reveals the per-language
     // voice picker — populate it (with the right voice catalog) for the target.

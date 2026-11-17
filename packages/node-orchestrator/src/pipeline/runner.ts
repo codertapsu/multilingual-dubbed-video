@@ -33,7 +33,6 @@ import {
   setStepStatus,
   toAppError,
   toWhisperLanguage,
-  transcriptSegmentsToCues,
   segmentsToSrt,
   segmentsToVtt,
   PIPELINE_STEP_IDS,
@@ -47,10 +46,41 @@ import {
   type TranslationDocContext,
 } from '@videodubber/shared';
 import { alignSegments, summarizeAlignment, type AlignInputSegment } from '../alignment/align.js';
-import { looksUntranslated } from '../providers/translation/llmTranslationProvider.js';
+import { applyClipTiming, measureClip, type MeasuredClip } from '../alignment/clipSpeech.js';
+import type { DubbingTranslationInput, PromptSegment } from '../providers/translation/llmTranslationProvider.js';
 import { reviewTranslations } from '../providers/translation/refinement.js';
+import { contextEngineCandidates, FallbackContextChat } from '../providers/translation/contextEngine.js';
+import {
+  applyReviewOutcome,
+  checkAndRepairLines,
+  readTranslationReport,
+  shortenOverflowingLines,
+  TRANSLATION_DRAFT_FILE,
+  translationDraftPath,
+  translationReportPath,
+  updateTranslationReport,
+  type CharacterSheetStatus,
+  type OverflowUnit,
+  type RepairPassResult,
+  type ShortenOutcome,
+} from '../providers/translation/dubPasses.js';
+import {
+  generateCharacterSheet,
+  MIN_SEGMENTS_FOR_ANALYSIS,
+  translationContextEnabled,
+  type AnalysisChat,
+} from '../providers/translation/translationContext.js';
+import {
+  clipRates,
+  resolveVoiceRate,
+  robustMedian,
+  voiceRateKey,
+  type ResolvedVoiceRate,
+  type VoiceRateBook,
+} from '../providers/translation/speechFit.js';
 import { isTranslationRefiner } from '../providers/types.js';
-import { applyCueOverrides, writeCueOverrides } from '../workspace/subtitleTiming.js';
+import { writeJsonAtomic, writeTextAtomic } from '../workspace/projectStore.js';
+import { displayCuesFor, writeCueOverrides } from '../workspace/subtitleTiming.js';
 import {
   estimateGroupDriftMs,
   maxGroupDriftMs,
@@ -62,6 +92,8 @@ import {
   type SynthesisGroup,
   type SynthesisGroupsArtifact,
 } from './grouping.js';
+import { anchorSegmentsToSpeech, needsSpeechMap, type SpeechRegion } from './segmentTiming.js';
+import { cachedSpeechRegions, type SpeechMapService } from './speechMap.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
 import { describeStretch } from '../media.js';
@@ -89,6 +121,12 @@ export interface RunnerDeps {
    */
   alignment?: AlignmentService;
   /**
+   * Where speech is in the audio (the STT worker's VAD). Anchors transcript
+   * lines to when they are spoken; absent => lines without word timings keep
+   * the engine's timing.
+   */
+  speechMap?: SpeechMapService;
+  /**
    * Long-video STT chunking knobs. Audio longer than `sttChunkThresholdMs` is
    * transcribed in `sttChunkWindowMs` windows (bounded requests + per-chunk
    * checkpoints + progress). Defaults: 10-min windows above a 15-min threshold
@@ -96,6 +134,12 @@ export interface RunnerDeps {
    */
   sttChunkWindowMs?: number;
   sttChunkThresholdMs?: number;
+  /**
+   * Measured speaking rates per voice (speechFit.ts). Alignment records each
+   * run's clips here and translation budgets read them back; absent => every
+   * run budgets with its TTS engine's default rate.
+   */
+  voiceRates?: VoiceRateBook;
 }
 
 /** Options controlling a single run. */
@@ -141,9 +185,13 @@ async function readSegments(path: string): Promise<TranscriptSegment[]> {
   return parsed.segments ?? [];
 }
 
-/** Write transcript segments to a JSON artifact. */
+/**
+ * Write transcript segments to a JSON artifact — atomically: source.json is the
+ * speech-to-text step's resume marker, and a file torn by a crash mid-write
+ * would be skipped over as a finished transcript.
+ */
 async function writeSegments(path: string, segments: TranscriptSegment[]): Promise<void> {
-  await fsp.writeFile(path, `${JSON.stringify({ segments }, null, 2)}\n`, 'utf8');
+  await writeJsonAtomic(path, { segments });
 }
 
 /** Read the persisted translation character sheet (undefined when absent/corrupt). */
@@ -157,9 +205,23 @@ async function readDocContext(path: string): Promise<TranslationDocContext | und
   }
 }
 
-/** Persist the translation character sheet. */
+/** Persist the translation character sheet (atomically: the editor reads it). */
 async function writeDocContext(path: string, ctx: TranslationDocContext): Promise<void> {
-  await fsp.writeFile(path, `${JSON.stringify(ctx, null, 2)}\n`, 'utf8');
+  await writeJsonAtomic(path, ctx);
+}
+
+/**
+ * Persist a transcript and its subtitle sidecars atomically. The text passes
+ * (translation, review, auto-fit) write while the editor may be reading the
+ * same files; a torn translated.json is read back as a complete artifact.
+ */
+async function writeTranscriptAtomic(paths: WorkspacePaths, segments: TranscriptSegment[]): Promise<void> {
+  await writeJsonAtomic(paths.translatedJson, { segments });
+  // Planned for reading (displayCuesFor); the alignment step rewrites them
+  // once the dub is placed, holding each line until its voice has finished.
+  const cues = displayCuesFor(segments);
+  await writeTextAtomic(paths.translatedSrt, segmentsToSrt(cues));
+  await writeTextAtomic(paths.translatedVtt, segmentsToVtt(cues));
 }
 
 /** Read the synthesis-group plan artifact (undefined when absent/corrupt). */
@@ -173,10 +235,18 @@ async function readGroups(path: string): Promise<SynthesisGroup[] | undefined> {
   }
 }
 
-/** Persist the synthesis-group plan artifact. */
+/** Persist the synthesis-group plan artifact (atomically: alignment and the editor read it). */
 async function writeGroups(path: string, groups: SynthesisGroup[]): Promise<void> {
   const artifact: SynthesisGroupsArtifact = { groups };
-  await fsp.writeFile(path, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+  await writeJsonAtomic(path, artifact);
+}
+
+/** What a unit's clip says: its members' current texts, in order. */
+function unitText(group: SynthesisGroup, segById: ReadonlyMap<string, TranscriptSegment>): string {
+  return group.segmentIds
+    .map((id) => (segById.get(id)?.translatedText ?? segById.get(id)?.sourceText ?? '').trim())
+    .filter((t) => t.length > 0)
+    .join(' ');
 }
 
 /** Map segments to the planner's input shape (text = what TTS will speak). */
@@ -206,13 +276,13 @@ export type StepProgress = (fraction: number) => Promise<void>;
 
 /**
  * Above this time-stretch ratio a fitted line audibly changes delivery (rushed
- * pace ≈ "a different speaker"), so auto-fit prefers re-translating it shorter.
+ * pace ≈ "a different speaker"), so auto-fit prefers shortening its text. (The
+ * stretch it shortens TO is speechFit.FIT_COMFORT_RATIO, shared with every
+ * prompt's length ceiling.)
  */
 const STRETCH_SOFT_CAP = 1.25;
-/** The stretch auto-fit aims for when shortening a heavy-stretch line. */
-const STRETCH_COMFORT = 1.15;
 
-/** True when a unit should go through the shorten-retranslate loop. */
+/** True when a unit should go through auto-fit shortening. */
 function needsDurationFit(a: AlignedSegment): boolean {
   return a.status === 'timing-conflict' || a.speedRatio > STRETCH_SOFT_CAP;
 }
@@ -287,6 +357,24 @@ function envIntMs(name: string, fallback: number): number {
 const DEFAULT_STT_CHUNK_WINDOW_MS = envIntMs('STT_CHUNK_WINDOW_MS', 10 * 60_000);
 const DEFAULT_STT_CHUNK_THRESHOLD_MS = envIntMs('STT_CHUNK_THRESHOLD_MS', 15 * 60_000);
 
+/** A speech-to-text provider as the registry hands it out. */
+type SttProviderRef = ReturnType<ProviderRegistry['getStt']>;
+/** A translation provider as the registry hands it out. */
+type TranslationProviderRef = ReturnType<ProviderRegistry['getTranslation']>;
+/**
+ * The bundled engine an app-picked engine falls back to, per phase. Not the
+ * voice: voices belong to their engine (a VieNeu voice id means nothing to
+ * Piper), and a dub that silently changed its whole sound is worse than one
+ * that stops and says why.
+ */
+const BUILT_IN_PROVIDER = { stt: 'faster-whisper', translation: 'argos' } as const;
+const BUILT_IN_STT_PROVIDER = BUILT_IN_PROVIDER.stt;
+/**
+ * Failures of the ENGINE (would not start, crashed, missing native runtime or
+ * pack), which the built-in engine can stand in for.
+ */
+const STT_FALLBACK_CODES: ReadonlySet<string> = new Set(['ENGINE_UNAVAILABLE', 'ENGINE_PACK_MISSING', 'ENGINE_PACK_FAILED']);
+
 /** A single STT time-window to transcribe independently. */
 export interface SttChunk {
   index: number;
@@ -337,12 +425,21 @@ export class PipelineRunner {
   constructor(private readonly deps: RunnerDeps) {}
 
   /**
+   * The clips alignment measures were synthesized by THIS run's TTS step. Only
+   * then are their paces recorded: a retry from alignment measures the same
+   * clips again, and recording them twice weighted one dub double in every
+   * later translation's length budgets.
+   */
+  private freshClips = false;
+
+  /**
    * Run the pipeline for a project. Resumes by skipping already-completed steps
    * whose artifacts exist, unless `retryFromStep` forces re-execution.
    */
   async run(project: Project, options: RunOptions): Promise<void> {
     const { store, bus, logger } = this.deps;
     const paths = store.paths(project.id);
+    this.freshClips = false;
 
     let state = await store.getPipeline(project.id);
 
@@ -569,7 +666,9 @@ export class PipelineRunner {
       case 'refine':
         return this.stepRefine(project, paths, signal);
       case 'tts':
-        return this.stepTts(project, paths, signal, onProgress);
+        await this.stepTts(project, paths, signal, onProgress);
+        this.freshClips = true;
+        return;
       case 'alignment':
         return this.stepAlignment(project, paths, signal, onProgress);
       case 'audio-mix':
@@ -612,7 +711,7 @@ export class PipelineRunner {
     onProgress: StepProgress,
   ): Promise<void> {
     throwIfCancelled(signal);
-    const provider = this.deps.registry.getStt(project.settings.sttProviderId);
+    let provider = this.deps.registry.getStt(project.settings.sttProviderId);
     const model = project.settings.sttModel ?? 'small';
     const explicitLanguage = project.settings.sourceLanguage
       ? toWhisperLanguage(project.settings.sourceLanguage)
@@ -629,28 +728,34 @@ export class PipelineRunner {
     // media-worker) fall back to a single request even for long audio.
     const canChunk = plan.length > 1 && typeof this.deps.media.clip16kMono === 'function';
 
-    let segments: TranscriptSegment[];
-    let detectedLanguage: string | undefined;
-
-    if (!canChunk) {
-      this.deps.logger.info(`Transcribing with provider "${provider.id}" (model ${model})...`);
-      const result = await provider.transcribe(
+    const transcribeWith = async (
+      p: SttProviderRef,
+    ): Promise<{ segments: TranscriptSegment[]; detectedLanguage: string | undefined }> => {
+      if (canChunk) return this.transcribeChunked(paths, p, model, explicitLanguage, plan, signal, onProgress);
+      this.deps.logger.info(`Transcribing with provider "${p.id}" (model ${model})...`);
+      const result = await p.transcribe(
         { audioPath: paths.original16kMonoWav, language: explicitLanguage, model, wordTimestamps: true },
         signal,
       );
-      segments = result.segments;
-      detectedLanguage = result.detectedLanguage;
-    } else {
-      ({ segments, detectedLanguage } = await this.transcribeChunked(
-        paths,
-        provider,
-        model,
-        explicitLanguage,
-        plan,
-        signal,
-        onProgress,
-      ));
+      return { segments: result.segments, detectedLanguage: result.detectedLanguage };
+    };
+
+    let transcript: { segments: TranscriptSegment[]; detectedLanguage: string | undefined };
+    try {
+      transcript = await transcribeWith(provider);
+    } catch (err) {
+      const fallback = this.sttFallbackFor(project, provider.id, err);
+      if (!fallback) throw err;
+      this.deps.logger.warn(
+        `Speech-to-text engine "${provider.id}" could not run (${toAppError(err).message}). ` +
+          `The app picked it for this project, so the built-in "${fallback.id}" transcribes instead.`,
+      );
+      await this.recordSttFallback(project.id, fallback.id);
+      provider = fallback;
+      transcript = await transcribeWith(provider);
     }
+    let { segments } = transcript;
+    const { detectedLanguage } = transcript;
 
     // Optional forced-alignment / diarization refinement (WhisperX engine pack).
     // Tightens word timestamps (±50 ms) and, when diarization is on, tags each
@@ -683,11 +788,15 @@ export class PipelineRunner {
       );
     }
 
-    await writeSegments(paths.sourceJson, segments);
-    const srt = segmentsToSrt(
-      segments.map((s) => ({ index: s.index + 1, startMs: s.startMs, endMs: s.endMs, text: s.sourceText })),
+    segments = await this.anchorToSpeech(
+      paths,
+      segments,
+      detectedLanguage || project.settings.sourceLanguage || '',
+      signal,
     );
-    await fsp.writeFile(paths.sourceSrt, srt, 'utf8');
+
+    await writeSegments(paths.sourceJson, segments);
+    await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(segments)));
     this.deps.logger.info(`Transcribed ${segments.length} segments (detected language: ${detectedLanguage}).`);
 
     // The STT chunk clips/checkpoints were scratch space; reclaim the disk now
@@ -695,6 +804,99 @@ export class PipelineRunner {
     if (canChunk) {
       await fsp.rm(paths.sttChunksDir, { recursive: true, force: true }).catch(() => {});
     }
+  }
+
+  /**
+   * The engine to fall back to when the speech-to-text engine failed to run.
+   * Only when the APP picked that engine (an installed GPU engine, see
+   * recommendProjectSettings): a project that used to work on the built-in
+   * engine must not start failing because a better one was installed. An
+   * engine the user chose fails loudly, as before; so does anything that is
+   * not the engine's fault (bad audio, cancellation, a missing speech model
+   * the run gate would have caught).
+   */
+  private sttFallbackFor(project: Project, providerId: string, err: unknown): SttProviderRef | undefined {
+    if (providerId === BUILT_IN_STT_PROVIDER) return undefined;
+    if (!project.settings.autoSelectedPhases?.includes('stt')) return undefined;
+    if (!STT_FALLBACK_CODES.has(toAppError(err).code)) return undefined;
+    try {
+      return this.deps.registry.getStt(BUILT_IN_STT_PROVIDER);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Make the project say which engine actually transcribed it (and stop retrying the broken one). */
+  private async recordSttFallback(projectId: string, providerId: string): Promise<void> {
+    await this.recordFallback(projectId, 'stt', providerId);
+  }
+
+  /**
+   * The built-in translator to fall back to when the translation engine failed
+   * to run — under the same rule as {@link sttFallbackFor}: only an engine the
+   * APP picked (TranslateGemma, once installed), only for a failure of the
+   * engine itself. A project that translated with Argos before the GPU engine
+   * was installed must not start failing because of it.
+   */
+  private translationFallbackFor(project: Project, providerId: string, err: unknown): TranslationProviderRef | undefined {
+    if (providerId === BUILT_IN_PROVIDER.translation) return undefined;
+    if (!project.settings.autoSelectedPhases?.includes('translation')) return undefined;
+    if (!STT_FALLBACK_CODES.has(toAppError(err).code)) return undefined;
+    try {
+      const fallback = this.deps.registry.getTranslation(BUILT_IN_PROVIDER.translation);
+      return fallback.id === BUILT_IN_PROVIDER.translation ? fallback : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Make the project say which engine actually ran a phase (and stop retrying the broken one). */
+  private async recordFallback(projectId: string, phase: 'stt' | 'translation', providerId: string): Promise<void> {
+    const fresh = await this.deps.store.getProject(projectId);
+    const { autoSelectedPhases, ...settings } = fresh.settings;
+    const auto = (autoSelectedPhases ?? []).filter((p) => p !== phase);
+    const field = phase === 'stt' ? 'sttProviderId' : 'translationProviderId';
+    await this.deps.store.saveProject({
+      ...fresh,
+      settings: { ...settings, [field]: providerId, ...(auto.length > 0 ? { autoSelectedPhases: auto } : {}) },
+    });
+  }
+
+  /**
+   * Anchor every line to when it is spoken (pipeline/segmentTiming.ts). The
+   * speech map is best-effort: without it, lines without word timings keep the
+   * engine's timing, as before.
+   */
+  private async anchorToSpeech(
+    paths: WorkspacePaths,
+    segments: TranscriptSegment[],
+    language: string,
+    signal: AbortSignal,
+  ): Promise<TranscriptSegment[]> {
+    let regions: SpeechRegion[] | undefined;
+    if (this.deps.speechMap && needsSpeechMap(segments)) {
+      throwIfCancelled(signal);
+      try {
+        regions = await cachedSpeechRegions(this.deps.speechMap, paths.original16kMonoWav, paths.speechRegionsJson, signal);
+      } catch (err) {
+        if (signal.aborted) throw err;
+        this.deps.logger.warn(
+          `Could not map where speech is (${toAppError(err).message}); lines without word timings keep the engine's timing.`,
+        );
+      }
+    }
+    const { segments: anchored, report } = anchorSegmentsToSpeech(segments, {
+      sourceLanguage: language,
+      ...(regions ? { regions } : {}),
+    });
+    if (report.moved > 0) {
+      this.deps.logger.info(
+        `Re-timed ${report.moved} of ${segments.length} lines to when they are spoken ` +
+          `(${report.byWords} by word timings, ${report.bySpeechMap} by the speech map; ` +
+          `${report.split} split at a long pause; largest shift ${(report.maxShiftMs / 1000).toFixed(1)} s).`,
+      );
+    }
+    return anchored;
   }
 
   /**
@@ -746,11 +948,8 @@ export class PipelineRunner {
         );
         if (!detectedLanguage && res.detectedLanguage) detectedLanguage = res.detectedLanguage;
         chunkSegments = res.segments.map((s) => offsetSegment(s, chunk.startMs));
-        await fsp.writeFile(
-          checkpoint,
-          `${JSON.stringify({ detectedLanguage: res.detectedLanguage, segments: chunkSegments }, null, 2)}\n`,
-          'utf8',
-        );
+        // Atomic: a resumed run trusts a checkpoint that exists.
+        await writeJsonAtomic(checkpoint, { detectedLanguage: res.detectedLanguage, segments: chunkSegments });
         // The clip WAV is large; drop it once its checkpoint is written.
         await fsp.rm(clipPath, { force: true }).catch(() => {});
         this.deps.logger.info(
@@ -769,43 +968,181 @@ export class PipelineRunner {
     return { segments, detectedLanguage };
   }
 
-  private async stepTranslation(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
-    throwIfCancelled(signal);
-    const provider = this.deps.registry.getTranslation(project.settings.translationProviderId);
-    const sourceSegments = await readSegments(paths.sourceJson);
-    this.deps.logger.info(
-      `Translating ${sourceSegments.length} segments ${project.settings.sourceLanguage} -> ${project.settings.targetLanguage} with "${provider.id}"...`,
+  /**
+   * The speaking rate translation budgets use: the project voice's measured
+   * rate once it has enough history (RunnerDeps.voiceRates), else its TTS
+   * engine's default, else the language default (evidence in speechFit.ts).
+   */
+  private async speechRateFor(project: Project): Promise<ResolvedVoiceRate> {
+    return resolveVoiceRate(
+      this.deps.voiceRates,
+      project.settings.ttsProviderId,
+      project.settings.ttsVoiceId,
+      project.settings.targetLanguage,
     );
+  }
 
-    // The project's character sheet (cast/glossary/pronoun plan): a persisted
-    // (possibly user-edited) one is authoritative and re-used verbatim; when
-    // absent, a context-capable provider generates one and we persist it so the
-    // editor can surface it and later re-translates stay consistent.
-    const documentContext = await readDocContext(paths.translationContextJson);
+  /** The project's context engine (contextEngine.ts), logging every candidate it has to skip. */
+  private contextEngineFor(project: Project): FallbackContextChat {
+    return new FallbackContextChat(contextEngineCandidates(this.deps.registry, project.settings), (provider, err) =>
+      this.deps.logger.info(`"${provider.displayName}" cannot run here (${toAppError(err).message}); trying the next model.`),
+    );
+  }
 
-    const result = await provider.translateSegments(
-      {
-        sourceLanguage: project.settings.sourceLanguage,
-        targetLanguage: project.settings.targetLanguage,
-        segments: sourceSegments.map((s) => ({
-          id: s.id,
-          sourceText: s.sourceText,
-          startMs: s.startMs,
-          endMs: s.endMs,
-          // Carry diarized speaker ids into the prompt: who is speaking is what
-          // decides Vietnamese xưng hô, and it was computed and then dropped.
-          ...(s.speakerId ? { speakerId: s.speakerId } : {}),
-        })),
-        ...(documentContext ? { documentContext } : {}),
-      },
+  /**
+   * Build and persist the character sheet with `chat`, or fail LOUDLY: a
+   * pipeline warning plus a `failed` status in translation_report.json (the
+   * editor/MCP surface). The old code swallowed every analysis error, and not
+   * one of six audited projects (2026-11) had a sheet.
+   */
+  private async generateSheet(
+    project: Project,
+    paths: WorkspacePaths,
+    chat: AnalysisChat,
+    engineLabel: () => string | undefined,
+    segments: PromptSegment[],
+    signal: AbortSignal,
+  ): Promise<{ sheet?: TranslationDocContext; status: CharacterSheetStatus }> {
+    const at = (): string => new Date().toISOString();
+    const outcome = await generateCharacterSheet(
+      chat,
+      { sourceLanguage: project.settings.sourceLanguage, targetLanguage: project.settings.targetLanguage, segments },
       signal,
     );
-
-    if (!documentContext && result.analysis) {
-      await writeDocContext(paths.translationContextJson, result.analysis);
+    const engine = engineLabel();
+    if (outcome.analysis) {
+      await writeDocContext(paths.translationContextJson, outcome.analysis);
       this.deps.logger.info(
-        'Generated the translation character sheet (cast, glossary, pronoun plan) — review it in the editor to fine-tune pronouns/terminology, then re-run translation.',
+        `Generated the translation character sheet (cast, glossary, pronoun plan) with "${engine ?? 'the context model'}" — review it in the editor to fine-tune pronouns/terminology, then re-run translation.`,
       );
+      return {
+        sheet: outcome.analysis,
+        status: { status: 'generated', ...(engine ? { engine } : {}), attempts: outcome.attempts, at: at() },
+      };
+    }
+    const why = outcome.attempts.map((a) => `${a.mode}: ${a.error ?? 'failed'}`).join('; ');
+    this.deps.logger.warn(
+      `Could not build the translation character sheet${engine ? ` with "${engine}"` : ''} (${why}). ` +
+        'Names, terms and terms of address will not be kept consistent across the video. Write or fix the sheet in the editor (or pick a stronger review model), then re-run translation.',
+    );
+    return { status: { status: 'failed', ...(engine ? { engine } : {}), attempts: outcome.attempts, at: at() } };
+  }
+
+  private async stepTranslation(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
+    throwIfCancelled(signal);
+    const { settings } = project;
+    let provider = this.deps.registry.getTranslation(settings.translationProviderId);
+    const sourceSegments = await readSegments(paths.sourceJson);
+    const languages = { sourceLanguage: settings.sourceLanguage, targetLanguage: settings.targetLanguage };
+    const rate = await this.speechRateFor(project);
+    this.deps.logger.info(
+      `Translating ${sourceSegments.length} segments ${settings.sourceLanguage} -> ${settings.targetLanguage} with "${provider.id}"` +
+        (rate.perSecond !== undefined ? ` (line lengths budgeted at ${rate.perSecond.toFixed(2)} units/s, ${rate.source})` : '') +
+        '...',
+    );
+    const reportPath = translationReportPath(paths.subtitlesDir);
+    // A new translation starts a new report: the previous run's review and
+    // auto-fit records described other lines, and its "failed" character
+    // sheet made the refine step skip building one.
+    await writeJsonAtomic(reportPath, {});
+    const promptSegments: PromptSegment[] = sourceSegments.map((s) => ({
+      id: s.id,
+      sourceText: s.sourceText,
+      startMs: s.startMs,
+      endMs: s.endMs,
+      // Carry diarized speaker ids into the prompt: who is speaking is what
+      // decides Vietnamese xưng hô, and it was computed and then dropped.
+      ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+    }));
+
+    // The project's character sheet (cast/glossary/pronoun plan): a persisted
+    // (possibly user-edited) one is authoritative and re-used verbatim. When
+    // absent, the PIPELINE generates it (providers are told to skip their own
+    // analysis) so a failure is reported instead of swallowed: with the
+    // translator itself when it reads context, else with the context engine
+    // AFTER translating — a local translator's model and the chat model then
+    // swap once instead of twice.
+    let documentContext = await readDocContext(paths.translationContextJson);
+    let sheetStatus: CharacterSheetStatus | undefined = documentContext
+      ? { status: 'provided', at: new Date().toISOString() }
+      : undefined;
+    const wantSheet =
+      !documentContext && translationContextEnabled() && sourceSegments.length >= MIN_SEGMENTS_FOR_ANALYSIS;
+    const contextEngine = this.contextEngineFor(project);
+    if (wantSheet && isTranslationRefiner(provider)) {
+      ({ sheet: documentContext, status: sheetStatus } = await this.generateSheet(
+        project,
+        paths,
+        provider,
+        () => provider.displayName,
+        promptSegments,
+        signal,
+      ));
+    }
+
+    const input: DubbingTranslationInput = {
+      ...languages,
+      segments: sourceSegments.map((s) => ({
+        id: s.id,
+        sourceText: s.sourceText,
+        startMs: s.startMs,
+        endMs: s.endMs,
+        ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+      })),
+      ...(documentContext ? { documentContext } : {}),
+      ...(rate.perSecond !== undefined ? { speechRate: rate.perSecond } : {}),
+      skipAnalysis: true,
+    };
+    let result: Awaited<ReturnType<TranslationProviderRef['translateSegments']>>;
+    try {
+      result = await provider.translateSegments(input, signal);
+    } catch (err) {
+      const fallback = this.translationFallbackFor(project, provider.id, err);
+      if (!fallback || signal.aborted) throw err;
+      this.deps.logger.warn(
+        `Translation engine "${provider.id}" could not run (${toAppError(err).message}). ` +
+          `The app picked it for this project, so the built-in "${fallback.id}" translates instead.`,
+      );
+      await this.recordFallback(project.id, 'translation', fallback.id);
+      provider = fallback;
+      result = await provider.translateSegments(input, signal);
+    }
+
+    // A provider that ignores skipAnalysis may still return a sheet: keep it.
+    if (!documentContext && result.analysis) {
+      documentContext = result.analysis;
+      await writeDocContext(paths.translationContextJson, result.analysis);
+      sheetStatus = { status: 'generated', engine: provider.displayName, at: new Date().toISOString() };
+    }
+    if (wantSheet && !documentContext && sheetStatus === undefined) {
+      if (contextEngine.available) {
+        ({ sheet: documentContext, status: sheetStatus } = await this.generateSheet(
+          project,
+          paths,
+          contextEngine,
+          () => contextEngine.engine?.displayName,
+          promptSegments,
+          signal,
+        ));
+        // Every candidate turned out not to be installed: that is "no model",
+        // not a failed analysis.
+        if (!contextEngine.available) {
+          sheetStatus = {
+            status: 'skipped',
+            reason: 'no instruction-following model is installed or configured',
+            at: new Date().toISOString(),
+          };
+        }
+      } else {
+        sheetStatus = {
+          status: 'skipped',
+          reason: `"${provider.displayName}" translates line by line and no review or chat model is configured`,
+          at: new Date().toISOString(),
+        };
+        this.deps.logger.info(
+          'No character sheet: the translator works line by line and no instruction-following model (a review model, the Gemma chat model or a cloud LLM) is available to build one.',
+        );
+      }
     }
 
     const byId = new Map(result.segments.map((s) => [s.id, s.translatedText]));
@@ -820,7 +1157,7 @@ export class PipelineRunner {
           `${missing.length} segment(s) were not translated (e.g. ${missing
             .slice(0, 3)
             .map((s) => s.id)
-            .join(', ')}). They will keep their source text.`,
+            .join(', ')}). They will be repaired or flagged.`,
       );
     }
 
@@ -829,33 +1166,73 @@ export class PipelineRunner {
       translatedText: byId.get(s.id) ?? s.translatedText ?? '',
     }));
 
-    // Surface lines that came back looking UNTRANSLATED. Providers fall back
-    // to the source text when a model skips a line, which used to be
-    // completely silent — a zh→vi run once shipped 169 Chinese lines into a
-    // Vietnamese dub without a single warning. looksUntranslated() tolerates
-    // legitimately-identical short lines ("OK", numbers, names), so a healthy
-    // run doesn't cry wolf.
-    if (project.settings.sourceLanguage.split('-')[0] !== project.settings.targetLanguage.split('-')[0]) {
-      const echoes = merged.filter((s) =>
-        looksUntranslated({ id: s.id, sourceText: s.sourceText }, s.translatedText),
+    // Check every line (lineQuality.ts): Chinese left in a Vietnamese line,
+    // pinyin names, "/" hedges, untranslated lines. Failures get ONE repair by
+    // the context engine with their neighbours and the sheet; whatever is
+    // still bad keeps its best candidate and is FLAGGED on the segment — it
+    // used to ship silently ("Nữ Th娲", "Kunlun Xu", "thầy/cô").
+    let pass: RepairPassResult;
+    const repairInput = {
+      ...languages,
+      segments: merged,
+      ...(documentContext ? { documentContext } : {}),
+      ...(rate.perSecond !== undefined ? { perSecond: rate.perSecond } : {}),
+    };
+    try {
+      pass = await checkAndRepairLines(repairInput, contextEngine.available ? contextEngine : undefined, signal);
+    } catch (err) {
+      // Only the run's signal is a cancel; a timed-out model just repairs nothing.
+      if (signal.aborted) throw err;
+      this.deps.logger.warn(
+        `Could not repair lines that failed the checks (${toAppError(err).message}); they are flagged instead.`,
       );
-      if (echoes.length > 0) {
-        this.deps.logger.warn(
-          `${echoes.length} line(s) look UNTRANSLATED (translation identical to the source, e.g. ${echoes
+      pass = await checkAndRepairLines(repairInput, undefined, signal);
+    }
+    if (pass.errors.length > 0) {
+      this.deps.logger.warn(
+        `The model failed on ${pass.errors.length} repair request(s) (${pass.errors[0]}); those lines keep their best version.`,
+      );
+    }
+    if (pass.repaired.length > 0) {
+      this.deps.logger.info(
+        `Repaired ${pass.repaired.length} line(s) that failed the checks with "${contextEngine.engine?.displayName ?? 'the context model'}" ` +
+          `(e.g. ${pass.repaired
+            .slice(0, 2)
+            .map((r) => `${r.id}: "${r.before}" -> "${r.after}"`)
+            .join('; ')}).`,
+      );
+    }
+    if (pass.flagged.length > 0) {
+      // "UNTRANSLATED" keeps the wording of the warning this replaces (a zh→vi
+      // run once shipped 169 Chinese lines without one): the editor badge and
+      // support threads search for it.
+      const untranslated = pass.flagged.filter((f) => f.flags.includes('untranslated'));
+      this.deps.logger.warn(
+        `${pass.flagged.length} line(s) still fail the translation checks and are flagged for review ` +
+          `(${pass.flagged
             .slice(0, 3)
-            .map((s) => s.id)
-            .join(', ')}). ` +
-            'The translator likely skipped them — re-run the translation step, try a stronger model, or edit them in the editor (flagged with an "Untranslated?" badge).',
-        );
-      }
+            .map((f) => `${f.id}: ${f.flags.join('+')}`)
+            .join(', ')}).` +
+          (untranslated.length > 0
+            ? ` ${untranslated.length} of them look UNTRANSLATED and keep their source text — re-run translation, try a stronger model, or edit them in the editor.`
+            : ''),
+      );
     }
 
-    await writeSegments(paths.translatedJson, merged);
-
-    const cues = transcriptSegmentsToCues(merged);
-    await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
-    await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
-    this.deps.logger.info(`Translated ${merged.length} segments.`);
+    await writeTranscriptAtomic(paths, pass.segments);
+    await updateTranslationReport(reportPath, {
+      ...(sheetStatus ? { characterSheet: sheetStatus } : {}),
+      speechRate: { ...(rate.perSecond !== undefined ? { perSecond: rate.perSecond } : {}), source: rate.source },
+      quality: {
+        checked: pass.segments.length,
+        repaired: pass.repaired,
+        flagged: pass.flagged,
+        ...(pass.errors.length > 0 ? { errors: pass.errors } : {}),
+        ...(contextEngine.engine ? { engine: contextEngine.engine.displayName } : {}),
+        at: new Date().toISOString(),
+      },
+    });
+    this.deps.logger.info(`Translated ${pass.segments.length} segments.`);
   }
 
   /**
@@ -864,14 +1241,15 @@ export class PipelineRunner {
    * polishes each line — returning it unchanged when it's already good. Runs
    * only when settings.refineProviderId names a refinement-capable provider;
    * otherwise completes instantly. The refine report doubles as the step's
-   * resume marker and feeds the editor's summary.
+   * resume marker and feeds the editor's summary; it records EVERY change
+   * with its before/after text and every proposal the checks refused, and the
+   * pre-review transcript is kept as translated.draft.json — before, the
+   * draft was overwritten and the report kept at most 200 bare ids.
    */
   private async stepRefine(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
     throwIfCancelled(signal);
     const providerId = project.settings.refineProviderId;
-    const writeReport = async (report: object): Promise<void> => {
-      await fsp.writeFile(paths.refineReportJson, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-    };
+    const writeReport = (report: object): Promise<void> => writeJsonAtomic(paths.refineReportJson, report);
 
     if (!providerId || providerId === 'none') {
       await writeReport({ skipped: true, reason: 'no refine provider configured' });
@@ -887,66 +1265,106 @@ export class PipelineRunner {
     }
 
     const segments = await readSegments(paths.translatedJson);
-    const documentContext = await readDocContext(paths.translationContextJson);
+    const languages = {
+      sourceLanguage: project.settings.sourceLanguage,
+      targetLanguage: project.settings.targetLanguage,
+    };
+    await writeJsonAtomic(translationDraftPath(paths.subtitlesDir), { segments });
+    let documentContext = await readDocContext(paths.translationContextJson);
+    const rate = await this.speechRateFor(project);
     this.deps.logger.info(
       `Reviewing ${segments.length} translated line(s) with "${provider.displayName}" (context-aware refinement)...`,
     );
+    const promptSegments: PromptSegment[] = segments.map((s) => ({
+      id: s.id,
+      sourceText: s.sourceText,
+      startMs: s.startMs,
+      endMs: s.endMs,
+      ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+    }));
+
+    // No sheet yet (the translator could not build one): this engine reads
+    // context, so try — unless the translation step already failed with this
+    // very engine, which would just pay for the same failure twice.
+    let sheetStatus: CharacterSheetStatus | undefined;
+    if (!documentContext && translationContextEnabled() && segments.length >= MIN_SEGMENTS_FOR_ANALYSIS) {
+      const reportPath = translationReportPath(paths.subtitlesDir);
+      const prior = (await readTranslationReport(reportPath)).characterSheet;
+      if (prior?.status === 'failed' && prior.engine === provider.displayName) {
+        sheetStatus = prior;
+      } else {
+        ({ sheet: documentContext, status: sheetStatus } = await this.generateSheet(
+          project,
+          paths,
+          provider,
+          () => provider.displayName,
+          promptSegments,
+          signal,
+        ));
+        await updateTranslationReport(reportPath, { characterSheet: sheetStatus });
+      }
+    }
 
     const outcome = await reviewTranslations(
       {
-        sourceLanguage: project.settings.sourceLanguage,
-        targetLanguage: project.settings.targetLanguage,
-        segments: segments.map((s) => ({
-          id: s.id,
-          sourceText: s.sourceText,
-          startMs: s.startMs,
-          endMs: s.endMs,
-          ...(s.speakerId ? { speakerId: s.speakerId } : {}),
-        })),
+        ...languages,
+        segments: promptSegments,
         draftById: new Map(segments.map((s) => [s.id, (s.translatedText ?? '').trim()])),
         ...(documentContext ? { documentContext } : {}),
         mode: 'refine',
+        ...(rate.perSecond !== undefined ? { perSecond: rate.perSecond } : {}),
+        skipAnalysis: true,
+        // A small local model mixes lines up in big batches (refinement.ts).
+        ...(provider.isLocal ? { batchSegments: 8 } : {}),
       },
       provider,
       signal,
     );
 
-    // Persist a character sheet generated by this pass (none existed before),
-    // so the editor can surface it and later runs stay consistent.
-    if (!documentContext && outcome.analysis) {
-      await writeDocContext(paths.translationContextJson, outcome.analysis);
-    }
-
-    // Locked lines (hand-written or approved in the editor) were sent as
-    // CONTEXT — the reviewer still reads them to keep pronouns and terms
-    // consistent — but their text is never replaced.
-    const lockedIds = new Set(segments.filter((s) => s.locked === true).map((s) => s.id));
-    const appliedIds = outcome.changedIds.filter((id) => !lockedIds.has(id));
-    if (appliedIds.length > 0) {
-      const byId = new Map(outcome.segments.map((s) => [s.id, s.translatedText]));
-      const merged: TranscriptSegment[] = segments.map((s) => ({
-        ...s,
-        translatedText: lockedIds.has(s.id) ? (s.translatedText ?? '') : (byId.get(s.id) ?? s.translatedText ?? ''),
-      }));
-      await writeSegments(paths.translatedJson, merged);
-      const cues = transcriptSegmentsToCues(merged);
-      await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
-      await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
-    }
+    // Locked lines were read as context but are never replaced; every line's
+    // quality flags are refreshed from its final text.
+    const merged = applyReviewOutcome(segments, outcome, languages);
+    const flagsChanged = merged.segments.some(
+      (s, i) => JSON.stringify(s.qualityFlags ?? []) !== JSON.stringify(segments[i]!.qualityFlags ?? []),
+    );
+    if (merged.applied.length > 0 || flagsChanged) await writeTranscriptAtomic(paths, merged.segments);
+    const lockedCount = segments.filter((s) => s.locked === true).length;
+    const appliedIds = merged.applied.map((c) => c.id);
     await writeReport({
       provider: providerId,
       reviewed: segments.length,
       changed: appliedIds.length,
-      changedIds: appliedIds.slice(0, 200),
-      ...(lockedIds.size > 0 ? { lockedKept: lockedIds.size } : {}),
+      changedIds: appliedIds,
+      changes: merged.applied,
+      rejected: outcome.rejected,
+      ...(outcome.failedBatches.length > 0 ? { failedBatches: outcome.failedBatches } : {}),
+      ...(lockedCount > 0 ? { lockedKept: lockedCount } : {}),
+      ...(sheetStatus ? { characterSheet: sheetStatus } : {}),
+      draft: TRANSLATION_DRAFT_FILE,
       finishedAt: new Date().toISOString(),
     });
+    if (outcome.failedBatches.length > 0) {
+      this.deps.logger.warn(
+        `The review model returned no usable reply for ${outcome.failedBatches.length} batch(es) even after a retry ` +
+          `(${outcome.failedBatches.reduce((a, b) => a + b.length, 0)} line(s) kept their draft, e.g. ${outcome.failedBatches[0]![0]}).`,
+      );
+    }
+    if (outcome.rejected.length > 0) {
+      this.deps.logger.info(
+        `Kept the draft for ${outcome.rejected.length} line(s) whose review failed the checks ` +
+          `(e.g. ${outcome.rejected
+            .slice(0, 2)
+            .map((r) => `${r.id}: ${r.reason}`)
+            .join('; ')}).`,
+      );
+    }
     this.deps.logger.info(
       `Refinement complete: ${appliedIds.length}/${segments.length} line(s) improved` +
         (appliedIds.length > 0
           ? ` (e.g. ${appliedIds.slice(0, 3).join(', ')}).`
           : ' — the translation was already consistent.') +
-        (lockedIds.size > 0 ? ` ${lockedIds.size} locked line(s) kept as written.` : ''),
+        (lockedCount > 0 ? ` ${lockedCount} locked line(s) kept as written.` : '') +
+        ` The pre-review draft is in ${TRANSLATION_DRAFT_FILE}.`,
     );
   }
 
@@ -1190,16 +1608,19 @@ export class PipelineRunner {
     // projects without the artifact fall back to one-group-per-segment, which
     // reproduces the legacy behavior exactly.
     const groups = (await readGroups(paths.synthesisGroupsJson)) ?? singletonGroups(toGroupInputs(segments));
+    await this.revoiceStaleUnits(project, paths, segments, groups, signal);
 
-    // Determine each synthesized unit's real duration by probing its WAV.
+    // Measure each synthesized unit's WAV: its length, and where the speech is
+    // in it (clipSpeech.ts — edge silence trimmed, a botched clip's trailing
+    // noise cut), so alignment fits the speech rather than the file.
     // The TTS worker names files by the numeric part of the segment/group id
     // (seg_0001 -> segment_0001.wav), so we resolve the index from the id first
     // and only fall back to the positional index if the id has no number.
-    // Probes are independent ffprobe runs — do them with bounded concurrency
-    // (sequential probing dominated this step's wall-clock on long videos).
+    // Measurements are independent ffmpeg runs — do them with bounded
+    // concurrency (sequential probing dominated this step on long videos).
     const PROBE_CONCURRENCY = 8;
-    const PROBE_TIMEOUT_MS = 15_000;
     const alignInputs = new Array<AlignInputSegment>(groups.length);
+    const outcomes = new Map<MeasuredClip['outcome'] | 'failed', string[]>();
     const progressEvery = Math.max(1, Math.floor(groups.length / 20));
     let nextGroup = 0;
     let probedCount = 0;
@@ -1212,30 +1633,16 @@ export class PipelineRunner {
           const fromId = segmentIdToIndex(group.id);
           const index = fromId > 0 ? fromId : i + 1;
           const audioPath = paths.ttsSegment(index);
-          // Assigned on both the success and failure paths below.
-          let generatedDurationMs: number;
-          try {
-            // Bound each probe so one hung/locked ffprobe can't stall the whole
-            // step on a long video; an unprobeable WAV is treated as 0ms below.
-            const info = await Promise.race([
-              this.deps.media.probe(audioPath, signal),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('probe timeout')), PROBE_TIMEOUT_MS),
-              ),
-            ]);
-            generatedDurationMs = info.durationMs;
-          } catch {
-            // If the WAV is missing/unprobeable/slow, treat as zero-length so
-            // alignment flags it rather than crashing or hanging the pipeline.
-            generatedDurationMs = 0;
-          }
-          alignInputs[i] = {
+          const input: AlignInputSegment = {
             segmentId: group.id,
             startMs: group.startMs,
             endMs: group.endMs,
             audioPath,
-            generatedDurationMs,
+            generatedDurationMs: 0,
           };
+          const outcome = await this.measureInto(input, group.text, signal);
+          outcomes.set(outcome, [...(outcomes.get(outcome) ?? []), group.id]);
+          alignInputs[i] = input;
           // Throttled progress (<=~20 emits) so long-video probing isn't a
           // silent multi-minute wait. Concurrent emits only race on the percent.
           probedCount++;
@@ -1245,6 +1652,7 @@ export class PipelineRunner {
         }
       }),
     );
+    this.logClipMeasurements(outcomes);
 
     // Pass the total media duration so alignment is gap-aware (a long
     // translation can use the silence until the next line — or until the end of
@@ -1256,14 +1664,25 @@ export class PipelineRunner {
     };
     let aligned = alignSegments(alignInputs, settings, totalDurationMs);
 
-    // Auto-fit: re-translate (tighter), re-synthesize, and re-align any unit
-    // that can't fit even at max speed OR that only fits with a heavy
-    // time-stretch (> STRETCH_SOFT_CAP): pace whiplash between a 1.5x line and
-    // its natural-rate neighbours reads as a different speaker, so shortening
-    // the text beats stretching the audio. No-op when the setting is off,
-    // nothing needs fitting, or the provider can't shorten on request (Argos).
+    // Learn the voice's real pace from the clips just measured (speechFit.ts):
+    // the next translation of this voice budgets with it, and auto-fit below
+    // uses it to spot clips the engine botched. A clip that is silent (the TTS
+    // worker's placeholder for a line it failed to voice), unreadable, or had
+    // noise cut off says nothing about the voice's pace.
+    const unreliable = new Set([
+      ...(outcomes.get('silent') ?? []),
+      ...(outcomes.get('failed') ?? []),
+      ...(outcomes.get('cut') ?? []),
+    ]);
+    const voiceRate = await this.learnVoiceRates(project, groups, alignInputs, unreliable);
+
+    // Auto-fit: SHORTEN the current text of any unit that can't fit even at
+    // max speed OR that only fits with a heavy time-stretch (> STRETCH_SOFT_CAP):
+    // pace whiplash between a 1.5x line and its natural-rate neighbours reads as
+    // a different speaker, so shortening the text beats stretching the audio.
+    // No-op when the setting is off, nothing needs fitting, or no
+    // instruction-following model is available (contextEngine.ts).
     if (project.settings.autoFitOverflow !== false && aligned.some(needsDurationFit)) {
-      this.deps.logger.info('Auto-fitting overflowing translations to their timing windows...');
       aligned = await this.refitOverflowingSegments(
         project,
         paths,
@@ -1274,6 +1693,7 @@ export class PipelineRunner {
         settings,
         totalDurationMs,
         signal,
+        voiceRate,
       );
     }
 
@@ -1292,21 +1712,25 @@ export class PipelineRunner {
       signal,
     );
 
-    await fsp.writeFile(paths.translatedAlignedJson, `${JSON.stringify(aligned, null, 2)}\n`, 'utf8');
+    // The step's resume artifact: written atomically, like every artifact that
+    // "exists = complete" (a torn file would be skipped over as done).
+    await writeJsonAtomic(paths.translatedAlignedJson, aligned);
 
     // Sync subtitles to the dub voice: re-time cues inside merged groups to
-    // when their words are actually spoken and regenerate the SRT/VTT sidecars
-    // (the canonical segment timings in translated.json stay untouched, so
-    // re-runs and the editor are unaffected). Uses the FINAL placed clips —
-    // after auto-fit and native-rate re-synthesis. The overrides are PERSISTED
-    // (cue_timing.json) so an editor edit / refit reapplies them instead of
-    // reverting the whole track to source-speech timing.
-    if (project.settings.syncSubtitlesToVoice !== false) {
-      const finalGroups = (await readGroups(paths.synthesisGroupsJson)) ?? [];
+    // when their words are actually spoken (the canonical segment timings in
+    // translated.json stay untouched, so re-runs and the editor are
+    // unaffected). Uses the FINAL placed clips — after auto-fit and native-rate
+    // re-synthesis. The overrides are PERSISTED (cue_timing.json) so an editor
+    // edit / refit reapplies them instead of reverting the whole track to
+    // source-speech timing.
+    const sync = project.settings.syncSubtitlesToVoice !== false;
+    const finalGroups = (await readGroups(paths.synthesisGroupsJson)) ?? [];
+    let retimed = new Map<string, { startMs: number; endMs: number }>();
+    if (sync) {
       const placedById = new Map(
         aligned.map((a) => [a.segmentId, { startMs: a.startMs, placedDurationMs: a.placedDurationMs }]),
       );
-      const retimed = retimeCuesToVoice(
+      retimed = retimeCuesToVoice(
         finalGroups,
         placedById,
         segments.map((s) => ({
@@ -1316,18 +1740,19 @@ export class PipelineRunner {
           text: (s.translatedText ?? s.sourceText ?? '').trim(),
         })),
       );
-      // Persist the fresh set (possibly empty — clears stale overrides from a
-      // prior run), then regenerate the sidecars applying it.
+      // Persist the fresh set (possibly empty — clears stale overrides from a prior run).
       await writeCueOverrides(paths.cueTimingJson, retimed);
       if (retimed.size > 0) {
-        const cues = transcriptSegmentsToCues(applyCueOverrides(segments, retimed));
-        await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
-        await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
         this.deps.logger.info(
           `Re-timed ${retimed.size} subtitle cue(s) to match the dub voice (grouped lines are spoken continuously).`,
         );
       }
     }
+    // The subtitle files, now that the dub is placed: planned for reading, and
+    // (with voice sync) each line held until its voice has finished.
+    const cues = displayCuesFor(segments, sync ? { overrides: retimed, groups: finalGroups, units: aligned } : {});
+    await writeTextAtomic(paths.translatedSrt, segmentsToSrt(cues));
+    await writeTextAtomic(paths.translatedVtt, segmentsToVtt(cues));
 
     const summary = summarizeAlignment(aligned);
     this.deps.logger.info(
@@ -1341,15 +1766,158 @@ export class PipelineRunner {
   }
 
   /**
-   * Re-fit synthesis units that can't fit even at max speed: re-translate each
-   * MEMBER segment with a tighter budget (achieved by handing the LLM a SHRUNK
-   * window, which lowers the prompt's budget — distributed across a group's
-   * members proportionally to their own cue windows), rebuild the group text,
-   * re-synthesize the unit, re-probe, and re-align — up to a couple of passes.
-   * Persists the shortened translations + subtitle sidecars + group plan when
-   * they change. A provider that can't shorten on request (Argos) returns
-   * identical text, which we detect as "no change" and stop without any wasted
-   * TTS. Inputs are mutated in place (segments + groups + alignInputs).
+   * Voice the units whose text changed after their clip was made (an auto-fit
+   * a cancel cut short, an editor edit) before alignment measures them: their
+   * clips say the old line, and fitting those would place the old line under
+   * the new subtitle. Clears the stale marks. Mutates `segments` and `groups`.
+   */
+  private async revoiceStaleUnits(
+    project: Project,
+    paths: WorkspacePaths,
+    segments: TranscriptSegment[],
+    groups: SynthesisGroup[],
+    signal: AbortSignal,
+  ): Promise<void> {
+    const stale = new Set(segments.filter((s) => s.ttsStale === true).map((s) => s.id));
+    if (stale.size === 0) return;
+    const segById = new Map(segments.map((s) => [s.id, s]));
+    const staleGroups = groups.filter((g) => g.segmentIds.some((id) => stale.has(id)));
+    for (const g of staleGroups) g.text = unitText(g, segById);
+    this.deps.logger.info(
+      `Re-voicing ${staleGroups.length} unit(s) whose text changed after they were synthesized...`,
+    );
+    await this.synthesizeGroups(project, paths, staleGroups, signal);
+    for (const s of segments) delete s.ttsStale;
+    await writeTranscriptAtomic(paths, segments);
+    await writeJsonAtomic(paths.synthesisGroupsJson, { groups } satisfies SynthesisGroupsArtifact);
+  }
+
+  /**
+   * Measure a unit's clip into its alignment input: the length that plays and
+   * the trim that gives it (clipSpeech.ts). Bounded, so one hung ffmpeg cannot
+   * stall the step on a long video; a clip that cannot be read is aligned as
+   * empty, which flags it instead of failing the run. A cancel propagates.
+   */
+  private async measureInto(
+    input: AlignInputSegment,
+    text: string,
+    signal: AbortSignal,
+  ): Promise<MeasuredClip['outcome'] | 'failed'> {
+    const MEASURE_TIMEOUT_MS = 15_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const measured = await Promise.race([
+        measureClip(this.deps.media, input.audioPath, text, signal),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('measurement timeout')), MEASURE_TIMEOUT_MS);
+        }),
+      ]);
+      applyClipTiming(input, measured);
+      return measured.outcome;
+    } catch (err) {
+      if (signal.aborted) throw err;
+      applyClipTiming(input, { generatedDurationMs: 0 });
+      return 'failed';
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * What the clip measurements found, for pipeline.log: how many clips were
+   * trimmed, and by name the ones to listen to — a botched clip whose noise
+   * was cut, a silent one, one that could not be read.
+   */
+  private logClipMeasurements(outcomes: ReadonlyMap<MeasuredClip['outcome'] | 'failed', readonly string[]>): void {
+    const ids = (k: MeasuredClip['outcome'] | 'failed'): readonly string[] => outcomes.get(k) ?? [];
+    const named = (list: readonly string[]): string =>
+      list.length > 10 ? `${list.slice(0, 10).join(', ')} and ${list.length - 10} more` : list.join(', ');
+    const total = [...outcomes.values()].reduce((sum, list) => sum + list.length, 0);
+    const trimmed = ids('trimmed').length + ids('cut').length;
+    if (trimmed > 0) {
+      this.deps.logger.info(`Voice clips: trimmed the silence around the speech in ${trimmed} of ${total} clip(s).`);
+    }
+    const cut = [...ids('cut')].sort();
+    if (cut.length > 0) {
+      this.deps.logger.warn(
+        `${cut.length} voice clip(s) ran on long after their line (the voice engine kept generating); ` +
+          `the noise after the speech was cut: ${named(cut)}. Listen to them in the editor and regenerate any that sound wrong.`,
+      );
+    }
+    const silent = [...ids('silent')].sort();
+    if (silent.length > 0) {
+      this.deps.logger.warn(`${silent.length} voice clip(s) are silent: ${named(silent)}. Regenerate them in the editor.`);
+    }
+    const failed = [...ids('failed')].sort();
+    if (failed.length > 0) {
+      this.deps.logger.warn(`${failed.length} voice clip(s) could not be read and are left out: ${named(failed)}.`);
+    }
+  }
+
+  /**
+   * Measure how fast the voice actually spoke, from the clips the alignment
+   * step just measured (syllables ÷ speech length per unit; speechFit.clipRates
+   * drops short clips and engine failures), record it per voice for the next
+   * translation's budgets — once per synthesis, see {@link freshClips} — and
+   * return the pace auto-fit should assume for the project voice: this run's
+   * median when it has enough clips, else the stored/engine rate. Units read
+   * at a per-line speed, and `unreliable` ones, are skipped.
+   */
+  private async learnVoiceRates(
+    project: Project,
+    groups: readonly SynthesisGroup[],
+    alignInputs: readonly AlignInputSegment[],
+    unreliable: ReadonlySet<string>,
+  ): Promise<number | undefined> {
+    const { settings } = project;
+    const lang = settings.targetLanguage;
+    const byKey = new Map<string, { text: string; durationMs: number }[]>();
+    groups.forEach((g, i) => {
+      const input = alignInputs[i];
+      if (!input || input.segmentId !== g.id || Math.abs(rateForGroup(g) - 1) > 1e-3) return;
+      if (unreliable.has(g.id)) return;
+      const key = voiceRateKey(settings.ttsProviderId, voiceForGroup(g, settings), lang);
+      const list = byKey.get(key) ?? [];
+      list.push({ text: g.text, durationMs: input.generatedDurationMs });
+      byKey.set(key, list);
+    });
+    for (const [key, samples] of byKey) {
+      const rates = clipRates(samples, lang);
+      if (rates.length === 0 || !this.deps.voiceRates || !this.freshClips) continue;
+      await this.deps.voiceRates.record(key, rates).catch((err: unknown) => {
+        this.deps.logger.warn(`Could not save the measured voice pace (${toAppError(err).message}).`);
+      });
+    }
+    const projectKey = voiceRateKey(settings.ttsProviderId, settings.ttsVoiceId, lang);
+    const runRates = clipRates(byKey.get(projectKey) ?? [], lang);
+    const measured = runRates.length >= 5 ? robustMedian(runRates) : undefined;
+    if (measured !== undefined) {
+      this.deps.logger.info(
+        `Voice pace: ${measured.toFixed(2)} units/s (median of ${runRates.length} clips) — later translations with this voice budget line lengths with it.`,
+      );
+      return measured;
+    }
+    return (await this.speechRateFor(project)).perSecond;
+  }
+
+  /**
+   * Auto-fit: SHORTEN the current translation of every unit that cannot fit,
+   * or fits only with a heavy stretch, then re-synthesize those units once and
+   * re-align once.
+   *
+   * It used to RE-TRANSLATE overflowing lines from the source with the
+   * project's translator (TranslateGemma: no context, no instructions) after
+   * the review pass, accept any text that differed, and alternate LLM and TTS
+   * per pass. On three real dubs that rewrote 36-62 reviewed lines each, many
+   * broken (母符必碎 → "Tránh làm vỡ."), and reloaded llama.cpp and the GPU voice
+   * four times in four minutes. Now the context engine shortens the CURRENT
+   * line with its neighbours, the character sheet and a length computed from
+   * the clip itself; a proposal is kept only if it is shorter and passes the
+   * line checks (contextEngine.judgeShortening). Both shortening passes finish
+   * before any re-synthesis. Locked members are never touched (their unit keeps
+   * whatever stretch it needs). Persists the new texts, sidecars, group plan,
+   * and an auto-fit record (before/after, refusals) in translation_report.json.
+   * Mutates segments, groups and alignInputs in place.
    */
   private async refitOverflowingSegments(
     project: Project,
@@ -1361,135 +1929,120 @@ export class PipelineRunner {
     settings: { maxSpeedRatio: number; allowedOverflowMs: number },
     totalDurationMs: number | undefined,
     signal: AbortSignal,
+    voiceRate: number | undefined,
   ): Promise<AlignedSegment[]> {
-    const MAX_ATTEMPTS = 2;
-    const translation = this.deps.registry.getTranslation(project.settings.translationProviderId);
-    const tts = this.deps.registry.getTts(project.settings.ttsProviderId);
-    const segById = new Map(segments.map((s) => [s.id, s]));
+    throwIfCancelled(signal);
+    const conflicts = aligned.filter(needsDurationFit);
+    const chat = this.contextEngineFor(project);
+    if (!chat.available) {
+      this.deps.logger.info(
+        `${conflicts.length} unit(s) need a heavy speed-up, but no instruction-following model is available to shorten them ` +
+          '(set a review model or install the Gemma chat model); time-stretch fits them instead.',
+      );
+      return aligned;
+    }
     const groupById = new Map(groups.map((g) => [g.id, g]));
-    const groupOfMember = new Map<string, SynthesisGroup>();
-    for (const g of groups) for (const id of g.segmentIds) groupOfMember.set(id, g);
-    const inputById = new Map(alignInputs.map((a) => [a.segmentId, a]));
-    let current = aligned;
-    let changedAny = false;
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      throwIfCancelled(signal);
-      const conflicts = current.filter(needsDurationFit);
-      if (conflicts.length === 0) break;
-
-      const reqSegs: { id: string; sourceText: string; startMs: number; endMs: number }[] = [];
-      for (const c of conflicts) {
-        const group = groupById.get(c.segmentId);
-        if (!group) continue;
-        // A line the user wrote or approved by hand is never machine-shortened:
-        // re-running from alignment used to replace it with the LLM's tighter
-        // version without a word. Its unit keeps whatever stretch it needs and
-        // stays flagged in the editor instead.
-        if (group.segmentIds.some((id) => segById.get(id)?.locked === true)) continue;
-        const availableMs = Math.max(1, c.placedDurationMs - c.overflowMs);
-        // Attempt 1 targets a window that still uses some speed-up headroom
-        // (max speed for real conflicts; a comfortable ~1.15x for lines that
-        // fit but only via a heavy stretch); attempt 2 targets the natural
-        // window (must fit without any speed-up).
-        const headroom =
-          c.status === 'timing-conflict'
-            ? Math.max(1, settings.maxSpeedRatio)
-            : Math.min(STRETCH_COMFORT, Math.max(1, settings.maxSpeedRatio));
-        const tightFactor = attempt === 1 ? headroom : 1;
-        const tightTotalMs = Math.max(500, Math.round(availableMs * tightFactor));
-        // Distribute the unit's budget over its members by their cue windows.
-        const windows = group.segmentIds.map((id) => {
-          const s = segById.get(id);
-          return s ? Math.max(1, s.endMs - s.startMs) : 1;
-        });
-        const windowSum = windows.reduce((a, b) => a + b, 0) || 1;
-        group.segmentIds.forEach((id, j) => {
-          const s = segById.get(id);
-          if (!s) return;
-          const memberTight = Math.max(300, Math.round((tightTotalMs * windows[j]!) / windowSum));
-          reqSegs.push({ id, sourceText: s.sourceText ?? '', startMs: 0, endMs: memberTight });
-        });
-      }
-      if (reqSegs.length === 0) break;
-
-      // Carry the character sheet into the refit re-translation too, so the
-      // shortened lines keep the same pronouns/terminology as the rest.
-      const documentContext = await readDocContext(paths.translationContextJson);
-      const result = await translation.translateSegments(
+    const units: OverflowUnit[] = conflicts.flatMap((c) => {
+      const g = groupById.get(c.segmentId);
+      return g
+        ? [
+            {
+              id: g.id,
+              memberIds: g.segmentIds,
+              generatedMs: c.generatedDurationMs,
+              availableMs: Math.max(1, c.placedDurationMs - c.overflowMs),
+            },
+          ]
+        : [];
+    });
+    this.deps.logger.info(`Auto-fit: shortening the lines of ${units.length} overflowing/over-stretched unit(s)...`);
+    const documentContext = await readDocContext(paths.translationContextJson);
+    let outcome: ShortenOutcome;
+    try {
+      outcome = await shortenOverflowingLines(
         {
           sourceLanguage: project.settings.sourceLanguage,
           targetLanguage: project.settings.targetLanguage,
-          segments: reqSegs,
+          units,
+          segments,
           ...(documentContext ? { documentContext } : {}),
+          ...(voiceRate !== undefined ? { perSecond: voiceRate } : {}),
         },
+        chat,
         signal,
       );
-      const newTextById = new Map(result.segments.map((s) => [s.id, (s.translatedText ?? '').trim()]));
-
-      const changedGroups = new Set<SynthesisGroup>();
-      for (const req of reqSegs) {
-        const seg = segById.get(req.id);
-        const newText = newTextById.get(req.id);
-        if (seg && newText && newText.length > 0 && newText !== (seg.translatedText ?? '')) {
-          seg.translatedText = newText;
-          const g = groupOfMember.get(req.id);
-          if (g) changedGroups.add(g);
-        }
-      }
-      if (changedGroups.size === 0) break; // provider can't shorten (e.g. Argos) or converged
-
-      changedAny = true;
-
-      // Rebuild each changed unit's text from its (updated) members, then
-      // re-synthesize only those units (overwrites their WAVs in place).
-      for (const g of changedGroups) {
-        g.text = g.segmentIds
-          .map((id) => (segById.get(id)?.translatedText ?? segById.get(id)?.sourceText ?? '').trim())
-          .filter((t) => t.length > 0)
-          .join(' ');
-      }
-      // Re-synthesize per group so speaker-assigned voices are preserved.
-      for (const g of changedGroups) {
-        await tts.synthesizeSegments(
-          {
-            language: project.settings.targetLanguage,
-            voiceId: voiceForGroup(g, project.settings),
-            segments: [{ id: g.id, text: g.text, startMs: g.startMs, endMs: g.endMs }],
-            outputDir: paths.ttsSegmentsDir,
-            speed: rateForGroup(g),
-          },
-          signal,
-        );
-      }
-
-      // Re-probe the changed units' new durations, then re-align everything
-      // (gap-aware alignment depends on neighbours, so re-run the whole list).
-      for (const g of changedGroups) {
-        const input = inputById.get(g.id);
-        if (!input) continue;
-        try {
-          input.generatedDurationMs = (await this.deps.media.probe(input.audioPath, signal)).durationMs;
-        } catch {
-          input.generatedDurationMs = 0;
-        }
-      }
-      current = alignSegments(alignInputs, settings, totalDurationMs);
-      this.deps.logger.info(
-        `Auto-fit pass ${attempt}: shortened ${changedGroups.size} overflowing/over-stretched line(s); ` +
-          `${current.filter(needsDurationFit).length} still need fitting.`,
+    } catch (err) {
+      if (signal.aborted) throw err;
+      this.deps.logger.warn(
+        `Auto-fit could not shorten lines (${toAppError(err).message}); time-stretch fits them instead.`,
       );
+      return aligned;
+    }
+    if (outcome.errors.length > 0) {
+      this.deps.logger.warn(`Auto-fit: the model failed on part of the request (${outcome.errors[0]}).`);
+    }
+    await updateTranslationReport(translationReportPath(paths.subtitlesDir), {
+      autoFit: {
+        ...(chat.engine ? { engine: chat.engine.displayName } : {}),
+        units: units.length,
+        changes: outcome.changes,
+        rejected: outcome.rejected,
+        stillLong: outcome.stillLong,
+        ...(outcome.errors.length > 0 ? { errors: outcome.errors } : {}),
+        at: new Date().toISOString(),
+      },
+    });
+    if (outcome.accepted.size === 0) {
+      this.deps.logger.info(
+        `Auto-fit: no shorter line passed the checks (${outcome.rejected.length} proposal(s) refused); time-stretch fits them instead.`,
+      );
+      return aligned;
     }
 
-    if (changedAny) {
-      // Persist the shortened translations + regenerate subtitle sidecars + the
-      // group plan so the editor + burned/sidecar subtitles match the audio.
-      await writeSegments(paths.translatedJson, segments);
-      const cues = transcriptSegmentsToCues(segments);
-      await fsp.writeFile(paths.translatedSrt, segmentsToSrt(cues), 'utf8');
-      await fsp.writeFile(paths.translatedVtt, segmentsToVtt(cues), 'utf8');
-      await writeGroups(paths.synthesisGroupsJson, groups);
+    const segById = new Map(segments.map((s) => [s.id, s]));
+    for (const [id, text] of outcome.accepted) {
+      const seg = segById.get(id);
+      if (!seg) continue;
+      seg.translatedText = text;
+      delete seg.qualityFlags; // accepted shortenings passed every line check
     }
+    const changedGroups = groups.filter((g) => g.segmentIds.some((id) => outcome.accepted.has(id)));
+    for (const g of changedGroups) g.text = unitText(g, segById);
+
+    // The text goes to disk first, marked stale until its clip exists. Written
+    // after the synthesis, a cancel in between left the dub saying the long
+    // line under the short subtitle with nothing to tell; now the editor shows
+    // "voice out of date" on those lines, and the next alignment re-voices them.
+    for (const id of outcome.accepted.keys()) {
+      const seg = segById.get(id);
+      if (seg) seg.ttsStale = true;
+    }
+    await writeTranscriptAtomic(paths, segments);
+    await writeJsonAtomic(paths.synthesisGroupsJson, { groups } satisfies SynthesisGroupsArtifact);
+
+    // ONE synthesis pass for every changed unit, batched per voice and rate
+    // like the TTS step (synthesizeGroups) — after all LLM work is done.
+    throwIfCancelled(signal);
+    await this.synthesizeGroups(project, paths, changedGroups, signal);
+    for (const id of outcome.accepted.keys()) {
+      const seg = segById.get(id);
+      if (seg) delete seg.ttsStale;
+    }
+    const inputById = new Map(alignInputs.map((a) => [a.segmentId, a]));
+    for (const g of changedGroups) {
+      const input = inputById.get(g.id);
+      if (input) await this.measureInto(input, g.text, signal);
+    }
+    // Re-align everything (gap-aware windows depend on neighbours).
+    const current = alignSegments(alignInputs, settings, totalDurationMs);
+    this.deps.logger.info(
+      `Auto-fit: shortened ${outcome.changes.length} line(s) in ${changedGroups.length} unit(s) ` +
+        `(${outcome.rejected.length} proposal(s) refused by the checks); ` +
+        `${current.filter(needsDurationFit).length} unit(s) still need a heavy speed-up.`,
+    );
+
+    // The clips now say the shortened lines: clear their stale marks.
+    await writeTranscriptAtomic(paths, segments);
     return current;
   }
 
@@ -1545,7 +2098,7 @@ export class PipelineRunner {
           },
           signal,
         );
-        input.generatedDurationMs = (await this.deps.media.probe(input.audioPath, signal)).durationMs;
+        await this.measureInto(input, group.text, signal);
         requestedSpeed.set(a.segmentId, speed);
       } catch (err) {
         if (signal.aborted) throw err;
@@ -1581,6 +2134,10 @@ export class PipelineRunner {
       startMs: a.startMs,
       speedRatio: a.speedRatio,
       durationMs: a.generatedDurationMs,
+      // Only the speech plays (clipSpeech.ts); durationMs is already its length.
+      ...(a.trimStartMs !== undefined && a.trimEndMs !== undefined
+        ? { trimStartMs: a.trimStartMs, trimEndMs: a.trimEndMs }
+        : {}),
     }));
 
     this.deps.logger.info(`Building TTS timeline (${timelineSegments.length} clips, ${totalDurationMs}ms)...`);
@@ -1691,6 +2248,17 @@ export class PipelineRunner {
     this.deps.logger.info(
       `Render complete: ${result.outputPath} (${Math.round(result.durationMs / 1000)}s, ${result.sidecarSubtitlePaths.length} sidecar subtitle file(s)).`,
     );
+    // Chosen per machine at run time, so the log is the only record of them.
+    const enc = result.videoEncoder;
+    if (enc) {
+      const fellBack = enc.fallbackFrom ? ` after ${enc.fallbackFrom} failed (${enc.fallbackReason ?? 'no reason given'})` : '';
+      this.deps.logger.info(`Video encoded with ${enc.codec}${enc.hardware ? ' (hardware)' : ''}${fellBack}.`);
+    }
+    if (result.burnFont) {
+      this.deps.logger.info(
+        `Subtitles drawn in ${result.burnFont.family}${result.burnFont.fontsDir ? '' : ' (a system font: the bundled one was not found)'}.`,
+      );
+    }
   }
 
   // ----- Helpers ------------------------------------------------------------

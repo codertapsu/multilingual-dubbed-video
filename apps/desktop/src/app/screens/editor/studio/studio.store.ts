@@ -40,6 +40,8 @@ export interface UnitVm {
   /** A member's text/voice/rate changed since the clip was synthesized. */
   stale: boolean;
   audioPath?: string;
+  /** The part of the clip the mix plays (edge silence / an engine's noise cut off). */
+  trim?: { startMs: number; endMs: number };
 }
 
 /** One line, enriched for the lists, the inspector and the timeline. */
@@ -52,6 +54,12 @@ export interface LineVm {
   isUnitHead: boolean;
   cps: number;
   untranslated: boolean;
+  /**
+   * What the pipeline's per-line checks found wrong with the machine's text
+   * (Chinese characters left in, pinyin, "thầy/cô" alternatives…), after its
+   * one repair attempt. Cleared when the user rewrites the line.
+   */
+  quality: NonNullable<TimelineSegment['qualityFlags']>;
   long: boolean;
   fast: boolean;
   status: UnitVm['status'];
@@ -94,6 +102,12 @@ export class StudioStore {
   readonly projectId = signal('');
   readonly loading = signal(false);
   readonly error = signal<AppError | null>(null);
+  /**
+   * Why "Tighten to fit" kept a line as it was (the model's proposal was not
+   * shorter, failed the checks, or cut too far). Without it the button looked
+   * like it did nothing.
+   */
+  readonly tightenKept = signal<{ line: number; reason: string } | null>(null);
 
   private readonly doc = signal<TimelineDocument | null>(null);
   /** The lines as the user currently sees them (server state + pending edits). */
@@ -170,6 +184,9 @@ export class StudioStore {
           ...(a?.note ? { note: a.note } : {}),
           stale: members.some((m) => m.ttsStale === true),
           ...(a?.audioPath ? { audioPath: a.audioPath } : {}),
+          ...(a?.trimStartMs !== undefined && a.trimEndMs !== undefined
+            ? { trim: { startMs: a.trimStartMs, endMs: a.trimEndMs } }
+            : {}),
         },
       ];
     });
@@ -189,7 +206,9 @@ export class StudioStore {
       const wrapped = splitSubtitleLines(text, 42, 2);
       const long = text.length > LONG_SUBTITLE_CHARS || wrapped.length > 2;
       const cps = charsPerSecond(text, seg.endMs - seg.startMs);
-      const untranslated = this.translated() && looksUntranslated(seg.sourceText, text);
+      const quality = (seg.qualityFlags ?? []).filter((f) => f !== 'untranslated');
+      const untranslated =
+        this.translated() && (looksUntranslated(seg.sourceText, text) || (seg.qualityFlags ?? []).includes('untranslated'));
       const status = unit?.status ?? 'none';
       const fast = cps > MAX_CPS;
       return {
@@ -200,12 +219,13 @@ export class StudioStore {
         isUnitHead: unit?.id === seg.id,
         cps,
         untranslated,
+        quality,
         long,
         fast,
         status,
         stale: seg.ttsStale === true,
         locked: seg.locked === true,
-        problem: untranslated || long || status === 'timing-conflict' || status === 'needs-review',
+        problem: untranslated || quality.length > 0 || long || status === 'timing-conflict' || status === 'needs-review',
       };
     });
   });
@@ -560,6 +580,8 @@ export class StudioStore {
     try {
       const res = await this.ipc.refitSegment(this.projectId(), id);
       this.bumpAudio(res.alignment.segmentId);
+      const n = this.lines().find((l) => l.seg.id === id)?.n ?? 0;
+      this.tightenKept.set(res.shortened === false && res.reason ? { line: n, reason: res.reason } : null);
       await this.reload();
     } catch (err) {
       this.error.set(toAppError(err));
@@ -568,12 +590,15 @@ export class StudioStore {
     }
   }
 
-  /** The URL the preview plays for a unit (fitted like the final mix when sped up). */
+  /**
+   * The URL the preview plays for a unit: cut and fitted like the final mix
+   * when the mix trims or speeds it up, else the clip itself.
+   */
   clipUrl(unit: UnitVm): string | null {
     if (!unit.audioPath || unit.status === 'none') return null;
     const v = `${unit.placedDurationMs}-${this.audioVersion()[unit.id] ?? 0}`;
-    return unit.speedRatio > 1.001
-      ? this.ipc.fittedClipUrl(this.projectId(), unit.id, unit.speedRatio, v)
+    return unit.speedRatio > 1.001 || unit.trim
+      ? this.ipc.fittedClipUrl(this.projectId(), unit.id, unit.speedRatio, v, unit.trim)
       : this.ipc.fileUrl(unit.audioPath, v);
   }
 

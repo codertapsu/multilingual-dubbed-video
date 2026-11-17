@@ -9,7 +9,7 @@
  *     pipeline.json
  *     input/original.<ext>
  *     audio/original.wav, original_16k_mono.wav, tts_segments/segment_XXXX.wav,
- *           tts_full.wav, final_mix.wav
+ *           tts_full.wav, final_mix.wav, speech_regions.json
  *     subtitles/source.json, source.srt, translated.json, translated.srt,
  *               translated.vtt, translated.aligned.json
  *     render/output.mp4
@@ -37,6 +37,8 @@ export interface WorkspacePaths {
   readonly finalMixWav: string;
   /** Synthesis-group plan (which cues were merged into one TTS utterance). */
   readonly synthesisGroupsJson: string;
+  /** Where speech is in original_16k_mono.wav (cache; see pipeline/speechMap.ts). */
+  readonly speechRegionsJson: string;
 
   /** Scratch dir for chunked-STT clips + per-chunk transcript checkpoints. */
   readonly sttChunksDir: string;
@@ -122,6 +124,7 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     ttsFullWav: path.join(audioDir, 'tts_full.wav'),
     finalMixWav: path.join(audioDir, 'final_mix.wav'),
     synthesisGroupsJson: path.join(audioDir, 'synthesis_groups.json'),
+    speechRegionsJson: path.join(audioDir, 'speech_regions.json'),
 
     sttChunksDir,
     sttChunkWav: (index: number) => path.join(sttChunksDir, `chunk_${padSegmentIndex(index)}.wav`),

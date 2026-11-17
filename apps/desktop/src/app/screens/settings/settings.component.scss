@@ -136,6 +136,17 @@
   font-weight: 600;
 }
 
+.cred-model {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  flex-wrap: wrap;
+
+  select {
+    min-width: 18rem;
+  }
+}
+
 .cred-controls {
   display: flex;
   gap: 0.5rem;

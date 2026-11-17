@@ -15,9 +15,18 @@ describe('escapeSubtitlePathForFilter', () => {
     expect(out).toBe('/home/user/My\\\\: Subs/translated.srt');
   });
 
-  it('escapes single quotes and brackets', () => {
+  it('escapes single quotes for both passes, and brackets', () => {
     const out = escapeSubtitlePathForFilter("/a/o'brien/[x].srt", 'linux');
-    expect(out).toBe("/a/o\\'brien/\\[x\\].srt");
+    // `\\\'` -> outer pass yields `\'` -> inner pass yields a literal `'`.
+    expect(out).toBe("/a/o\\\\\\'brien/\\[x\\].srt");
+  });
+
+  it("keeps a Windows profile like O'Brien, a semicolon and a literal backslash intact", () => {
+    expect(escapeSubtitlePathForFilter("C:\\Users\\O'Brien\\a;b\\burn.ass", 'win32')).toBe(
+      "C\\\\:/Users/O\\\\\\'Brien/a\\;b/burn.ass",
+    );
+    // A POSIX name may contain a backslash: four, so one survives both passes.
+    expect(escapeSubtitlePathForFilter('/tmp/a\\b.srt', 'linux')).toBe('/tmp/a\\\\\\\\b.srt');
   });
 
   it('escapes commas', () => {
@@ -120,6 +129,21 @@ describe('buildSubtitlesFilter', () => {
     );
     expect(f.startsWith('subtitles=/tmp/a.srt:force_style=')).toBe(true);
     expect(f).toContain("force_style='FontName=Arial");
+  });
+
+  it('passes the fonts dir to libass, escaped like the path (its drive colon too)', () => {
+    const f = buildSubtitlesFilter(
+      'C:\\Users\\Admin\\AppData\\Local\\Temp\\vd-burn-1\\burn.ass',
+      undefined,
+      'win32',
+      'C:\\Program Files\\VideoDubber\\resources\\fonts',
+    );
+    expect(f).toBe(
+      'subtitles=C\\\\:/Users/Admin/AppData/Local/Temp/vd-burn-1/burn.ass:fontsdir=C\\\\:/Program Files/VideoDubber/resources/fonts',
+    );
+    expect(buildSubtitlesFilter('/tmp/a.srt', undefined, 'linux', '/opt/vd/fonts')).toBe(
+      'subtitles=/tmp/a.srt:fontsdir=/opt/vd/fonts',
+    );
   });
 
   it('builds a Windows burn-in filter whose drive colon survives ffmpeg parsing (regression)', () => {

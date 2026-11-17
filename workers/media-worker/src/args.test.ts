@@ -2,7 +2,7 @@ import { basename, dirname, extname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseFfmpegFilters } from './exec.js';
 import { buildClip16kMonoArgs, buildExtract16kMonoArgs, buildExtractAudioArgs } from './extract.js';
-import { buildProbeArgs, ffprobeJsonToMediaInfo, parseFrameRate } from './probe.js';
+import { buildProbeArgs, buildVideoGeometryArgs, ffprobeJsonToMediaInfo, parseFrameRate, parseVideoGeometry } from './probe.js';
 import {
   buildRenderArgs,
   sidecarDestinationPath,
@@ -100,6 +100,40 @@ describe('probe args + parsing', () => {
       bitrateKbps: 128,
       language: 'eng',
     });
+  });
+
+  it('video geometry: probes the first video stream, its rotation and the duration', () => {
+    const args = buildVideoGeometryArgs('/in.mp4');
+    expect(args[args.indexOf('-select_streams') + 1]).toBe('v:0');
+    expect(args[args.indexOf('-show_entries') + 1]).toContain('stream_side_data=rotation');
+    expect(args.at(-1)).toBe('/in.mp4');
+  });
+
+  it('video geometry: a 90° phone video is laid out on the ROTATED frame ffmpeg decodes', () => {
+    // Real ffprobe 9.0.2 output for a 1280x720 stream with a 90° display matrix.
+    const json = {
+      streams: [{ width: 1280, height: 720, r_frame_rate: '30/1', avg_frame_rate: '30/1', tags: {}, side_data_list: [{ rotation: 90 }] }],
+      format: { duration: '2.100000' },
+    };
+    expect(parseVideoGeometry(json)).toEqual({ width: 720, height: 1280, fps: 30, durationMs: 2100 });
+    // -90 / 270 turn too; 180 does not swap; the pre-ffmpeg-5 `rotate` tag counts.
+    const rotated = (side: unknown, tags: unknown = {}) =>
+      parseVideoGeometry({ streams: [{ width: 1920, height: 1080, avg_frame_rate: '25/1', side_data_list: side, tags }] });
+    expect(rotated([{ rotation: -90 }])).toMatchObject({ width: 1080, height: 1920 });
+    expect(rotated([{ rotation: 270 }])).toMatchObject({ width: 1080, height: 1920 });
+    expect(rotated([{ rotation: 180 }])).toMatchObject({ width: 1920, height: 1080 });
+    expect(rotated(undefined, { rotate: '90' })).toMatchObject({ width: 1080, height: 1920 });
+  });
+
+  it('video geometry: unknown frame rate means 30; no video stream means undefined', () => {
+    expect(parseVideoGeometry({ streams: [{ width: 640, height: 480, avg_frame_rate: '0/0' }] })).toEqual({
+      width: 640,
+      height: 480,
+      fps: 30,
+      durationMs: 0,
+    });
+    expect(parseVideoGeometry({ streams: [] })).toBeUndefined();
+    expect(parseVideoGeometry(null)).toBeUndefined();
   });
 
   it('reports hasAudio=false when there is no audio stream', () => {

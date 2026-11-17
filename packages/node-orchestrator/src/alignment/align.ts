@@ -41,8 +41,17 @@ export interface AlignInputSegment {
   endMs: number;
   /** Path to the synthesized WAV for this segment. */
   audioPath: string;
-  /** Real measured duration of the synthesized WAV (ms). */
+  /** Real measured duration of the synthesized WAV (ms) — of its trimmed part when trimmed. */
   generatedDurationMs: number;
+  /** The part of the clip that plays (clipSpeech.ts); carried to the AlignedSegment. */
+  trimStartMs?: number;
+  trimEndMs?: number;
+}
+
+/** The trim window, passed through unchanged when it is well-formed. */
+function trimOf(seg: AlignInputSegment): Pick<AlignedSegment, 'trimStartMs' | 'trimEndMs'> {
+  const { trimStartMs: start, trimEndMs: end } = seg;
+  return start !== undefined && end !== undefined && end > start ? { trimStartMs: start, trimEndMs: end } : {};
 }
 
 /** Settings subset the aligner reads. */
@@ -66,6 +75,16 @@ export function alignSegment(
    * Caps how much overflow may be tolerated; omitted = the full
    * `settings.allowedOverflowMs` (a lone segment with nothing after it).
    */
+  freeAfterMs?: number,
+): AlignedSegment {
+  return { ...fitSegment(seg, settings, availableWindowMs, freeAfterMs), ...trimOf(seg) };
+}
+
+/** {@link alignSegment} without the trim window. */
+function fitSegment(
+  seg: AlignInputSegment,
+  settings: AlignSettings,
+  availableWindowMs?: number,
   freeAfterMs?: number,
 ): AlignedSegment {
   const startMs = roundMs(seg.startMs);

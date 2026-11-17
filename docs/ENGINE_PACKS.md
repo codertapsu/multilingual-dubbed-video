@@ -96,6 +96,22 @@ this is the class of breakage that actually happens. See §3.
 | `chat-gemma3-4b` / `-12b` | Gemma 3 instruct requants | `licenseCategory: 'commercial-restricted'` + the Gemma note |
 | `chat-gemma4-12b` / `-26b-a4b` | Gemma 4 instruct requants (**Apache-2.0** — no Gemma ToU) | no restriction |
 
+**whisper.cpp model packs** — the ggml weights `whisper-server` loads with `-m`.
+The runtime pack has none: up to 0.11.0 nothing downloaded a model, whisper-server
+fell back to its compiled-in `models/ggml-base.en.bin`, and every whisper.cpp
+transcription failed. The project's speech model picks the pack
+(`whisperCppModelPackFor`), the run gate checks it, and pressing Start downloads
+a missing one by itself.
+
+| Pack | Weights | Notes |
+|---|---|---|
+| `whisper-model-tiny` / `-base` / `-small` / `-medium` / `-large-v3` / `-large-v3-turbo` | official ggml f16 conversions, `ggerganov/whisper.cpp` on HuggingFace | pinned to a **commit** (`WHISPER_GGML_REV`), never `main`; MIT |
+
+PhoWhisper and distil-large-v3.5 have no official ggml build, so they get no pack
+and the gate tells the user to pick another model or use faster-whisper. To
+re-pin: read each file's `lfs.oid` (its sha256) and size from
+`https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/<commit>`.
+
 **Python packs** — no URLs; `uv` materializes them from a locked requirement set.
 
 | Pack | Platform | Status |

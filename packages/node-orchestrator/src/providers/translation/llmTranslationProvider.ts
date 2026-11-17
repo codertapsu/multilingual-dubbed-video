@@ -23,19 +23,89 @@ import {
 import type { CancellableTranslationProvider } from '../types.js';
 import type { CredentialsStore } from '../../credentials/credentialsStore.js';
 import { cloudPostJson, extractJsonObject, requireCredential, SERVICE_LABELS } from '../cloud/cloudHttp.js';
+import { claudeMessage, DEFAULT_CLAUDE_MODEL, sdkSend, type ClaudeSend } from '../cloud/claudeMessages.js';
 import {
-  buildAnalysisPrompt,
-  buildAnalysisSample,
   buildContextHeader,
   collectRollingPairs,
+  generateCharacterSheet,
   isSceneBreak,
   MIN_SEGMENTS_FOR_ANALYSIS,
-  parseAnalysisReply,
   planContextBatches,
   translationContextEnabled,
   type RollingPair,
   type TranslationAnalysis,
 } from './translationContext.js';
+import { looksUntranslated, normalizeForCompare } from './lineQuality.js';
+import { budgetPhrase, segmentFitBudget, withFitWindows } from './speechFit.js';
+
+// The echo check moved to lineQuality.ts (every per-line check lives there);
+// re-exported because the runner and tests import it from here.
+export { looksUntranslated };
+
+/**
+ * Per-call options for {@link LlmTranslationProvider.chatComplete} and the
+ * local provider's equivalent. Engines that cannot honour an option ignore it.
+ */
+export interface ChatOptions {
+  /**
+   * JSON schema the reply must match. llama-server enforces it with a grammar
+   * (`json_schema` on /completion — verified on the pinned build b12110); the
+   * cloud transports keep their existing JSON mode and the prompt's own
+   * format instructions.
+   */
+  jsonSchema?: Record<string, unknown>;
+  /** Reply token budget. */
+  maxTokens?: number;
+  /**
+   * Sampling temperature, for the transports that honour it (the local
+   * llama.cpp one, 0 by default there). A retry raises it: at 0 a local model
+   * answers an identical prompt with the identical unusable reply.
+   */
+  temperature?: number;
+}
+
+/**
+ * What the pipeline passes beyond the shared {@link TranslationInput} contract.
+ * Optional on purpose: other callers (the eval script, the Argos+repair tier)
+ * keep sending a plain TranslationInput.
+ */
+export interface DubbingTranslationExtras {
+  /**
+   * Speaking rate of the voice that will say these lines, in the target's
+   * budget unit per second (Vietnamese syllables/s). Without it budgets use
+   * the shared language default, which is ~30% too generous for VieNeu.
+   */
+  speechRate?: number;
+  /**
+   * The caller already ran (or deliberately did not run) the character-sheet
+   * analysis; providers must not start another. The pipeline drives the
+   * analysis itself so a failure is reported instead of swallowed.
+   */
+  skipAnalysis?: boolean;
+}
+
+/** A {@link TranslationInput} with the pipeline's extras. */
+export type DubbingTranslationInput = TranslationInput & DubbingTranslationExtras;
+
+/** JSON schema for a `{"segments":[{"id","text"}]}` reply covering exactly `ids`. */
+export function segmentsReplySchema(ids: readonly string[]): Record<string, unknown> {
+  return {
+    type: 'object',
+    properties: {
+      segments: {
+        type: 'array',
+        minItems: ids.length,
+        maxItems: ids.length,
+        items: {
+          type: 'object',
+          properties: { id: { type: 'string', enum: [...ids] }, text: { type: 'string' } },
+          required: ['id', 'text'],
+        },
+      },
+    },
+    required: ['segments'],
+  };
+}
 
 function envIntDefault(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
@@ -65,7 +135,9 @@ const SERVICE_DEFAULTS: Record<
     model: 'gemini-3.5-flash',
     dialect: 'openai',
   },
-  anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: 'claude-haiku-4-5-20251001', dialect: 'anthropic' },
+  // Claude goes through the official SDK (providers/cloud/claudeMessages.ts);
+  // the model is the user's choice in Settings, Claude Opus 5.5 by default.
+  anthropic: { baseUrl: 'https://api.anthropic.com/v1', model: DEFAULT_CLAUDE_MODEL, dialect: 'anthropic' },
 };
 
 /** A segment for prompting: id + source text, plus optional timing for fitting. */
@@ -80,6 +152,12 @@ export interface PromptSegment {
    * re-deciding them line by line (see buildTranslationPrompt).
    */
   speakerId?: string;
+  /**
+   * The window (ms) the line may fill — its cue plus a capped share of the
+   * pause after it (speechFit.ts). Set from the FULL transcript before
+   * batching, so a line at the end of a batch still sees its real successor.
+   */
+  fitMs?: number;
 }
 
 /**
@@ -110,50 +188,42 @@ export function planTranslationBatches(
   return batches;
 }
 
-/** How a spoken-length budget is counted in the target language. */
-export type BudgetUnit = 'words' | 'syllables' | 'characters';
+// The spoken-length budget moved to @videodubber/shared so the editor and the
+// MCP server count exactly what these prompts count; re-exported for callers.
+import { budgetUnitLabel, speechBudget, type BudgetUnit } from '@videodubber/shared';
+export { budgetUnitLabel, speechBudget };
+export type { BudgetUnit };
 
 /**
- * Per-language speaking rates for the duration budget. Vietnamese is written
- * one syllable per whitespace-separated token, so a SYLLABLE budget is exactly
- * countable — and Vietnamese (like Chinese/Japanese) has no useful "word"
- * count. Rates are deliberately a touch under natural speed so the line fits
- * without stretching. Everything else uses the ~2.8 words/s heuristic.
+ * The source line is speech recognition, not a script. Said once in every
+ * prompt that reads source lines: an audit of four zh→vi dubs (2026-11) found
+ * recognizer homophones translated literally into invented names (a misheard
+ * 普贤 became a new character), because nothing told the model the text could
+ * be wrong.
  */
-const BUDGET_RATES: Record<string, { unit: BudgetUnit; perSecond: number }> = {
-  vi: { unit: 'syllables', perSecond: 4.6 },
-  zh: { unit: 'characters', perSecond: 4.2 },
-  ja: { unit: 'characters', perSecond: 5.5 },
-};
-const DEFAULT_RATE = { unit: 'words' as BudgetUnit, perSecond: 2.8 };
+export const ASR_SOURCE_NOTE =
+  'The source lines are automatic speech recognition of the audio: they can contain homophone errors (a word written with the wrong characters that SOUND the same) and odd line breaks mid-sentence. When a word makes no sense in context, translate the most plausible word that was actually SAID — never invent a new name from a misheard word.';
 
-/** The spoken-length budget that fits a window, in target-language units. */
-export function speechBudget(
-  targetLanguage: string,
-  startMs?: number,
-  endMs?: number,
-): { amount: number; unit: BudgetUnit } | undefined {
-  if (typeof startMs !== 'number' || typeof endMs !== 'number') return undefined;
-  const seconds = Math.max(0, endMs - startMs) / 1000;
-  if (seconds <= 0) return undefined;
-  const base = targetLanguage.split('-')[0]!.toLowerCase();
-  const rate = BUDGET_RATES[base] ?? DEFAULT_RATE;
-  return { amount: Math.max(1, Math.round(seconds * rate.perSecond)), unit: rate.unit };
-}
-
-/** Human wording for a budget unit ("syllables (âm tiết)" for Vietnamese). */
-export function budgetUnitLabel(unit: BudgetUnit, targetLanguage: string): string {
-  if (unit === 'syllables' && targetLanguage.split('-')[0]!.toLowerCase() === 'vi') return 'syllables (âm tiết)';
-  return unit;
+/** Options for {@link buildTranslationPrompt}. */
+export interface TranslationPromptOptions {
+  /**
+   * Retry emphasis: a previous reply skipped these segments or echoed the
+   * source back. Prepends a hard "translate EVERY segment" directive.
+   */
+  insist?: boolean;
+  /** Speaking rate of the dub voice (budget units/s); default: the language's. */
+  perSecond?: number;
 }
 
 /**
  * Build the strict-JSON translation prompt for one batch.
  *
  * Duration-aware: when a segment carries timing, the prompt states the spoken
- * time window and a target budget IN TARGET-LANGUAGE UNITS (Vietnamese
- * syllables, Chinese characters, otherwise words) so the model produces a line
- * that fits without heavy time-stretching downstream.
+ * window and a length target with a ceiling IN TARGET-LANGUAGE UNITS
+ * (Vietnamese syllables, Chinese characters, otherwise words), computed from the
+ * dub voice's real speaking rate (speechFit.ts), so the model writes a line
+ * that fits without heavy time-stretching — and without cutting meaning to be
+ * "as short as possible", which the old ceiling-only wording invited.
  *
  * Context-aware: an optional `context` block (synopsis, cast, glossary,
  * pronoun/address plan, previous translated lines — see translationContext.ts)
@@ -165,22 +235,16 @@ export function buildTranslationPrompt(
   targetLanguage: string,
   segments: PromptSegment[],
   context?: string,
-  opts?: {
-    /**
-     * Retry emphasis: a previous reply skipped these segments or echoed the
-     * source back. Prepends a hard "translate EVERY segment" directive.
-     */
-    insist?: boolean;
-  },
+  opts?: TranslationPromptOptions,
 ): string {
-  const unitLabel = (unit: BudgetUnit): string => budgetUnitLabel(unit, targetLanguage);
   const tName = languageName(targetLanguage);
   const list = segments
     .map((s) => {
-      const budget = speechBudget(targetLanguage, s.startMs, s.endMs);
+      const budget = segmentFitBudget(s, targetLanguage, opts?.perSecond);
+      const windowMs = s.fitMs ?? (s.endMs ?? 0) - (s.startMs ?? 0);
       const hint =
         budget !== undefined
-          ? `  [spoken window: ${((s.endMs! - s.startMs!) / 1000).toFixed(1)}s; target ${budget.amount} ${unitLabel(budget.unit)} or fewer]`
+          ? `  [spoken window: ${(windowMs / 1000).toFixed(1)}s; length: ${budgetPhrase(budget, targetLanguage)}]`
           : '';
       // Collapse any internal line breaks so each segment stays on one line of
       // the numbered list the model reads.
@@ -202,10 +266,11 @@ export function buildTranslationPrompt(
       : []),
     ...(context ? [context] : []),
     'Rules:',
-    '- These are spoken dialogue lines for dubbing: they must fit the original spoken time window. Favor concise, natural phrasing over literal completeness — drop filler and redundancy so the line is no longer than it needs to be.',
-    '- When a target length budget is given, treat it as a firm ceiling: a shorter line that fits the timing is BETTER than a complete line that overflows. Stay at or under the budget.',
+    '- These are spoken dialogue lines for dubbing: each one is performed by a voice in the time the original speaker took. Write it the way a native speaker would SAY it — natural and concise, no filler.',
+    '- When a length is given ("about N, never more than M"), aim for about N and never exceed M — while keeping the FULL meaning. Do not drop content to get below N; a line that keeps its meaning at N beats a shorter one that loses it.',
+    `- ${ASR_SOURCE_NOTE}`,
     '- Preserve names, numbers, and the tone of the original.',
-    `- EVERY segment must be rendered in ${tName} — never return a line unchanged and never leave source-script characters in the output. Render names with the target language's convention (e.g. Chinese names into Sino-Vietnamese when translating into Vietnamese: 唐三藏 → Đường Tam Tạng). When the context lists a name as "target form (source form)", use ONLY the target form in the spoken line — never copy the parenthesized source form.`,
+    `- EVERY segment must be rendered in ${tName} — never return a line unchanged and never leave source-script characters in the output. Render names with the target language's convention (e.g. Chinese names into Sino-Vietnamese when translating into Vietnamese: 唐三藏 → Đường Tam Tạng — never pinyin like "Tang Sanzang"). When the context lists a name as "target form (source form)", use ONLY the target form in the spoken line — never copy the parenthesized source form.`,
     '- Keep pronouns and terms of address consistent with the context and across ALL segments: pick the forms the speaker relationships call for (e.g. Vietnamese xưng hô — thầy/cô, anh/chị, em, bạn, con — not a generic default) and never switch mid-conversation.',
     ...(hasSpeakers
       ? [
@@ -213,6 +278,7 @@ export function buildTranslationPrompt(
         ]
       : []),
     '- Use the same terminology for the same things across segments.',
+    '- Each line is spoken aloud: never offer alternatives with "/" (choose ONE form, e.g. one pronoun), never add notes or explanations.',
     '- The "text" value must be ONLY the spoken translation. Never copy the bracketed timing hints, segment ids, or any annotation into it — no "(4 syllables)", no "[spoken window...]", no repeated copy of the line.',
     '- Respond with ONLY a JSON object of the form {"segments":[{"id":"seg_0001","text":"..."}]} — no prose, no markdown fences. One entry per input segment id; never merge or split segments.',
     '',
@@ -223,29 +289,10 @@ export function buildTranslationPrompt(
 
 // ---- Batch recovery (missing ids / source echoes) ---------------------------
 
-/** True when a reply line is effectively "not translated": absent, empty, or
- * the source text echoed back (compared punctuation/case-insensitively). Only
- * meaningful when source and target languages differ.
- *
- * Identical-to-source is only damning when the source actually needed
- * transforming: a CJK-script source in a non-CJK dub can NEVER legitimately
- * survive verbatim (the voice can't say it), while short Latin lines often do
- * ("OK", "2023", "Anna!", "iPhone 15", "No, no, no!"). So: CJK echo → always a
- * failure; otherwise only a substantial line (≥15 normalized chars) counts —
- * flagging those short lines would burn retries and pressure the model into
- * mutating already-correct output. */
-export function looksUntranslated(seg: PromptSegment, text: string | undefined): boolean {
-  if (text === undefined || text.trim().length === 0) return true;
-  const src = normalizeForCompare(seg.sourceText);
-  if (src.length < 2 || normalizeForCompare(text) !== src) return false;
-  if (CJK_RE.test(seg.sourceText)) return true;
-  return src.length >= 15;
-}
-
 /** True for cancellation/timeout errors that must ABORT recovery, not be
  * swallowed as a per-line failure (structural checks: no hard dependency on
  * the throwing layer). */
-function isCancellation(err: unknown): boolean {
+export function isCancellation(err: unknown): boolean {
   const name = (err as Error | undefined)?.name;
   if (name === 'AbortError' || name === 'TimeoutError') return true;
   const code = (err as { appError?: { code?: string } } | undefined)?.appError?.code;
@@ -385,22 +432,24 @@ function languageName(code: string): string {
  * template appends `<end_of_turn>` DIRECTLY after the trimmed text (no newline),
  * which is exactly what {@link wrapGemmaTurn} relies on.
  *
- * The one deliberate addition is the dubbing `fit` sentence (a target word
- * budget) when timing is known. Source text is CRLF-normalized + trimmed (a
- * stray `\r` is a known cause of garbled local-LLM output, and the template
- * trims too).
+ * The one deliberate addition is the dubbing `fit` sentence (a length target
+ * with a ceiling) when timing is known; `plain` drops it, which is exactly the
+ * trained prompt — the empty-reply retry uses that. Source text is
+ * CRLF-normalized + trimmed (a stray `\r` is a known cause of garbled
+ * local-LLM output, and the template trims too).
  */
 export function buildRawTranslationPrompt(
   sourceLanguage: string,
   targetLanguage: string,
   segment: PromptSegment,
+  opts?: { perSecond?: number; plain?: boolean },
 ): string {
   const sName = languageName(sourceLanguage);
   const tName = languageName(targetLanguage);
-  const budget = speechBudget(targetLanguage, segment.startMs, segment.endMs);
+  const budget = opts?.plain ? undefined : segmentFitBudget(segment, targetLanguage, opts?.perSecond);
   const fit =
     budget !== undefined
-      ? ` Keep it to ${budget.amount} ${budgetUnitLabel(budget.unit, targetLanguage)} or fewer so it fits the spoken dubbing timing; prefer a concise line that fits over a longer, more literal one.`
+      ? ` Aim for ${budgetPhrase(budget, targetLanguage)}, so it fits the spoken dubbing timing, and keep the full meaning.`
       : '';
   const text = segment.sourceText.replace(/\r\n?/g, '\n').trim();
   return (
@@ -412,17 +461,6 @@ export function buildRawTranslationPrompt(
   );
 }
 
-/** Case/punctuation/width-insensitive comparison key for echo detection. */
-function normalizeForCompare(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[\s\p{P}\p{S}]+/gu, '')
-    .normalize('NFC');
-}
-
-/** CJK detection (Han/Kana/Hangul) — the scripts a spoken vi/en dub can't say. */
-const CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-
 /**
  * Bracket/paren content that IS a leaked timing/budget annotation — matched
  * against the WHOLE inner text (anchored both ends), so legitimate
@@ -432,7 +470,7 @@ const CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=H
  * "(2 số cuối)" / "(2 từ thôi)" survive too.
  */
 const HINT_ECHO_RE =
-  /^(?:spoken window\b.*|target\s*\d.*|≤\s*\d.*|\d+[.,]\d+\s*(?:s|secs?|seconds?|giây)|\d+\s*(?:syllables?|âm tiết|characters?|words?|từ|ký tự)(?:\s*(?:or fewer|trở xuống))?)$/iu;
+  /^(?:spoken window\b.*|length\s*:.*|(?:xưng|gọi)\s*['"‘’“”].*|about\s+\d+\s+(?:syllables?|characters?|words?)\b.*|target\s*\d.*|≤\s*\d.*|\d+[.,]\d+\s*(?:s|secs?|seconds?|giây)|\d+\s*(?:syllables?|âm tiết|characters?|words?|từ|ký tự)(?:\s*(?:or fewer|trở xuống))?)$/iu;
 
 /** A trailing bracketed group, tolerating ONE level of nesting inside (the
  * standard vi hint "[... 11 syllables (âm tiết) or fewer]" nests parens). */
@@ -483,18 +521,30 @@ export function sanitizeTranslatedLine(text: string): string {
       }
     }
 
+    // A dangling quote mark at either end with no partner inside the line
+    // ("Kết thúc “" — a Gemma 3 4B review pass appended one to eight lines in
+    // a row). The voice cannot say it and the subtitle shows it.
+    out = out.replace(/\s*[“”"]$/u, (m) => (countQuotes(out) % 2 === 1 ? '' : m)).trim();
+    out = out.replace(/^[“”"]\s*/u, (m) => (countQuotes(out) % 2 === 1 ? '' : m)).trim();
+
     // Trailing bracketed/parenthesized groups that are duplicates or hint
     // echoes. Loop: a line can carry several ("text (text) [4 syllables]").
+    // The duplicate test ignores diacritics: the same review pass appended
+    // each line's tone-stripped romanization ("Ở (O)", "… ở đâu? (… o dau?)").
     for (;;) {
       const m = out.match(TRAILING_GROUP_RE);
       if (!m) break;
       const head = m[1]!;
       const inner = m[2]!.trim();
-      const isDuplicate = inner.length > 0 && normalizeForCompare(inner) === normalizeForCompare(head);
+      const isDuplicate = inner.length > 0 && stripDiacritics(normalizeForCompare(inner)) === stripDiacritics(normalizeForCompare(head));
       const isHintEcho = HINT_ECHO_RE.test(inner);
       if (!isDuplicate && !isHintEcho) break;
       out = head.trim();
     }
+
+    // A stray single letter after the sentence's end ("… của tôi nữa. k"),
+    // a token a model emitted past its answer: no language ends a line so.
+    out = out.replace(/([.!?…])\s+\p{L}$/u, '$1').trim();
 
     if (out === before) break;
   }
@@ -505,6 +555,16 @@ export function sanitizeTranslatedLine(text: string): string {
   if (whole && HINT_ECHO_RE.test(whole[1]!.trim())) return '';
 
   return out;
+}
+
+/** Double quote marks in a line (straight and curly). */
+function countQuotes(text: string): number {
+  return (text.match(/[“”"]/gu) ?? []).length;
+}
+
+/** Base letters only: NFD without combining marks, đ → d. */
+export function stripDiacritics(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}+/gu, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 }
 
 /** Parse the model reply into id->text (sanitized), tolerating fences and prose. */
@@ -532,12 +592,20 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
   readonly credentialService: CloudServiceId;
   /** Instruction-following + context-capable → can run the refine pass. */
   readonly supportsRefinement = true;
+  /**
+   * Context window used to size the character-sheet analysis. Every default
+   * model here takes >=128K tokens; 100K leaves room for a user-chosen smaller
+   * one without ever sampling a transcript that would have fitted whole.
+   */
+  readonly contextTokens = 100_000;
 
   constructor(
     service: CloudServiceId,
     private readonly credentials: CredentialsStore,
     private readonly timeoutMs: number,
     private readonly postJson: PostJsonFn = cloudPostJson,
+    /** Claude's transport (the official SDK); tests pass a fake. */
+    private readonly claudeSend: ClaudeSend = sdkSend,
   ) {
     this.credentialService = service;
     this.id = `${service}-translate`;
@@ -547,20 +615,22 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
   /**
    * One-shot chat completion (system + user → text) — the primitive the
    * review/refine pass drives. Credentials resolve per call, like
-   * translateSegments.
+   * translateSegments. On Claude, `opts.jsonSchema` becomes structured output
+   * and `opts.maxTokens` the reply budget; the OpenAI-compatible transports
+   * keep their JSON mode and the prompts' own format instructions.
    */
-  async chatComplete(system: string | undefined, user: string, signal?: AbortSignal): Promise<string> {
+  async chatComplete(system: string | undefined, user: string, signal?: AbortSignal, opts?: ChatOptions): Promise<string> {
     const cred = await requireCredential(this.credentials, this.credentialService);
     const defaults = SERVICE_DEFAULTS[this.credentialService];
     const baseUrl = (cred.baseUrl ?? defaults.baseUrl).replace(/\/$/, '');
     const model = cred.model ?? defaults.model;
     const sys = system ?? 'You are a professional subtitle/dubbing translator.';
     return defaults.dialect === 'anthropic'
-      ? this.callAnthropic(baseUrl, cred.apiKey, model, user, signal, sys)
+      ? this.callAnthropic(baseUrl, cred.apiKey, model, user, signal, sys, opts)
       : this.callOpenAiCompatible(baseUrl, cred.apiKey, model, user, signal, sys);
   }
 
-  async translateSegments(input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
+  async translateSegments(input: DubbingTranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
     const cred = await requireCredential(this.credentials, this.credentialService);
     const defaults = SERVICE_DEFAULTS[this.credentialService];
     const baseUrl = (cred.baseUrl ?? defaults.baseUrl).replace(/\/$/, '');
@@ -568,36 +638,45 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
 
     const source = normalizeLanguageCode(input.sourceLanguage);
     const target = normalizeLanguageCode(input.targetLanguage);
+    const perSecond = input.speechRate;
 
-    const send = (prompt: string, system?: string): Promise<string> =>
+    const send = (prompt: string, system?: string, opts?: ChatOptions): Promise<string> =>
       defaults.dialect === 'anthropic'
-        ? this.callAnthropic(baseUrl, cred.apiKey, model, prompt, signal, system)
+        ? this.callAnthropic(baseUrl, cred.apiKey, model, prompt, signal, system, opts)
         : this.callOpenAiCompatible(baseUrl, cred.apiKey, model, prompt, signal, system);
 
     // Document-level context: the project's character sheet (synopsis, cast,
     // glossary, pronoun/address plan) keeps Vietnamese xưng hô and terminology
     // consistent across batches. A sheet provided by the caller (persisted /
     // user-edited) is authoritative; otherwise one analysis pass generates it
-    // and it is returned for persistence. Best-effort: an analysis failure must
-    // never fail the translation itself.
+    // and it is returned for persistence — unless the caller (the pipeline)
+    // runs the analysis itself, so it can report a failure instead of losing it.
+    // An analysis failure never fails the translation itself.
     const provided = input.documentContext;
     const useContext =
       translationContextEnabled() && (provided !== undefined || input.segments.length >= MIN_SEGMENTS_FOR_ANALYSIS);
     let analysis: TranslationAnalysis | undefined = provided;
     let generated: TranslationAnalysis | undefined;
-    if (useContext && analysis === undefined) {
-      generated = await send(
-        buildAnalysisPrompt(source, target, buildAnalysisSample(input.segments)),
-        'You prepare structured notes for dubbing translators. Respond with strict JSON only.',
-      )
-        .then(parseAnalysisReply)
-        .catch(() => undefined);
+    if (useContext && analysis === undefined && input.skipAnalysis !== true) {
+      generated = (
+        await generateCharacterSheet(
+          {
+            // Pass the sheet's schema and reply budget through (Claude: structured output).
+            chatComplete: (system, user, _signal, opts) => send(user, system, opts),
+            contextTokens: this.contextTokens,
+          },
+          { sourceLanguage: source, targetLanguage: target, segments: input.segments },
+          signal,
+        )
+      ).analysis;
       analysis = generated;
     }
 
     // Scene-aware batches + a rolling window of the previous batch's translated
-    // pairs, so style/pronoun decisions flow across request boundaries.
-    const batches = planContextBatches(input.segments, {
+    // pairs, so style/pronoun decisions flow across request boundaries. Fit
+    // windows are measured on the WHOLE list first (a batch's last line still
+    // sees its real successor).
+    const batches = planContextBatches(withFitWindows(input.segments as PromptSegment[]), {
       maxSegments: MAX_BATCH_SEGMENTS,
       maxChars: MAX_BATCH_CHARS,
     });
@@ -609,15 +688,18 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
       const context = useContext
         ? buildContextHeader({ analysis, previousPairs: rolling, sceneBreak: isSceneBreak(previousBatch, batch) })
         : undefined;
-      const prompt = buildTranslationPrompt(source, target, batch, context || undefined);
-      const reply = await send(prompt);
+      const prompt = buildTranslationPrompt(source, target, batch, context || undefined, { perSecond });
+      // The batch's reply shape: Claude enforces it as structured output.
+      const shape = (segs: readonly PromptSegment[]): ChatOptions => ({ jsonSchema: segmentsReplySchema(segs.map((s) => s.id)) });
+      const reply = await send(prompt, undefined, shape(batch));
 
       // Recover skipped/echoed lines with one emphatic retry instead of
       // silently keeping the source text. (No per-line raw rung here: the
       // JSON response_format is pinned on this transport, and cloud models'
       // batch compliance makes the retry sufficient.)
       const byId = await recoverBatch(batch, parseTranslationReply(reply), {
-        sendBatch: (segs, insist) => send(buildTranslationPrompt(source, target, segs, context || undefined, { insist })),
+        sendBatch: (segs, insist) =>
+          send(buildTranslationPrompt(source, target, segs, context || undefined, { insist, perSecond }), undefined, shape(segs)),
       }, detectSourceEcho, signal);
       for (const seg of batch) {
         // Still-missing translation: fall back to the source text so the
@@ -657,7 +739,12 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     return data.choices?.[0]?.message?.content ?? '';
   }
 
-  /** Anthropic /v1/messages call. */
+  /**
+   * One Claude request through the official SDK (claudeMessage): a refusal or a
+   * reply cut off at the token limit is an error with its reason — before, both
+   * quietly left lines in the source language — and a JSON schema becomes
+   * structured output.
+   */
   private async callAnthropic(
     baseUrl: string,
     apiKey: string,
@@ -665,21 +752,22 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     prompt: string,
     signal?: AbortSignal,
     system = 'You are a professional subtitle/dubbing translator. Respond with strict JSON only.',
+    opts?: ChatOptions,
   ): Promise<string> {
-    const data = await this.postJson<{ content?: { type: string; text?: string }[] }>(
-      `${baseUrl}/messages`,
-      { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    const reply = await claudeMessage(
       {
+        apiKey,
+        baseUrl,
         model,
-        max_tokens: 8192,
         system,
-        messages: [{ role: 'user', content: prompt }],
+        user: prompt,
+        timeoutMs: this.timeoutMs,
+        ...(signal ? { signal } : {}),
+        ...(opts?.jsonSchema ? { jsonSchema: opts.jsonSchema } : {}),
+        ...(opts?.maxTokens ? { maxTokens: opts.maxTokens } : {}),
       },
-      { service: this.credentialService, timeoutMs: this.timeoutMs, signal },
+      this.claudeSend,
     );
-    return (data.content ?? [])
-      .filter((b) => b.type === 'text' && typeof b.text === 'string')
-      .map((b) => b.text as string)
-      .join('');
+    return reply.text;
   }
 }

@@ -30,11 +30,17 @@ import type { SubtitleStyle } from '@videodubber/shared';
  * literal ':' must be `\\:` — the outer pass yields `\:`, the inner yields ':'.
  *
  * Rules (matching ffmpeg's two-level filtergraph escaping):
+ *   - backslash  \  -> \\\\     (literal at BOTH levels; macOS/Linux names only)
  *   - colon      :  -> \\:       (option separator — needs BOTH levels)
- *   - single '   '  -> \'        (string delimiter)
- *   - left [     [  -> \[
+ *   - single '   '  -> \\\'      (quote — special at BOTH levels)
+ *   - left [     [  -> \[        (graph level only)
  *   - right ]    ]  -> \]
  *   - comma      ,  -> \,        (filter separator)
+ *   - semicolon  ;  -> \;        (chain separator)
+ * The quote used to get one level (`\'`): the outer pass ate the backslash and
+ * the inner pass took the bare `'` as an opening quote that swallowed the rest
+ * of the options, so a profile like C:\Users\O'Brien failed every burn with
+ * "Unable to open …". A `;` was not escaped at all ("Error parsing filterchain").
  * On Windows we normalize backslashes in the drive path to forward slashes
  * first (libass accepts forward slashes on Windows), so the only colon left is
  * the drive colon — escaped by the rule above.
@@ -51,16 +57,16 @@ export function escapeSubtitlePathForFilter(
     // The remaining drive colon (C:/...) is escaped for the filtergraph below.
   }
 
-  // Backslash first (so we don't double the ones the colon rule inserts), then
-  // the colon as `\\:` so the two-pass filtergraph parse keeps it literal
-  // instead of splitting the path into a second filter option.
+  // Backslash first (so we don't multiply the ones the later rules insert).
+  const bs = '\\';
   return p
-    .replace(/\\/g, '\\\\')
-    .replace(/:/g, '\\\\:')
-    .replace(/'/g, "\\'")
-    .replace(/\[/g, '\\[')
-    .replace(/\]/g, '\\]')
-    .replace(/,/g, '\\,');
+    .replace(/\\/g, bs.repeat(4))
+    .replace(/:/g, `${bs.repeat(2)}:`)
+    .replace(/'/g, `${bs.repeat(3)}'`)
+    .replace(/\[/g, `${bs}[`)
+    .replace(/\]/g, `${bs}]`)
+    .replace(/,/g, `${bs},`)
+    .replace(/;/g, `${bs};`);
 }
 
 /**
@@ -126,11 +132,11 @@ export function alignmentToAssCode(alignment: SubtitleStyle['alignment']): numbe
  */
 export function buildBurnSubtitlesStyle(style: SubtitleStyle): string {
   const fontName = (style.fontFamily || 'Arial').replace(/,/g, ' ').trim();
-  const fontSize = Number.isFinite(style.fontSize) ? Math.round(style.fontSize) : 24;
+  const fontSize = Number.isFinite(style.fontSize) ? Math.round(style.fontSize as number) : 24;
   const primary = hexToAssColor(style.primaryColor || '#FFFFFF');
   const outlineColor = hexToAssColor(style.outlineColor || '#000000');
   const outlineWidth = Number.isFinite(style.outlineWidth)
-    ? Math.max(0, style.outlineWidth)
+    ? Math.max(0, style.outlineWidth as number)
     : 2;
   const alignment = alignmentToAssCode(style.alignment);
 
@@ -146,16 +152,27 @@ export function buildBurnSubtitlesStyle(style: SubtitleStyle): string {
 }
 
 /**
- * Build the full `subtitles=...` filter value (path + optional force_style).
- * Returns just the filter string (no `-vf`); render.ts inserts it.
+ * Build the full `subtitles=...` filter value (path + optional fontsdir +
+ * optional force_style). Returns just the filter string (no `-vf`); render.ts
+ * inserts it.
+ *
+ * `fontsDir` is handed to libass, which loads every font file in it and
+ * matches the script's family names against them as well as the system's:
+ * that is how the bundled subtitle font reaches the burn. It is an option value
+ * just like the path, so it gets the same two-level escaping — on Windows its
+ * drive colon would otherwise split the option string.
  */
 export function buildSubtitlesFilter(
   subtitlePath: string,
   style?: SubtitleStyle,
   platform: NodeJS.Platform = process.platform,
+  fontsDir?: string,
 ): string {
   const escaped = escapeSubtitlePathForFilter(subtitlePath, platform);
   let filter = `subtitles=${escaped}`;
+  if (fontsDir) {
+    filter += `:fontsdir=${escapeSubtitlePathForFilter(fontsDir, platform)}`;
+  }
   if (style) {
     // force_style is itself passed as a single value; wrap in single quotes so
     // its internal commas are treated as style fields, not filter separators.

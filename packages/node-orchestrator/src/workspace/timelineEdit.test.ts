@@ -44,6 +44,17 @@ describe('applySegmentPatches', () => {
     expect(base[1]).toMatchObject({ startMs: 1500, endMs: 2500 });
   });
 
+  it('takes word timings along when a line moves, and drops them when it is resized', () => {
+    const withWords = base.map((s, i) =>
+      i === 1 ? { ...s, words: [{ word: 'b', startMs: 1600, endMs: 2400 }] } : s,
+    );
+    const moved = applySegmentPatches(withWords, [{ id: 'seg_0002', startMs: 1300, endMs: 2300 }]);
+    expect(moved.segments[1]!.words).toEqual([{ word: 'b', startMs: 1400, endMs: 2200 }]);
+    const resized = applySegmentPatches(withWords, [{ id: 'seg_0002', startMs: 1500, endMs: 2900 }]);
+    expect(resized.segments[1]!.words).toBeUndefined();
+    expect(withWords[1]!.words).toEqual([{ word: 'b', startMs: 1600, endMs: 2400 }]); // input untouched
+  });
+
   it('locks a line whose text really changed and marks its clip stale', () => {
     const out = applySegmentPatches(base, [{ id: 'seg_0001', translatedText: 'mới' }]);
     expect(out.segments[0]).toMatchObject({ translatedText: 'mới', locked: true, ttsStale: true });
@@ -170,11 +181,39 @@ describe('alignmentInputsForUnits', () => {
       ['seg_0001', { audioPath: '/a.wav', generatedDurationMs: 900 }],
       ['seg_0002', { audioPath: '/b.wav', generatedDurationMs: 1500 }],
     ]);
-    const inputs = alignmentInputsForUnits(units, previous, (id) => `/fallback/${id}.wav`, new Map([['seg_0002', 800]]));
+    const inputs = alignmentInputsForUnits(
+      units,
+      previous,
+      (id) => `/fallback/${id}.wav`,
+      new Map([['seg_0002', { generatedDurationMs: 800 }]]),
+    );
     expect(inputs).toEqual([
       { segmentId: 'seg_0001', startMs: 0, endMs: 1000, audioPath: '/a.wav', generatedDurationMs: 900 },
       { segmentId: 'seg_0002', startMs: 2000, endMs: 3000, audioPath: '/b.wav', generatedDurationMs: 800 },
     ]);
+  });
+
+  it("carries each clip's trim: the old one through a timing edit, the new one after a re-synthesis", () => {
+    const units = singletonUnits(translated([[0, 1000, 'a'], [2000, 3000, 'b']]));
+    const previous = new Map([
+      ['seg_0001', { audioPath: '/a.wav', generatedDurationMs: 611, trimStartMs: 35, trimEndMs: 646 }],
+      ['seg_0002', { audioPath: '/b.wav', generatedDurationMs: 700, trimStartMs: 50, trimEndMs: 750 }],
+    ]);
+    // seg_0002 was regenerated and its new clip needs no trim: the old trim must go.
+    const inputs = alignmentInputsForUnits(
+      units,
+      previous,
+      (id) => `/fallback/${id}.wav`,
+      new Map([['seg_0002', { generatedDurationMs: 820 }]]),
+    );
+    expect(inputs[0]).toMatchObject({ generatedDurationMs: 611, trimStartMs: 35, trimEndMs: 646 });
+    expect(inputs[1]).toEqual({
+      segmentId: 'seg_0002',
+      startMs: 2000,
+      endMs: 3000,
+      audioPath: '/b.wav',
+      generatedDurationMs: 820,
+    });
   });
 
   it('keeps a never-synthesized unit in the list (as empty) so neighbours stay gap-aware', () => {

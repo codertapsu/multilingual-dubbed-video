@@ -113,6 +113,11 @@ if [[ "${SKIP_ENGINE_SRC:-0}" != "1" ]]; then
   node "${SCRIPT_DIR}/stage-engine-src.mjs"
 fi
 
+# `resources/fonts` is a DECLARED Tauri resource: the burned-in subtitle font
+# (a few hundred KB), so every build stages it.
+echo ""; echo "### Subtitle font ############################################"
+node "${SCRIPT_DIR}/stage-fonts.mjs"
+
 # `resources/default-models` is a DECLARED Tauri resource — always exists.
 DM_RES="${REPO_ROOT}/apps/desktop/src-tauri/resources/default-models"
 # Bundling the default models is OPT-IN (BUNDLE_DEFAULT_MODELS=1): it makes a
@@ -303,5 +308,9 @@ if [[ "${ASSERT_BUNDLE:-1}" == "1" ]]; then
     echo "          Re-run with network, or set ASSERT_BUNDLE=0 to ship a degraded build on purpose." >&2
     exit 1
   fi
-  echo "✓ bundle assertion passed: default models + uv + CPython are all bundled."
+  if [[ "${BUNDLE_DEFAULT_MODELS:-0}" == "1" ]]; then
+    echo "✓ bundle assertion passed: default models + uv + CPython are bundled."
+  else
+    echo "✓ bundle assertion passed: uv + CPython are bundled (default models are downloaded at first run; BUNDLE_DEFAULT_MODELS=1 bundles them)."
+  fi
 fi

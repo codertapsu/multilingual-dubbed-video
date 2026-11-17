@@ -8,7 +8,7 @@ import {
   type DuckAndMixInput,
 } from './mix.js';
 import { parseFfmpegEncoders } from './exec.js';
-import { selectVideoCodec } from './render.js';
+import { planVideoEncode, type HardwareEncoderProbe } from './encoder.js';
 import { buildRubberbandArgs, shouldUseRubberband } from './stretch.js';
 
 const baseMix: DuckAndMixInput = {
@@ -81,29 +81,37 @@ describe('replace-vocals / keep M&E bed mix', () => {
 });
 
 describe('hardware encoder selection', () => {
-  const all = new Set(['libx264', 'h264_videotoolbox', 'h264_nvenc']);
-
-  it('quality always uses software x264 CRF', () => {
-    const sel = selectVideoCodec('quality', 'darwin', all);
-    expect(sel.codec).toBe('libx264');
-    expect(sel.extraArgs).toContain('-crf');
+  // The choice now follows a PROBE (a real test encode), not the encoder list:
+  // listing h264_nvenc proves nothing on an AMD/Intel-only PC. See encoder.test.ts.
+  const geometry = { width: 1280, height: 720, fps: 30 };
+  const found = (codec: string, rateControl?: 'quality' | 'bitrate'): HardwareEncoderProbe => ({
+    selected: { codec, ...(rateControl ? { rateControl } : {}) },
+    attempts: [],
   });
 
-  it('fast uses VideoToolbox on macOS when available', () => {
-    const sel = selectVideoCodec('fast', 'darwin', all);
-    expect(sel.codec).toBe('h264_videotoolbox');
-    expect(sel.extraArgs).toContain('-q:v');
+  it('quality always uses software x264 CRF, whatever hardware exists', () => {
+    const plan = planVideoEncode('quality', found('h264_nvenc'), geometry);
+    expect(plan.primary.codec).toBe('libx264');
+    expect(plan.primary.args).toContain('-crf');
+    expect(plan.fallback).toBeUndefined();
   });
 
-  it('fast uses NVENC off-macOS when available', () => {
-    const sel = selectVideoCodec('fast', 'win32', all);
-    expect(sel.codec).toBe('h264_nvenc');
-    expect(sel.extraArgs).toContain('-cq');
+  it('fast uses the probed VideoToolbox on macOS', () => {
+    const plan = planVideoEncode('fast', found('h264_videotoolbox', 'quality'), geometry);
+    expect(plan.primary.codec).toBe('h264_videotoolbox');
+    expect(plan.primary.args).toContain('-q:v');
   });
 
-  it('falls back to x264 when the hardware encoder is absent', () => {
-    const sel = selectVideoCodec('fast', 'win32', new Set(['libx264']));
-    expect(sel.codec).toBe('libx264');
+  it('fast uses the probed NVENC off-macOS', () => {
+    const plan = planVideoEncode('fast', found('h264_nvenc'), geometry);
+    expect(plan.primary.codec).toBe('h264_nvenc');
+    expect(plan.primary.args).toContain('-cq');
+    expect(plan.fallback?.codec).toBe('libx264');
+  });
+
+  it('uses x264 when the probe found no working hardware encoder', () => {
+    const plan = planVideoEncode('fast', { attempts: [] }, geometry);
+    expect(plan.primary.codec).toBe('libx264');
   });
 
   it('parses encoder names from ffmpeg -encoders output', () => {

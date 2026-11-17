@@ -73,9 +73,23 @@ New-Item -ItemType Directory -Force -Path $SeaDir | Out-Null
 Write-Host "==> [1/4] pnpm build (orchestrator + deps)"
 Push-Location $RepoRoot
 try {
-  & pnpm --filter '@videodubber/node-orchestrator...' build
+  # The MCP server ships inside the same binary (`--mcp`), so build it too.
+  & pnpm --filter '@videodubber/node-orchestrator...' --filter '@videodubber/mcp-server...' build
   Assert-NativeOk "pnpm build"
 } finally { Pop-Location }
+
+# The build stamp GET /health reports (read by orchestrator-entry.mjs). Without
+# it every shipped build said version "unknown". Written as a JSON file the entry
+# imports, not an esbuild --define: a JSON object does not survive being passed
+# through esbuild.cmd's quoting on Windows.
+$Conf = Get-Content -Raw (Join-Path $RepoRoot 'apps\desktop\src-tauri\tauri.conf.json') | ConvertFrom-Json
+$Commit = (git -C $RepoRoot rev-parse --short=7 HEAD 2>$null)
+if ($LASTEXITCODE -ne 0 -or -not $Commit) { $Commit = $null }
+elseif (git -C $RepoRoot status --porcelain --untracked-files=no) { $Commit = "$Commit-dirty" }
+$Stamp = [ordered]@{ version = $Conf.version; builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
+if ($Commit) { $Stamp['commit'] = $Commit }
+$Stamp | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $ScriptDir 'build-stamp.json') -Encoding utf8NoBOM
+Write-Host ("    build stamp: {0}{1}" -f $Conf.version, $(if ($Commit) { " ($Commit)" } else { '' }))
 
 Write-Host "==> [2/4] esbuild bundle -> orchestrator.cjs"
 # Bundle orchestrator-entry.mjs (NOT dist/server.js): server.js only auto-starts

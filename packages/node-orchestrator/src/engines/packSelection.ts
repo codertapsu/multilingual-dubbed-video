@@ -10,13 +10,18 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
   AppErrorException,
+  MIN_GPU_RESIDENT_FRACTION,
+  gpuResidentFraction,
+  gpuWeightBudgetMb,
+  gpuWorkingSetMb,
   type ActivePackSelection,
   type EngineAccel,
   type EnginePackInfo,
+  type LocalModelPreferences,
   type SystemProfile,
 } from '@videodubber/shared';
-import { availablePacks, findPack } from './enginePackCatalog.js';
-import { nvidiaDriverSupportsPack, packFitsForSelection } from './engineRecommendation.js';
+import { availablePacks, findPack, WHISPER_CPP_MODEL_FILE } from './enginePackCatalog.js';
+import { nvidiaDriverSupportsPack, packFitsForSelection, packHardwareSupported } from './engineRecommendation.js';
 import { getSystemProfile } from '../system/systemProfile.js';
 import type { EnginePackStore } from './enginePackStore.js';
 
@@ -140,6 +145,36 @@ export async function requireInstalledPack(store: EnginePackStore, providerId: s
   return id;
 }
 
+/** The runtime family a weights-only (model) pack runs on. */
+const RUNTIME_FOR_MODEL_FAMILY: Readonly<Record<string, string>> = {
+  'local-llm-model': 'local-llm',
+  'local-llm-chat-model': 'local-llm',
+  'whisper-cpp-model': 'whisper-cpp',
+};
+
+/**
+ * The runtime pack to install alongside a model pack: the most capable build
+ * this hardware can actually run (accelerator present, NVIDIA driver new
+ * enough), or undefined when the family already has a runtime installed or
+ * none fits. The model packs' descriptions promised "installed automatically
+ * alongside" long before anything did it, so installing a TranslateGemma model
+ * alone left a model the app could not run.
+ */
+export async function companionRuntimeFor(
+  store: EnginePackStore,
+  packId: string,
+  profile: SystemProfile,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): Promise<string | undefined> {
+  const family = RUNTIME_FOR_MODEL_FAMILY[findPack(packId)?.providerId ?? ''];
+  if (!family) return undefined;
+  if (await pickInstalledPack(store, family, platform, arch)) return undefined;
+  return packsForProvider(family, platform, arch).find(
+    (p) => packHardwareSupported(p, profile) && nvidiaDriverSupportsPack(p, profile),
+  )?.id;
+}
+
 /** The best pack to SUGGEST installing for a provider (most capable for the machine). */
 export function recommendedPackFor(
   providerId: string,
@@ -166,6 +201,8 @@ export interface ModelPackSelection {
    * which model is actually running — and can free the disk space.
    */
   skipped?: { packId: string; reason: string };
+  /** The user picked this pack in Settings → Engines. */
+  chosenByUser?: boolean;
 }
 
 /** Is `modelPath` a real file (a half-finished download has no GGUF)? */
@@ -202,6 +239,7 @@ async function pickRankedModelPack(
   store: EnginePackStore,
   ranked: readonly string[],
   profileOverride?: SystemProfile,
+  preferred?: string,
 ): Promise<ModelPackSelection | undefined> {
   const candidates: { packId: string; modelPath: string }[] = [];
   for (const packId of ranked) {
@@ -213,6 +251,11 @@ async function pickRankedModelPack(
   if (candidates.length === 0) return undefined;
   const best = candidates[0]!;
 
+  // The user's choice (Settings → Engines) wins whatever the hardware advice:
+  // a slower, better model is theirs to pick.
+  const chosenByUser = preferred ? candidates.find((c) => c.packId === preferred) : undefined;
+  if (chosenByUser) return { ...chosenByUser, chosenByUser: true };
+
   const profile = profileOverride ?? (await machineProfile());
   if (!profile) return best;
 
@@ -223,13 +266,36 @@ async function pickRankedModelPack(
     // every tier boundary unreachable there (see packFitsForSelection).
     return !pack || packFitsForSelection(pack, profile);
   };
+  // With a graphics card, the most capable model that sits mostly ON it — the
+  // same rule the recommendation uses. RAM alone used to decide, and on an
+  // 8 GB RTX 3050 with 32 GB of RAM that picked the 15 GB TranslateGemma 27B:
+  // most of it ran on the processor, and translation plus review took 1,248 s
+  // of a 2,220 s dub.
+  const residentEnough = (packId: string): boolean => {
+    const pack = findPack(packId);
+    const size = pack ? gpuWorkingSetMb(pack) : 0;
+    return size > 0 && gpuResidentFraction(size, profile) >= MIN_GPU_RESIDENT_FRACTION;
+  };
+  const onGpu = gpuWeightBudgetMb(profile) > 0 ? candidates.find((c) => fits(c.packId) && residentEnough(c.packId)) : undefined;
   const chosen =
+    onGpu ??
     candidates.find((c) => fits(c.packId)) ??
     // Nothing fits — use the least memory-hungry installed pack.
     [...candidates].sort((a, b) => (findPack(a.packId)?.minRamMb ?? 0) - (findPack(b.packId)?.minRamMb ?? 0))[0]!;
 
   if (chosen.packId === best.packId) return chosen;
   const bestPack = findPack(best.packId);
+  const bestName = bestPack?.displayName ?? best.packId;
+  if (onGpu && fits(best.packId)) {
+    const pct = Math.round(gpuResidentFraction(bestPack ? gpuWorkingSetMb(bestPack) : 0, profile) * 100);
+    return {
+      ...chosen,
+      skipped: {
+        packId: best.packId,
+        reason: `Only about ${pct}% of ${bestName} fits in the graphics card's memory, so most of it would run on the processor; choose it in Settings → Engines to use it anyway.`,
+      },
+    };
+  }
   const needGb = bestPack?.minRamMb ? Math.round(bestPack.minRamMb / 1024) : undefined;
   const haveGb = Math.floor(profile.totalRamMb / 1024);
   return {
@@ -237,8 +303,8 @@ async function pickRankedModelPack(
     skipped: {
       packId: best.packId,
       reason: needGb
-        ? `${bestPack?.displayName ?? best.packId} needs about ${needGb} GB of memory; this computer has ${haveGb} GB.`
-        : `${bestPack?.displayName ?? best.packId} needs more memory than this computer has (${haveGb} GB).`,
+        ? `${bestName} needs about ${needGb} GB of memory; this computer has ${haveGb} GB.`
+        : `${bestName} needs more memory than this computer has (${haveGb} GB).`,
     },
   };
 }
@@ -256,13 +322,14 @@ const LOCAL_LLM_MODEL_PACKS = ['translategemma-27b', 'translategemma-12b', 'tran
 export async function pickInstalledLocalLlmModel(
   store: EnginePackStore,
   profile?: SystemProfile,
+  preferred?: string,
 ): Promise<ModelPackSelection | undefined> {
-  return pickRankedModelPack(store, LOCAL_LLM_MODEL_PACKS, profile);
+  return pickRankedModelPack(store, LOCAL_LLM_MODEL_PACKS, profile, preferred);
 }
 
 /** Resolve the GGUF path of the best installed model pack, or throw ENGINE_PACK_MISSING. */
-export async function resolveLocalLlmModelPath(store: EnginePackStore): Promise<string> {
-  const found = await pickInstalledLocalLlmModel(store);
+export async function resolveLocalLlmModelPath(store: EnginePackStore, preferred?: string): Promise<string> {
+  const found = await pickInstalledLocalLlmModel(store, undefined, preferred);
   if (!found) {
     throw new AppErrorException('ENGINE_PACK_MISSING', 'No TranslateGemma model is installed for the local LLM.', {
       remediation:
@@ -316,8 +383,9 @@ export interface LocalLlmChatModelSelection extends ModelPackSelection {
 export async function pickInstalledLocalLlmChatModel(
   store: EnginePackStore,
   profile?: SystemProfile,
+  preferred?: string,
 ): Promise<LocalLlmChatModelSelection | undefined> {
-  const picked = await pickRankedModelPack(store, LOCAL_LLM_CHAT_MODEL_PACKS, profile);
+  const picked = await pickRankedModelPack(store, LOCAL_LLM_CHAT_MODEL_PACKS, profile, preferred);
   if (!picked) return undefined;
   const promptFormat = CHAT_MODEL_PROMPT_FORMATS[picked.packId as (typeof LOCAL_LLM_CHAT_MODEL_PACKS)[number]];
   return { ...picked, promptFormat };
@@ -335,21 +403,23 @@ export async function pickInstalledLocalLlmChatModel(
 export async function resolveActivePackSelections(
   store: EnginePackStore,
   profile?: SystemProfile,
+  preferred: LocalModelPreferences = {},
 ): Promise<ActivePackSelection[]> {
   const out: ActivePackSelection[] = [];
 
-  for (const [providerId, pick] of [
-    ['local-llm-model', pickInstalledLocalLlmModel],
-    ['local-llm-chat-model', pickInstalledLocalLlmChatModel],
+  for (const [providerId, pick, choice] of [
+    ['local-llm-model', pickInstalledLocalLlmModel, preferred.translation],
+    ['local-llm-chat-model', pickInstalledLocalLlmChatModel, preferred.chat],
   ] as const) {
     const installedInFamily = await installedIdsFor(store, providerId);
     if (installedInFamily.length < 2) continue;
-    const chosen = await pick(store, profile);
+    const chosen = await pick(store, profile, choice);
     if (!chosen) continue;
     out.push({
       providerId,
       packId: chosen.packId,
       ...(chosen.skipped ? { note: chosen.skipped.reason } : {}),
+      ...(chosen.chosenByUser ? { chosenByUser: true } : {}),
     });
   }
 
@@ -376,8 +446,9 @@ async function installedIdsFor(store: EnginePackStore, providerId: string): Prom
 export async function resolveLocalLlmChatModel(
   store: EnginePackStore,
   profile?: SystemProfile,
+  preferred?: string,
 ): Promise<LocalLlmChatModelSelection> {
-  const found = await pickInstalledLocalLlmChatModel(store, profile);
+  const found = await pickInstalledLocalLlmChatModel(store, profile, preferred);
   if (!found) {
     throw new AppErrorException(
       'ENGINE_PACK_MISSING',
@@ -389,4 +460,66 @@ export async function resolveLocalLlmChatModel(
     );
   }
   return found;
+}
+
+// --------------------------------------------------------------------------
+// whisper.cpp speech models (the `whisper-cpp-model` packs)
+// --------------------------------------------------------------------------
+
+/**
+ * The model pack whisper.cpp needs for a project's speech model, keyed by the
+ * ids the model picker offers. Unlike TranslateGemma there is no "best
+ * installed" pick: the project names its model, and running a different size
+ * would hand the user a transcript they did not choose.
+ */
+const WHISPER_CPP_MODEL_PACKS: Readonly<Record<string, string>> = {
+  tiny: 'whisper-model-tiny',
+  base: 'whisper-model-base',
+  small: 'whisper-model-small',
+  medium: 'whisper-model-medium',
+  'large-v3': 'whisper-model-large-v3',
+  'large-v3-turbo': 'whisper-model-large-v3-turbo',
+  turbo: 'whisper-model-large-v3-turbo',
+};
+
+/** Where whisper.cpp problems are explained, for the user and for support. */
+export const WHISPER_CPP_DOCS_REF = 'docs/TROUBLESHOOTING.md#whispercpp-needs-its-speech-model';
+
+/**
+ * The whisper.cpp model pack for `sttModel`, or undefined when that model has
+ * no whisper.cpp build (PhoWhisper and distil-large-v3.5 exist only for
+ * faster-whisper).
+ */
+export function whisperCppModelPackFor(sttModel: string): string | undefined {
+  return WHISPER_CPP_MODEL_PACKS[sttModel.trim()];
+}
+
+/** Why whisper.cpp cannot run `sttModel` at all — no download fixes this. */
+export function whisperCppUnsupportedModelError(sttModel: string): AppErrorException {
+  return new AppErrorException('STT_MODEL_MISSING', `whisper.cpp cannot run the "${sttModel}" speech model.`, {
+    remediation:
+      `"${sttModel}" exists only for faster-whisper. Pick large-v3-turbo (or another standard Whisper size) as this ` +
+      'project’s speech model, or switch its speech-to-text back to faster-whisper.',
+    docsRef: WHISPER_CPP_DOCS_REF,
+  });
+}
+
+/**
+ * The absolute path of the ggml file whisper.cpp must load for `sttModel`.
+ * Throws when the model has no whisper.cpp build, or when its pack is not
+ * installed (or is a half-finished download with no model file).
+ */
+export async function resolveWhisperCppModel(store: EnginePackStore, sttModel: string): Promise<string> {
+  const packId = whisperCppModelPackFor(sttModel);
+  if (!packId) throw whisperCppUnsupportedModelError(sttModel);
+  const rec = await store.get(packId);
+  const modelPath = rec ? path.join(rec.path, WHISPER_CPP_MODEL_FILE) : undefined;
+  if (modelPath && (await isFile(modelPath))) return modelPath;
+  const pack = findPack(packId);
+  throw new AppErrorException('ENGINE_PACK_MISSING', `whisper.cpp needs the "${sttModel}" speech model, which is not installed.`, {
+    remediation:
+      `Install "${pack?.displayName ?? packId}" in Settings → Engines (it also starts downloading by itself when you ` +
+      'press Start), or switch this project’s speech-to-text to faster-whisper.',
+    docsRef: WHISPER_CPP_DOCS_REF,
+  });
 }

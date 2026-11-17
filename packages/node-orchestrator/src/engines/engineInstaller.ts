@@ -66,6 +66,15 @@ export class EngineInstaller {
 
   constructor(private readonly deps: EngineInstallerDeps) {}
 
+  /**
+   * True while `packId` is installing, so the run gate can say "still
+   * downloading" instead of "not installed" — and not start it a second time.
+   * Synchronous with `install()`: the id is recorded before its first await.
+   */
+  isInstalling(packId: string): boolean {
+    return this.running.has(packId);
+  }
+
   private get fetchImpl(): typeof fetch {
     return this.deps.fetchImpl ?? fetch;
   }

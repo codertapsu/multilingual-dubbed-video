@@ -154,3 +154,85 @@ export async function probeDurationMs(inputPath: string, opts: RunOptions = {}):
   const info = await probe(inputPath, opts);
   return info.durationMs;
 }
+
+/** The first video stream as the filtergraph will SEE it. */
+export interface VideoGeometry {
+  /** Display-oriented width (after ffmpeg's autorotation). */
+  width: number;
+  /** Display-oriented height. */
+  height: number;
+  /** Average frame rate (30 when unknown). */
+  fps: number;
+  /** Container duration in ms (0 when unknown). */
+  durationMs: number;
+}
+
+/** ffprobe argv for {@link probeVideoGeometry}. Pure. */
+export function buildVideoGeometryArgs(inputPath: string): string[] {
+  return [
+    '-v',
+    'error',
+    '-select_streams',
+    'v:0',
+    '-show_entries',
+    'stream=width,height,avg_frame_rate,r_frame_rate:stream_side_data=rotation:stream_tags=rotate:format=duration',
+    '-print_format',
+    'json',
+    '-i',
+    inputPath,
+  ];
+}
+
+/**
+ * Parse {@link buildVideoGeometryArgs} output. Pure.
+ *
+ * A phone video stores 1920x1080 plus a 90° display matrix; ffmpeg autorotates
+ * while decoding, so the subtitle filter draws on a 1080x1920 frame. Sizing the
+ * subtitle canvas from the stored size would squash the text into the wrong
+ * aspect. Rotation comes from the display-matrix side data (ffmpeg 5+) or the
+ * legacy `rotate` tag.
+ */
+export function parseVideoGeometry(json: unknown): VideoGeometry | undefined {
+  const j = json as {
+    streams?: Array<{
+      width?: number;
+      height?: number;
+      avg_frame_rate?: string;
+      r_frame_rate?: string;
+      side_data_list?: Array<{ rotation?: number | string }>;
+      tags?: { rotate?: string };
+    }>;
+    format?: { duration?: string };
+  };
+  const s = j?.streams?.[0];
+  if (!s || !s.width || !s.height) return undefined;
+  const rotation = Number(s.side_data_list?.find((d) => d.rotation !== undefined)?.rotation ?? s.tags?.rotate ?? 0);
+  const quarterTurn = Number.isFinite(rotation) && Math.abs(Math.round(rotation / 90)) % 2 === 1;
+  const durationSec = Number(j.format?.duration);
+  return {
+    width: quarterTurn ? s.height : s.width,
+    height: quarterTurn ? s.width : s.height,
+    fps: parseFrameRate(s.avg_frame_rate) || parseFrameRate(s.r_frame_rate) || 30,
+    durationMs: Number.isFinite(durationSec) ? Math.round(durationSec * 1000) : 0,
+  };
+}
+
+/** Probe the display geometry of `inputPath`'s first video stream. */
+export async function probeVideoGeometry(inputPath: string, opts: RunOptions = {}): Promise<VideoGeometry> {
+  const { stdout } = await runFfprobe(buildVideoGeometryArgs(inputPath), opts);
+  let geometry: VideoGeometry | undefined;
+  try {
+    geometry = parseVideoGeometry(JSON.parse(stdout));
+  } catch {
+    geometry = undefined;
+  }
+  if (!geometry) {
+    throw new AppErrorException({
+      code: 'UNSUPPORTED_MEDIA',
+      message: `No video stream to burn subtitles into: ${inputPath}`,
+      remediation: 'Burned-in subtitles need a video track. Choose an .srt/.vtt export for audio-only input.',
+      docsRef: 'docs/TROUBLESHOOTING.md#media',
+    });
+  }
+  return geometry;
+}

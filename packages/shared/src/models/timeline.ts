@@ -57,6 +57,13 @@ export interface TimelineDocument {
   /** Voice-synced subtitle timing for cues inside merged units (display only). */
   cueOverrides: Record<string, { startMs: number; endMs: number }>;
   media: TimelineMedia;
+  /**
+   * How fast the project's voice speaks, in the target language's budget unit
+   * per second (Vietnamese syllables): measured from its clips when known, else
+   * the engine's default. Lines are budgeted at this pace everywhere (the
+   * pipeline's prompts, the editor, the MCP server). Absent = the language default.
+   */
+  speechRate?: { perSecond: number; source: 'measured' | 'engine-default' };
 }
 
 /** GET /projects/:id/waveform — the original audio's envelope. */

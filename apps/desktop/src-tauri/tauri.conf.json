@@ -49,7 +49,8 @@
         "silent": true
       },
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "./windows/installer-hooks.nsh"
       }
     },
     "externalBin": [
@@ -62,6 +63,8 @@
     "resources": [
       "resources/default-models",
       "resources/engine-src",
+      "resources/fonts",
+      "resources/licenses",
       "resources/python",
       "resources/workers"
     ],

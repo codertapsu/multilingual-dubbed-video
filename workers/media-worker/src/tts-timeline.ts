@@ -16,6 +16,8 @@
  * segments we mix in chunks: each chunk produces an intermediate WAV, then the
  * intermediates are amix'd together. The chunking is recursive-friendly but we
  * keep it to a single extra level which is plenty (e.g. 64*64 = 4096 segments).
+ * The chunks are independent, so they are mixed several at a time
+ * (concurrency.ts); the final mix still takes them in chunk order.
  *
  * Arg-builders are pure and unit-tested. The orchestrator passes already-
  * aligned segments (with absolute audio paths). Segments with an empty/missing
@@ -27,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AppErrorException, type AlignedSegment, type TimeStretchEngine } from '@videodubber/shared';
 import { writeAtomically } from './atomic.js';
+import { defaultMixConcurrency, mapWithConcurrency } from './concurrency.js';
 import {
   assertInputReadable,
   assertOutputWritable,
@@ -113,6 +116,27 @@ export interface TimelineClip {
    * from the engine policy + detected capabilities). Default `atempo`.
    */
   stretchWith?: 'atempo' | 'rubberband';
+  /**
+   * The part of the source that plays, in ms of the source (the orchestrator's
+   * clipSpeech.ts: edge silence off, a botched clip's trailing noise cut). Cut
+   * first in the chain, so the fades, the stretch and the placement all apply
+   * to the speech alone; `durationMs` is then the kept length. Both or neither.
+   */
+  trimStartMs?: number;
+  trimEndMs?: number;
+}
+
+/**
+ * The `atrim` fragment that keeps only a clip's trim window (trailing-comma-
+ * terminated, or '' when the clip plays whole or the window is malformed). The
+ * PTS reset makes the kept part start at t=0, where the fade-in expects it. Pure.
+ */
+export function buildTrimChain(trimStartMs?: number, trimEndMs?: number): string {
+  if (trimStartMs === undefined || trimEndMs === undefined) return '';
+  if (!Number.isFinite(trimStartMs) || !Number.isFinite(trimEndMs)) return '';
+  const start = Math.max(0, trimStartMs);
+  if (!(trimEndMs > start)) return '';
+  return `atrim=start=${msToSec(start)}:end=${msToSec(trimEndMs)},asetpts=PTS-STARTPTS,`;
 }
 
 /**
@@ -208,7 +232,8 @@ export function buildTimelineFilterComplex(
         ? buildRubberbandFilterChain(clip.speedRatio)
         : buildAtempoChain(clip.speedRatio);
     parts.push(
-      `[${i}:a]aresample=${SAMPLE_RATE},aformat=sample_fmts=fltp:channel_layouts=stereo,` +
+      `[${i}:a]${buildTrimChain(clip.trimStartMs, clip.trimEndMs)}aresample=${SAMPLE_RATE},` +
+        `aformat=sample_fmts=fltp:channel_layouts=stereo,` +
         `${buildFadeChain(clip.durationMs)}${stretch}adelay=${delay}|${delay},asetpts=N/SR/TB[${label}]`,
     );
     delayedLabels.push(`[${label}]`);
@@ -291,8 +316,11 @@ export interface TimelineSegmentInput {
   startMs: number;
   /** Tempo factor to apply before placement (1/undefined = none). */
   speedRatio?: number;
-  /** Measured clip duration in ms (pre-stretch) for tail-fade placement. */
+  /** Measured clip duration in ms (pre-stretch) for tail-fade placement — of the trimmed part when trimmed. */
   durationMs?: number;
+  /** The part of the clip that plays, in ms of the clip (see {@link TimelineClip}). */
+  trimStartMs?: number;
+  trimEndMs?: number;
 }
 
 /** Input object for {@link buildTtsTimeline}. */
@@ -306,6 +334,12 @@ export interface BuildTtsTimelineInput {
    * like `ffmpeg-atempo` (legacy callers keep their exact behavior).
    */
   timeStretchEngine?: TimeStretchEngine;
+  /**
+   * How many chunk mixes may run at once on a long timeline. Default
+   * {@link defaultMixConcurrency}; 1 reproduces the old sequential build (the
+   * output is byte-identical either way — benchmarks and tests set it).
+   */
+  mixConcurrency?: number;
 }
 
 /**
@@ -365,10 +399,16 @@ async function resolveStretchMechanisms(
     } else if (shouldUseRubberband(clip.speedRatio, engine, caps.cli)) {
       const stretchedPath = join(cliTmpDir(), `stretched_${String(i).padStart(4, '0')}.wav`);
       try {
-        await stretchWithRubberbandCli(clip.audioPath, stretchedPath, clip.speedRatio!);
+        const ratio = clip.speedRatio!;
+        await stretchWithRubberbandCli(clip.audioPath, stretchedPath, ratio);
         clip.audioPath = stretchedPath;
-        // The clip is now already at target tempo; adjust the tail-fade anchor.
-        if (clip.durationMs !== undefined) clip.durationMs = Math.round(clip.durationMs / clip.speedRatio!);
+        // The clip is now already at target tempo: the tail-fade anchor and the
+        // trim window (positions in the source) shrink with it.
+        if (clip.durationMs !== undefined) clip.durationMs = Math.round(clip.durationMs / ratio);
+        if (clip.trimStartMs !== undefined && clip.trimEndMs !== undefined) {
+          clip.trimStartMs = Math.round(clip.trimStartMs / ratio);
+          clip.trimEndMs = Math.round(clip.trimEndMs / ratio);
+        }
         clip.speedRatio = undefined;
         rubberbandCli += 1;
       } catch {
@@ -407,6 +447,9 @@ export async function buildTtsTimeline(
       startMs: Math.max(0, Math.round(s.startMs)),
       speedRatio: s.speedRatio,
       durationMs: s.durationMs,
+      ...(s.trimStartMs !== undefined && s.trimEndMs !== undefined
+        ? { trimStartMs: s.trimStartMs, trimEndMs: s.trimEndMs }
+        : {}),
     }))
     .sort((a, b) => a.startMs - b.startMs);
 
@@ -437,60 +480,88 @@ export async function buildTtsTimeline(
       return { outputPath, durationMs: await probeDurationMs(outputPath), stretch };
     }
 
-    return { ...(await buildChunkedTimeline(clips, totalDurationMs, outputPath, opts)), stretch };
+    const concurrency = input.mixConcurrency ?? defaultMixConcurrency();
+    return {
+      ...(await buildChunkedTimeline(clips, totalDurationMs, outputPath, opts, concurrency)),
+      stretch,
+    };
   } finally {
     if (stretchTmpDir) rmSync(stretchTmpDir, { recursive: true, force: true });
   }
 }
 
 /**
+ * Mix each group of `groups` to its own full-length WAV in `tmpDir`, up to
+ * `concurrency` ffmpeg processes at once. Returns the intermediates in GROUP
+ * order (not completion order), which is what keeps the final amix — and so the
+ * output bytes — identical to a sequential build. Every child gets the shared
+ * abort signal, so a cancel or a sibling's failure kills the rest.
+ */
+async function mixGroupsToIntermediates(
+  groups: TimelineClip[][],
+  prefix: string,
+  tmpDir: string,
+  totalDurationMs: number,
+  opts: RunOptions,
+  concurrency: number,
+): Promise<TimelineClip[]> {
+  return mapWithConcurrency(
+    groups,
+    concurrency,
+    async (group, c, signal) => {
+      const out = join(tmpDir, `${prefix}_${String(c).padStart(4, '0')}.wav`);
+      await runFfmpeg(buildTimelineMixArgs(group, totalDurationMs, out), { ...opts, signal });
+      // Intermediates are already on the absolute timeline -> startMs 0.
+      return { audioPath: out, startMs: 0 };
+    },
+    opts.signal,
+  );
+}
+
+/**
  * Chunked path: mix each chunk to an intermediate full-length WAV, then mix the
  * intermediates (which already start at t=0) together. These intermediates are
  * full-length, so a long/dense video can need many GiB of scratch — fail fast
- * with a clear message if temp space is short.
+ * with a clear message if temp space is short. Running chunks side by side
+ * changes nothing here: all intermediates coexisted on disk before too.
  */
 async function buildChunkedTimeline(
   clips: TimelineClip[],
   totalDurationMs: number,
   outputPath: string,
   opts: RunOptions,
+  concurrency: number,
 ): Promise<{ outputPath: string; durationMs: number }> {
   assertTmpSpace(estimateTimelineTmpBytes(clips.length, totalDurationMs));
   const tmpDir = mkdtempSync(join(tmpdir(), 'vd-tts-'));
   try {
-    const chunks = chunkClips(clips);
-    const intermediates: TimelineClip[] = [];
-
-    for (const [c, chunk] of chunks.entries()) {
-      const chunkOut = join(tmpDir, `chunk_${String(c).padStart(4, '0')}.wav`);
-      await runFfmpeg(buildTimelineMixArgs(chunk, totalDurationMs, chunkOut), opts);
-      // Intermediates are already on the absolute timeline -> startMs 0.
-      intermediates.push({ audioPath: chunkOut, startMs: 0 });
-    }
+    const intermediates = await mixGroupsToIntermediates(
+      chunkClips(clips),
+      'chunk',
+      tmpDir,
+      totalDurationMs,
+      opts,
+      concurrency,
+    );
 
     // If the number of intermediates ALSO exceeds the limit, mix them in a
     // second level. One extra level supports MAX^2 segments which is ample.
     // Only the FINAL mix needs the atomic write — the intermediates live in
     // `tmpDir`, which is removed wholesale in the finally block.
-    if (intermediates.length <= MAX_INPUTS_PER_MIX) {
-      await writeAtomically(outputPath, (partial) =>
-        runFfmpeg(buildTimelineMixArgs(intermediates, totalDurationMs, partial), opts),
-      );
-    } else {
-      const superChunks = chunkClips(intermediates);
-      const level2: TimelineClip[] = [];
-      for (const [c, superChunk] of superChunks.entries()) {
-        const superOut = join(tmpDir, `super_${String(c).padStart(4, '0')}.wav`);
-        await runFfmpeg(
-          buildTimelineMixArgs(superChunk, totalDurationMs, superOut),
-          opts,
-        );
-        level2.push({ audioPath: superOut, startMs: 0 });
-      }
-      await writeAtomically(outputPath, (partial) =>
-        runFfmpeg(buildTimelineMixArgs(level2, totalDurationMs, partial), opts),
-      );
-    }
+    const finalInputs =
+      intermediates.length <= MAX_INPUTS_PER_MIX
+        ? intermediates
+        : await mixGroupsToIntermediates(
+            chunkClips(intermediates),
+            'super',
+            tmpDir,
+            totalDurationMs,
+            opts,
+            concurrency,
+          );
+    await writeAtomically(outputPath, (partial) =>
+      runFfmpeg(buildTimelineMixArgs(finalInputs, totalDurationMs, partial), opts),
+    );
 
     return { outputPath, durationMs: await probeDurationMs(outputPath) };
   } finally {

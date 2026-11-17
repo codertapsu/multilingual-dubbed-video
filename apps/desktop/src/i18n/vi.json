@@ -167,12 +167,30 @@
       "translation": "2 · Dịch thuật",
       "tts": "3 · Tổng hợp giọng nói",
       "needs-key": " — cần khoá API",
+      "auto": "Tự động — engine tốt nhất đã cài trên máy này",
+      "auto-model": "Tự động — mô hình được đề xuất cho máy này",
       "render": "4 · Render",
       "render-value": "FFmpeg cục bộ — luôn chạy trên máy này (video của bạn không rời khỏi máy).",
       "save": "Lưu mặc định",
       "saving": "Đang lưu…",
       "saved": "✓ Đã lưu — áp dụng cho dự án mới",
       "unavailable": "Chưa lấy được danh sách nhà cung cấp — dịch vụ nền đã chạy chưa?"
+    },
+    "claude": {
+      "heading": "Claude (trợ lý AI)",
+      "intro": "Để Claude điều khiển VideoDubber thay bạn: tạo dự án từ tệp hoặc đường dẫn, lồng tiếng, đọc toàn bộ lời thoại và viết lại bản dịch với đầy đủ ngữ cảnh, tạo lại giọng cho từng câu rồi xuất video. Claude Desktop và Claude Code kết nối qua MCP.",
+      "privacy": "Việc lồng tiếng vẫn chạy trên máy này. Khi bạn nhờ Claude làm việc với một dự án, lời thoại và bản dịch mà Claude đọc sẽ được gửi tới Claude như một phần của cuộc trò chuyện.",
+      "connected": "Đã kết nối",
+      "not-connected": "Chưa kết nối",
+      "not-installed": "Chưa cài trên máy này",
+      "connect": "Kết nối",
+      "disconnect": "Ngắt kết nối",
+      "restart": "Xong. Hãy thoát hẳn Claude Desktop rồi mở lại để nạp VideoDubber.",
+      "code-hint": "Chạy lệnh này một lần trong cửa sổ dòng lệnh:",
+      "copy": "Sao chép",
+      "copied": "Đã sao chép ✓",
+      "try": "Sau đó, hãy nhờ Claude, ví dụ: \"Lồng tiếng video trong thư mục Tải xuống sang tiếng Việt với chất lượng tốt nhất.\"",
+      "no-server": "Bản dựng này không khởi động được máy chủ MCP. Nếu chạy từ mã nguồn, hãy chạy pnpm build trước."
     },
     "keys": {
       "heading": "Khoá API đám mây",
@@ -183,7 +201,15 @@
       "api-key-aria": "Khoá API {{ service }}",
       "save": "Lưu",
       "test": "Kiểm tra",
-      "remove": "Xoá"
+      "remove": "Xoá",
+      "claude-model": "Mô hình Claude dùng để dịch và rà soát",
+      "claude-model-hint": "Opus dịch tự nhiên và nhất quán nhất; Sonnet tốn khoảng một nửa; Haiku rẻ và nhanh nhất. Ước chừng một video 30 phút tốn vài xu với Haiku và một đến hai đô la Mỹ với Opus.",
+      "claude": {
+        "opus": "Claude Opus 5.5 — chất lượng cao nhất (khuyên dùng)",
+        "sonnet": "Claude Sonnet 5.5 — cân bằng",
+        "haiku": "Claude Haiku 5.5 — nhanh nhất, rẻ nhất",
+        "other": "{{ id }} (đặt thủ công)"
+      }
     },
     "engines": {
       "heading": "Engine",
@@ -201,6 +227,10 @@
       "fit-ok": "✓ Máy của bạn chạy được gói này",
       "shadowed": "Đã cài nhưng không dùng tới — “{{ name }}” tốt hơn nên được chạy thay.",
       "shadowed-free": "Bạn có thể xoá gói này để giải phóng dung lượng.",
+      "use-this": "Dùng mô hình này",
+      "use-this-title": "Dùng mô hình này thay cho lựa chọn tự động. Mô hình lớn hơn dịch tốt hơn nhưng chạy chậm hơn khi không vừa bộ nhớ card đồ hoạ.",
+      "chosen-by-you": "Do bạn chọn.",
+      "use-automatic": "Trở lại tự động",
       "update": "Cập nhật",
       "update-title": "Đã có phiên bản mới — cài lại để cập nhật",
       "reinstall": "Cài lại",
@@ -427,6 +457,9 @@
     "tts-gain": "Âm lượng giọng lồng tiếng",
     "subtitles-render": "Phụ đề & render",
     "subtitles": "Phụ đề",
+    "subtitle-position": "Vị trí phụ đề",
+    "cover-original": "Che phụ đề gốc",
+    "cover-original-hint": "Vẽ một dải màu đặc phủ phần đáy khung hình — nơi nhiều video đã ghi sẵn phụ đề của chúng — để phụ đề gốc không lộ ra dưới phụ đề lồng tiếng.",
     "render-quality": "Chất lượng render",
     "redub-from": "Lồng tiếng lại từ:",
     "redub-title": "Chạy lại pipeline từ “{{ step }}”, tái sử dụng các giai đoạn trước",
@@ -453,6 +486,7 @@
     "save-retranslate": "Lưu & dịch lại",
     "save-retranslate-title": "Lưu, rồi chạy lại pipeline từ bước dịch để áp dụng bảng này",
     "no-sheet": "Chưa có bảng nhân vật cho bản dịch — bảng sẽ được tạo tự động trong lần dịch có ngữ cảnh đầu tiên (LLM đám mây, Gemma 3 chat, hoặc Argos + Gemma repair), hoặc bạn có thể tạo ngay để định hướng đại từ và thuật ngữ.",
+    "sheet-failed": "Ứng dụng đã thử tạo bảng nhân vật bằng \"{{ engine }}\" nhưng không thành công ({{ why }}). Thiếu bảng này, tên riêng và cách xưng hô có thể thay đổi giữa các câu. Hãy tự viết bảng tại đây hoặc chọn một mô hình rà soát mạnh hơn, rồi dịch lại.",
     "create-sheet": "Tạo bảng",
     "review-title": "📝 Đang rà soát trước khi tổng hợp giọng",
     "review-hint": "Chưa tổng hợp giọng nói. Hãy chỉnh các bản dịch bên dưới (và bảng nhân vật & đại từ), lưu lại, rồi tiếp tục — quá trình lồng tiếng sẽ tiếp tục từ bước tổng hợp giọng.",
@@ -464,6 +498,16 @@
     "col-translation": "Bản dịch",
     "untranslated": "Chưa dịch?",
     "untranslated-title": "Bản dịch trùng với bản gốc — có thể trình dịch đã bỏ qua dòng này. Hãy sửa hoặc dịch lại.",
+    "quality": {
+      "wrong-script": "Ký tự lạ",
+      "wrong-script-title": "Dòng này còn chữ của hệ chữ khác (Hán, Thái…) mà giọng đọc không đọc được. Hãy sửa lại.",
+      "pinyin": "Phiên âm?",
+      "pinyin-title": "Có từ trông như phiên âm tiếng Trung (pinyin) chứ không phải tiếng Việt — thường là tên riêng chưa được dịch. Hãy sửa lại.",
+      "alternatives": "Nhiều phương án",
+      "alternatives-title": "Dòng này đưa ra nhiều phương án bằng dấu gạch chéo (ví dụ \"thầy/cô\"); giọng đọc sẽ đọc cả hai. Hãy chọn một.",
+      "no-diacritics": "Thiếu dấu",
+      "no-diacritics-title": "Nhiều từ không có dấu tiếng Việt — có lẽ không phải tiếng Việt. Hãy sửa lại."
+    },
     "long-subtitle": "Phụ đề dài",
     "long-subtitle-title": "Vượt quá 2 dòng / khoảng 84 ký tự",
     "needs-review": "Cần rà soát",
@@ -585,6 +629,7 @@
     "fits": "Vừa khít",
     "stale": "Cần lồng lại",
     "stale-title": "Nội dung, giọng hoặc tốc độ đã đổi kể từ lần lồng tiếng trước; đoạn âm thanh trên dòng thời gian vẫn là bản cũ.",
+    "tighten-kept": "Câu {{ n }} được giữ nguyên: {{ reason }}. Hãy tự rút gọn câu, hoặc để giọng đọc nhanh hơn.",
     "locked": "Đã khoá",
     "locked-title": "Dòng đã khoá sẽ không bị tự động rút gọn hay chỉnh lại khi rà soát.",
     "lock": "Khoá",
@@ -648,8 +693,10 @@
     "auto-fit-hint": "Khi một dòng đã dịch quá dài để vừa khung dù đã ở tốc độ tối đa, hệ thống sẽ dịch lại ngắn hơn và tổng hợp lại cho vừa — giảm xung đột thời gian. Hoạt động với các trình dịch LLM (Ollama / llama.cpp / đám mây); bỏ qua với Argos.",
     "render-quality": "Chất lượng render",
     "render-quality-aria": "Chất lượng render",
-    "quality": "Chất lượng tốt nhất (khuyến nghị)",
-    "quality-hint": "Mã hoá H.264 bằng phần mềm — cân bằng dung lượng/chất lượng tốt nhất. Chỉ có ý nghĩa khi phụ đề được ghi chèn vào video.",
+    "auto": "Tự động (khuyến nghị)",
+    "auto-hint": "Dùng bộ mã hoá video phần cứng của máy (NVIDIA, Intel, AMD hoặc Apple) nếu chạy được — được kiểm tra một lần mỗi phiên — còn không thì dùng bộ mã hoá phần mềm. Trong thử nghiệm, hình ảnh đẹp ngang bộ mã hoá phần mềm mà nhanh hơn 4–5 lần. Chỉ có ý nghĩa khi phụ đề được ghi chèn vào video.",
+    "quality": "Bộ mã hoá phần mềm (H.264)",
+    "quality-hint": "Mã hoá bằng CPU: tệp nhỏ nhất nhưng chậm hơn vài lần. Chỉ có ý nghĩa khi phụ đề được ghi chèn vào video.",
     "fast": "Nhanh (mã hoá phần cứng)",
     "fast-hint": "Dùng bộ mã hoá video của GPU (VideoToolbox / NVENC) khi có — nhanh hơn nhiều, tệp lớn hơn một chút.",
     "voice-timing": "Nhịp giọng nói",
@@ -775,8 +822,14 @@
       "replace-vocals": "Thay giọng nói, giữ nhạc & hiệu ứng",
       "remove": "Bỏ hẳn âm thanh gốc"
     },
+    "subtitle-position": {
+      "bottom": "Dưới cùng (tiêu chuẩn)",
+      "raised": "Nâng lên — phía trên phụ đề sẵn có của video",
+      "top": "Phía trên khung hình"
+    },
     "render-quality": {
-      "quality": "Chất lượng tốt nhất (H.264 phần mềm)",
+      "auto": "Tự động (dùng mã hoá phần cứng nếu chạy được)",
+      "quality": "Bộ mã hoá phần mềm (H.264)",
       "fast": "Nhanh (mã hoá bằng phần cứng)"
     },
     "time-stretch": {
@@ -865,7 +918,7 @@
     "ram-constrained": "Với {{ ram }} GB RAM, chỉ mô hình nhận dạng lời thoại nhỏ nhất chạy thoải mái; STT trên đám mây sẽ chính xác hơn rõ rệt.",
     "ram-balanced": "{{ ram }} GB RAM chạy được “large-v3-turbo” — độ chính xác gần như tốt nhất mà nhanh hơn large-v3 6-8 lần, rất cân bằng cho chế độ ngoại tuyến.",
     "ram-performance": "{{ ram }} GB RAM chạy “large-v3-turbo” rất thoải mái; “large-v3” cũng chạy được nếu bạn chấp nhận chờ lâu hơn để có độ chính xác cao nhất.",
-    "apple-metal": "Trên Apple Silicon, hãy cài gói engine whisper.cpp (Metal) để nhanh hơn hẳn so với bản chạy CPU.",
+    "apple-metal": "Trên Apple Silicon, gói engine llama.cpp (Apple Metal) giúp bước dịch chạy trên GPU. Nhận dạng giọng nói và lồng tiếng hiện vẫn chạy trên CPU.",
     "slow-cpu": "Máy có {{ cores }} nhân CPU nên nhận dạng lời thoại sẽ chậm với video dài — cân nhắc dùng STT đám mây cho video quá vài phút.",
     "nvidia": "Đã phát hiện {{ name }} ({{ vram }} GB) — hãy cài các gói engine CUDA trong Cài đặt → Engine để tăng tốc nhận dạng và dịch bằng GPU. Chúng cần driver NVIDIA 551.61 trở lên; với driver cũ hơn, ứng dụng sẽ tự chuyển sang bản Vulkan."
   },
@@ -915,10 +968,12 @@
     "why": {
       "whisper-metal": "Chip Apple Silicon trên máy Mac của bạn nhận dạng giọng nói bằng Metal, nhanh hơn nhiều so với bản chạy CPU.",
       "whisper-gpu": "Card {{ gpu }} của bạn nhận dạng giọng nói nhanh hơn nhiều so với CPU.",
+      "whisper-model": "Mô hình nhận dạng giọng nói mà whisper.cpp cần để chạy: Whisper {{ model }} (~{{ size }} GB), đúng cỡ được đề xuất cho máy này.",
       "llm-runtime": "Chạy TranslateGemma ngay trên máy: bản dịch tốt hơn hẳn so với Argos mặc định.",
       "tg-cpu": "TranslateGemma 4B (~{{ size }} GB): dịch tốt hơn Argos nhiều, đủ nhẹ để chạy không cần GPU.",
       "tg-4b-gpu": "TranslateGemma 4B (~{{ size }} GB) chạy khoảng {{ pct }}% trên GPU của bạn. Mô hình lớn hơn sẽ tràn sang bộ nhớ hệ thống và dịch chậm như CPU, nên đây là lựa chọn nhanh hơn ở máy này; bản 12B và 27B vẫn cài được nếu bạn ưu tiên chất lượng.",
       "tg-gpu": "TranslateGemma {{ model }} (~{{ size }} GB) vừa với GPU của bạn (khoảng {{ pct }}% nằm trên card): chất lượng tốt nhất mà máy này chạy được ở tốc độ GPU.",
+      "chat-review": "Mô hình rà soát (~{{ size }} GB) đọc lại toàn bộ bản dịch để giữ đúng tên riêng, đại từ và cách xưng hô. Trên một bản lồng tiếng phim Trung Quốc thật, số câu dịch dùng được tăng từ khoảng 4/20 lên 15/20.",
       "vieneu-gpu": "Giọng tiếng Việt tự nhiên được tạo ngay trên {{ gpu }}: nhanh hơn khoảng 4 lần so với chạy bằng CPU (một video 21 phút chỉ mất 2,5 phút trên RTX 3050), vẫn các giọng đọc như cũ.",
       "vieneu-cpu": "Giọng tiếng Việt tự nhiên hơn hẳn giọng Piper có sẵn, chạy bằng CPU.",
       "separator": "Giữ nguyên nhạc nền và hiệu ứng âm thanh gốc dưới giọng lồng tiếng, thay vì vặn nhỏ tất cả.",

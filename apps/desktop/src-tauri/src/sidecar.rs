@@ -431,6 +431,14 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
         } else {
             log_info("bundled engine-src not found; the neural-TTS pack will fall back to the repo path (dev only).");
         }
+        // The burned-in subtitle font (Be Vietnam Pro): the media worker hands
+        // this folder to libass, so subtitles look the same on every machine
+        // instead of falling back to whatever system font fontconfig finds.
+        if let Some(fonts) = resolve_fonts_dir(app) {
+            env.push(("VIDEODUBBER_FONTS_DIR", fonts));
+        } else {
+            log_info("bundled subtitle font not found; burned-in subtitles will use a system font.");
+        }
         // Point uv at the BUNDLED standalone CPython so engine-pack installs don't
         // download an interpreter from GitHub at runtime (which fails on flaky
         // international links). Staged into resources/python by fetch-python.*.
@@ -655,6 +663,17 @@ fn resolve_engine_src_dir(app: &AppHandle) -> Option<String> {
         .map(|c| c.to_string_lossy().into_owned())
 }
 
+/// Resolve the bundled subtitle-font dir (`resources/fonts`, staged by
+/// scripts/package/stage-fonts.mjs), accepting the first candidate that holds
+/// the font itself — same layout caveat as [`resolve_engine_src_dir`].
+fn resolve_fonts_dir(app: &AppHandle) -> Option<String> {
+    let res = app.path().resource_dir().ok()?;
+    [res.join("fonts"), res.join("resources").join("fonts")]
+        .into_iter()
+        .find(|c| c.join("BeVietnamPro-SemiBold.ttf").is_file())
+        .map(|c| c.to_string_lossy().into_owned())
+}
+
 /// Resolve the bundled default-pipeline models dir (`resources/default-models`,
 /// staged at build by scripts/package/fetch-default-models.sh). `None` in a
 /// dev/source build (those rely on the first-run wizard download).
@@ -692,16 +711,26 @@ fn seed_default_models(app: &AppHandle, models_dir: &Path) {
     let Some(src_root) = resolve_default_models_dir(app) else {
         return;
     };
+    let mut seeded: Vec<&str> = Vec::new();
     for sub in ["huggingface", "argos", "piper"] {
         let src = src_root.join(sub);
         if !src.is_dir() {
             continue;
         }
-        if let Err(e) = copy_if_absent(&src, &models_dir.join(sub)) {
-            log_info(&format!("seeding bundled default models: '{sub}' copy failed: {e}"));
+        match copy_if_absent(&src, &models_dir.join(sub)) {
+            Ok(()) => seeded.push(sub),
+            Err(e) => log_info(&format!("seeding bundled default models: '{sub}' copy failed: {e}")),
         }
     }
-    log_info("seeded bundled default-pipeline models (offline out-of-box dub).");
+    // Default models are bundled only when the build opted in
+    // (BUNDLE_DEFAULT_MODELS=1); a normal build ships this folder with just a
+    // README. Logging "seeded … offline out-of-box dub" on every launch of such
+    // a build sent anyone diagnosing a first run down the wrong path.
+    if seeded.is_empty() {
+        log_info("this build bundles no default models; first-run setup downloads them.");
+    } else {
+        log_info(&format!("seeded bundled default models: {}.", seeded.join(", ")));
+    }
 }
 
 /// Resolve the bundled standalone-CPython install dir — a `UV_PYTHON_INSTALL_DIR`

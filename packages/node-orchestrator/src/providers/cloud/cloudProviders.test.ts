@@ -11,6 +11,11 @@ import {
   planTranslationBatches,
 } from '../translation/llmTranslationProvider.js';
 import { mapOpenAiSegments } from '../stt/openaiSttProvider.js';
+
+/** Claude must never reach the raw fetch transport any more. */
+const cloudPostJsonNever = async (): Promise<never> => {
+  throw new Error('Claude must not go through the raw fetch transport');
+};
 import { segmentFilename, wavDurationMs } from '../tts/openaiTtsProvider.js';
 
 describe('extractJsonObject', () => {
@@ -93,11 +98,18 @@ describe('LlmTranslationProvider', () => {
     expect(calls[0].headers.Authorization).toMatch(/^Bearer sk-test/);
   });
 
-  it('uses the Anthropic dialect for the claude provider', async () => {
-    const calls: { url: string; headers: Record<string, string> }[] = [];
-    const provider = new LlmTranslationProvider('anthropic', store, 5000, async (url, headers) => {
-      calls.push({ url, headers: headers as Record<string, string> });
-      return { content: [{ type: 'text', text: '{"segments":[{"id":"seg_0001","text":"Xin chào."}]}' }] } as never;
+  it('sends Claude requests through the SDK transport: default model, structured output for the batch', async () => {
+    const calls: { params: Record<string, unknown>; apiKey: string; baseUrl?: string }[] = [];
+    const rawFetch = async () => {
+      throw new Error('Claude must not go through the raw fetch transport');
+    };
+    const provider = new LlmTranslationProvider('anthropic', store, 5000, rawFetch as never, async (params, ctx) => {
+      calls.push({ params, apiKey: ctx.apiKey, ...(ctx.baseUrl ? { baseUrl: ctx.baseUrl } : {}) });
+      return {
+        model: String(params.model),
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: '{"segments":[{"id":"seg_0001","text":"Xin chào."}]}' }],
+      };
     });
 
     const result = await provider.translateSegments({
@@ -107,9 +119,26 @@ describe('LlmTranslationProvider', () => {
     });
 
     expect(result.segments[0].translatedText).toBe('Xin chào.');
-    expect(calls[0].url).toBe('https://api.anthropic.com/v1/messages');
-    expect(calls[0].headers['x-api-key']).toMatch(/^sk-ant/);
-    expect(calls[0].headers['anthropic-version']).toBeTruthy();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.apiKey).toMatch(/^sk-ant/);
+    expect(calls[0]!.params).toMatchObject({ model: 'claude-opus-5-5', fallbacks: 'default' });
+    expect(calls[0]!.params.output_config).toMatchObject({ format: { type: 'json_schema' } });
+  });
+
+  it('a Claude refusal fails the batch with its reason instead of falling back to the source text', async () => {
+    const provider = new LlmTranslationProvider('anthropic', store, 5000, cloudPostJsonNever as never, async () => ({
+      model: 'claude-opus-5-5',
+      stop_reason: 'refusal',
+      stop_details: { category: 'cyber', explanation: 'x' },
+      content: [],
+    }));
+    await expect(
+      provider.translateSegments({
+        sourceLanguage: 'en',
+        targetLanguage: 'vi',
+        segments: [{ id: 'seg_0001', sourceText: 'Hello.', startMs: 0, endMs: 1000 }],
+      }),
+    ).rejects.toMatchObject({ code: 'CLOUD_REQUEST_FAILED' });
   });
 
   it('retries dropped ids once (insist prompt over just the missing lines), then falls back to source', async () => {

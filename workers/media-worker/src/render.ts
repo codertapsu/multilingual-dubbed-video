@@ -14,59 +14,47 @@
  *     - add the subtitle as a soft text stream: -map 2 -c:s mov_text (mp4).
  *
  *   burned-in:
- *     - re-encode the video with -vf subtitles=<escaped>:force_style=...
- *       (burning requires re-encode), aac audio.
+ *     - re-encode the video through -vf subtitles=<generated .ass>:fontsdir=…
+ *       (ass.ts: canvas = the video's pixel size, bundled font, soft shadow,
+ *       optional band over the original's subtitle strip). The encoder comes
+ *       from encoder.ts: x264, or a PROBED hardware encoder with one x264
+ *       retry. aac audio.
  *
  * Arg-builders are pure (testable); renderFinalVideo spawns + probes duration.
  */
 
-import { copyFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import {
   AppErrorException,
   type RenderFinalVideoInput,
   type RenderFinalVideoResult,
-  type RenderQuality,
   type SubtitleExportMode,
   type SubtitleStyle,
 } from '@videodubber/shared';
+import { buildAssDocument, computeAssLayout, parseSubtitleCues } from './ass.js';
 import { writeAtomically } from './atomic.js';
+import {
+  cachedHardwareEncoderProbe,
+  encodeWithFallback,
+  LIBX264,
+  planVideoEncode,
+  wantsHardwareEncoder,
+  type EncoderProbeAttempt,
+  type HardwareEncoderProbe,
+  type VideoEncodeReport,
+} from './encoder.js';
 import {
   assertInputReadable,
   assertOutputWritable,
   ffmpegHasFilter,
-  listFfmpegEncoders,
   runFfmpeg,
   type RunOptions,
 } from './exec.js';
-import { probeDurationMs } from './probe.js';
+import { chooseBurnFont, resolveFontsDir, type BurnFont } from './fonts.js';
+import { probeDurationMs, probeVideoGeometry } from './probe.js';
 import { buildSubtitlesFilter } from './subtitles.js';
-
-/**
- * Choose the H.264 video encoder for a re-encode (burned-in subtitles).
- * `quality` always uses software x264 (best size/quality). `fast` prefers a
- * hardware encoder when one is available for the platform:
- *   macOS  -> h264_videotoolbox
- *   others -> h264_nvenc (NVIDIA)
- * Falls back to libx264 when the requested hardware encoder is absent.
- *
- * Pure given `available` (the set of ffmpeg encoder names present).
- */
-export function selectVideoCodec(
-  quality: RenderQuality | undefined,
-  platform: NodeJS.Platform,
-  available: Set<string>,
-): { codec: string; extraArgs: string[] } {
-  if (quality === 'fast') {
-    const hw = platform === 'darwin' ? 'h264_videotoolbox' : 'h264_nvenc';
-    if (available.has(hw)) {
-      // VideoToolbox uses -q:v (constant quality, Apple Silicon); NVENC uses -cq.
-      const extraArgs = hw === 'h264_videotoolbox' ? ['-q:v', '55'] : ['-rc', 'vbr', '-cq', '23'];
-      return { codec: hw, extraArgs };
-    }
-  }
-  return { codec: 'libx264', extraArgs: ['-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p'] };
-}
 
 /** Inputs needed to construct the ffmpeg argv (already-validated paths). */
 export interface RenderArgsContext {
@@ -76,14 +64,17 @@ export interface RenderArgsContext {
   subtitleExportMode: SubtitleExportMode;
   /** Path to the subtitle to embed/burn (required for embedded-soft/burned-in). */
   subtitlePath?: string;
+  /** force_style for a burned .srt (renderFinalVideo burns a styled .ass instead). */
   burnSubtitleStyle?: SubtitleStyle;
   copyVideoStream?: boolean;
   /** Platform override for subtitle path escaping (tests). */
   platform?: NodeJS.Platform;
   /** Video encoder for the burned-in re-encode (default libx264). */
   videoCodec?: string;
-  /** Encoder-specific args (preset/crf for x264, q/cq for HW). */
+  /** Encoder-specific args (preset/crf for x264, cq/q for hardware). */
   videoCodecArgs?: string[];
+  /** Fonts directory handed to libass for the burn (the bundled subtitle font). */
+  fontsDir?: string;
 }
 
 const AUDIO_ARGS = ['-c:a', 'aac', '-b:a', '192k'] as const;
@@ -105,10 +96,10 @@ export function buildRenderArgs(ctx: RenderArgsContext): string[] {
     platform,
   } = ctx;
   const copyVideo = ctx.copyVideoStream !== false; // default true except burned-in
-  // Encoder for re-encodes: default to software x264 unless the caller resolved
-  // a hardware encoder (renderQuality "fast").
-  const videoCodec = ctx.videoCodec ?? 'libx264';
-  const videoCodecArgs = ctx.videoCodecArgs ?? ['-preset', 'medium', '-crf', '20', '-pix_fmt', 'yuv420p'];
+  // Encoder for re-encodes: software x264 unless the caller resolved another
+  // (renderQuality "fast"/"auto" with a probed hardware encoder).
+  const videoCodec = ctx.videoCodec ?? LIBX264.codec;
+  const videoCodecArgs = ctx.videoCodecArgs ?? LIBX264.args;
 
   switch (subtitleExportMode) {
     case 'burned-in': {
@@ -116,7 +107,7 @@ export function buildRenderArgs(ctx: RenderArgsContext): string[] {
         throw missingSubtitle('burned-in');
       }
       // Burning requires a video re-encode; -c:v copy is impossible here.
-      const filter = buildSubtitlesFilter(subtitlePath, burnSubtitleStyle, platform);
+      const filter = buildSubtitlesFilter(subtitlePath, burnSubtitleStyle, platform, ctx.fontsDir);
       return [
         '-y',
         '-i',
@@ -213,11 +204,43 @@ export function sidecarDestinationPath(
   return join(dir, `${base}${ext}`);
 }
 
+/** The shared render input plus what only the media worker needs. */
+export interface RenderFinalVideoOptions extends RenderFinalVideoInput {
+  /**
+   * Fonts directory for burned-in subtitles: the app's bundled fonts. When
+   * absent: VIDEODUBBER_FONTS_DIR, then this package's assets/fonts (dev).
+   */
+  fontsDir?: string;
+}
+
+/** Injectable seams for {@link renderFinalVideo} (tests, diagnostics). */
+export interface RenderDeps {
+  /** Hardware-encoder probe. Default: the per-process cached real probe. */
+  probeHardwareEncoder?: () => Promise<HardwareEncoderProbe>;
+}
+
+/** The shared result plus how the media worker produced it. */
+export interface RenderFinalVideoReport extends RenderFinalVideoResult {
+  /**
+   * Burned-in only: which encoder made the video stream (and whether a
+   * hardware failure handed it to x264), plus what the probe saw. Chosen at
+   * runtime per machine, so this is the only record of it — log it.
+   */
+  videoEncoder?: VideoEncodeReport & { probe?: EncoderProbeAttempt[] };
+  /**
+   * Burned-in only: the subtitle font asked for and the fonts dir libass got.
+   * `Arial` without the bundled family means the bundled font was not
+   * reachable (the packaged fonts dir is missing) — log it.
+   */
+  burnFont?: BurnFont;
+}
+
 /** Render the final video and report duration + any sidecar subtitle paths. */
 export async function renderFinalVideo(
-  input: RenderFinalVideoInput,
+  input: RenderFinalVideoOptions,
   runOpts: RunOptions = {},
-): Promise<RenderFinalVideoResult> {
+  deps: RenderDeps = {},
+): Promise<RenderFinalVideoReport> {
   assertInputReadable(input.inputVideoPath);
   assertInputReadable(input.audioPath);
   assertOutputWritable(input.outputPath);
@@ -248,15 +271,15 @@ export async function renderFinalVideo(
     assertInputReadable(input.subtitlePath);
   }
 
-  // Resolve the re-encode codec only when we actually re-encode (burned-in).
-  // For "fast" we pick a hardware encoder if this ffmpeg build has one.
-  let videoCodec: string | undefined;
-  let videoCodecArgs: string[] | undefined;
   if (input.subtitleExportMode === 'burned-in') {
-    const encoders = await listFfmpegEncoders(runOpts);
-    const sel = selectVideoCodec(input.renderQuality, process.platform, encoders);
-    videoCodec = sel.codec;
-    videoCodecArgs = sel.extraArgs;
+    const { videoEncoder, burnFont } = await renderBurnedIn(input, runOpts, deps);
+    return {
+      outputPath: input.outputPath,
+      durationMs: await probeDurationMs(input.outputPath),
+      sidecarSubtitlePaths: [],
+      videoEncoder,
+      burnFont,
+    };
   }
 
   // Atomic: a killed render (cancel, crash, disk full) leaves a non-empty mp4
@@ -271,12 +294,7 @@ export async function renderFinalVideo(
       outputPath: partial,
       subtitleExportMode: input.subtitleExportMode,
       subtitlePath: input.subtitlePath,
-      burnSubtitleStyle: input.burnSubtitleStyle,
-      // burned-in must re-encode; everything else may copy unless caller forbids.
-      copyVideoStream:
-        input.subtitleExportMode === 'burned-in' ? false : input.copyVideoStream,
-      ...(videoCodec ? { videoCodec } : {}),
-      ...(videoCodecArgs ? { videoCodecArgs } : {}),
+      copyVideoStream: input.copyVideoStream,
     });
     return runFfmpeg(args, runOpts);
   });
@@ -297,4 +315,71 @@ export async function renderFinalVideo(
     durationMs,
     sidecarSubtitlePaths,
   };
+}
+
+/** True for a subtitle that already is an ASS/SSA script (burned as-is). */
+function isAssScript(path: string): boolean {
+  return /\.(ass|ssa)$/i.test(path);
+}
+
+/**
+ * The burned-in re-encode: generate the styled ASS script, pick the encoder,
+ * encode — through writeAtomically on EVERY attempt, so a hardware try that dies
+ * halfway leaves no partial behind and the x264 retry starts clean.
+ */
+async function renderBurnedIn(
+  input: RenderFinalVideoOptions,
+  runOpts: RunOptions,
+  deps: RenderDeps,
+): Promise<{ videoEncoder: VideoEncodeReport & { probe?: EncoderProbeAttempt[] }; burnFont: BurnFont }> {
+  const subtitlePath = input.subtitlePath;
+  if (!subtitlePath) throw missingSubtitle('burned-in');
+
+  const geometry = await probeVideoGeometry(input.inputVideoPath, runOpts);
+  const burnFont = chooseBurnFont(resolveFontsDir(input.fontsDir), input.burnSubtitleStyle?.fontFamily);
+  const fontsDir = burnFont.fontsDir;
+  const scratch = mkdtempSync(join(tmpdir(), 'vd-burn-'));
+  try {
+    let scriptPath = subtitlePath;
+    if (!isAssScript(subtitlePath)) {
+      const cues = parseSubtitleCues(readFileSync(subtitlePath, 'utf8'));
+      const style = { ...input.burnSubtitleStyle, fontFamily: burnFont.family };
+      const layout = computeAssLayout(style, geometry.width, geometry.height);
+      // The band spans the whole video; a little past the container duration
+      // covers streams that run slightly long. Unknown duration: the ASS max.
+      const endMs = geometry.durationMs > 0 ? geometry.durationMs + 1000 : Number.MAX_SAFE_INTEGER;
+      scriptPath = join(scratch, 'burn.ass');
+      writeFileSync(scriptPath, buildAssDocument(cues, layout, endMs), 'utf8');
+    }
+
+    const probe = wantsHardwareEncoder(input.renderQuality)
+      ? await (deps.probeHardwareEncoder ?? cachedHardwareEncoderProbe)()
+      : undefined;
+    const plan = planVideoEncode(input.renderQuality, probe, geometry);
+
+    const { report } = await encodeWithFallback(
+      plan,
+      (encoder) =>
+        writeAtomically(input.outputPath, (partial) =>
+          runFfmpeg(
+            buildRenderArgs({
+              inputVideoPath: input.inputVideoPath,
+              audioPath: input.audioPath,
+              outputPath: partial,
+              subtitleExportMode: 'burned-in',
+              subtitlePath: scriptPath,
+              copyVideoStream: false,
+              videoCodec: encoder.codec,
+              videoCodecArgs: encoder.args,
+              ...(fontsDir ? { fontsDir } : {}),
+            }),
+            runOpts,
+          ),
+        ),
+      runOpts.signal,
+    );
+    return { videoEncoder: { ...report, ...(probe ? { probe: probe.attempts } : {}) }, burnFont };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }

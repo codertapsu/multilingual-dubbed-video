@@ -90,6 +90,14 @@ export interface EnginePackInfo {
   artifacts: EnginePackArtifact[];
   /** Total approximate size in MB. */
   approxSizeMb: number;
+  /**
+   * Mixture-of-experts models: the share of the weights each token actually
+   * runs through (4B of 26B for Gemma 4 26B-A4B). Speed follows the ACTIVE
+   * weights, so the graphics-card fit is judged on those: measured on an 8 GB
+   * RTX 3050, the 26B-A4B generated 24.5 tokens/s mostly off the card, against
+   * 9.6 for a dense 12B that was mostly on it. Absent = dense (1).
+   */
+  activeParamsShare?: number;
   /** Minimum total RAM (MB) recommended to run this engine well. */
   minRamMb?: number;
   /** Minimum dedicated VRAM (MB) for GPU packs. */
@@ -181,10 +189,12 @@ export interface EnginePrerequisites {
 export interface ActivePackSelection {
   /** The function/family (catalog `providerId`), e.g. `local-llm-chat-model`. */
   providerId: string;
-  /** The pack actually used — the most capable one this machine can run. */
+  /** The pack actually used — the user's choice, else the best fit for this machine. */
   packId: string;
   /** Why a MORE capable installed pack was passed over (memory, usually). */
   note?: string;
+  /** The user picked this pack (Settings → Engines); otherwise it was chosen automatically. */
+  chosenByUser?: boolean;
 }
 
 /** GET /engines response: catalog (runnable on this machine) + installed set. */
@@ -364,16 +374,18 @@ export interface GpuBudgetInput {
 }
 
 /**
- * Share of a DISCRETE card's VRAM that model weights can realistically claim.
+ * VRAM on a DISCRETE card that is NOT available to model weights.
  *
- * Not 1.0, and not a guess: on a 4096 MiB GTX 1650 the desktop already held
- * ~790 MiB before we started, and of the ~3300 MiB llama.cpp could see it spent
- * 1750 on weights, 668 on the KV cache, 325 on the compute buffer and kept 566
- * in reserve. Weights got 43% of the card. Rounded up slightly because that run
- * also carried an 8192-token context, which is our upper bound rather than
- * typical.
+ * Measured, not guessed: on a 4096 MiB GTX 1650 the desktop already held ~790
+ * MiB before we started, and of the ~3300 MiB llama.cpp could see it spent 1750
+ * on weights, 668 on the KV cache (8192-token context), 325 on the compute
+ * buffer and kept 566 in reserve — about 2.35 GB that is not weights. That
+ * overhead is roughly FIXED, not a share of the card: it used to be modelled as
+ * "weights get 45%", which fits a 4 GB card and starves bigger ones (an 8 GB
+ * card got 3.7 GB, so TranslateGemma 12B, which runs at 8.6 tokens/s mostly on
+ * an RTX 3050, was ruled out for the 4B).
  */
-const DISCRETE_WEIGHT_SHARE = 0.45;
+const DISCRETE_OVERHEAD_MB = 2400;
 
 /**
  * Share of UNIFIED memory that model weights can claim on Apple Silicon.
@@ -395,7 +407,7 @@ const UNIFIED_WEIGHT_SHARE = 0.5;
 export function gpuWeightBudgetMb(profile: GpuBudgetInput): number {
   if (profile.appleSilicon) return Math.floor(profile.totalRamMb * UNIFIED_WEIGHT_SHARE);
   const vram = Math.max(0, ...profile.gpus.map((g) => g.vramMb ?? 0));
-  return vram > 0 ? Math.floor(vram * DISCRETE_WEIGHT_SHARE) : 0;
+  return vram > 0 ? Math.max(0, vram - DISCRETE_OVERHEAD_MB) : 0;
 }
 
 /**
@@ -406,6 +418,16 @@ export function gpuResidentFraction(sizeMb: number, profile: GpuBudgetInput): nu
   if (!(sizeMb > 0)) return 0;
   const budget = gpuWeightBudgetMb(profile);
   return budget <= 0 ? 0 : Math.min(1, budget / sizeMb);
+}
+
+/**
+ * The weights that decide a pack's speed on a GPU: all of them for a dense
+ * model, the active share for a mixture-of-experts one (see
+ * EnginePackInfo.activeParamsShare).
+ */
+export function gpuWorkingSetMb(pack: { approxSizeMb: number; activeParamsShare?: number }): number {
+  const share = pack.activeParamsShare;
+  return share !== undefined && share > 0 && share <= 1 ? Math.round(pack.approxSizeMb * share) : pack.approxSizeMb;
 }
 
 /**

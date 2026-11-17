@@ -35,11 +35,22 @@ export type ProcessingMode = 'local' | 'cloud-enhanced';
 export type OriginalAudioMode = 'keep' | 'remove' | 'replace-vocals';
 
 /**
- * Final-render encode quality / speed trade-off:
- * - `quality` — software x264 CRF (best size/quality; default).
- * - `fast`    — hardware encode (VideoToolbox / NVENC) when available.
+ * Final-render encode quality / speed trade-off. Only matters when the video is
+ * re-encoded, i.e. for burned-in subtitles (every other mode copies the stream):
+ * - `quality` — software x264 (medium, CRF 20); the default.
+ * - `fast`    — prefer a hardware encoder; x264 when none works.
+ * - `auto`    — hardware when this machine has an encoder that works, else x264.
+ *
+ * `fast` and `auto` resolve identically in the media worker; `auto` is the name
+ * for "let the app decide", `fast` stays so settings saved before it still load.
+ *
+ * "Works" is proven by a 0.2 s synthetic encode per candidate, never assumed
+ * from the encoder's name: the bundled ffmpeg LISTS NVENC, QSV and AMF on every
+ * machine, so picking by name sent AMD/Intel-only PCs to NVENC and failed the
+ * render. Hardware settings are tuned for visual parity with x264 CRF 20, and a
+ * hardware encode that fails is retried once with x264.
  */
-export type RenderQuality = 'quality' | 'fast';
+export type RenderQuality = 'quality' | 'fast' | 'auto';
 
 /**
  * Time-stretch engine used to fit a synthesized clip to its window:
@@ -71,20 +82,66 @@ export type PipelineStepId =
   | 'audio-mix'
   | 'render';
 
-/** Visual styling for burned-in subtitles. */
+/**
+ * Visual styling for burned-in subtitles. Every field is optional: an absent
+ * style (the usual case) renders the defaults described on each field.
+ *
+ * The burn is drawn from a generated ASS script whose canvas IS the video's
+ * pixel size, so the percentages below mean the same thing at 480p and at 4K.
+ * Before that, ffmpeg's built-in SRT style applied (~40 px Arial at 720p, 2.5 px
+ * outline, no shadow, 25 px from the bottom): the exact strip where many Chinese
+ * sources carry their own burned-in subtitles, so the two collided.
+ *
+ * `fontSize` / `outlineWidth` / `alignment` are the original fields, kept with
+ * their original meaning so a style saved by the older renderer still renders
+ * the same; prefer `sizePercent` and `position`, which win when both are set.
+ */
 export interface SubtitleStyle {
-  /** Font family name. */
-  fontFamily: string;
-  /** Font size in points. */
-  fontSize: number;
-  /** Primary text color (e.g. "#FFFFFF"). */
-  primaryColor: string;
-  /** Outline/border color (e.g. "#000000"). */
-  outlineColor: string;
-  /** Outline width in pixels. */
-  outlineWidth: number;
-  /** Vertical placement of the subtitle block. */
-  alignment: 'bottom' | 'top' | 'center';
+  /**
+   * Font family. Default: the bundled Be Vietnam Pro SemiBold (OFL, full
+   * Vietnamese coverage), shipped so every machine draws the same glyphs instead
+   * of whatever the OS substitutes for a missing family.
+   */
+  fontFamily?: string;
+  /**
+   * Legacy size: font size on the 288-line canvas libass used for an SRT burned
+   * with `force_style` (16 there ≈ ffmpeg's default). Ignored if `sizePercent`.
+   */
+  fontSize?: number;
+  /** Text size, as the font's em height in % of the frame's shorter side. Default 5.5. */
+  sizePercent?: number;
+  /** Primary text color (e.g. "#FFFFFF"). Default white. */
+  primaryColor?: string;
+  /** Outline color (e.g. "#000000"). Default black. */
+  outlineColor?: string;
+  /** Legacy outline width, on the same 288-line canvas as `fontSize`. Default: 8% of the text size. */
+  outlineWidth?: number;
+  /** Legacy vertical placement; `position` wins when both are set. */
+  alignment?: 'bottom' | 'top' | 'center';
+  /**
+   * Where the dub's text sits:
+   * - `bottom` (default) — the conventional subtitle strip.
+   * - `raised` — just above that strip, so a source's own burned-in subtitles
+   *   stay readable instead of colliding with the dub's.
+   * - `top`    — the top of the frame.
+   */
+  position?: 'bottom' | 'raised' | 'top';
+  /**
+   * Draw a full-width band over the bottom strip of the frame, where sources
+   * burn in their own subtitles, to hide them. It covers that strip whatever
+   * `position` says (with `bottom`, the dub's text sits on the band). Default false.
+   */
+  coverOriginal?: boolean;
+  /**
+   * Band opacity, 0..1. Default 1 (opaque): on a real 720p source a white
+   * hardsub still ghosted through behind the dub's text at 0.9 and even 0.96.
+   */
+  coverOpacity?: number;
+  /**
+   * Band height in % of the frame height. Default 18, grown when needed so two
+   * lines of the dub's text fit on it.
+   */
+  coverHeightPercent?: number;
 }
 
 /** All user-configurable settings for a dubbing project. */
@@ -181,6 +238,15 @@ export interface ProjectSettings {
   diarize?: boolean;
   /** Per-speaker TTS voice assignments (used when diarization is on). */
   speakerVoices?: SpeakerVoiceAssignment[];
+  /**
+   * Phases whose engine the APP picked for this project (an installed GPU
+   * engine, recommendProjectSettings) rather than the user. Speech-to-text and
+   * translation fall back to the built-in engine when the picked one cannot
+   * start; an engine the user chose explicitly fails loudly instead, as
+   * before. The voice never falls back: voices belong to their engine, and a
+   * dub whose whole sound silently changed is worse than a clear failure.
+   */
+  autoSelectedPhases?: ('stt' | 'translation' | 'tts')[];
   /** Optional style for burned-in subtitles. */
   burnSubtitleStyle?: SubtitleStyle;
 }
@@ -287,6 +353,23 @@ export interface TranscriptSegment {
    * patch; cleared whenever the line is (re-)synthesized.
    */
   ttsStale?: boolean;
+  /**
+   * Automatic checks this translation still FAILS after every repair the
+   * pipeline tried, so a person has to look at it:
+   *   - `untranslated`  the line is (still) the source text, or empty;
+   *   - `wrong-script`  characters the target language cannot be spoken in
+   *                     (Han, Kana, Hangul, Thai, Cyrillic… in a Vietnamese line);
+   *   - `pinyin`        a romanized Chinese name left as-is ("Kunlun Xu"), which
+   *                     a Vietnamese voice mispronounces instead of reading the
+   *                     Hán-Việt form;
+   *   - `alternatives`  a hedge like "thầy/cô" — the voice reads the slash;
+   *   - `no-diacritics` four or more words without a single Vietnamese
+   *                     diacritic: English, or Vietnamese with its tones lost.
+   * Before this existed, all of these shipped silently (a zh→vi dub kept "Nữ
+   * Th娲", "Kunlun Xu", a Thai letter in "Mุ่ง" and "thầy/cô"). Absent = clean.
+   * Rewritten whenever the pipeline re-translates or reviews the line.
+   */
+  qualityFlags?: ('untranslated' | 'wrong-script' | 'pinyin' | 'alternatives' | 'no-diacritics')[];
 }
 
 /**
@@ -343,7 +426,10 @@ export interface AlignedSegment {
   endMs: number;
   /** Absolute path to the (possibly re-timed) audio clip. */
   audioPath: string;
-  /** Duration of the generated clip before fitting, in ms. */
+  /**
+   * Duration of the generated clip before fitting, in ms — of the part that
+   * plays (trimStartMs..trimEndMs) when the clip is trimmed.
+   */
   generatedDurationMs: number;
   /** Duration actually placed on the timeline, in ms. */
   placedDurationMs: number;
@@ -355,6 +441,15 @@ export interface AlignedSegment {
   status: AlignmentStatus;
   /** Optional human-readable note about the alignment decision. */
   note?: string;
+  /**
+   * The part of the clip that plays, in ms of the clip itself (unset = all of
+   * it): from just before its first sound to just after its last, or — for a
+   * clip the engine botched — up to its first long silence (clipSpeech.ts).
+   * Edge silence used to count as speech to fit (28–41 clips per dub stretched
+   * only for it), and a 12 s clip holding one word played over the next lines.
+   */
+  trimStartMs?: number;
+  trimEndMs?: number;
 }
 
 /** Input to create a new project. */

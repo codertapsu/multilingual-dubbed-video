@@ -99,6 +99,8 @@ export class FakeMediaService implements PipelineMediaService {
       /** Map of audioPath -> durationMs returned by probe(). */
       segmentDurations?: Map<string, number>;
       hasAudio?: boolean;
+      /** Silence measureSpeech() reports around each clip's speech (default 80 / 220 ms). */
+      clipEdges?: { leadMs: number; tailMs: number };
     } = {},
   ) {}
 
@@ -151,8 +153,12 @@ export class FakeMediaService implements PipelineMediaService {
     return { audioPath: outputPath, sampleRate: 16000, channels: 1, durationMs: Math.max(0, endMs - startMs) };
   }
 
+  /** Every timeline build's input, so tests can see what the mix was asked to play. */
+  public timelineInputs: BuildTtsTimelineInput[] = [];
+
   async buildTtsTimeline(input: BuildTtsTimelineInput): Promise<{ outputPath: string; durationMs: number }> {
     this.calls.push(`buildTtsTimeline:${input.outputPath}`);
+    this.timelineInputs.push(input);
     await this.touch(input.outputPath);
     return { outputPath: input.outputPath, durationMs: input.totalDurationMs };
   }
@@ -189,9 +195,17 @@ export class FakeMediaService implements PipelineMediaService {
 
   public fittedCalls = 0;
 
-  async renderFittedClip(_inputPath: string, outputPath: string, ratio: number): Promise<string> {
+  public fittedTrims: Array<{ startMs: number; endMs: number } | undefined> = [];
+
+  async renderFittedClip(
+    _inputPath: string,
+    outputPath: string,
+    ratio: number,
+    trim?: { startMs: number; endMs: number },
+  ): Promise<string> {
     this.fittedCalls += 1;
-    await this.touch(outputPath, `fitted@${ratio}`);
+    this.fittedTrims.push(trim);
+    await this.touch(outputPath, `fitted@${ratio}${trim ? `[${trim.startMs}-${trim.endMs}]` : ''}`);
     return outputPath;
   }
 
@@ -199,6 +213,36 @@ export class FakeMediaService implements PipelineMediaService {
     this.calls.push(`renderFinalVideo:${input.outputPath}`);
     await this.touch(input.outputPath);
     return { outputPath: input.outputPath, durationMs: 10_000, sidecarSubtitlePaths: [] };
+  }
+
+  /** Per-path speech measurements a test wants (e.g. a broken, mostly silent clip). */
+  public speech = new Map<string, Awaited<ReturnType<NonNullable<PipelineMediaService['measureSpeech']>>>>();
+  public speechCalls = 0;
+
+  /**
+   * A clean clip by default, shaped like a real VieNeu one: ~80 ms of silence
+   * before the speech and ~220 ms after it (the media worker's measurements).
+   */
+  async measureSpeech(wavPath: string): ReturnType<NonNullable<PipelineMediaService['measureSpeech']>> {
+    this.speechCalls += 1;
+    const custom = this.speech.get(wavPath);
+    if (custom) return custom;
+    const { durationMs } = await this.probe(wavPath);
+    const edges = this.opts.clipEdges ?? { leadMs: 80, tailMs: 220 };
+    const speechStartMs = Math.min(edges.leadMs, durationMs);
+    const speechEndMs = Math.max(speechStartMs, durationMs - edges.tailMs);
+    return {
+      durationMs,
+      silences: [
+        ...(speechStartMs > 0 ? [{ startMs: 0, endMs: speechStartMs }] : []),
+        ...(speechEndMs < durationMs ? [{ startMs: speechEndMs, endMs: durationMs }] : []),
+      ],
+      speechStartMs,
+      speechEndMs,
+      speechMs: speechEndMs - speechStartMs,
+      noiseDb: -40,
+      minSilenceMs: 50,
+    };
   }
 }
 
@@ -254,8 +298,9 @@ export class FakeTtsProvider implements TtsProvider {
         const numeric = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
         const audioPath = path.join(input.outputDir, `segment_${String(numeric).padStart(4, '0')}.wav`);
         await fsp.mkdir(input.outputDir, { recursive: true });
-        await fsp.writeFile(audioPath, 'wav', 'utf8');
         const durationMs = this.durationForSegment(s.id);
+        // The "WAV" holds its duration, so FakeMediaService measures what was reported.
+        await fsp.writeFile(audioPath, String(durationMs), 'utf8');
         return {
           segmentId: s.id,
           text: s.text,

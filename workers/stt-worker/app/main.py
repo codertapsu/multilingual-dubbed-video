@@ -2,8 +2,10 @@
 
 Endpoints
 ---------
-* ``GET  /health``     -> liveness + capabilities (model, device, loaded?).
-* ``POST /transcribe`` -> faster-whisper transcription into timed segments.
+* ``GET  /health``          -> liveness + capabilities (model, device, loaded?).
+* ``POST /transcribe``      -> faster-whisper transcription into timed segments.
+* ``POST /speech-regions``  -> where speech is (Silero VAD), whichever engine
+  transcribed: the orchestrator anchors transcript lines to it.
 
 The whisper model is loaded lazily on the first ``/transcribe`` call (or via the
 optional ``STT_WARMUP=1`` startup hook), so ``/health`` works instantly even
@@ -29,6 +31,8 @@ from .schemas import (
     EnsureModelResponse,
     HealthResponse,
     InstalledModelsResponse,
+    SpeechRegionsRequest,
+    SpeechRegionsResponse,
     TranscribeRequest,
     TranscribeResponse,
 )
@@ -95,6 +99,7 @@ def create_app() -> FastAPI:
             device=settings.device,
             compute_type=settings.compute_type,
             loaded=whisper_service.is_model_loaded(),
+            cpu_threads=settings.cpu_threads,
         )
 
     @app.post("/transcribe", response_model=TranscribeResponse)
@@ -107,6 +112,16 @@ def create_app() -> FastAPI:
         from anyio import to_thread
 
         return await to_thread.run_sync(whisper_service.transcribe, req)
+
+    @app.post("/speech-regions", response_model=SpeechRegionsResponse)
+    async def speech_regions(req: SpeechRegionsRequest) -> SpeechRegionsResponse:
+        """Where speech is in an audio file (the orchestrator anchors transcript
+        lines to it). Blocking VAD work runs in a worker thread."""
+        from anyio import to_thread
+
+        from . import vad_service
+
+        return await to_thread.run_sync(vad_service.speech_regions, req)
 
     @app.get("/models", response_model=InstalledModelsResponse)
     async def list_models() -> InstalledModelsResponse:

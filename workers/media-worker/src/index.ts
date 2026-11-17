@@ -10,17 +10,12 @@
  * shell-interpreted.
  */
 
-import type {
-  AudioExtractResult,
-  MediaInfo,
-  MediaService,
-  RenderFinalVideoInput,
-  RenderFinalVideoResult,
-} from '@videodubber/shared';
+import type { AudioExtractResult, MediaInfo, MediaService } from '@videodubber/shared';
 
 import { clip16kMono, extract16kMono, extractAudio } from './extract.js';
 import { probe } from './probe.js';
-import { renderFinalVideo } from './render.js';
+import { renderFinalVideo, type RenderFinalVideoOptions, type RenderFinalVideoReport } from './render.js';
+import { measureSpeech, type MeasureSpeechOptions, type SpeechMeasurement } from './speech.js';
 import { buildTtsTimeline, type BuildTtsTimelineInput, type TimelineStretchSummary } from './tts-timeline.js';
 import { duckAndMix, type DuckAndMixInput } from './mix.js';
 import { checkBinaryAvailable, type RunOptions } from './exec.js';
@@ -80,8 +75,18 @@ export class FfmpegMediaService implements MediaService {
     return duckAndMix(input, this.opts(opts));
   }
 
-  renderFinalVideo(input: RenderFinalVideoInput, opts?: RunOptions): Promise<RenderFinalVideoResult> {
+  renderFinalVideo(input: RenderFinalVideoOptions, opts?: RunOptions): Promise<RenderFinalVideoReport> {
     return renderFinalVideo(input, this.opts(opts));
+  }
+
+  /** Where the speech is inside a clip (silences + speech bounds); see speech.ts. */
+  measureSpeech(
+    inputPath: string,
+    options?: Omit<MeasureSpeechOptions, 'signal'>,
+    opts?: RunOptions,
+  ): Promise<SpeechMeasurement> {
+    const run = this.opts(opts);
+    return measureSpeech(inputPath, { ...options, ...(run.signal ? { signal: run.signal } : {}) });
   }
 }
 
@@ -135,7 +140,7 @@ export {
   type WaveformPeaks,
 } from './waveform.js';
 
-export { renderFittedClip, buildFittedClipArgs } from './fittedclip.js';
+export { renderFittedClip, buildFittedClipArgs, type FittedClipTrim } from './fittedclip.js';
 
 export {
   renderFilmstrip,
@@ -148,9 +153,13 @@ export {
 export {
   probe,
   probeDurationMs,
+  probeVideoGeometry,
+  parseVideoGeometry,
   buildProbeArgs,
+  buildVideoGeometryArgs,
   ffprobeJsonToMediaInfo,
   parseFrameRate,
+  type VideoGeometry,
 } from './probe.js';
 
 export {
@@ -167,12 +176,29 @@ export {
   type TimelineStretchSummary,
   buildTimelineMixArgs,
   buildTimelineFilterComplex,
+  buildTrimChain,
   alignedSegmentsToClips,
   chunkClips,
   estimateTimelineTmpBytes,
   MAX_INPUTS_PER_MIX,
   type TimelineClip,
+  type BuildTtsTimelineInput,
 } from './tts-timeline.js';
+
+export { defaultMixConcurrency, mapWithConcurrency, MAX_MIX_CONCURRENCY } from './concurrency.js';
+
+export {
+  measureSpeech,
+  buildSilenceDetectArgs,
+  parseSilenceDetect,
+  deriveSpeechMeasurement,
+  SPEECH_NOISE_DB,
+  SPEECH_MIN_SILENCE_MS,
+  SPEECH_MAX_ISLAND_MS,
+  type SpeechMeasurement,
+  type SilenceInterval,
+  type MeasureSpeechOptions,
+} from './speech.js';
 
 export {
   duckAndMix,
@@ -202,9 +228,49 @@ export {
 } from './subtitles.js';
 
 export {
+  parseSubtitleCues,
+  cueTextToAss,
+  computeAssLayout,
+  buildAssDocument,
+  formatAssTime,
+  type SubtitleCue,
+  type AssLayout,
+} from './ass.js';
+
+export {
+  resolveFontsDir,
+  packagedFontsDir,
+  chooseBurnFont,
+  BUNDLED_FONT_FAMILY,
+  BUNDLED_FONT_FILE,
+  FALLBACK_FONT_FAMILY,
+  type BurnFont,
+} from './fonts.js';
+
+export {
   renderFinalVideo,
   buildRenderArgs,
-  selectVideoCodec,
   sidecarDestinationPath,
   type RenderArgsContext,
+  type RenderFinalVideoOptions,
+  type RenderFinalVideoReport,
+  type RenderDeps,
 } from './render.js';
+
+export {
+  LIBX264,
+  hardwareEncoderCandidates,
+  hardwareEncoderArgs,
+  buildEncoderProbeArgs,
+  probeHardwareEncoders,
+  cachedHardwareEncoderProbe,
+  resetHardwareEncoderProbeCache,
+  planVideoEncode,
+  encodeWithFallback,
+  wantsHardwareEncoder,
+  type VideoEncoderChoice,
+  type VideoEncodePlan,
+  type VideoEncodeReport,
+  type HardwareEncoderProbe,
+  type EncoderProbeAttempt,
+} from './encoder.js';

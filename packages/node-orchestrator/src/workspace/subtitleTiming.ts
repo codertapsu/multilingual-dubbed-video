@@ -11,7 +11,14 @@
  * their own artifact keyed by segment id.
  */
 import fsp from 'node:fs/promises';
-import type { TranscriptSegment } from '@videodubber/shared';
+import {
+  planDisplayCues,
+  transcriptSegmentsToCues,
+  type DisplayCueInput,
+  type IndexedCue,
+  type TranscriptSegment,
+} from '@videodubber/shared';
+import { writeJsonAtomic } from './projectStore.js';
 
 /** One cue's overridden start/end (ms). */
 export interface CueTiming {
@@ -42,7 +49,8 @@ export async function readCueOverrides(path: string): Promise<Map<string, CueTim
  * later regeneration deterministically finds "no overrides" and uses canonical). */
 export async function writeCueOverrides(path: string, overrides: ReadonlyMap<string, CueTiming>): Promise<void> {
   const obj: CueTimingArtifact = { overrides: Object.fromEntries(overrides) };
-  await fsp.writeFile(path, `${JSON.stringify(obj, null, 2)}\n`, 'utf8');
+  // Atomic: the editor regenerates the sidecars from this file at any moment.
+  await writeJsonAtomic(path, obj);
 }
 
 /**
@@ -74,4 +82,49 @@ export function applyCueOverrides(
     const o = overrides.get(s.id);
     return o ? { ...s, startMs: o.startMs, endMs: o.endMs } : s;
   });
+}
+
+/** What the dub did with each synthesis unit (the parts of AlignedSegment read here). */
+export interface PlacedUnit {
+  /** The unit's id: its first line's id. */
+  segmentId: string;
+  /** Where its clip starts in the mix, ms. */
+  startMs: number;
+  /** How long the clip plays once fitted, ms. */
+  placedDurationMs: number;
+}
+
+/**
+ * The cues every subtitle FILE is written from (SRT/VTT, and the burned-in
+ * render, which draws the SRT): the canonical or voice-synced times, planned
+ * for reading by shared `planDisplayCues` — sorted, held long enough to read,
+ * never on screen for 99 s, merged within a synthesis group rather than
+ * flashed. When the dub is known (`units` + `groups`), each unit's last line
+ * stays up until its voice has finished: the subtitle audit found the voice
+ * still talking after its subtitle had gone in 15–54 lines per video.
+ */
+export function displayCuesFor(
+  segments: readonly TranscriptSegment[],
+  dub: {
+    overrides?: ReadonlyMap<string, CueTiming>;
+    groups?: readonly { id: string; segmentIds: readonly string[] }[];
+    units?: readonly PlacedUnit[];
+  } = {},
+): IndexedCue[] {
+  const timed = dub.overrides ? applyCueOverrides(segments, dub.overrides) : [...segments];
+  const groupOf = new Map<string, string>();
+  for (const g of dub.groups ?? []) for (const id of g.segmentIds) groupOf.set(id, g.id);
+  const voiceEnd = new Map<string, number>();
+  for (const u of dub.units ?? []) {
+    const lastLine = dub.groups?.find((g) => g.id === u.segmentId)?.segmentIds.at(-1) ?? u.segmentId;
+    if (u.placedDurationMs > 0) voiceEnd.set(lastLine, u.startMs + u.placedDurationMs);
+  }
+  const byIndex = new Map(timed.map((s) => [s.index + 1, s.id]));
+  const inputs: DisplayCueInput[] = transcriptSegmentsToCues(timed).map((cue) => {
+    const id = cue.index !== undefined ? byIndex.get(cue.index) : undefined;
+    const end = id ? voiceEnd.get(id) : undefined;
+    const group = id ? groupOf.get(id) : undefined;
+    return { ...cue, ...(end !== undefined ? { voiceEndMs: end } : {}), ...(group ? { groupId: group } : {}) };
+  });
+  return planDisplayCues(inputs);
 }

@@ -59,6 +59,16 @@ export interface ClassifyOptions {
    * other heavy run. Computed with I/O by the caller; absent = none.
    */
   gpuFamilies?: ReadonlySet<string>;
+  /**
+   * The engine the run's context work will use (contextEngine.ts: the
+   * character sheet and line repairs in the translation step, auto-fit in
+   * alignment), as resolved by the caller with I/O. It is not one of the
+   * project's provider ids: with the built-in Gemma chat installed, an Argos +
+   * Piper run (light by its providers) starts llama.cpp for its repairs and
+   * auto-fit, takes the heavy lane at runtime, and a heavy dub admitted beside
+   * it fails with ENGINE_BUSY. Absent = none.
+   */
+  contextEngine?: Traits;
 }
 
 /** The pipeline step each heavy-capable phase runs in. */
@@ -93,6 +103,9 @@ export function classifyWorkload(
   if (settings.refineProviderId && settings.refineProviderId !== 'none' && willRun(PHASE_STEP.refine)) {
     providers.push(registry.getTranslation(settings.refineProviderId));
   }
+  const usesContextEngine =
+    willRun(PHASE_STEP.translation) || (willRun('alignment') && settings.autoFitOverflow !== false);
+  if (opts.contextEngine && usesContextEngine) providers.push(opts.contextEngine);
 
   const heavy = (family: string | undefined): boolean =>
     isHeavyEngineFamily(family) || (family !== undefined && opts.gpuFamilies?.has(family) === true);
@@ -132,6 +145,23 @@ export function classifyWorkload(
     points: cloudOnly ? POINTS_PER_CLOUD_RUN : POINTS_PER_LOCAL_RUN,
     ...(heavyFamily ? { heavyFamily } : {}),
   };
+}
+
+/**
+ * The last step of a run that can start a heavy engine. Once it is done the
+ * run only mixes and renders (ffmpeg), so it can hand the heavy lane to the
+ * next queued dub. The lane used to be held to the very end: measured on a
+ * 31-minute dub, the GPU then sat idle for the 600 s of mix and render while a
+ * second GPU dub waited in the queue.
+ *
+ * Alignment is heavy because auto-fit re-translates (local LLM) and re-voices
+ * (GPU voice); audio-mix only when vocal separation will run in it.
+ */
+export function lastHeavyStep(
+  settings: ProjectSettings,
+  opts: Pick<ClassifyOptions, 'separationAvailable'> = {},
+): PipelineStepId {
+  return settings.originalAudioMode === 'replace-vocals' && opts.separationAvailable !== false ? 'audio-mix' : 'alignment';
 }
 
 /** Friendly name for the engine family that forces the heavy lane. */

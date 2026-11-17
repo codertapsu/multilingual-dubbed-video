@@ -88,7 +88,28 @@ its outputs are present. That is only sound because every ffmpeg output is writt
 `writeAtomically` (`workers/media-worker/src/atomic.ts`) — to `<dest>.partial<ext>`, renamed only on
 exit 0. Before that, a cancelled render left a truncated non-empty file that the next run reported
 as success, shipping a half-length dub. If you add an ffmpeg-producing step, it must write
-atomically. The partial keeps the real extension because ffmpeg picks its muxer from it.
+atomically. The partial keeps the real extension because ffmpeg picks its muxer from it. The
+same holds for JSON artifacts (`source.json`, `translated.aligned.json`): `writeJsonAtomic`.
+
+**Line timing is fixed in exactly one place: the end of the STT step** (`pipeline/segmentTiming.ts`).
+Both engines can stretch a line across seconds of music (faster-whisper's VAD maps a line's first word
+into the previous chunk's padding; whisper.cpp starts a window's first line at the window start), and
+everything downstream places the dub at the line's start. Word timings decide first, then the speech
+map (Silero VAD, `POST /speech-regions` on the STT worker, cached in `audio/speech_regions.json`). A
+line only shrinks or splits inside its own bounds. Nothing later re-times lines automatically.
+
+**Only the speech in a dub clip is fitted and played.** Alignment measures each clip
+(`alignment/clipSpeech.ts` over media-worker `measureSpeech`) and stores the part to keep as
+`trimStartMs`/`trimEndMs` on its `AlignedSegment`; `generatedDurationMs` is that part's length.
+Anything that plays a clip must cut the same window: the timeline mix and the editor's fitted
+preview do. A clip played whole starts a lead-in late, and a botched one ("Thua": 12.3 s, the word
+in its first half second) plays its noise over the next lines.
+
+**Every subtitle file goes through `displayCuesFor`** (`workspace/subtitleTiming.ts` → shared
+`planDisplayCues`): sorted, held to ≤17 cps and ≥1 s, capped at 7 s, kept up until the line's dub
+voice ends, merged within a synthesis group rather than flashed. Never write
+`transcriptSegmentsToCues` output to a file directly: that is how cues shipped at 102 cps, 99 s
+long, or out of order.
 
 ### The lazy media proxy
 
@@ -121,8 +142,17 @@ artifact URL carries a pinned `sha256`. `DISABLED_PACK_IDS` gates packs out of r
 `docs/OMNIVOICE.md` is canonical). Recommend by measured hardware fit, but **never restrict a
 backend**: the user can always pick anything.
 
+whisper.cpp is two packs, like llama.cpp: the runtime and a `whisper-model-*` pack holding the
+ggml file of the **project's** speech model (`resolveWhisperCppModel`, passed as `-m`; never a
+different size). Without `-m`, whisper-server loads `models/ggml-base.en.bin` from its working
+directory, and that is how every whisper.cpp dub failed through 0.11.0. Request
+`response_format=verbose_json`: plain `json` carries no segments, which is an empty transcript,
+not an error.
+
 Two rules from a dub that could never finish (step 6, 21-minute video, `WORKER_TIMEOUT` twice):
-**never trust a runtime's default thread count** for an autoregressive model. ONNX Runtime's
+**never trust a runtime's default thread count** for an autoregressive model. (llama.cpp and
+whisper.cpp get the performance-core count the STT worker measures, `cpu_threads` in its `/health`:
+llama.cpp via `LLAMA_ARG_THREADS`, whisper-server via `-t`.) ONNX Runtime's
 default ran VieNeu 5.4× slower than 2 threads, and the SDK exposes no setting, so
 `vd_tts_engine/engine.py` wraps its constructor (measurements there). And **long synthesis must
 be batched and resumable**: the runner splits TTS into requests of `maxSegmentsPerRequest`
@@ -223,3 +253,15 @@ previous binary. Verify the artifact (`GET /health` reports version + build stam
 - `en.json` / `vi.json` stay key-for-key in sync. Write natural Vietnamese — it is the primary
   audience, and the release notes and UI are Vietnamese-first.
 - Never restrict a backend on hardware grounds; recommend, then let the user choose.
+- Dependencies are pinned exactly, and pnpm's minimum-release-age policy stands: when `pnpm add`
+  offers to add a package to `minimumReleaseAgeExclude`, pick an older release instead of
+  accepting the exclusion.
+- Claude goes through the official `@anthropic-ai/sdk` (`providers/cloud/claudeMessages.ts`,
+  loaded lazily), never raw `fetch`: `stop_reason` is checked, schemas become structured output.
+- A cancel is the run's `AbortSignal` being aborted, never an error code. The local LLM's
+  per-request timeout used to surface as `CANCELLED`, and the passes that rethrow cancels threw
+  away a translation step whose lines were all done. It is `WORKER_TIMEOUT` now, the context
+  engine fails fast after one, and callers check `signal.aborted`.
+- Admission must count every engine a run will start, not just its provider ids: the context
+  engine (`contextEngine.ts`, the Gemma chat model for repairs and auto-fit) takes the heavy
+  lane in a run whose providers are all light (`ClassifyOptions.contextEngine`).

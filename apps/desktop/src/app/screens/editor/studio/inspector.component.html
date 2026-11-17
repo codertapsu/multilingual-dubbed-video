@@ -50,6 +50,9 @@
       @if (l.untranslated) {
         <span class="badge badge-failed" [title]="'editor.untranslated-title' | translate">{{ 'editor.untranslated' | translate }}</span>
       }
+      @for (flag of l.quality; track flag) {
+        <span class="badge badge-failed" [title]="qualityLabels[flag].title | translate">{{ qualityLabels[flag].label | translate }}</span>
+      }
       @if (l.long) {
         <span class="badge badge-warning" [title]="'editor.long-subtitle-title' | translate">{{ 'editor.long-subtitle' | translate }}</span>
       }

@@ -19,6 +19,7 @@ import { renameReplacing } from '../fsRename.js';
 import type {
   ArgosPair,
   InstalledModels,
+  LocalModelPreferences,
   SetupStatus,
   UpdatePreferences,
 } from '@videodubber/shared';
@@ -219,6 +220,7 @@ export class SetupStore {
   }
 
   // ----- preferences.json --------------------------------------------------
+  // (cleanLocalModels, below the class, keeps only well-formed pack ids)
 
   /** Load preferences, defaulting to auto-update enabled. */
   async getPreferences(): Promise<UpdatePreferences> {
@@ -232,17 +234,32 @@ export class SetupStore {
       ...(stored.concurrency && typeof stored.concurrency === 'object'
         ? { concurrency: stored.concurrency }
         : {}),
+      ...(cleanLocalModels(stored.localModels) ? { localModels: cleanLocalModels(stored.localModels) } : {}),
     };
   }
 
   /** Persist preferences atomically (autoUpdate + per-phase provider defaults). */
   async savePreferences(prefs: UpdatePreferences): Promise<UpdatePreferences> {
+    const localModels = cleanLocalModels(prefs.localModels);
     const next: UpdatePreferences = {
       autoUpdate: prefs.autoUpdate === true,
       ...(prefs.providerDefaults ? { providerDefaults: prefs.providerDefaults } : {}),
       ...(prefs.concurrency ? { concurrency: prefs.concurrency } : {}),
+      ...(localModels ? { localModels } : {}),
     };
     await writeJsonAtomic(this.preferencesPath, next);
     return next;
   }
+}
+
+/** The user's local-model choices with only pack-id-shaped values, or undefined when none. */
+function cleanLocalModels(value: unknown): LocalModelPreferences | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const id = (x: unknown): string | undefined => (typeof x === 'string' && /^[a-z0-9][a-z0-9.-]{0,80}$/.test(x) ? x : undefined);
+  const out: LocalModelPreferences = {
+    ...(id(v.translation) ? { translation: id(v.translation)! } : {}),
+    ...(id(v.chat) ? { chat: id(v.chat)! } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }

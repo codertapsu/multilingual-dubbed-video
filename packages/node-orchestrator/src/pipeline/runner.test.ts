@@ -2,16 +2,21 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type {
-  Project,
-  TranslationInput,
-  TranslationProvider,
-  TranslationResult,
-  TtsInput,
-  TtsProvider,
-  TtsResult,
+import {
+  AppErrorException,
+  type AlignedSegment,
+  type Project,
+  type SttProvider,
+  type TranscriptSegment,
+  type TranslationInput,
+  type TranslationProvider,
+  type TranslationResult,
+  type TtsInput,
+  type TtsProvider,
+  type TtsResult,
 } from '@videodubber/shared';
 import { PipelineRunner, planSttChunks, type RunnerDeps } from './runner.js';
+import type { SpeechMapService } from './speechMap.js';
 import type { PipelineMediaService } from '../media.js';
 import { ProjectStore } from '../workspace/projectStore.js';
 import { EventBusRegistry } from '../events.js';
@@ -291,7 +296,54 @@ describe('planSttChunks', () => {
 });
 
 describe('PipelineRunner — auto-fit overflowing translations', () => {
-  it('re-translates + re-synthesizes timing-conflict segments so they fit', async () => {
+  /** Nine Vietnamese syllables: the "too long" line every member starts as. */
+  const LONG = 'một hai ba bốn năm sáu bảy tám chín';
+
+  /** TTS whose clip length is 300 ms per syllable (FakeMediaService probes it back). */
+  function syllableTts(events: string[]): TtsProvider {
+    return {
+      id: 'piper-local',
+      displayName: 'syllable-tts',
+      isLocal: true,
+      async synthesizeSegments(input: TtsInput): Promise<TtsResult> {
+        events.push(`tts:${input.segments.map((s) => s.id).join(',')}`);
+        const segments = await Promise.all(
+          input.segments.map(async (s, i) => {
+            const num = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
+            const audioPath = path.join(input.outputDir, `segment_${String(num).padStart(4, '0')}.wav`);
+            const durationMs = s.text.trim().split(/\s+/).length * 300;
+            await fsp.mkdir(input.outputDir, { recursive: true });
+            await fsp.writeFile(audioPath, String(durationMs), 'utf8');
+            return { segmentId: s.id, text: s.text, audioPath, durationMs, startMs: s.startMs, endMs: s.endMs, speedRatio: 1 };
+          }),
+        );
+        return { segments };
+      },
+    };
+  }
+
+  /** A context-capable model registered as the built-in chat engine; answers every rewrite with `reply`. */
+  function chatEngine(events: string[], prompts: string[], reply: (id: string) => string): TranslationProvider {
+    return {
+      id: 'llama-cpp-chat',
+      displayName: 'Fake Gemma chat',
+      isLocal: true,
+      supportsRefinement: true,
+      async translateSegments(): Promise<TranslationResult> {
+        throw new Error('auto-fit must not re-translate');
+      },
+      async chatComplete(_system: string | undefined, user: string): Promise<string> {
+        events.push('chat');
+        prompts.push(user);
+        const ids = [...user.matchAll(/^(seg_\d{4})/gm)].map((m) => m[1]!);
+        return JSON.stringify({ segments: ids.map((id) => ({ id, text: reply(id) })) });
+      },
+    } as TranslationProvider;
+  }
+
+  async function runOverflowing(
+    reply: (id: string) => string,
+  ): Promise<{ paths: ReturnType<ProjectStore['paths']>; events: string[]; prompts: string[]; counts: Map<string, number> }> {
     const video = await writeDummyVideo(tmp);
     const project = await store.createProject(
       createProjectInput(video, {
@@ -299,7 +351,6 @@ describe('PipelineRunner — auto-fit overflowing translations', () => {
       }),
     );
     const paths = store.paths(project.id);
-
     // Segments 1+2 are adjacent (gap 0 -> merged into one synthesis group);
     // segment 3 starts 900 ms later (>= the 750 ms grouping gap), so it stays
     // its own group AND bounds the first group's gap-aware window to 2900 ms.
@@ -310,73 +361,90 @@ describe('PipelineRunner — auto-fit overflowing translations', () => {
         [2900, 3900, 'zh2'],
       ]),
     );
-
-    // Translation shortens a segment's text each time it is (re)translated.
     const counts = new Map<string, number>();
     const translation: TranslationProvider = {
       id: 'argos',
-      displayName: 'shrinking-mt',
+      displayName: 'context-free-mt',
       isLocal: true,
       async translateSegments(input: TranslationInput): Promise<TranslationResult> {
         return {
           segments: input.segments.map((s) => {
-            const n = counts.get(s.id) ?? 0;
-            counts.set(s.id, n + 1);
-            return { id: s.id, translatedText: 'x'.repeat(Math.max(10, 90 - n * 60)) };
+            counts.set(s.id, (counts.get(s.id) ?? 0) + 1);
+            return { id: s.id, translatedText: s.id === 'seg_0003' ? 'xin chào' : LONG };
           }),
         };
       },
     };
-
-    // TTS writes duration (= textLen * 30 ms) as the WAV content; FakeMediaService
-    // probe reads it back, so re-synthesis after shortening changes the duration.
-    const tts: TtsProvider = {
-      id: 'piper-local',
-      displayName: 'len-tts',
-      isLocal: true,
-      async synthesizeSegments(input: TtsInput): Promise<TtsResult> {
-        const segments = await Promise.all(
-          input.segments.map(async (s, i) => {
-            const num = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
-            const audioPath = path.join(input.outputDir, `segment_${String(num).padStart(4, '0')}.wav`);
-            const durationMs = s.text.length * 30;
-            await fsp.mkdir(input.outputDir, { recursive: true });
-            await fsp.writeFile(audioPath, String(durationMs), 'utf8');
-            return { segmentId: s.id, text: s.text, audioPath, durationMs, startMs: s.startMs, endMs: s.endMs, speedRatio: 1 };
-          }),
-        );
-        return { segments };
-      },
-    };
-
+    const events: string[] = [];
+    const prompts: string[] = [];
+    const registry = fakeRegistry(stt, translation, syllableTts(events));
+    registry.registerTranslation(chatEngine(events, prompts, reply) as never);
     const bus = buses.get(project.id);
-    const deps: RunnerDeps = {
+    await new PipelineRunner({
       store,
       media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
-      registry: fakeRegistry(stt, translation, tts),
+      registry,
       bus,
       logger: new ProjectLogger(paths.pipelineLog, bus),
-    };
+    }).run(project, { signal: new AbortController().signal });
+    return { paths, events, prompts, counts };
+  }
 
-    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+  it('shortens the CURRENT lines with the context model, then re-synthesizes once', async () => {
+    // The group (seg 1+2: 18 syllables -> 5400 ms in a 2900 ms window; needs
+    // 1.86x > 1.6x max) begins as a timing-conflict. Each member may keep at
+    // most 5 syllables (2900 ms × 1.15 ÷ 300 ms per syllable = 11 for the unit).
+    const { paths, events, prompts, counts } = await runOverflowing(() => 'một hai ba bốn năm');
 
-    // The group (seg 1+2: 2x90 chars -> 5430 ms in a 2900 ms window; needs
-    // 1.87x > 1.6x max) began as a timing-conflict and was auto-fit: BOTH
-    // members re-translated to 30 chars -> 61 chars joined -> 1830 ms -> fits.
     const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8')) as {
       segmentId: string;
       status: string;
+      speedRatio: number;
     }[];
-    expect(aligned.find((a) => a.segmentId === 'seg_0001')?.status).not.toBe('timing-conflict');
+    const unit = aligned.find((a) => a.segmentId === 'seg_0001')!;
+    expect(unit.status).not.toBe('timing-conflict');
+    expect(unit.speedRatio).toBeLessThanOrEqual(1.25);
 
-    // Members were re-translated once (initial + one refit) and the persisted text shrank.
-    expect(counts.get('seg_0001')).toBe(2);
-    expect(counts.get('seg_0002')).toBe(2);
+    // The translator ran once per line: auto-fit never re-translates from the source.
+    expect(counts.get('seg_0001')).toBe(1);
     const translated = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')) as {
       segments: { id: string; translatedText: string }[];
     };
-    expect(translated.segments.find((s) => s.id === 'seg_0001')!.translatedText.length).toBe(30);
-    expect(translated.segments.find((s) => s.id === 'seg_0002')!.translatedText.length).toBe(30);
+    expect(translated.segments.find((s) => s.id === 'seg_0001')!.translatedText).toBe('một hai ba bốn năm');
+    expect(translated.segments.find((s) => s.id === 'seg_0003')!.translatedText).toBe('xin chào');
+
+    // The model saw the current line and its range, and was told not to re-translate.
+    expect(prompts[0]).toContain(`current: ${LONG}`);
+    expect(prompts[0]).toMatch(/seg_0001 — length: (about \d+ syllables \(âm tiết\), )?at most 5/);
+    expect(prompts[0]).toContain('do NOT translate the source again');
+
+    // Every model call came before the auto-fit re-synthesis: one load each.
+    const firstTtsAfterChat = events.indexOf('tts:seg_0001', events.indexOf('chat'));
+    expect(firstTtsAfterChat).toBeGreaterThan(-1);
+    expect(events.slice(firstTtsAfterChat).includes('chat')).toBe(false);
+
+    // Audit trail for the editor/MCP.
+    const report = JSON.parse(await fsp.readFile(path.join(paths.subtitlesDir, 'translation_report.json'), 'utf8'));
+    expect(report.autoFit.changes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'seg_0001', before: LONG, after: 'một hai ba bốn năm', unitsBefore: 9, unitsAfter: 5 }),
+      ]),
+    );
+  });
+
+  it('keeps the text and lets time-stretch fit it when no proposal is shorter and clean', async () => {
+    // Untranslated source, or the same length: both refused by the acceptance rule.
+    const { paths, events } = await runOverflowing((id) => (id === 'seg_0001' ? 'zh0' : LONG));
+    const translated = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')) as {
+      segments: { id: string; translatedText: string }[];
+    };
+    expect(translated.segments.find((s) => s.id === 'seg_0001')!.translatedText).toBe(LONG);
+    expect(translated.segments.find((s) => s.id === 'seg_0002')!.translatedText).toBe(LONG);
+    // Nothing changed, so nothing was re-synthesized after the model ran.
+    expect(events.slice(events.indexOf('chat')).some((e) => e.startsWith('tts:'))).toBe(false);
+    const report = JSON.parse(await fsp.readFile(path.join(paths.subtitlesDir, 'translation_report.json'), 'utf8'));
+    expect(report.autoFit.changes).toEqual([]);
+    expect(report.autoFit.rejected.map((r: { id: string }) => r.id)).toEqual(expect.arrayContaining(['seg_0001', 'seg_0002']));
   });
 
   it('does not refit when autoFitOverflow is false', async () => {
@@ -492,7 +560,8 @@ describe('PipelineRunner — native-rate re-synthesis', () => {
     const bus = buses.get(project.id);
     await new PipelineRunner({
       store,
-      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      // Clips that are speech from end to end: the whole 2220 ms must be fitted.
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000), clipEdges: { leadMs: 0, tailMs: 0 } }),
       registry: fakeRegistry(stt, translation, tts),
       bus,
       logger: new ProjectLogger(paths.pipelineLog, bus),
@@ -917,6 +986,273 @@ describe('PipelineRunner — translation character sheet', () => {
     // Re-translate: the persisted (user-editable) sheet is now authoritative.
     await runner.run(project, { retryFromStep: 'translation', signal: new AbortController().signal });
     expect(receivedContexts[1]).toEqual(persisted);
+  });
+});
+
+describe('PipelineRunner — speech-to-text timing and fallback', () => {
+  /** A whisper.cpp-like engine: lines without word timings, or a failure to start. */
+  function sttEngine(id: string, result: TranscriptSegment[] | Error) {
+    const calls: string[] = [];
+    const provider: SttProvider = {
+      id,
+      displayName: id,
+      isLocal: true,
+      async transcribe() {
+        calls.push(id);
+        if (result instanceof Error) throw result;
+        return { segments: result, detectedLanguage: 'zh', durationMs: 60_000 };
+      },
+    };
+    return { provider, calls };
+  }
+
+  async function build(opts: {
+    settings?: Partial<Project['settings']>;
+    engines: SttProvider[];
+    speechMap?: SpeechMapService;
+  }) {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(
+      createProjectInput(video, { settings: defaultSettings({ sourceLanguage: 'zh-CN', ...opts.settings }) }),
+    );
+    const paths = store.paths(project.id);
+    const registry = fakeRegistry(opts.engines[0]!, new FakeTranslationProvider(), new FakeTtsProvider());
+    for (const e of opts.engines.slice(1)) registry.registerStt(e);
+    const bus = buses.get(project.id);
+    const deps: RunnerDeps = {
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(60_000) }),
+      registry,
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+      ...(opts.speechMap ? { speechMap: opts.speechMap } : {}),
+    };
+    return { project, paths, deps };
+  }
+
+  const readSource = async (p: string) =>
+    (JSON.parse(await fsp.readFile(p, 'utf8')) as { segments: TranscriptSegment[] }).segments;
+
+  it('anchors lines without word timings to the speech map, and caches the map for a retry', async () => {
+    const lines = makeSegments([
+      [30_000, 46_960, '虎哥 这啥地方啊'], // whisper.cpp: the window opened on music
+      [47_000, 49_000, '走吧'],
+    ]);
+    const { provider } = sttEngine('whisper-cpp', lines);
+    const measured: string[] = [];
+    const speechMap: SpeechMapService = {
+      async regions(audioPath) {
+        measured.push(audioPath);
+        return [
+          { startMs: 44_500, endMs: 46_900 },
+          { startMs: 47_100, endMs: 48_800 },
+        ];
+      },
+    };
+    const { project, paths, deps } = await build({
+      settings: { sttProviderId: 'whisper-cpp' },
+      engines: [provider],
+      speechMap,
+    });
+    const runner = new PipelineRunner(deps);
+    await runner.run(project, { signal: new AbortController().signal });
+
+    const source = await readSource(paths.sourceJson);
+    expect(source.map((s) => [s.startMs, s.endMs])).toEqual([
+      [44_400, 46_960],
+      [47_000, 49_000], // 100 ms of difference is noise: left alone
+    ]);
+    expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toContain('Re-timed 1 of 2 lines');
+
+    // A retried speech-to-text step reuses the map measured on the same audio.
+    await runner.run(project, { retryFromStep: 'stt', signal: new AbortController().signal });
+    expect(measured).toEqual([paths.original16kMonoWav]);
+  });
+
+  it('keeps the engine timing when the speech map cannot be measured', async () => {
+    const lines = makeSegments([[30_000, 46_960, '虎哥 这啥地方啊']]);
+    const { provider } = sttEngine('whisper-cpp', lines);
+    const speechMap: SpeechMapService = {
+      async regions() {
+        throw new Error('worker down');
+      },
+    };
+    const { project, paths, deps } = await build({ settings: { sttProviderId: 'whisper-cpp' }, engines: [provider], speechMap });
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    expect((await readSource(paths.sourceJson)).map((s) => [s.startMs, s.endMs])).toEqual([[30_000, 46_960]]);
+    expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toContain('Could not map where speech is');
+  });
+
+  it('an engine the APP picked that cannot start falls back to the built-in one, and the project says so', async () => {
+    const broken = sttEngine(
+      'whisper-cpp',
+      new AppErrorException('ENGINE_UNAVAILABLE', 'Engine "whisper-cpp-cuda" stopped while starting.'),
+    );
+    const builtIn = sttEngine('faster-whisper', makeSegments([[0, 1000, '你好']]));
+    const { project, paths, deps } = await build({
+      settings: { sttProviderId: 'whisper-cpp', autoSelectedPhases: ['stt', 'tts'] },
+      engines: [broken.provider, builtIn.provider],
+    });
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+
+    expect(broken.calls).toHaveLength(1);
+    expect(builtIn.calls).toHaveLength(1);
+    expect((await readSource(paths.sourceJson))[0]!.sourceText).toBe('你好');
+    const saved = await store.getProject(project.id);
+    expect(saved.settings.sttProviderId).toBe('faster-whisper');
+    expect(saved.settings.autoSelectedPhases).toEqual(['tts']);
+    expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toContain('The app picked it for this project');
+  });
+
+  it('an engine the USER picked fails loudly, as before', async () => {
+    const broken = sttEngine('whisper-cpp', new AppErrorException('ENGINE_UNAVAILABLE', 'stopped while starting'));
+    const builtIn = sttEngine('faster-whisper', makeSegments([[0, 1000, '你好']]));
+    const { project, deps } = await build({
+      settings: { sttProviderId: 'whisper-cpp' },
+      engines: [broken.provider, builtIn.provider],
+    });
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    expect(builtIn.calls).toHaveLength(0);
+    const stt = (await store.getPipeline(project.id)).steps.find((s) => s.id === 'stt');
+    expect(stt?.status).toBe('failed');
+    expect(stt?.error).toContain('stopped while starting');
+    expect((await store.getProject(project.id)).settings.sttProviderId).toBe('whisper-cpp');
+  });
+});
+
+describe('PipelineRunner — translation engine fallback', () => {
+  async function runWith(settings: Partial<Project['settings']>) {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video, { settings: defaultSettings(settings) }));
+    const paths = store.paths(project.id);
+    const registry = fakeRegistry(
+      new FakeSttProvider(makeSegments([[0, 1000, 'Hello']])),
+      new FakeTranslationProvider(),
+      new FakeTtsProvider(),
+    );
+    let brokenCalls = 0;
+    registry.registerTranslation({
+      id: 'llama-cpp',
+      displayName: 'TranslateGemma',
+      isLocal: true,
+      async translateSegments() {
+        brokenCalls += 1;
+        throw new AppErrorException('ENGINE_UNAVAILABLE', 'Engine "llama-cpp-cuda" stopped while starting.');
+      },
+    });
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry,
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+    return { project, paths, brokenCalls: () => brokenCalls };
+  }
+
+  it('an engine the APP picked that cannot start falls back to the built-in translator', async () => {
+    const { project, paths, brokenCalls } = await runWith({
+      translationProviderId: 'llama-cpp',
+      autoSelectedPhases: ['translation'],
+    });
+    expect(brokenCalls()).toBe(1);
+    const doc = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')) as { segments: TranscriptSegment[] };
+    expect(doc.segments[0]!.translatedText).toBe('[vi] Hello');
+    const saved = await store.getProject(project.id);
+    expect(saved.settings.translationProviderId).toBe('argos');
+    expect(saved.settings.autoSelectedPhases).toBeUndefined();
+    expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toContain('the built-in "argos" translates instead');
+  });
+
+  it('an engine the USER picked fails loudly, as before', async () => {
+    const { project, brokenCalls } = await runWith({ translationProviderId: 'llama-cpp' });
+    expect(brokenCalls()).toBe(1);
+    const pipeline = await store.getPipeline(project.id);
+    expect(pipeline.steps.find((s) => s.id === 'translation')?.status).toBe('failed');
+  });
+});
+
+describe('PipelineRunner — lines whose voice is out of date', () => {
+  it('re-voices them before alignment measures their clips', async () => {
+    const { project, deps } = await buildProject();
+    const tts = deps.registry.getTts(project.settings.ttsProviderId) as FakeTtsProvider;
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    const paths = store.paths(project.id);
+
+    // An auto-fit cut short by a cancel (or an editor edit) leaves a new text
+    // whose clip still says the old one.
+    const doc = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')) as { segments: TranscriptSegment[] };
+    doc.segments[1] = { ...doc.segments[1]!, translatedText: 'Câu mới', ttsStale: true };
+    await fsp.writeFile(paths.translatedJson, JSON.stringify(doc), 'utf8');
+    const callsBefore = tts.inputs.length;
+
+    await new PipelineRunner(deps).run(await store.getProject(project.id), {
+      retryFromStep: 'alignment',
+      signal: new AbortController().signal,
+    });
+
+    // The two lines share one unit (one clip): it is voiced again with both texts.
+    const revoiced = tts.inputs.slice(callsBefore).flatMap((i) => i.segments);
+    expect(revoiced.map((s) => [s.id, s.text])).toEqual([['seg_0001', '[vi] Hello Câu mới']]);
+    const after = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')) as { segments: TranscriptSegment[] };
+    expect(after.segments.some((s) => s.ttsStale === true)).toBe(false);
+  });
+});
+
+describe('PipelineRunner — the speech in each clip', () => {
+  it('fits and mixes only the speech, and cuts the noise a botched clip carries', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+    const media = new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) });
+    // "Thua" as VieNeu once returned it: 12.3 s, the word in its first half
+    // second, a burst of noise at 6.4 s.
+    media.speech.set(paths.ttsSegment(1), {
+      durationMs: 12_300,
+      silences: [
+        { startMs: 0, endMs: 85 },
+        { startMs: 566, endMs: 6398 },
+        { startMs: 6600, endMs: 12_300 },
+      ],
+      speechStartMs: 85,
+      speechEndMs: 6600,
+      speechMs: 683,
+      noiseDb: -40,
+      minSilenceMs: 50,
+    });
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media,
+      registry: fakeRegistry(
+        new FakeSttProvider(
+          makeSegments([
+            [0, 1000, '输了'],
+            [3000, 4000, '走吧'],
+          ]),
+        ),
+        new FakeTranslationProvider(),
+        new FakeTtsProvider((id) => (id === 'seg_0001' ? 12_300 : 900)),
+      ),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8')) as AlignedSegment[];
+    // Whole, the 12.3 s clip could not fit before the next line (a conflict,
+    // its noise over the next lines); its speech fits at natural speed.
+    expect(aligned[0]).toMatchObject({ trimStartMs: 35, trimEndMs: 646, generatedDurationMs: 611, status: 'ok' });
+    // A clean clip loses its edge silence: 80/220 ms down to 50/80 ms pads.
+    expect(aligned[1]).toMatchObject({ trimStartMs: 30, trimEndMs: 760, generatedDurationMs: 730 });
+
+    const mix = media.timelineInputs.at(-1)!.segments;
+    expect(mix[0]).toMatchObject({ trimStartMs: 35, trimEndMs: 646, durationMs: 611, speedRatio: 1 });
+    expect(mix[1]).toMatchObject({ trimStartMs: 30, trimEndMs: 760, durationMs: 730 });
+
+    const log = await fsp.readFile(paths.pipelineLog, 'utf8');
+    expect(log).toContain('trimmed the silence around the speech in 2 of 2 clip(s)');
+    expect(log).toMatch(/1 voice clip\(s\) ran on long after their line .*: seg_0001\./);
   });
 });
 

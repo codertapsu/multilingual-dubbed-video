@@ -56,6 +56,7 @@ reference-only.
 | `@videodubber/shared` | TS types + subtitle/language/pipeline utils + error model | (none) |
 | `@videodubber/media-worker` | FFmpeg/ffprobe wrapper, `MediaService` impl | `@videodubber/shared` |
 | `@videodubber/node-orchestrator` | HTTP engine, pipeline, providers, workspace, SSE | `@videodubber/shared`, `@videodubber/media-worker` |
+| `@videodubber/mcp-server` | MCP server (stdio) so Claude Desktop / Claude Code can drive the app through the HTTP API; bundled into the orchestrator binary as `--mcp` ([MCP.md](MCP.md)) | `@videodubber/shared` |
 | `videodubber-desktop` | Angular 22 UI + Tauri 2 shell | `@videodubber/shared` (types only) |
 | `workers/stt-worker` | Python FastAPI + faster-whisper | (Python venv) |
 | `workers/translation-worker` | Python FastAPI + Argos Translate | (Python venv) |
@@ -112,7 +113,11 @@ this prose, which has been off by one before.
   faster-whisper prefers). Fails with `NO_AUDIO_STREAM` if the input has no audio.
 - **stt** — Transcribes the 16 kHz mono WAV into `TranscriptSegment[]` with word
   timestamps and per-segment confidence; reports detected language. Source language is
-  reduced to the whisper base subtag (`toWhisperLanguage`).
+  reduced to the whisper base subtag (`toWhisperLanguage`). The step then anchors every
+  line to when it is spoken (`pipeline/segmentTiming.ts`): word timings first, then the
+  STT worker's speech map (`POST /speech-regions`, Silero VAD, cached in
+  `audio/speech_regions.json`) for lines without words. Lines only shrink or split
+  inside their own bounds; this is the one place timing is changed automatically.
 - **translation** — Translates each segment independently (preserving ids/order), with
   optional glossary pre/post replacement. Languages reduced via `toArgosLanguage`.
   Missing pair → `TRANSLATION_PACKAGE_MISSING`.
@@ -124,16 +129,30 @@ this prose, which has been off by one before.
   Only providers declaring `supportsRefinement` can serve it (the cloud LLMs,
   `llama-cpp-chat`); with `settings.refineProviderId` unset the step completes
   immediately as a no-op, which is the default.
-- **alignment** — Computes, per segment, a `speedRatio` to fit the generated audio into
-  its time window, bounded by `maxSpeedRatio`/`allowedOverflowMs`. Marks each
-  `AlignedSegment` `ok` / `needs-review` / `timing-conflict`.
+- **alignment** — Measures where the speech is in each clip (`silencedetect`, media-worker
+  `speech.ts`) and fits only that part (`alignment/clipSpeech.ts`): the edge silence comes
+  off, and a clip the engine botched (one word, then seconds of noise) is cut at the long
+  silence after its speech. The window is stored as `trimStartMs`/`trimEndMs` on the
+  `AlignedSegment`, and the mix and the editor preview cut the same window. Then computes,
+  per unit, a `speedRatio` to fit that speech into its time window, bounded by
+  `maxSpeedRatio`/`allowedOverflowMs`, and marks each `AlignedSegment` `ok` /
+  `needs-review` / `timing-conflict`.
 - **audio-mix** — Assembles the placed segments into a continuous `tts_full.wav`, then
   mixes it over the original background according to
   `includeOriginalBackgroundAudio`, `duckOriginalAudio`, `duckingLevelDb`, `ttsGainDb`.
 - **render** — Muxes video + `final_mix.wav` into the output, applying the chosen
   `subtitleExportMode` (sidecar / embedded-soft / burned-in with `burnSubtitleStyle`).
   Subtitle paths used in the FFmpeg `subtitles=` filter are validated/escaped; FFmpeg is
-  always invoked with an argv array, never a concatenated shell string.
+  always invoked with an argv array, never a concatenated shell string. Burned-in
+  subtitles are drawn from a generated `.ass` (position, optional band over the source's
+  own subtitles, the bundled Be Vietnam Pro font) and encoded with the hardware encoder
+  the media worker found working (`renderQuality: 'auto'`), else x264.
+
+Every subtitle FILE (`source.srt`, `translated.srt/.vtt`, and the SRT a burned-in render
+draws) is written from `displayCuesFor` (`workspace/subtitleTiming.ts` → shared
+`planDisplayCues`): sorted, ≤ 17 characters/s and ≥ 1 s where the gap after allows it,
+capped at 7 s, held until the line's dub voice ends, merged within a synthesis group
+rather than flashed, with balanced line breaks.
 
 ### Long-video handling
 
@@ -156,9 +175,9 @@ short clips:
   source-character budget (`CLOUD_LLM_BATCH_SIZE` / `CLOUD_LLM_MAX_PROMPT_CHARS`) so a run
   of long lines can't overflow the model context or truncate its JSON reply; the local-LLM
   raw-segment path runs a bounded, order-preserving concurrency pool (`LOCAL_LLM_CONCURRENCY`).
-- **Bounded probing + progress.** Alignment probes each segment WAV with a 15 s per-probe
-  timeout (a slow/locked probe is treated as 0 ms, like a missing file) and emits throttled
-  progress. STT/alignment progress flows over SSE as `progressPercent` patches, throttled
+- **Bounded measuring + progress.** Alignment measures each segment WAV with a 15 s
+  timeout (an unreadable or slow clip is treated as 0 ms, like a missing file) and emits
+  throttled progress. STT/alignment progress flows over SSE as `progressPercent` patches, throttled
   to per-chunk/per-batch so the stream is never flooded.
 - **Temp-space guard.** The chunked TTS-timeline build (used past
   `MAX_INPUTS_PER_MIX` segments) writes full-length intermediates; it estimates the disk
@@ -286,7 +305,8 @@ The orchestrator creates one folder per project under `VIDEODUBBER_PROJECTS_DIR`
 │   │   ├── segment_0001.wav
 │   │   └── segment_0002.wav ...
 │   ├── tts_full.wav                 # aligned/assembled TTS track
-│   └── final_mix.wav                # TTS mixed over (ducked) background
+│   ├── final_mix.wav                # TTS mixed over (ducked) background
+│   └── speech_regions.json          # where speech is (STT worker VAD), keyed to the WAV
 ├── subtitles/
 │   ├── source.json                  # STT TranscriptSegment[]
 │   ├── source.srt

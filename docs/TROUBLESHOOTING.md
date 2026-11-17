@@ -173,6 +173,63 @@ size because packs unpack and need working room:
    **System Settings → General → Storage**.
 3. Click **Install** again.
 
+<a id="whispercpp-needs-its-speech-model"></a>
+
+### whisper.cpp needs its speech model
+
+**Symptom, up to 0.11.0:** step 3 (*Transcribe*) fails with *"Engine
+"whisper-cpp-cuda" did not become healthy in time"*, and the engine output ends with
+*"failed to open 'models/ggml-base.en.bin'"*.
+
+whisper.cpp transcribes with the speech model your project picks (the *speech
+model* setting in the project panel). That model is a separate download: the
+**whisper.cpp (NVIDIA CUDA, Windows)** engine is only the program. Up to 0.11.0 the
+app never downloaded a model for it, so every whisper.cpp transcription failed.
+
+**In versions after 0.11.0** the model downloads by itself:
+
+1. Press **Start** (or **Retry** on a project that failed). If the model is
+   missing, the app starts downloading it and says *"The whisper.cpp speech model
+   … is downloading"*. large-v3-turbo is about 1.5 GB.
+2. When it finishes (**Settings → Engines** shows the progress), press **Start**
+   or **Retry** again.
+
+A new project starts the download as soon as you create it. To get it ahead of
+time, install **Whisper large-v3-turbo (whisper.cpp model)** in **Settings →
+Engines**, or the size your projects use.
+
+**PhoWhisper and distil-large-v3.5** exist only for faster-whisper, so the app
+says *"whisper.cpp cannot run …"* for them. Pick large-v3-turbo as the project's
+speech model, or switch its speech-to-text back to **faster-whisper**.
+
+**Still on 0.11.0?** Switch the project's speech-to-text to **faster-whisper**
+and press **Retry**.
+
+### Burned-in subtitles sit on top of the video's own subtitles
+
+Many videos, Chinese dramas and animation especially, already have subtitles burned
+into the picture at the bottom. Burned-in dub subtitles go to the same place by
+default, so the two collide.
+
+In the editor's **Project** tab (with **Subtitles: burned in**):
+
+- **Subtitle position → Raised** puts the dub's subtitles just above the original
+  ones; **Top** puts them at the top of the picture.
+- **Cover the original subtitles** lays a solid band over the bottom strip, so the
+  original subtitles no longer show.
+
+Then **Re-dub from: Render** (it takes a minute or two; nothing else is redone).
+
+### A line's subtitle or voice comes much earlier than the speaker
+
+Up to 0.11.0, speech-to-text could stretch a line over seconds of music or fighting
+before it is spoken (on two test videos, up to 46 s and 98 s early), and the dub
+voice and subtitle started at the start of that stretch. Later versions move such
+lines to where the speech actually is, using the word timings and a map of where
+speech is in the audio; the log says *"Re-timed N of M lines to when they are
+spoken"*. A project transcribed by an older version keeps its timing: redo it from
+**Transcribe** to get the new timing, or drag the line in the editor.
+
 ---
 
 ## Developing from source
@@ -426,6 +483,13 @@ for translation) to unblock the dub. On Windows with an NVIDIA GPU, see
 mention of a driver in the message. An engine that cannot load the Microsoft
 Visual C++ runtime fails at once with its own message instead; see
 [Engines need the Microsoft Visual C++ Runtime](#engines-need-the-microsoft-visual-c-runtime).
+
+When the **app** picked the engine for the project (a GPU engine it found installed),
+speech-to-text falls back to faster-whisper and translation to Argos on their own,
+and the project's settings then say which engine actually ran (the log says why).
+An engine you picked yourself fails loudly instead. The voice never falls back:
+voices belong to their engine, and a dub whose whole sound changed without asking
+is worse than a clear stop.
 
 <a id="engine-busy"></a>
 

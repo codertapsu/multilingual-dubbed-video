@@ -5,6 +5,7 @@ import {
   detectGpus,
   parseNvidiaSmi,
   parseSystemProfiler,
+  parseVramMb,
   parseWindowsWmiGpus,
   recommendSetup,
   type ExecProbe,
@@ -120,6 +121,19 @@ describe('GPU probe parsing', () => {
         '{"SPDisplaysDataType":[{"sppci_model":"Apple M3 Pro","spdisplays_vram":"18 GB"}]}',
       ),
     ).toEqual([{ name: 'Apple M3 Pro', vramMb: 18 * 1024 }]);
+  });
+
+  it('reads the VRAM unit (an older Intel Mac reports MB, which was taken as GB)', () => {
+    expect(
+      parseSystemProfiler(
+        '{"SPDisplaysDataType":[{"sppci_model":"Intel Iris Pro","spdisplays_vram":"1536 MB"},{"sppci_model":"AMD Radeon Pro 560X","spdisplays_vram":"4 GB"}]}',
+      ),
+    ).toEqual([
+      { name: 'Intel Iris Pro', vramMb: 1536 },
+      { name: 'AMD Radeon Pro 560X', vramMb: 4096 },
+    ]);
+    expect(parseVramMb('8')).toBe(8192); // no unit: GB, as before
+    expect(parseVramMb('n/a')).toBeUndefined();
   });
 });
 

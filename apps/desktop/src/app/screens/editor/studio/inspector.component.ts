@@ -15,7 +15,7 @@ import { splitSubtitleLines } from '@videodubber/shared';
 import { TranslatePipe } from '../../../core/i18n';
 import { formatTimecode } from '../../../core/util/format';
 import { PlaybackService } from './playback.service';
-import { MAX_CPS, StudioStore } from './studio.store';
+import { MAX_CPS, StudioStore, type LineVm } from './studio.store';
 import { VOICE_DRAG_TYPE } from './timeline.component';
 import { constrainDrag, MIN_SEGMENT_MS, parseTimecode, type DragEdge } from './timeline-math';
 
@@ -64,6 +64,15 @@ export class InspectorComponent {
   });
 
   protected readonly wrapped = computed(() => splitSubtitleLines(this.line()?.text ?? '', 42, 2));
+
+  /** The per-line checks' findings (lineQuality.ts in the orchestrator): label + explanation keys. */
+  protected readonly qualityLabels: Record<LineVm['quality'][number], { label: string; title: string }> = {
+    untranslated: { label: 'editor.untranslated', title: 'editor.untranslated-title' },
+    'wrong-script': { label: 'editor.quality.wrong-script', title: 'editor.quality.wrong-script-title' },
+    pinyin: { label: 'editor.quality.pinyin', title: 'editor.quality.pinyin-title' },
+    alternatives: { label: 'editor.quality.alternatives', title: 'editor.quality.alternatives-title' },
+    'no-diacritics': { label: 'editor.quality.no-diacritics', title: 'editor.quality.no-diacritics-title' },
+  };
   protected readonly duration = computed(() => {
     const l = this.line();
     return l ? l.seg.endMs - l.seg.startMs : 0;

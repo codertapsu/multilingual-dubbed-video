@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildFadeChain,
   buildTimelineFilterComplex,
+  buildTrimChain,
   FADE_IN_MS,
   FADE_OUT_MS,
   type TimelineClip,
@@ -59,6 +60,33 @@ describe('timeline filtergraph with stretch policy', () => {
     expect(clip0.indexOf('afade=t=in')).toBeLessThan(clip0.indexOf('rubberband='));
     expect(clip0.indexOf('rubberband=')).toBeLessThan(clip0.indexOf('adelay=0|0'));
     expect(clip0).toMatch(/adelay=0\|0,asetpts=N\/SR\/TB/);
+  });
+});
+
+describe('trimmed clips (only the speech plays)', () => {
+  it('cuts the window first, so fades, stretch and placement apply to the speech', () => {
+    // "Thua": a 12.3 s clip whose word sits in [35, 646] ms.
+    const f = buildTimelineFilterComplex(
+      [{ audioPath: '/a.wav', startMs: 4000, speedRatio: 1.2, durationMs: 611, trimStartMs: 35, trimEndMs: 646 }],
+      10_000,
+    );
+    const clip0 = f.split(';')[0]!;
+    expect(clip0.startsWith('[0:a]atrim=start=0.035:end=0.646,asetpts=PTS-STARTPTS,aresample=')).toBe(true);
+    // The fade-out sits at the end of the KEPT part, not of the 12.3 s file.
+    expect(clip0).toContain(`afade=t=out:st=${((611 - FADE_OUT_MS) / 1000).toFixed(3)}`);
+    expect(clip0.indexOf('atrim=')).toBeLessThan(clip0.indexOf('afade=t=in'));
+    expect(clip0.indexOf('afade=t=out')).toBeLessThan(clip0.indexOf('atempo='));
+    expect(clip0).toMatch(/adelay=4000\|4000,asetpts=N\/SR\/TB\[a0\]$/);
+  });
+
+  it('leaves an untrimmed or malformed window alone', () => {
+    expect(buildTrimChain(undefined, undefined)).toBe('');
+    expect(buildTrimChain(35, undefined)).toBe('');
+    expect(buildTrimChain(646, 35)).toBe('');
+    expect(buildTrimChain(Number.NaN, 400)).toBe('');
+    expect(buildTrimChain(-5, 400)).toBe('atrim=start=0.000:end=0.400,asetpts=PTS-STARTPTS,');
+    const f = buildTimelineFilterComplex([{ audioPath: '/a.wav', startMs: 0, durationMs: 2000 }], 5000);
+    expect(f).not.toContain('atrim=start');
   });
 });
 

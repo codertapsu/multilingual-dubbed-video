@@ -51,6 +51,11 @@ function env(name: string): string | undefined {
  * Walk up from this module looking for a package.json with a version. Dev-only:
  * inside the SEA bundle `import.meta.url` is undefined, `fileURLToPath` throws,
  * and we fall through to the caller's fallback.
+ *
+ * The workspace's own `@videodubber/*` packages are skipped: they sit at 0.1.0
+ * forever (release:version bumps only the app manifests), so the nearest one —
+ * this package's — made a dev /health report "0.1.0" for a 0.11.0 app. The repo
+ * root's package.json carries the app version.
  */
 function versionFromDisk(): string | undefined {
   let dir: string;
@@ -63,8 +68,9 @@ function versionFromDisk(): string | undefined {
   for (let i = 0; i < 6 && dir !== root; i += 1) {
     try {
       const raw = readFileSync(join(dir, 'package.json'), 'utf8');
-      const pkg = JSON.parse(raw) as { version?: string };
-      if (typeof pkg.version === 'string' && pkg.version.length > 0) return pkg.version;
+      const pkg = JSON.parse(raw) as { name?: string; version?: string };
+      const internal = typeof pkg.name === 'string' && pkg.name.startsWith('@videodubber/');
+      if (!internal && typeof pkg.version === 'string' && pkg.version.length > 0) return pkg.version;
     } catch {
       /* keep walking */
     }

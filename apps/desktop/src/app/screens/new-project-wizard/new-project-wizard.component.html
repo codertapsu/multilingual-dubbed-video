@@ -267,6 +267,19 @@
             <input
               type="radio"
               name="renderQuality"
+              value="auto"
+              [checked]="settings().renderQuality === 'auto'"
+              (change)="setRenderQuality('auto')"
+            />
+            <span class="radio-body">
+              <span class="radio-title">{{ 'wizard.auto' | translate }}</span>
+              <span class="hint">{{ 'wizard.auto-hint' | translate }}</span>
+            </span>
+          </label>
+          <label class="radio-row">
+            <input
+              type="radio"
+              name="renderQuality"
               value="quality"
               [checked]="(settings().renderQuality ?? 'quality') === 'quality'"
               (change)="setRenderQuality('quality')"

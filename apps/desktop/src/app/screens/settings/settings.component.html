@@ -87,10 +87,11 @@
           <select
             id="defStt"
             name="defStt"
-            [ngModel]="defaults().sttProviderId ?? 'faster-whisper'"
-            (ngModelChange)="patchDefault('sttProviderId', $event)"
+            [ngModel]="defaults().sttProviderId ?? ''"
+            (ngModelChange)="patchDefault('sttProviderId', $event || undefined)"
           >
-            @for (p of selectable(provs.stt, defaults().sttProviderId ?? 'faster-whisper'); track p.id) {
+            <option value="">{{ 'settings.defaults.auto' | translate }}</option>
+            @for (p of selectable(provs.stt, defaults().sttProviderId); track p.id) {
               <option [value]="p.id">
                 {{ p.displayName }}{{ p.available ? '' : ('settings.defaults.needs-key' | translate) }}
               </option>
@@ -103,9 +104,10 @@
           <select
             id="defSttModel"
             name="defSttModel"
-            [ngModel]="defaults().sttModel ?? 'base'"
-            (ngModelChange)="patchDefault('sttModel', $event)"
+            [ngModel]="defaults().sttModel ?? ''"
+            (ngModelChange)="patchDefault('sttModel', $event || undefined)"
           >
+            <option value="">{{ 'settings.defaults.auto-model' | translate }}</option>
             @for (m of whisperModels; track m.id) {
               <option [value]="m.id">{{ m.label | translate }}</option>
             }
@@ -117,10 +119,11 @@
           <select
             id="defTranslation"
             name="defTranslation"
-            [ngModel]="defaults().translationProviderId ?? 'argos'"
-            (ngModelChange)="patchDefault('translationProviderId', $event)"
+            [ngModel]="defaults().translationProviderId ?? ''"
+            (ngModelChange)="patchDefault('translationProviderId', $event || undefined)"
           >
-            @for (p of selectable(provs.translation, defaults().translationProviderId ?? 'argos'); track p.id) {
+            <option value="">{{ 'settings.defaults.auto' | translate }}</option>
+            @for (p of selectable(provs.translation, defaults().translationProviderId); track p.id) {
               <option [value]="p.id">
                 {{ p.displayName }}{{ p.available ? '' : ('settings.defaults.needs-key' | translate) }}
               </option>
@@ -133,10 +136,11 @@
           <select
             id="defTts"
             name="defTts"
-            [ngModel]="defaults().ttsProviderId ?? 'piper-local'"
-            (ngModelChange)="patchDefault('ttsProviderId', $event)"
+            [ngModel]="defaults().ttsProviderId ?? ''"
+            (ngModelChange)="patchDefault('ttsProviderId', $event || undefined)"
           >
-            @for (p of selectable(provs.tts, defaults().ttsProviderId ?? 'piper-local'); track p.id) {
+            <option value="">{{ 'settings.defaults.auto' | translate }}</option>
+            @for (p of selectable(provs.tts, defaults().ttsProviderId); track p.id) {
               <option [value]="p.id">
                 {{ p.displayName }}{{ p.available ? '' : ('settings.defaults.needs-key' | translate) }}
               </option>
@@ -227,7 +231,84 @@
             {{ result.ok ? '✓' : '✗' }} {{ result.detail }}
           </p>
         }
+        @if (svc === 'anthropic') {
+          <label class="cred-model">
+            <span>{{ 'settings.keys.claude-model' | translate }}</span>
+            <select
+              [ngModel]="claudeModel()"
+              (ngModelChange)="saveClaudeModel($event)"
+              name="claude-model"
+              [disabled]="credBusy() !== null"
+            >
+              @for (m of claudeModels(); track m.id) {
+                <option [value]="m.id">{{ m.label | translate: { id: m.id } }}</option>
+              }
+            </select>
+          </label>
+          <p class="hint">{{ 'settings.keys.claude-model-hint' | translate }}</p>
+        }
       </div>
+    }
+  </div>
+
+  <!-- ============================ Claude (MCP) ============================ -->
+  <div class="card stack">
+    <h2>{{ 'settings.claude.heading' | translate }}</h2>
+    <p class="muted">{{ 'settings.claude.intro' | translate }}</p>
+    <p class="hint">{{ 'settings.claude.privacy' | translate }}</p>
+    @if (claude(); as c) {
+      @if (!c.mcp) {
+        <p class="hint test-fail">{{ 'settings.claude.no-server' | translate }}</p>
+      } @else {
+        <div class="cred-row stack-sm">
+          <div class="cred-head">
+            <span class="cred-name">Claude Desktop</span>
+            @if (c.claudeDesktop.connected) {
+              <span class="badge badge-completed">{{ 'settings.claude.connected' | translate }}</span>
+            } @else if (c.claudeDesktop.installed) {
+              <span class="badge">{{ 'settings.claude.not-connected' | translate }}</span>
+            } @else {
+              <span class="badge">{{ 'settings.claude.not-installed' | translate }}</span>
+            }
+          </div>
+          <div class="cred-controls">
+            @if (c.claudeDesktop.connected) {
+              <button type="button" class="btn btn-ghost btn-sm" (click)="connectClaudeDesktop(false)" [disabled]="claudeBusy()">
+                {{ 'settings.claude.disconnect' | translate }}
+              </button>
+            } @else {
+              <button
+                type="button"
+                class="btn btn-sm"
+                (click)="connectClaudeDesktop(true)"
+                [disabled]="claudeBusy() || !c.claudeDesktop.installed || !c.claudeDesktop.configPath"
+              >
+                {{ 'settings.claude.connect' | translate }}
+              </button>
+            }
+          </div>
+          @if (claudeJustChanged()) {
+            <p class="hint test-ok">{{ 'settings.claude.restart' | translate }}</p>
+          }
+        </div>
+        @if (c.claudeCode; as code) {
+          <div class="cred-row stack-sm">
+            <div class="cred-head">
+              <span class="cred-name">Claude Code</span>
+            </div>
+            <p class="hint">{{ 'settings.claude.code-hint' | translate }}</p>
+            <div class="cred-controls">
+              <code class="grow">{{ code.command }}</code>
+              <button type="button" class="btn btn-sm" (click)="copyClaudeCodeCommand()">
+                {{ (claudeCopied() ? 'settings.claude.copied' : 'settings.claude.copy') | translate }}
+              </button>
+            </div>
+          </div>
+        }
+        <p class="hint">{{ 'settings.claude.try' | translate }}</p>
+      }
+    } @else {
+      <p class="hint">{{ 'settings.defaults.unavailable' | translate }}</p>
     }
   </div>
 
@@ -315,6 +396,18 @@
                 <button type="button" class="btn btn-ghost btn-sm" (click)="installEngine(pack.id)" [title]="'settings.engines.reinstall-title' | translate">{{ 'settings.engines.reinstall' | translate }}</button>
               }
               <button type="button" class="btn btn-ghost btn-sm" (click)="uninstallEngine(pack.id)">{{ 'settings.engines.remove' | translate }}</button>
+              @if (isChoosableModel(pack)) {
+                @if (isEngineShadowed(pack)) {
+                  <button type="button" class="btn btn-sm" (click)="chooseModel(pack, true)" [title]="'settings.engines.use-this-title' | translate">
+                    {{ 'settings.engines.use-this' | translate }}
+                  </button>
+                } @else if (isEngineActive(pack) && isModelChosenByUser(pack)) {
+                  <span class="hint">{{ 'settings.engines.chosen-by-you' | translate }}</span>
+                  <button type="button" class="btn btn-ghost btn-sm" (click)="chooseModel(pack, false)">
+                    {{ 'settings.engines.use-automatic' | translate }}
+                  </button>
+                }
+              }
             } @else if (needsUv(pack) && prerequisites() && !prerequisites()!.uv.available && !uvObtainable()) {
               <button type="button" class="btn btn-sm" disabled [title]="'settings.engines.needs-uv-title' | translate">
                 {{ 'settings.engines.install' | translate }}

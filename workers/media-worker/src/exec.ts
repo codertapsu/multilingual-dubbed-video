@@ -287,8 +287,9 @@ export function assertOutputWritable(outputPath: string): void {
 /**
  * Cache of the set of available libavfilter names, keyed by the resolved ffmpeg
  * binary (so changing FFMPEG_PATH re-queries). `ffmpeg -filters` is parsed for
- * the name column. On any failure we cache an empty set; callers treat "unknown"
- * as "not available" and surface FFMPEG_NOT_FOUND/FFMPEG_FILTER_MISSING.
+ * the name column. A failed listing answers with an empty set (callers treat
+ * "unknown" as "not available" and surface FFMPEG_NOT_FOUND/FFMPEG_FILTER_MISSING)
+ * but is NOT kept: the next call lists again.
  */
 const _filtersByBinary = new Map<string, Promise<Set<string>>>();
 
@@ -314,14 +315,25 @@ export function parseFfmpegFilters(stdout: string): Set<string> {
   return names;
 }
 
-/** List the libavfilter filter names this ffmpeg build provides (cached). */
-export async function listFfmpegFilters(opts: RunOptions = {}): Promise<Set<string>> {
+/**
+ * List the libavfilter filter names this ffmpeg build provides (cached).
+ *
+ * The list is shared by every caller for the life of the process, so it runs
+ * WITHOUT any caller's cancel signal, and a failed listing is not remembered:
+ * a render cancelled during this ~0.1 s call used to cache an EMPTY set, and
+ * every later burned-in render then failed with FFMPEG_FILTER_MISSING until
+ * the app restarted. (`_opts` is kept for callers that pass one.)
+ */
+export async function listFfmpegFilters(_opts: RunOptions = {}): Promise<Set<string>> {
   const bin = resolveFfmpegBinary();
   let cached = _filtersByBinary.get(bin);
   if (!cached) {
-    cached = runFfmpeg(['-hide_banner', '-filters'], { timeoutMs: 10_000, ...opts })
+    cached = runFfmpeg(['-hide_banner', '-filters'], { timeoutMs: 10_000 })
       .then((r) => parseFfmpegFilters(r.stdout))
-      .catch(() => new Set<string>());
+      .catch(() => {
+        _filtersByBinary.delete(bin);
+        return new Set<string>();
+      });
     _filtersByBinary.set(bin, cached);
   }
   return cached;
@@ -346,14 +358,17 @@ export function parseFfmpegEncoders(stdout: string): Set<string> {
 
 const _encodersByBinary = new Map<string, Promise<Set<string>>>();
 
-/** List the encoder names this ffmpeg build provides (cached). */
-export async function listFfmpegEncoders(opts: RunOptions = {}): Promise<Set<string>> {
+/** List the encoder names this ffmpeg build provides (cached; same rules as {@link listFfmpegFilters}). */
+export async function listFfmpegEncoders(_opts: RunOptions = {}): Promise<Set<string>> {
   const bin = resolveFfmpegBinary();
   let cached = _encodersByBinary.get(bin);
   if (!cached) {
-    cached = runFfmpeg(['-hide_banner', '-encoders'], { timeoutMs: 10_000, ...opts })
+    cached = runFfmpeg(['-hide_banner', '-encoders'], { timeoutMs: 10_000 })
       .then((r) => parseFfmpegEncoders(r.stdout))
-      .catch(() => new Set<string>());
+      .catch(() => {
+        _encodersByBinary.delete(bin);
+        return new Set<string>();
+      });
     _encodersByBinary.set(bin, cached);
   }
   return cached;

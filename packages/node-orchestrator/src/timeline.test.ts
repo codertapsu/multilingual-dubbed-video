@@ -191,7 +191,10 @@ describe('PATCH /timeline (patchSegments)', () => {
     await orchestrator.patchSegments(id, [{ id: 'seg_0003', translatedText: 'ba (đã sửa)', startMs: 5200, endMs: 6100 }]);
     const srt = await fsp.readFile(paths.translatedSrt, 'utf8');
     expect(srt).toContain('ba (đã sửa)');
-    expect(srt).toContain('00:00:05,200 --> 00:00:06,100');
+    // Starts at the edited time; stays up until the line's dub voice has
+    // finished (its clip, re-fitted to the edit, plays to 7.7 s here) rather
+    // than vanishing at 6.1 s while the voice is still speaking.
+    expect(srt).toContain('00:00:05,200 --> 00:00:07,700');
   });
 
   it('marks a text/voice edit stale and locked, and leaves the clip where it was', async () => {
@@ -460,6 +463,16 @@ describe('fitted preview clips', () => {
     expect(await orch.getFittedClip(id, 'seg_0003', 1)).toBe(paths.ttsSegment(3));
     expect(media.fittedCalls).toBe(0);
     await expect(orch.getFittedClip(id, '../../etc/passwd', 1.2)).rejects.toMatchObject({ code: 'INVALID_EDIT' });
+  });
+
+  it('trims a clip the mix trims, even at 1x, and ignores a malformed trim', async () => {
+    const { media, orch, id, paths } = await setup();
+    const trimmed = await orch.getFittedClip(id, 'seg_0003', 1, { startMs: 35, endMs: 646 });
+    expect(trimmed).not.toBe(paths.ttsSegment(3));
+    expect(media.fittedTrims).toEqual([{ startMs: 35, endMs: 646 }]);
+    expect(await orch.getFittedClip(id, 'seg_0003', 1, { startMs: 646, endMs: 35 })).toBe(paths.ttsSegment(3));
+    expect(await orch.getFittedClip(id, 'seg_0003', 1, { startMs: Number.NaN, endMs: 400 })).toBe(paths.ttsSegment(3));
+    expect(media.fittedCalls).toBe(1);
   });
 
   it('re-fits after the line is regenerated and deletes the stale fit', async () => {

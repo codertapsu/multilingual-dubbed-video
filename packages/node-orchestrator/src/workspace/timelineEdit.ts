@@ -24,6 +24,7 @@
  */
 import { AppErrorException, type SegmentPatch, type TranscriptSegment } from '@videodubber/shared';
 import type { AlignInputSegment } from '../alignment/align.js';
+import type { ClipTiming } from '../alignment/clipSpeech.js';
 import type { SynthesisGroup } from '../pipeline/grouping.js';
 
 /** Shortest line the editor may produce (ms). Shorter is unreadable and unspeakable. */
@@ -98,7 +99,21 @@ export function applySegmentPatches(
       if (opts.durationMs !== undefined && endMs > opts.durationMs + END_TOLERANCE_MS) {
         invalid(`Line ${patch.id} cannot end after the video does.`);
       }
-      if (startMs !== before.startMs || endMs !== before.endMs) outcome.timingChanged.add(patch.id);
+      if (startMs !== before.startMs || endMs !== before.endMs) {
+        outcome.timingChanged.add(patch.id);
+        // Word timings belong to the speech, not to the line: a moved line
+        // takes them along; a resized one no longer matches them, so they go.
+        // (They used to stay where they were: lines dragged to 25-50 s kept
+        // words at 4-7 s, and anything reading them was misled.)
+        if (seg.words) {
+          const shift = startMs - before.startMs;
+          if (endMs - startMs === before.endMs - before.startMs) {
+            seg.words = seg.words.map((w) => ({ ...w, startMs: w.startMs + shift, endMs: w.endMs + shift }));
+          } else {
+            delete seg.words;
+          }
+        }
+      }
       seg.startMs = startMs;
       seg.endMs = endMs;
     }
@@ -110,6 +125,8 @@ export function applySegmentPatches(
       }
       if (patch.translatedText !== (before.translatedText ?? '')) {
         seg.translatedText = patch.translatedText;
+        // The checks flagged the machine's text; the user's own replaces it.
+        delete seg.qualityFlags;
         outcome.textChanged.add(patch.id);
       }
     }
@@ -209,25 +226,29 @@ export function reconcileGroups(
 /**
  * Alignment inputs for every synthesis unit, in timeline order. Pure.
  *
- * Durations come from the previous alignment (a timing edit does not change the
- * audio) unless `durations` overrides them (a unit just re-synthesized). A unit
- * with no known duration is aligned as empty rather than skipped, so the list
- * stays gap-aware for its neighbours.
+ * Each clip's timing — the length that plays and the trim that gives it
+ * (clipSpeech.ts) — comes from the previous alignment (a timing edit does not
+ * change the audio) unless `clips` overrides it (a unit just re-synthesized
+ * and re-measured). A unit with no known timing is aligned as empty rather
+ * than skipped, so the list stays gap-aware for its neighbours.
  */
 export function alignmentInputsForUnits(
   units: readonly SynthesisGroup[],
-  previous: ReadonlyMap<string, { audioPath: string; generatedDurationMs: number }>,
+  previous: ReadonlyMap<string, ClipTiming & { audioPath: string }>,
   audioPathFor: (unitId: string) => string,
-  durations: ReadonlyMap<string, number> = new Map(),
+  clips: ReadonlyMap<string, ClipTiming> = new Map(),
 ): AlignInputSegment[] {
   return units.map((u) => {
     const prior = previous.get(u.id);
+    const timing = clips.get(u.id) ?? prior;
+    const trimmed = timing?.trimStartMs !== undefined && timing.trimEndMs !== undefined;
     return {
       segmentId: u.id,
       startMs: u.startMs,
       endMs: u.endMs,
       audioPath: prior?.audioPath ?? audioPathFor(u.id),
-      generatedDurationMs: durations.get(u.id) ?? prior?.generatedDurationMs ?? 0,
+      generatedDurationMs: timing?.generatedDurationMs ?? 0,
+      ...(trimmed ? { trimStartMs: timing.trimStartMs, trimEndMs: timing.trimEndMs } : {}),
     };
   });
 }

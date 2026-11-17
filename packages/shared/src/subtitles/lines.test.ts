@@ -106,6 +106,53 @@ describe('splitSubtitleLines', () => {
   });
 });
 
+describe('splitSubtitleLines: where lines break', () => {
+  it('balances two lines instead of leaving a word or two on the second (the greedy fill did, in 62-89% of cues)', () => {
+    const vi = 'Ngươi tưởng chỉ dựa vào chút pháp lực ấy mà có thể ngăn được ta sao?';
+    const [top, bottom] = splitSubtitleLines(vi, 42, 2);
+    expect(top!.length).toBeGreaterThan(20);
+    expect(bottom!.split(' ').length).toBeGreaterThan(3);
+    expect(Math.abs(top!.length - bottom!.length)).toBeLessThan(12);
+    expect(`${top} ${bottom}`).toBe(vi);
+  });
+
+  it('prefers to break after punctuation near the middle, but not at the cost of a lopsided pair', () => {
+    expect(splitSubtitleLines('Nếu ngươi còn dám quay lại, ta sẽ không tha cho ngươi nữa đâu', 42, 2)).toEqual([
+      'Nếu ngươi còn dám quay lại,',
+      'ta sẽ không tha cho ngươi nữa đâu',
+    ]);
+    // "Sư phụ," alone on top would leave 37 columns below.
+    expect(splitSubtitleLines('Sư phụ, con đã trở về từ núi Côn Luân rồi đây', 42, 2)).toEqual([
+      'Sư phụ, con đã trở về',
+      'từ núi Côn Luân rồi đây',
+    ]);
+  });
+
+  it('does not cut a name in half', () => {
+    const lines = splitSubtitleLines('Kẻ đứng sau tất cả chuyện này chính là Ngô Chi Long', 42, 2);
+    expect(lines.some((l) => l.includes('Ngô Chi Long'))).toBe(true);
+  });
+
+  it('puts the longer line at the bottom when the balance is otherwise equal', () => {
+    const [top, bottom] = splitSubtitleLines('aaaa bbbb cccc dddd eeee ffff ggg', 20, 2);
+    expect(top!.length).toBeLessThanOrEqual(bottom!.length);
+  });
+
+  it('wraps Chinese, which has no spaces, at double width and never before closing punctuation', () => {
+    const zh = '我们已经退出青丘地界了，你们还想要怎么样呢？';
+    const lines = splitSubtitleLines(zh, 42, 2);
+    expect(lines).toEqual(['我们已经退出青丘地界了，', '你们还想要怎么样呢？']);
+    // A longer line with no punctuation near the middle still never starts with a mark.
+    const long = '我们已经按照约定退出青丘地界了，你们还想怎么样？';
+    const split = splitSubtitleLines(long, 42, 2);
+    expect(split.join('')).toBe(long);
+    for (const l of split) {
+      expect([...l].length).toBeLessThanOrEqual(21);
+      expect(l).not.toMatch(/^[，。！？]/u);
+    }
+  });
+});
+
 describe('wrapSubtitleText', () => {
   it('joins wrapped lines with newlines', () => {
     const text = 'one two three four five six seven eight nine ten';

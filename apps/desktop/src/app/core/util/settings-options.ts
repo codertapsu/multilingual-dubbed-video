@@ -22,6 +22,7 @@ export const ORIGINAL_AUDIO_MODE_LABELS: Record<OriginalAudioMode, string> = {
 };
 
 export const RENDER_QUALITY_LABELS: Record<RenderQuality, string> = {
+  auto: 'opt.render-quality.auto',
   quality: 'opt.render-quality.quality',
   fast: 'opt.render-quality.fast',
 };
@@ -113,6 +114,16 @@ export const SETTING_AFFECTS_STEP: Partial<Record<keyof ProjectSettings, Pipelin
   ttsGainDb: 'audio-mix',
   renderQuality: 'render',
   subtitleExportMode: 'render',
+  burnSubtitleStyle: 'render',
+};
+
+/** Where burned-in subtitles sit (SubtitleStyle.position). */
+export const SUBTITLE_POSITIONS = ['bottom', 'raised', 'top'] as const;
+export type SubtitlePosition = (typeof SUBTITLE_POSITIONS)[number];
+export const SUBTITLE_POSITION_LABELS: Record<SubtitlePosition, string> = {
+  bottom: 'opt.subtitle-position.bottom',
+  raised: 'opt.subtitle-position.raised',
+  top: 'opt.subtitle-position.top',
 };
 
 /** The user-facing re-dub stages, earliest → latest (subset of pipeline steps). */

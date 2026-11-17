@@ -31,8 +31,18 @@ export interface TimelineSegmentInput {
   /** Time-stretch factor to apply before placement (1 = none). */
   speedRatio: number;
   /** Measured clip duration (ms), pre-stretch — lets the worker place the
-   * join-smoothing fade-out without re-probing every clip. */
+   * join-smoothing fade-out without re-probing every clip. The trimmed part's
+   * length when the clip is trimmed. */
   durationMs?: number;
+  /** The part of the clip that plays, in ms of the clip (alignment/clipSpeech.ts). */
+  trimStartMs?: number;
+  trimEndMs?: number;
+}
+
+/** The part of a dub clip that plays, in ms of the clip. */
+export interface ClipTrim {
+  startMs: number;
+  endMs: number;
 }
 
 /** Options for {@link PipelineMediaService.buildTtsTimeline}. */
@@ -171,10 +181,43 @@ export interface PipelineMediaService extends MediaService {
     signal?: AbortSignal,
   ): Promise<Omit<TimelineFilmstrip, 'path'> & { path: string }>;
   /**
-   * Tempo-fit one dub clip exactly as the timeline mix will (atempo), for the
-   * editor's WebAudio preview — which can only resample, i.e. shift pitch.
+   * Trim and tempo-fit one dub clip exactly as the timeline mix will (atrim,
+   * atempo), for the editor's WebAudio preview — which can only resample, i.e.
+   * shift pitch, and would otherwise play the edge silence the mix drops.
    */
-  renderFittedClip?(inputPath: string, outputPath: string, ratio: number, signal?: AbortSignal): Promise<string>;
+  renderFittedClip?(
+    inputPath: string,
+    outputPath: string,
+    ratio: number,
+    trim?: ClipTrim,
+    signal?: AbortSignal,
+  ): Promise<string>;
+  /**
+   * Where the speech is inside a synthesized clip: ffmpeg `silencedetect`
+   * (default -40 dBFS, silences >= 50 ms, clicks < 20 ms folded in) plus the
+   * exact duration. Measures only — what to do about a clip that is mostly
+   * silence ("Thua": 12.3 s with 0.5 s of sound) is the caller's decision.
+   * Optional: an older media worker does not have it.
+   */
+  measureSpeech?(
+    wavPath: string,
+    opts?: { noiseDb?: number; minSilenceMs?: number },
+    signal?: AbortSignal,
+  ): Promise<{
+    /** Whole clip, ms. */
+    durationMs: number;
+    /** Silent stretches, sorted and non-overlapping, within [0, durationMs]. */
+    silences: Array<{ startMs: number; endMs: number }>;
+    /** First ms of sound (0 if the clip opens on sound or has none). */
+    speechStartMs: number;
+    /** End of the last sound (durationMs if it runs to the end; 0 if none). */
+    speechEndMs: number;
+    /** Total non-silent ms; 0 = silent throughout. */
+    speechMs: number;
+    /** Thresholds actually used. */
+    noiseDb: number;
+    minSilenceMs: number;
+  }>;
 }
 
 /**
@@ -205,6 +248,7 @@ const MEDIA_SERVICE_METHOD_TABLE: Record<keyof PipelineMediaService, true> = {
   computeWaveformPeaks: true,
   renderFilmstrip: true,
   renderFittedClip: true,
+  measureSpeech: true,
 };
 
 /** A method name of {@link PipelineMediaService}. */

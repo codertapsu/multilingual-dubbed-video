@@ -18,7 +18,6 @@
 import {
   AppErrorException,
   normalizeLanguageCode,
-  type TranslationInput,
   type TranslationResult,
   type TranslationResultSegment,
 } from '@videodubber/shared';
@@ -29,21 +28,23 @@ import {
   parseTranslationReply,
   recoverBatch,
   sanitizeTranslatedLine,
+  segmentsReplySchema,
+  type ChatOptions,
+  type DubbingTranslationInput,
   type PromptSegment,
 } from './llmTranslationProvider.js';
 import {
-  buildAnalysisPrompt,
-  buildAnalysisSample,
   buildContextHeader,
   collectRollingPairs,
+  generateCharacterSheet,
   isSceneBreak,
   MIN_SEGMENTS_FOR_ANALYSIS,
-  parseAnalysisReply,
   planContextBatches,
   translationContextEnabled,
   type RollingPair,
   type TranslationAnalysis,
 } from './translationContext.js';
+import { withFitWindows } from './speechFit.js';
 
 /** Prompting strategy. */
 export type LocalLlmMode = 'chat-json-batch' | 'raw-segment';
@@ -282,16 +283,31 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
   }
 
   /**
-   * One-shot chat completion against the resolved local server. Public so the
-   * context-repair provider can drive the same engine (analysis + repair
-   * passes) without duplicating transport/turn-wrapping logic.
+   * Context window (tokens) the analysis transcript is sized against. Our
+   * llama-server is launched with `-c 8192` (engineManager.ts), and it reports
+   * n_ctx_slot = 8192 with a unified KV cache, so one request may use all of
+   * it. Ollama's default num_ctx is 4096 unless the user raised it.
    */
-  async chatComplete(system: string | undefined, user: string, signal?: AbortSignal): Promise<string> {
-    const endpoint = await this.resolveEndpoint();
-    return this.complete(system, user, endpoint, signal);
+  get contextTokens(): number {
+    return this.opts.backend === 'llama-cpp' ? 8192 : 4096;
   }
 
-  async translateSegments(input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
+  /**
+   * One-shot chat completion against the resolved local server. Public so the
+   * context-repair provider, the review pass and auto-fit can drive the same
+   * engine without duplicating transport/turn-wrapping logic. `opts.jsonSchema`
+   * constrains the reply on llama.cpp (see {@link ChatOptions}).
+   */
+  async chatComplete(system: string | undefined, user: string, signal?: AbortSignal, opts?: ChatOptions): Promise<string> {
+    const endpoint = await this.resolveEndpoint();
+    return this.complete(system, user, endpoint, signal, {
+      ...(opts?.maxTokens !== undefined ? { nPredict: opts.maxTokens } : {}),
+      ...(opts?.jsonSchema ? { jsonSchema: opts.jsonSchema } : {}),
+      ...(opts?.temperature !== undefined ? { temperature: opts.temperature } : {}),
+    });
+  }
+
+  async translateSegments(input: DubbingTranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
     const endpoint = await this.resolveEndpoint();
     const source = normalizeLanguageCode(input.sourceLanguage);
     const target = normalizeLanguageCode(input.targetLanguage);
@@ -311,12 +327,13 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     endpoint: { baseUrl: string; format: LocalLlmPromptFormat; headers?: Record<string, string> },
     source: string,
     target: string,
-    input: TranslationInput,
+    input: DubbingTranslationInput,
     signal: AbortSignal | undefined,
   ): Promise<TranslationResult> {
     // Document-level context (same design as the cloud provider): a provided
     // character sheet (persisted / user-edited) is authoritative; otherwise one
-    // analysis pass builds it and it is returned for persistence. Scene-aware
+    // analysis pass builds it and it is returned for persistence — unless the
+    // pipeline already ran the analysis itself (skipAnalysis). Scene-aware
     // batches then carry a rolling window of translated pairs. Best-effort — a
     // failed analysis never fails the translation.
     const provided = input.documentContext;
@@ -324,19 +341,29 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       translationContextEnabled() && (provided !== undefined || input.segments.length >= MIN_SEGMENTS_FOR_ANALYSIS);
     let analysis: TranslationAnalysis | undefined = provided;
     let generated: TranslationAnalysis | undefined;
-    if (useContext && analysis === undefined) {
-      generated = await this.complete(
-        'You prepare structured notes for dubbing translators. Respond with strict JSON only.',
-        buildAnalysisPrompt(source, target, buildAnalysisSample(input.segments)),
-        endpoint,
-        signal,
-      )
-        .then(parseAnalysisReply)
-        .catch(() => undefined);
+    if (useContext && analysis === undefined && input.skipAnalysis !== true) {
+      generated = (
+        await generateCharacterSheet(
+          {
+            chatComplete: (system, user, sig, opts) =>
+              this.complete(system, user, endpoint, sig, {
+                ...(opts?.maxTokens !== undefined ? { nPredict: opts.maxTokens } : {}),
+                ...(opts?.jsonSchema ? { jsonSchema: opts.jsonSchema } : {}),
+              }),
+            contextTokens: this.contextTokens,
+          },
+          { sourceLanguage: source, targetLanguage: target, segments: input.segments },
+          signal,
+        )
+      ).analysis;
       analysis = generated;
     }
 
-    const batches = planContextBatches(input.segments, { maxSegments: BATCH_SIZE, maxChars: 6000 });
+    const perSecond = input.speechRate;
+    const batches = planContextBatches(withFitWindows(input.segments as PromptSegment[]), {
+      maxSegments: BATCH_SIZE,
+      maxChars: 6000,
+    });
     const results: TranslationResultSegment[] = [];
     const detectSourceEcho = source.split('-')[0] !== target.split('-')[0];
     const system = 'You are a professional subtitle/dubbing translator.';
@@ -346,8 +373,13 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       const context = useContext
         ? buildContextHeader({ analysis, previousPairs: rolling, sceneBreak: isSceneBreak(previousBatch, batch) })
         : undefined;
-      const prompt = buildTranslationPrompt(source, target, batch, context || undefined);
-      const reply = await this.complete(system, prompt, endpoint, signal);
+      const prompt = buildTranslationPrompt(source, target, batch, context || undefined, { perSecond });
+      // The reply is grammar-constrained to exactly this batch's ids (llama.cpp
+      // json_schema): a truncated, fenced or prose-wrapped reply used to lose
+      // the whole batch to the recovery ladder below.
+      const reply = await this.complete(system, prompt, endpoint, signal, {
+        jsonSchema: segmentsReplySchema(batch.map((s) => s.id)),
+      });
 
       // Small local models routinely violate the batch contract (truncated /
       // malformed JSON, skipped lines, source echoes) — recover with one
@@ -355,12 +387,20 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       // with a plain-text reply: no JSON left to get wrong).
       const byId = await recoverBatch(batch, parseTranslationReply(reply), {
         sendBatch: (segs, insist) =>
-          this.complete(system, buildTranslationPrompt(source, target, segs, context || undefined, { insist }), endpoint, signal),
+          this.complete(
+            system,
+            buildTranslationPrompt(source, target, segs, context || undefined, { insist, perSecond }),
+            endpoint,
+            signal,
+            { jsonSchema: segmentsReplySchema(segs.map((s) => s.id)) },
+          ),
         // Per-line raw prompts return one bare line — a small reply budget
         // keeps the (up to 20) fallback calls fast.
         sendSingle: async (seg) =>
           stripTurnTokens(
-            await this.complete(undefined, buildRawTranslationPrompt(source, target, seg), endpoint, signal, 512),
+            await this.complete(undefined, buildRawTranslationPrompt(source, target, seg, { perSecond }), endpoint, signal, {
+              nPredict: 512,
+            }),
           ),
       }, detectSourceEcho, signal);
       for (const seg of batch) {
@@ -377,18 +417,40 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     endpoint: { baseUrl: string; format: LocalLlmPromptFormat; headers?: Record<string, string> },
     source: string,
     target: string,
-    input: TranslationInput,
+    input: DubbingTranslationInput,
     signal: AbortSignal | undefined,
   ): Promise<TranslationResult> {
+    const perSecond = input.speechRate;
     // Bounded concurrency: still one request per segment (preserving the strict
     // 1:1 mapping dubbing needs), but overlapped so a long video isn't
     // translated strictly one segment at a time. Result order is preserved.
-    const segments = await mapWithConcurrency(input.segments, this.concurrency, async (seg) => {
-      const prompt = buildRawTranslationPrompt(source, target, seg);
-      const reply = await this.complete(undefined, prompt, endpoint, signal);
-      const text = sanitizeTranslatedLine(stripTurnTokens(reply));
-      return { id: seg.id, translatedText: text || seg.sourceText } satisfies TranslationResultSegment;
-    });
+    const segments = await mapWithConcurrency(
+      withFitWindows(input.segments as PromptSegment[]),
+      this.concurrency,
+      async (seg) => {
+        const reply = await this.complete(undefined, buildRawTranslationPrompt(source, target, seg, { perSecond }), endpoint, signal);
+        let text = sanitizeTranslatedLine(stripTurnTokens(reply));
+        if (!text) {
+          // An empty reply used to become the SOURCE text without a word — a
+          // Chinese line handed to a Vietnamese voice. Retry once with the
+          // exact trained prompt (no dubbing sentence, which is the one part
+          // of the prompt TranslateGemma never saw in training) and a little
+          // temperature, since repeating a greedy request reproduces it.
+          const retry = await this.complete(
+            undefined,
+            buildRawTranslationPrompt(source, target, seg, { plain: true }),
+            endpoint,
+            signal,
+            { temperature: 0.3 },
+          );
+          text = sanitizeTranslatedLine(stripTurnTokens(retry));
+        }
+        // Still empty: return it EMPTY. The pipeline's per-line check flags it
+        // ('untranslated') and repairs it with a context model when one exists,
+        // instead of this provider quietly substituting the source.
+        return { id: seg.id, translatedText: text } satisfies TranslationResultSegment;
+      },
+    );
     return { segments };
   }
 
@@ -408,12 +470,38 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     user: string,
     endpoint: { baseUrl: string; format: LocalLlmPromptFormat; headers?: Record<string, string> },
     signal: AbortSignal | undefined,
-    nPredictOverride?: number,
+    opts: { nPredict?: number; jsonSchema?: Record<string, unknown>; temperature?: number } = {},
   ): Promise<string> {
     // Per-REQUEST timeout: the step's total budget is unbounded (a long video
     // is many requests), but no single request may hang the pipeline.
     const timeout = AbortSignal.timeout(this.opts.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    try {
+      return await this.request(system, user, endpoint, combined, opts);
+    } catch (err) {
+      // The transport reports any abort as a cancel, but only the RUN's signal
+      // is one. A request that ran out of time is a hung model: reported as a
+      // cancel, it failed a translation step whose lines were all done, with
+      // "cancelled" as the reason.
+      if (timeout.aborted && !signal?.aborted) {
+        throw new AppErrorException(
+          'WORKER_TIMEOUT',
+          `The local model did not answer within ${Math.round(this.opts.timeoutMs / 60_000)} min.`,
+          { remediation: 'Restart the app to restart the model, or pick a smaller model in Settings -> Engines.' },
+        );
+      }
+      throw err;
+    }
+  }
+
+  /** One request to the server, under `combined` (the run's signal and the request's timeout). */
+  private async request(
+    system: string | undefined,
+    user: string,
+    endpoint: { baseUrl: string; format: LocalLlmPromptFormat; headers?: Record<string, string> },
+    combined: AbortSignal,
+    opts: { nPredict?: number; jsonSchema?: Record<string, unknown>; temperature?: number },
+  ): Promise<string> {
     const { baseUrl, format } = endpoint;
     const headers = endpoint.headers ?? {};
     if (this.opts.backend === 'llama-cpp') {
@@ -424,16 +512,21 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       // Reply budget: a raw-segment reply is one line (512 is ample), but a
       // chat-JSON batch reply carries ~20 translated lines plus JSON scaffolding
       // (and the analysis pass a whole character sheet) — give those headroom.
-      const nPredict = nPredictOverride ?? (this.mode === 'chat-json-batch' ? 3072 : 512);
+      const nPredict = opts.nPredict ?? (this.mode === 'chat-json-batch' ? 3072 : 512);
       const data = await this.postJson<{ content?: string }>(
         `${baseUrl}/completion`,
         headers,
         {
           prompt,
-          temperature: 0,
+          temperature: opts.temperature ?? 0,
           n_predict: nPredict,
           cache_prompt: true,
           stop: [format === 'gemma4' ? GEMMA4_END_TURN : GEMMA_END_TURN],
+          // Grammar-constrained JSON (llama-server converts the schema to a
+          // GBNF grammar; checked on the pinned b12110). Without it a 4B model
+          // answered the character-sheet request with prose often enough that
+          // no audited project ever got a sheet.
+          ...(opts.jsonSchema ? { json_schema: opts.jsonSchema } : {}),
         },
         combined,
       );
@@ -451,7 +544,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     const data = await this.postJson<{ choices?: { message?: { content?: string } }[] }>(
       `${baseUrl}/chat/completions`,
       headers,
-      { model: this.opts.model, messages, temperature: 0, stream: false },
+      { model: this.opts.model, messages, temperature: opts.temperature ?? 0, stream: false },
       combined,
     );
     return data.choices?.[0]?.message?.content ?? '';

@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
+import { AppErrorException } from '@videodubber/shared';
 import {
+  analysisJsonSchema,
   buildAnalysisPrompt,
   buildAnalysisSample,
+  buildAnalysisTranscript,
   buildContextHeader,
   collectRollingPairs,
+  estimateTokens,
+  generateCharacterSheet,
+  GLOSSARY_JSON_SCHEMA,
+  isHanVietReadingShaped,
   isSceneBreak,
   parseAnalysisReply,
   planContextBatches,
+  recurringTerms,
+  type AnalysisChat,
 } from './translationContext.js';
 import {
   buildRawTranslationPrompt,
@@ -98,6 +107,175 @@ describe('analysis prompt + reply', () => {
   });
 });
 
+describe('character sheet (analysis) — constrained, whole-transcript, retried, loud', () => {
+  it('estimates tokens on the safe side of what Gemma measured (zh 0.79/char, vi 0.37/char)', () => {
+    expect(estimateTokens('昆仑墟东北')).toBe(5);
+    expect(estimateTokens('Đông bắc Côn Lôn Khư.')).toBe(Math.ceil(21 * 0.4));
+  });
+
+  it('sends the WHOLE transcript when it fits, with speaker tags', () => {
+    const segs = [
+      { id: 'a', sourceText: '师父，我们去哪', speakerId: 'SPEAKER_01' },
+      { id: 'b', sourceText: '长安', speakerId: 'SPEAKER_00' },
+    ];
+    expect(buildAnalysisTranscript(segs, 5000)).toBe('SPEAKER_01: 师父，我们去哪\nSPEAKER_00: 长安');
+  });
+
+  it('samples whole lines from beginning, middle and end when it does not fit', () => {
+    const segs = Array.from({ length: 300 }, (_, i) => ({ id: `s${i}`, sourceText: `第${i}句话在这里` }));
+    const sample = buildAnalysisTranscript(segs, 300);
+    expect(estimateTokens(sample)).toBeLessThanOrEqual(320);
+    expect(sample).toContain('第0句话在这里');
+    expect(sample).toContain('第299句话在这里');
+    expect(sample).toContain('[...]');
+    expect(sample.split('\n').every((l) => l === '[...]' || /^第\d+句话在这里$/.test(l))).toBe(true);
+  });
+
+  it('asks for Hán-Việt names (never pinyin) and per-speaker-pair xưng hô for zh→vi', () => {
+    const prompt = buildAnalysisPrompt('zh', 'vi-VN', 'SPEAKER_00: 师父');
+    expect(prompt).toContain('Hán-Việt');
+    expect(prompt).toContain('NEVER pinyin');
+    expect(prompt).toContain('PER SPEAKER PAIR');
+    expect(prompt).toContain('ta/ngươi');
+    expect(prompt).toContain('Analyze the following transcript');
+    // Mentioned only when the transcript has labels (4B invented SPEAKER_00..04 otherwise).
+    expect(prompt).toContain('Speaker labels like SPEAKER_00');
+    expect(buildAnalysisPrompt('zh', 'vi-VN', '师父')).not.toContain('Speaker labels');
+    const glossaryOnly = buildAnalysisPrompt('zh', 'vi', 'x', { glossaryOnly: true });
+    expect(glossaryOnly).toContain('"glossary"');
+    expect(glossaryOnly).not.toContain('"pronounGuide"');
+  });
+
+  it('drops glossary entries the voice could not say (pinyin, Chinese, untranslated)', () => {
+    const reply = JSON.stringify({
+      glossary: [
+        { source: '昆仑墟', target: 'Côn Lôn Khư' },
+        { source: '女娲', target: 'Nuwa' },
+        { source: '盘古', target: '盘古' },
+        { source: '鸿蒙', target: 'Hồng Mông' },
+        { source: '鸿蒙', target: 'Hồng Mông (duplicate)' },
+      ],
+    });
+    expect(parseAnalysisReply(reply, { sourceLanguage: 'zh', targetLanguage: 'vi' })?.glossary).toEqual([
+      { source: '昆仑墟', target: 'Côn Lôn Khư' },
+      { source: '鸿蒙', target: 'Hồng Mông' },
+    ]);
+  });
+
+  it('keeps only glossary names that occur in the transcript (Gemma 3 4B listed the prompt examples)', () => {
+    const reply = JSON.stringify({
+      glossary: [
+        { source: '唐三藏', target: 'Đường Tam Tạng' }, // never said in this video
+        { source: '西方教', target: 'Tây Phương Giáo' },
+      ],
+    });
+    expect(parseAnalysisReply(reply, { sourceLanguage: 'zh', targetLanguage: 'vi' }, '你们西方教\n乃西方教之地')?.glossary).toEqual([
+      { source: '西方教', target: 'Tây Phương Giáo' },
+    ]);
+  });
+
+  it('renders structured address pairs into the editable guide and drops CJK cast names for a vi dub', () => {
+    const reply = JSON.stringify({
+      cast: [{ name: '臭猴子 (臭猴子)', role: 'Monkey' }, { name: 'Tôn Ngộ Không (孙悟空)', role: 'hero' }],
+      pronounGuide: [
+        { speaker: 'Tôn Ngộ Không', listener: 'Thiên binh', self: 'lão Tôn', address: 'các ngươi' },
+        { speaker: '', listener: 'x', self: 'a', address: 'b' },
+        { speaker: 'Tôn Ngộ Không', listener: 'Sư tôn', self: '猴子', address: 'thầy' }, // Chinese term: dropped
+        { speaker: 'Hou Zi', listener: 'Zhu Que', self: 'ta', address: 'ngươi' }, // pinyin names: dropped
+      ],
+    });
+    const out = parseAnalysisReply(reply, { sourceLanguage: 'zh', targetLanguage: 'vi' });
+    expect(out?.cast).toEqual([{ name: 'Tôn Ngộ Không (孙悟空)', role: 'hero' }]);
+    expect(out?.pronounGuide).toBe('Tôn Ngộ Không → Thiên binh: xưng "lão Tôn", gọi "các ngươi"');
+  });
+
+  it('drops "ordinary word" entries and name-styled targets that cannot be a Hán-Việt reading', () => {
+    const reply = JSON.stringify({
+      glossary: [
+        { source: '西方教', kind: 'group', target: 'Tây Phương Giáo' },
+        { source: '现在', kind: 'ordinary word', target: 'Hiện tại' },
+        { source: '我天庭', kind: 'place', target: 'Thiên Đàng của ta' }, // 3 characters, 4 syllables
+        { source: '镇压', kind: 'technique', target: 'bế quan' }, // lowercase: an ordinary word (and wrong)
+      ],
+    });
+    expect(parseAnalysisReply(reply, { sourceLanguage: 'zh', targetLanguage: 'vi' })?.glossary).toEqual([
+      { source: '西方教', target: 'Tây Phương Giáo' },
+    ]);
+    expect(isHanVietReadingShaped('之力', 'Lực lượng của nó', { sourceLanguage: 'zh', targetLanguage: 'vi' })).toBe(false);
+    expect(isHanVietReadingShaped('之力', 'Lực lượng của nó', { sourceLanguage: 'en', targetLanguage: 'vi' })).toBe(true);
+  });
+
+  it('extracts recurring terms, preferring the full name over its parts and skipping grammar', () => {
+    const lines = ['乃西方教之地', '天庭已向西方教宣战', '西方教的手', '你们西方教', '我们什么', '我们什么', '我们什么'].map(
+      (sourceText) => ({ sourceText }),
+    );
+    const terms = recurringTerms(lines);
+    expect(terms[0]).toEqual({ term: '西方教', count: 4 });
+    expect(terms.map((t) => t.term)).not.toContain('西方');
+    expect(terms.map((t) => t.term)).not.toContain('我们什么');
+  });
+
+  /** A chat that returns `replies` in order and records each request's schema. */
+  function chat(replies: (string | Error)[], contextTokens?: number): AnalysisChat & { calls: { user: string; schema?: unknown }[] } {
+    const calls: { user: string; schema?: unknown }[] = [];
+    return {
+      calls,
+      ...(contextTokens ? { contextTokens } : {}),
+      async chatComplete(_system, user, _signal, opts) {
+        calls.push({ user, schema: opts?.jsonSchema });
+        const next = replies.shift();
+        if (next instanceof Error) throw next;
+        return next ?? '';
+      },
+    };
+  }
+
+  const input = {
+    sourceLanguage: 'zh',
+    targetLanguage: 'vi',
+    segments: [{ id: 'a', sourceText: '师父，长安到了' }],
+  };
+
+  it('constrains the reply with the sheet schema and returns the sheet', async () => {
+    const engine = chat([JSON.stringify({ synopsis: 'Đường đi thỉnh kinh.', cast: [], glossary: [], pronounGuide: 'x' })]);
+    const out = await generateCharacterSheet(engine, input);
+    expect(out.analysis?.synopsis).toBe('Đường đi thỉnh kinh.');
+    expect(out.attempts).toEqual([{ mode: 'full', ok: true }]);
+    expect(engine.calls[0]!.schema).toEqual(analysisJsonSchema('vi'));
+  });
+
+  it('retries ONCE with the glossary-only request, then reports both failures without throwing', async () => {
+    const engine = chat([new Error('llama-server returned HTTP 500'), JSON.stringify({ glossary: [{ source: '长安', target: 'Trường An' }] })]);
+    const ok = await generateCharacterSheet(engine, input);
+    expect(ok.analysis).toEqual({ glossary: [{ source: '长安', target: 'Trường An' }] });
+    expect(engine.calls[1]!.schema).toBe(GLOSSARY_JSON_SCHEMA);
+    expect(ok.attempts).toEqual([
+      { mode: 'full', ok: false, error: 'llama-server returned HTTP 500' },
+      { mode: 'glossary-only', ok: true },
+    ]);
+
+    const failed = await generateCharacterSheet(chat(['prose, no json', '{"glossary":[]}']), input);
+    expect(failed.analysis).toBeUndefined();
+    expect(failed.attempts.map((a) => a.ok)).toEqual([false, false]);
+  });
+
+  it('propagates cancellation instead of retrying', async () => {
+    const engine = chat([new AppErrorException('CANCELLED', 'cancelled')]);
+    await expect(generateCharacterSheet(engine, input)).rejects.toMatchObject({ appError: { code: 'CANCELLED' } });
+    expect(engine.calls).toHaveLength(1);
+  });
+
+  it('sizes the transcript to the engine context window', async () => {
+    const long = { ...input, segments: Array.from({ length: 3000 }, (_, i) => ({ id: `s${i}`, sourceText: `这是第${i}句很长的台词` })) };
+    const engine = chat(['{}', '{}'], 8192);
+    await generateCharacterSheet(engine, long);
+    expect(engine.calls[0]!.user).toContain('[...]');
+    const big = chat(['{}', '{}'], 200_000);
+    await generateCharacterSheet(big, long);
+    expect(big.calls[0]!.user).not.toContain('[...]');
+  });
+});
+
 describe('context header + rolling pairs', () => {
   const analysis = {
     synopsis: 'A cooking show.',
@@ -155,11 +333,35 @@ describe('speech budgets (duration-aware, target-language units)', () => {
     expect(speechBudget('vi')).toBeUndefined();
   });
 
-  it('surfaces the syllable budget in both prompt styles for vi', () => {
+  it('asks for a length RANGE in both prompt styles for vi, not "shorter is better"', () => {
+    // "A firm ceiling — shorter is BETTER" made models cut meaning on lines
+    // that had room (此乃上古至高道术 → "Đạo thuật thượng cổ.", dropping 至高).
     const batch = buildTranslationPrompt('en', 'vi', [seg('seg_0001', 0, 3000, 'Hello there my friend')]);
-    expect(batch).toContain('target 14 syllables (âm tiết) or fewer');
+    expect(batch).toContain('length: about 14 syllables (âm tiết), never more than 16');
+    expect(batch).toContain('keeping the FULL meaning');
+    expect(batch).not.toMatch(/shorter is BETTER|or fewer/);
     const raw = buildRawTranslationPrompt('en', 'vi', seg('seg_0001', 0, 3000, 'Hello there my friend'));
-    expect(raw).toContain('14 syllables (âm tiết) or fewer');
+    expect(raw).toContain('Aim for about 14 syllables (âm tiết), never more than 16');
+    expect(raw).toContain('keep the full meaning');
+  });
+
+  it('budgets with the voice rate and the pause after the cue when given', () => {
+    // VieNeu speaks ~3.5 syllables/s; the 600 ms pause before the next line
+    // adds 450 ms (150 ms is kept as a breath).
+    const prompt = buildTranslationPrompt(
+      'zh',
+      'vi',
+      [{ ...seg('seg_0001', 0, 3000, '此乃上古至高道术'), fitMs: 3450 }],
+      undefined,
+      { perSecond: 3.5 },
+    );
+    expect(prompt).toContain('[spoken window: 3.5s; length: about 12 syllables (âm tiết), never more than 14]');
+  });
+
+  it('the plain raw prompt is exactly the trained TranslateGemma template (no dubbing sentence)', () => {
+    const raw = buildRawTranslationPrompt('zh', 'vi', seg('seg_0001', 0, 3000, '你好'), { plain: true });
+    expect(raw).not.toContain('Aim for');
+    expect(raw).toContain('without any additional explanations or commentary. Please translate the following Chinese text into Vietnamese:\n\n\n你好');
   });
 
   it('prepends the context block before the rules', () => {
@@ -246,6 +448,31 @@ describe('sanitizeTranslatedLine', () => {
     expect(sanitizeTranslatedLine('(4 âm tiết)')).toBe('');
     expect(sanitizeTranslatedLine('[spoken window: 2.5s; target 4 syllables]')).toBe('');
     expect(sanitizeTranslatedLine('seg_0012: (4 âm tiết)')).toBe('');
+  });
+
+  it('strips tone-stripped romanization echoes and dangling quotes (Gemma 3 4B review, 2026-11)', () => {
+    expect(sanitizeTranslatedLine('Ở (O)')).toBe('Ở');
+    expect(sanitizeTranslatedLine('Thượng tướng Trần Phượng ở đâu? (Thượng tướng Trần Phượng o dau?)')).toBe(
+      'Thượng tướng Trần Phượng ở đâu?',
+    );
+    expect(sanitizeTranslatedLine('Kết thúc “')).toBe('Kết thúc');
+    expect(sanitizeTranslatedLine('Ấn khắc “Đại Quang” “')).toBe('Ấn khắc “Đại Quang”');
+    // A real parenthetical and balanced quotes stay.
+    expect(sanitizeTranslatedLine('Anh ta nói "đi" rồi.')).toBe('Anh ta nói "đi" rồi.');
+    expect(sanitizeTranslatedLine('Đọc cho tôi (2 số cuối)')).toBe('Đọc cho tôi (2 số cuối)');
+  });
+
+  it('strips the range hint when a model echoes it (new "length:" wording)', () => {
+    expect(sanitizeTranslatedLine('Hiện tại, sư phụ nên giúp đỡ đồ nhi này. [length: about 11 syllables (âm tiết), never more than 13]')).toBe(
+      'Hiện tại, sư phụ nên giúp đỡ đồ nhi này.',
+    );
+    expect(sanitizeTranslatedLine('Đi thôi. (about 4 syllables)')).toBe('Đi thôi.');
+    // The pronoun plan's notation, and a stray token after the sentence (Gemma 3 4B review).
+    expect(sanitizeTranslatedLine("Thiên giới. (xưng 'bạn')")).toBe('Thiên giới.');
+    expect(sanitizeTranslatedLine('Khi đó, bạn không còn là đối thủ của tôi nữa. k')).toBe(
+      'Khi đó, bạn không còn là đối thủ của tôi nữa.',
+    );
+    expect(sanitizeTranslatedLine('Gọi cho anh (gọi điện) nhé')).toBe('Gọi cho anh (gọi điện) nhé');
   });
 
   it('keeps elision apostrophes (no straight-single-quote unwrapping)', () => {

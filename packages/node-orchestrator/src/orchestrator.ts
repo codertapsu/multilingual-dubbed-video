@@ -15,7 +15,6 @@ import {
   toAppError,
   segmentsToSrt,
   segmentsToVtt,
-  transcriptSegmentsToCues,
   type AlignedSegment,
   type CreateProjectInput,
   type JobOrchestrator,
@@ -30,6 +29,7 @@ import {
   type RunScheduleResult,
   type RenderFinalVideoResult,
   type SegmentPatch,
+  type SubtitleStyle,
   type SystemProfile,
   type TimelineDocument,
   type TimelineFilmstrip,
@@ -40,6 +40,7 @@ import {
   type TtsSegment,
 } from '@videodubber/shared';
 import { alignSegments, type AlignSettings } from './alignment/align.js';
+import { measureClip, type ClipTiming } from './alignment/clipSpeech.js';
 import {
   rateForGroup,
   voiceForGroup,
@@ -50,7 +51,7 @@ import type { OrchestratorConfig } from './config.js';
 import type { EngineManager } from './engines/engineManager.js';
 import { withEngineOwner } from './engines/engineOwner.js';
 import { decideAdmissions, type RunningRun } from './scheduler/admit.js';
-import { classifyWorkload, type RunWorkload } from './scheduler/workload.js';
+import { classifyWorkload, lastHeavyStep, type RunWorkload } from './scheduler/workload.js';
 import { effectiveCapacity, POINTS_PER_LOCAL_RUN, recommendCapacity } from './system/capacity.js';
 import { getSystemProfile } from './system/systemProfile.js';
 import type { SetupStore } from './setup/setupStore.js';
@@ -58,14 +59,28 @@ import type { EventBusRegistry} from './events.js';
 import { type ProjectEventBus } from './events.js';
 import { KeyedMutex } from './keyedMutex.js';
 import { ProjectLogger } from './logging.js';
-import type { PipelineMediaService, SeparationService } from './media.js';
+import type { ClipTrim, PipelineMediaService, SeparationService } from './media.js';
 import type { AlignmentService } from './providers/alignment/whisperxProvider.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { assertRunReady, type ProviderReadiness } from './providers/readiness.js';
+import {
+  BUILT_IN_CHAT_PROVIDER_ID,
+  contextEngineCandidates,
+  FallbackContextChat,
+  type ContextCapableProvider,
+} from './providers/translation/contextEngine.js';
+import {
+  readTranslationReport,
+  tightenOneLine,
+  translationReportPath,
+  type TranslationReport,
+} from './providers/translation/dubPasses.js';
+import { fitWindowMs, resolveVoiceRate, voiceRateBookFor } from './providers/translation/speechFit.js';
 import { PipelineRunner, type RunnerDeps } from './pipeline/runner.js';
+import type { SpeechMapService } from './pipeline/speechMap.js';
 import type { ProjectStore } from './workspace/projectStore.js';
 import { segmentIdToIndex, type WorkspacePaths } from './workspace/paths.js';
-import { applyCueOverrides, clearCueOverridesFor, readCueOverrides } from './workspace/subtitleTiming.js';
+import { clearCueOverridesFor, displayCuesFor, readCueOverrides } from './workspace/subtitleTiming.js';
 import { writeJsonAtomic, writeTextAtomic } from './workspace/projectStore.js';
 import {
   alignmentInputsForUnits,
@@ -85,6 +100,8 @@ export interface OrchestratorDeps {
   separation?: SeparationService;
   /** Optional forced-alignment/diarization engine for tighter timing. */
   alignment?: AlignmentService;
+  /** Where speech is in a project's audio, to anchor transcript lines (see RunnerDeps). */
+  speechMap?: SpeechMapService;
   /** Engine lifecycle manager, so a finished run releases its heavy-engine lane. */
   engines?: EngineManager;
   /**
@@ -93,6 +110,14 @@ export interface OrchestratorDeps {
    * specs alone, as before.
    */
   gpuEngineFamilies?: () => Promise<ReadonlySet<string>>;
+  /**
+   * Whether the built-in Gemma chat model can run here (a llama.cpp runtime and
+   * a chat model pack are installed). Admission needs it: a project without a
+   * review model does its repairs and auto-fit with that model
+   * (contextEngine.ts), which takes the heavy lane. Optional: without it the
+   * model is taken to be absent, as before.
+   */
+  localChatAvailable?: () => Promise<boolean>;
   /** Preferences store (the user's concurrency limit / queue-paused flag). */
   setup?: Pick<SetupStore, 'getPreferences'>;
   /**
@@ -163,6 +188,48 @@ const EDITABLE_SETTING_KEYS = [
   'forcedAlignment',
   'diarize',
 ] as const satisfies readonly (keyof ProjectSettings)[];
+
+/**
+ * A clip trim from outside (the editor's preview request), or undefined when it
+ * is missing or not a plausible window: whole milliseconds, start before end,
+ * inside the longest clip an engine produces (an hour is far beyond it).
+ */
+export function validClipTrim(trim: Partial<ClipTrim> | undefined): ClipTrim | undefined {
+  const start = trim?.startMs;
+  const end = trim?.endMs;
+  if (typeof start !== 'number' || typeof end !== 'number') return undefined;
+  if (!Number.isInteger(start) || !Number.isInteger(end)) return undefined;
+  if (start < 0 || end <= start || end > 3_600_000) return undefined;
+  return { startMs: start, endMs: end };
+}
+
+/**
+ * Keep only well-formed {@link SubtitleStyle} fields (a client may send
+ * anything), or undefined when nothing is left. Out-of-range numbers are
+ * dropped, not clamped: the renderer's defaults are better than a guess.
+ */
+export function sanitizeSubtitleStyle(input: unknown): SubtitleStyle | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const s = input as Record<string, unknown>;
+  const out: SubtitleStyle = {};
+  const num = (v: unknown, lo: number, hi: number): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : undefined;
+  const color = (v: unknown): string | undefined => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : undefined);
+  if (s.position === 'bottom' || s.position === 'raised' || s.position === 'top') out.position = s.position;
+  if (typeof s.coverOriginal === 'boolean') out.coverOriginal = s.coverOriginal;
+  const opacity = num(s.coverOpacity, 0, 1);
+  if (opacity !== undefined) out.coverOpacity = opacity;
+  const band = num(s.coverHeightPercent, 5, 50);
+  if (band !== undefined) out.coverHeightPercent = band;
+  const size = num(s.sizePercent, 2, 15);
+  if (size !== undefined) out.sizePercent = size;
+  if (typeof s.fontFamily === 'string' && s.fontFamily.trim() && s.fontFamily.length <= 100) out.fontFamily = s.fontFamily.trim();
+  const primary = color(s.primaryColor);
+  if (primary) out.primaryColor = primary;
+  const outline = color(s.outlineColor);
+  if (outline) out.outlineColor = outline;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 /** The transcript segment shape merged with optional alignment status. */
 export interface SegmentWithAlignment extends TranscriptSegment {
@@ -243,6 +310,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       logger,
       ...(this.deps.separation ? { separation: this.deps.separation } : {}),
       ...(this.deps.alignment ? { alignment: this.deps.alignment } : {}),
+      ...(this.deps.speechMap ? { speechMap: this.deps.speechMap } : {}),
+      // How fast each voice really speaks, measured from its clips and kept
+      // between runs, so the next translation budgets lines at the voice's pace.
+      voiceRates: voiceRateBookFor(this.deps.config.configDir),
     };
     return { runner: new PipelineRunner(deps), bus, logger };
   }
@@ -355,6 +426,14 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         (next as unknown as Record<string, unknown>)[key] = value;
       }
     }
+    // The burned-in subtitle style is an object, so it is checked field by field
+    // (position + the band that hides a source's own hardsubs; see SubtitleStyle).
+    // Validate the patch BEFORE merging, so a bad value cannot erase a good one.
+    if (patch.burnSubtitleStyle !== undefined) {
+      const style = sanitizeSubtitleStyle({ ...next.burnSubtitleStyle, ...sanitizeSubtitleStyle(patch.burnSubtitleStyle) });
+      if (style) next.burnSubtitleStyle = style;
+      else delete next.burnSubtitleStyle;
+    }
     const saved = await this.deps.store.saveProject({
       ...project,
       settings: next,
@@ -435,7 +514,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       const merged: TranscriptSegment[] = base.map((s) => {
         const next = editMap.get(s.id);
         if (next === undefined || next === (s.translatedText ?? '')) return s;
-        return { ...s, translatedText: next, locked: true, ttsStale: true };
+        // Hand-written text replaces the machine's, and with it the checks' flags.
+        const { qualityFlags: _flags, ...rest } = s;
+        return { ...rest, translatedText: next, locked: true, ttsStale: true };
       });
 
       await writeJsonAtomic(paths.translatedJson, { segments: merged });
@@ -476,6 +557,13 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const video = project.mediaInfo?.videoStreams[0];
     const exists = async (p: string): Promise<boolean> =>
       fsp.stat(p).then((s) => s.isFile() && s.size > 0, () => false);
+    // The pace the pipeline budgets this project's lines at (speechFit.ts).
+    const rate = await resolveVoiceRate(
+      voiceRateBookFor(this.deps.config.configDir),
+      project.settings.ttsProviderId,
+      project.settings.ttsVoiceId,
+      project.settings.targetLanguage,
+    ).catch(() => undefined);
 
     return {
       projectId,
@@ -494,6 +582,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         ...((await exists(paths.originalWav)) ? { originalAudioPath: paths.originalWav } : {}),
         ...((await exists(paths.outputMp4)) ? { outputPath: paths.outputMp4 } : {}),
       },
+      ...(rate?.perSecond !== undefined && rate.source !== 'language-default'
+        ? { speechRate: { perSecond: rate.perSecond, source: rate.source } }
+        : {}),
     };
   }
 
@@ -571,13 +662,16 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /**
-   * The path of a dub clip tempo-fitted to `ratio` (cached), for the editor's
-   * preview. Validates the unit id (it becomes part of a file name) and clamps
-   * the ratio to what the aligner can produce; the cache key includes the
-   * clip's own size+mtime, so regenerating the line invalidates it, and older
-   * fits of the same unit are deleted when a new one is written.
+   * The path of a dub clip trimmed and tempo-fitted like the final mix
+   * (cached), for the editor's preview. `trim` is the unit's alignment trim
+   * (the part of the clip the mix plays); without it and at 1x the clip itself
+   * is the preview. Validates the unit id (it becomes part of a file name),
+   * clamps the ratio to what the aligner can produce and ignores a malformed
+   * trim; the cache key includes the clip's own size+mtime, so regenerating the
+   * line invalidates it, and older fits of the same unit are deleted when a new
+   * one is written.
    */
-  async getFittedClip(projectId: string, unitId: string, ratio: number): Promise<string> {
+  async getFittedClip(projectId: string, unitId: string, ratio: number, trim?: ClipTrim): Promise<string> {
     const paths = this.deps.store.paths(projectId);
     const media = this.deps.media;
     if (!/^seg_\d{1,6}$/.test(unitId)) throw new AppErrorException('INVALID_EDIT', `Unknown clip ${unitId}.`);
@@ -585,16 +679,18 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       throw new AppErrorException('ENGINE_UNAVAILABLE', 'This build cannot preview fitted clips.');
     }
     const r = Math.round(Math.max(1, Math.min(4, Number.isFinite(ratio) ? ratio : 1)) * 1000) / 1000;
+    const window = validClipTrim(trim);
     const source = paths.ttsSegment(segmentIdToIndex(unitId) || 1);
     const stamp = await fileStamp(source);
     if (!stamp) throw new AppErrorException('TTS_VOICE_MISSING', `Clip ${unitId} has not been synthesized yet.`);
-    if (r === 1) return source;
-    const name = `${unitId}-r${r.toFixed(3)}-${stamp.replace(':', '-')}.wav`;
+    if (r === 1 && !window) return source;
+    const cut = window ? `-t${window.startMs}-${window.endMs}` : '';
+    const name = `${unitId}-r${r.toFixed(3)}${cut}-${stamp.replace(':', '-')}.wav`;
     const out = path.join(paths.fittedClipsDir, name);
     if (await fileStamp(out)) return out;
     return this.onceInFlight(`fitted:${projectId}:${name}`, async () => {
       await fsp.mkdir(paths.fittedClipsDir, { recursive: true });
-      await media.renderFittedClip!(source, out, r);
+      await media.renderFittedClip!(source, out, r, window);
       // Drop stale fits of this unit (other ratios / an older synthesis).
       const entries = await fsp.readdir(paths.fittedClipsDir).catch(() => [] as string[]);
       await Promise.all(
@@ -667,7 +763,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
           await writeJsonAtomic(paths.sourceJson, {
             segments: source.map((s) => {
               const n = byId.get(s.id);
-              return n ? { ...s, startMs: n.startMs, endMs: n.endMs } : s;
+              if (!n || !outcome.timingChanged.has(s.id)) return n ? { ...s, startMs: n.startMs, endMs: n.endMs } : s;
+              // Same rule as applySegmentPatches: words move with the line, or go.
+              const { words: _stale, ...rest } = s;
+              return { ...rest, startMs: n.startMs, endMs: n.endMs, ...(n.words ? { words: n.words } : {}) };
             }),
           });
         }
@@ -804,6 +903,19 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       throw new AppErrorException('UNKNOWN', `TTS produced no output for segment ${segmentId}.`);
     }
 
+    // Measure each new clip as the alignment step does (clipSpeech.ts): the
+    // speech is what gets fitted and played, not the file around it.
+    const clips = new Map<string, ClipTiming>();
+    for (const s of synthesized) {
+      const unitText = units.find((u) => u.id === s.segmentId)?.text ?? s.text;
+      try {
+        clips.set(s.segmentId, await measureClip(this.deps.media, s.audioPath, unitText));
+      } catch {
+        // Unreadable right after synthesis: fit the length the engine reported.
+        clips.set(s.segmentId, { generatedDurationMs: s.durationMs });
+      }
+    }
+
     const alignment = await this.artifactLock.run(projectId, async () => {
       // Re-read: another line may have been regenerated while this one synthesized.
       const latest =
@@ -818,6 +930,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
           if (textChanged) {
             next.translatedText = text;
             next.locked = true;
+            delete next.qualityFlags; // the user's text, not the machine's
           }
           if (opts.voiceId !== undefined) {
             if (opts.voiceId) next.voiceId = opts.voiceId;
@@ -852,8 +965,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       // This used to align just the edited line against its own cue window, so
       // a line the pipeline accepted (it may use the pause before the next
       // line) was reported as a timing conflict the moment it was regenerated.
-      const durations = new Map(synthesized.map((s) => [s.segmentId, s.durationMs]));
-      const placed = await this.realign(project, paths, merged, durations);
+      const placed = await this.realign(project, paths, merged, clips);
       return (
         placed?.find((a) => a.segmentId === segmentId) ??
         // No alignment artifact yet (e.g. a preview at the review checkpoint,
@@ -864,7 +976,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
             [units.find((u) => u.id === segmentId)!],
             new Map(),
             (id) => paths.ttsSegment(segmentIdToIndex(id) || segment.index + 1),
-            durations,
+            clips,
           ),
           this.alignSettings(project),
           project.mediaInfo?.durationMs,
@@ -876,26 +988,47 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /**
-   * "Tighten to fit" one segment: re-translate it with a tighter word budget (by
-   * handing the LLM a shrunk window, which lowers the prompt's target), then
-   * re-synthesize + re-align via {@link synthesizeSingleSegment}. The editor uses
-   * this on a flagged line. A provider that can't shorten (Argos) returns the
-   * same text, so we keep the existing translation and just re-synthesize.
+   * "Tighten to fit" one segment: SHORTEN its current translation with the
+   * project's context engine (review model, else the Gemma chat model, else an
+   * instruction-following translator — never TranslateGemma), then
+   * re-synthesize + re-align via {@link synthesizeSingleSegment}. The editor
+   * uses this on a flagged line.
+   *
+   * It used to re-translate the line FROM THE SOURCE with the translation
+   * provider, with no neighbours and a shrunk fake window, and accept any text
+   * that differed — the same path that turned reviewed lines into "Tránh làm
+   * vỡ." (母符必碎) during auto-fit. Now the model sees the current line, its
+   * neighbours, the character sheet and a length budget at the voice's
+   * measured pace, and the proposal is kept only when it is shorter AND passes
+   * the line checks (dubPasses.tightenOneLine). `shortened: false` + `reason`
+   * tell the editor when the line was kept as it was.
    */
   async refitSegment(
     projectId: string,
     segmentId: string,
-  ): Promise<{ segment: TtsSegment; alignment: AlignedSegment; translatedText: string }> {
+  ): Promise<{
+    segment: TtsSegment;
+    alignment: AlignedSegment;
+    translatedText: string;
+    shortened: boolean;
+    reason?: string;
+  }> {
     this.assertNotRunning(projectId, 'tighten a segment');
-    // Same engine-ownership rule as synthesizeSingleSegment: this re-translates
-    // (possibly on a heavy local LLM) before re-synthesizing.
+    // Same engine-ownership rule as synthesizeSingleSegment: this runs a model
+    // (possibly a heavy local LLM) before re-synthesizing.
     return this.withEditorLane(projectId, () => this.refitSegmentImpl(projectId, segmentId));
   }
 
   private async refitSegmentImpl(
     projectId: string,
     segmentId: string,
-  ): Promise<{ segment: TtsSegment; alignment: AlignedSegment; translatedText: string }> {
+  ): Promise<{
+    segment: TtsSegment;
+    alignment: AlignedSegment;
+    translatedText: string;
+    shortened: boolean;
+    reason?: string;
+  }> {
     const project = await this.deps.store.getProject(projectId);
     const paths = this.deps.store.paths(projectId);
     const segments =
@@ -905,30 +1038,75 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     if (!seg) {
       throw new AppErrorException('UNKNOWN', `Segment not found: ${segmentId}`);
     }
+    const current = (seg.translatedText ?? seg.sourceText ?? '').trim();
 
-    // Gap-aware window: this line may use the silence until the next line starts
-    // (or the end of the media for the last line). Target the max-speed window so
-    // the new line fits with the same atempo headroom the aligner allows.
+    // The window the line may fill: its cue plus a capped share of the pause
+    // after it (or of the media's end), the same window every prompt budgets.
     const next = segments[idx + 1];
-    const endSlot = next ? next.startMs : ((await this.deps.store.getProject(projectId)).mediaInfo?.durationMs ?? seg.endMs);
-    const availableMs = Math.max(1, endSlot - seg.startMs);
-    const tightMs = Math.max(500, Math.round(availableMs * Math.max(1, project.settings.maxSpeedRatio)));
+    const windowMs = fitWindowMs(seg, next ? next.startMs : (project.mediaInfo?.durationMs ?? seg.endMs));
+    const rate = await resolveVoiceRate(
+      voiceRateBookFor(this.deps.config.configDir),
+      project.settings.ttsProviderId,
+      seg.voiceId ?? project.settings.ttsVoiceId,
+      project.settings.targetLanguage,
+    );
 
-    const translation = this.deps.registry.getTranslation(project.settings.translationProviderId);
-    const documentContext = (await this.getTranslationContext(projectId)) ?? undefined;
-    const result = await translation.translateSegments({
-      sourceLanguage: project.settings.sourceLanguage,
-      targetLanguage: project.settings.targetLanguage,
-      segments: [{ id: segmentId, sourceText: seg.sourceText, startMs: 0, endMs: tightMs }],
-      ...(documentContext ? { documentContext } : {}),
-    });
-    const proposed = (result.segments[0]?.translatedText ?? '').trim();
-    const finalText =
-      proposed && proposed !== (seg.translatedText ?? '') ? proposed : (seg.translatedText ?? seg.sourceText ?? '');
+    let finalText = current;
+    let shortened = false;
+    let reason: string | undefined;
+    const engine = new FallbackContextChat(contextEngineCandidates(this.deps.registry, project.settings));
+    if (!engine.available) {
+      reason = 'No instruction-following model is available to shorten the line (set a review model or install the Gemma chat model).';
+    } else if (seg.translatedText !== undefined) {
+      const documentContext = (await this.getTranslationContext(projectId)) ?? undefined;
+      const outcome = await tightenOneLine(
+        {
+          sourceLanguage: project.settings.sourceLanguage,
+          targetLanguage: project.settings.targetLanguage,
+          segments,
+          segmentId,
+          windowMs,
+          ...(documentContext ? { documentContext } : {}),
+          ...(rate.perSecond !== undefined ? { perSecond: rate.perSecond } : {}),
+        },
+        engine,
+      );
+      shortened = outcome.shortened;
+      reason = outcome.reason;
+      if (outcome.shortened) finalText = outcome.text;
+    } else {
+      reason = 'The line has no translation yet.';
+    }
 
     // Persist the shortened text + re-synthesize + re-align (handled inside).
-    const { segment, alignment } = await this.synthesizeSingleSegmentImpl(projectId, segmentId, { text: finalText });
-    return { segment, alignment, translatedText: finalText };
+    // Nothing shortened: re-voice the line as it is. Passing its text as an
+    // edit wrote the SOURCE of an untranslated line as its locked translation.
+    const { segment, alignment } = await this.synthesizeSingleSegmentImpl(
+      projectId,
+      segmentId,
+      shortened ? { text: finalText } : {},
+    );
+    return { segment, alignment, translatedText: finalText, shortened, ...(reason ? { reason } : {}) };
+  }
+
+  /**
+   * What the app's text passes did to a project's translation: the character
+   * sheet (built, or failed and why), the per-line checks (repaired, still
+   * flagged), auto-fit (shortened, refused) — translation_report.json — and the
+   * review pass (changes, refusals) — refine_report.json. Empty / null before
+   * those steps ran. The editor warns from it, and Claude reads it over MCP to
+   * find the lines worth a look.
+   */
+  async getTranslationReport(
+    projectId: string,
+  ): Promise<{ translation: TranslationReport; review: Record<string, unknown> | null }> {
+    await this.deps.store.getProject(projectId); // an unknown project is an error, not an empty report
+    const paths = this.deps.store.paths(projectId);
+    const [translation, review] = await Promise.all([
+      readTranslationReport(translationReportPath(paths.subtitlesDir)),
+      readJsonIfExists<Record<string, unknown>>(paths.refineReportJson),
+    ]);
+    return { translation, review: review ?? null };
   }
 
   /**
@@ -973,7 +1151,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         ? { pronounGuide: ctx.pronounGuide.trim() }
         : {}),
     };
-    await fsp.writeFile(paths.translationContextJson, `${JSON.stringify(clean, null, 2)}\n`, 'utf8');
+    await writeJsonAtomic(paths.translationContextJson, clean);
     return clean;
   }
 
@@ -1064,11 +1242,13 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     retryFromStep: PipelineStepId | undefined,
   ): Promise<RunScheduleResult> {
     const gpuFamilies = await this.gpuFamilies();
+    const contextEngine = await this.contextEngineOf(project.settings);
     const workload = classifyWorkload(project.settings, this.deps.registry, {
       fromStep: retryFromStep,
       separationAvailable: this.deps.separation !== undefined,
       alignmentAvailable: this.deps.alignment !== undefined,
       gpuFamilies,
+      ...(contextEngine ? { contextEngine } : {}),
     });
 
     const capacity = await this.effectiveCapacity();
@@ -1319,6 +1499,19 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     return (await this.deps.gpuEngineFamilies?.().catch(() => undefined)) ?? new Set<string>();
   }
 
+  /**
+   * The engine a run's context work will use (the first candidate that can
+   * answer: a configured cloud or review model is taken to, the built-in chat
+   * only when it is installed), for admission. Never throws.
+   */
+  private async contextEngineOf(settings: ProjectSettings): Promise<ContextCapableProvider | undefined> {
+    for (const candidate of contextEngineCandidates(this.deps.registry, settings)) {
+      if (candidate.id !== BUILT_IN_CHAT_PROVIDER_ID) return candidate;
+      if (await this.deps.localChatAvailable?.().catch(() => false)) return candidate;
+    }
+    return undefined;
+  }
+
   async reconcileQueue(): Promise<void> {
     let projects: Project[];
     try {
@@ -1332,6 +1525,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const gpuFamilies = await this.gpuFamilies();
     for (const p of queued) {
       if (this.queued.has(p.id) || this.running.has(p.id)) continue;
+      const contextEngine = await this.contextEngineOf(p.settings);
       this.workloads.set(
         p.id,
         classifyWorkload(p.settings, this.deps.registry, {
@@ -1339,6 +1533,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
           separationAvailable: this.deps.separation !== undefined,
           alignmentAvailable: this.deps.alignment !== undefined,
           gpuFamilies,
+          ...(contextEngine ? { contextEngine } : {}),
         }),
       );
       this.queue.push(p.id);
@@ -1437,7 +1632,20 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    */
   private startRun(project: Project, retryFromStep: PipelineStepId | undefined): void {
     const controller = new AbortController();
-    const { runner } = this.runnerDeps(project.id);
+    const { runner, bus } = this.runnerDeps(project.id);
+
+    // Past its last heavy step the run only mixes and renders: hand the heavy
+    // lane to the next queued dub instead of holding it to the end (see
+    // lastHeavyStep). Its engines stay warm until someone else needs the GPU.
+    const handOver = lastHeavyStep(project.settings, { separationAvailable: this.deps.separation !== undefined });
+    const stopWatching = bus.subscribe((event) => {
+      if (event.type !== 'step' || event.step.id !== handOver) return;
+      if (event.step.status !== 'completed' && event.step.status !== 'skipped') return;
+      const w = this.workloads.get(project.id);
+      if (w?.needsHeavyEngine) this.workloads.set(project.id, { ...w, needsHeavyEngine: false });
+      this.deps.engines?.releaseHeavyLane(project.id);
+      void this.pump();
+    });
 
     const promise = withEngineOwner(project.id, async () => {
       // Mark the project running immediately for snappy UI feedback.
@@ -1448,6 +1656,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       );
     })
       .finally(() => {
+        stopWatching();
         this.running.delete(project.id);
         this.workloads.delete(project.id);
         this.deps.engines?.releaseHeavyLane(project.id);
@@ -1483,12 +1692,6 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     }
   }
 
-  /** Persist the synthesis-group plan. */
-  private async writeGroups(path: string, groups: SynthesisGroup[]): Promise<void> {
-    const artifact: SynthesisGroupsArtifact = { groups };
-    await fsp.writeFile(path, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
-  }
-
   /** Read aligned segments (or undefined if missing). */
   private async tryReadAligned(path: string): Promise<AlignedSegment[] | undefined> {
     try {
@@ -1508,8 +1711,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /**
-   * Re-fit every synthesis unit, gap-aware, from the clip durations already on
-   * disk (overridden by `durations` for units just re-synthesized), and persist.
+   * Re-fit every synthesis unit, gap-aware, from the clip timings of the last
+   * fit (overridden by `clips` for units just re-synthesized), and persist.
    *
    * Callers MUST hold the project's artifact lock. Returns undefined — and
    * writes nothing — when no alignment artifact exists yet: creating one with a
@@ -1519,7 +1722,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     project: Project,
     paths: WorkspacePaths,
     segments: readonly TranscriptSegment[],
-    durations: ReadonlyMap<string, number>,
+    clips: ReadonlyMap<string, ClipTiming>,
   ): Promise<AlignedSegment[] | undefined> {
     const previous = await this.tryReadAligned(paths.translatedAlignedJson);
     const groups = await this.tryReadGroups(paths.synthesisGroupsJson);
@@ -1531,7 +1734,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       units,
       prior,
       (id) => paths.ttsSegment(segmentIdToIndex(id) || 1),
-      durations,
+      clips,
     );
     const aligned = alignSegments(inputs, this.alignSettings(project), project.mediaInfo?.durationMs);
     await writeJsonAtomic(paths.translatedAlignedJson, aligned);
@@ -1544,8 +1747,16 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * source-speech timing. Atomic, like every other editor write.
    */
   private async writeSidecars(paths: WorkspacePaths, segments: readonly TranscriptSegment[]): Promise<void> {
-    const overrides = await readCueOverrides(paths.cueTimingJson);
-    const cues = transcriptSegmentsToCues(applyCueOverrides([...segments], overrides));
+    const [overrides, groups, units] = await Promise.all([
+      readCueOverrides(paths.cueTimingJson),
+      this.tryReadGroups(paths.synthesisGroupsJson),
+      this.tryReadAligned(paths.translatedAlignedJson),
+    ]);
+    const cues = displayCuesFor(segments, {
+      overrides,
+      ...(groups ? { groups } : {}),
+      ...(units ? { units } : {}),
+    });
     await writeTextAtomic(paths.translatedSrt, segmentsToSrt(cues));
     await writeTextAtomic(paths.translatedVtt, segmentsToVtt(cues));
   }

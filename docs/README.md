@@ -14,6 +14,7 @@ You need none of the contributor docs to use VideoDubber.
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Every error code the app can show, plus common failures. Split into "using the app" and "developing". |
 | [VIENEU_TTS_SETUP.md](VIENEU_TTS_SETUP.md) | The optional neural Vietnamese voice: install it, use it, remove it. |
 | [PROVIDERS.md](PROVIDERS.md) | Every engine you can pick per phase — local defaults, engine packs, optional cloud providers and exactly what data they send. |
+| [MCP.md](MCP.md) | Let Claude Desktop or Claude Code run the whole dub: connecting, the tools, the best-quality review workflow. |
 | [MODEL_SETUP.md](MODEL_SETUP.md) | Whisper models, Argos translation packs and Piper voices: what they are, where they live, how to pre-seed them. |
 
 ## For contributors (building from source)

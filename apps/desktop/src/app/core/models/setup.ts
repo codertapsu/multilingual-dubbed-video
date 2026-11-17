@@ -121,6 +121,8 @@ export interface UpdatePreferences {
   autoUpdate: boolean;
   providerDefaults?: ProviderDefaults;
   concurrency?: ConcurrencyPreferences;
+  /** Installed local model packs the user picked per job ('' = back to automatic). */
+  localModels?: { translation?: string; chat?: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -208,6 +210,15 @@ export interface RunPreflightProvider {
 export interface RunPreflightResult {
   ok: boolean;
   providers: RunPreflightProvider[];
+}
+
+/** GET /integrations/claude — how Claude starts VideoDubber's MCP server here. */
+export interface ClaudeIntegration {
+  /** The command a client runs (this app's binary + `--mcp`), or null if this build cannot. */
+  mcp: { command: string; args: string[] } | null;
+  /** The one-line `claude mcp add …` for Claude Code. */
+  claudeCode: { command: string } | null;
+  claudeDesktop: { installed: boolean; configPath: string | null; connected: boolean };
 }
 
 /** A detected GPU (best-effort). */

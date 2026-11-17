@@ -80,6 +80,10 @@ class HealthResponse(BaseModel):
     device: str
     compute_type: str
     loaded: bool
+    # The machine's PERFORMANCE cores (cpu.py), which the orchestrator also
+    # hands to llama.cpp and whisper.cpp: left alone they count E-cores and SMT
+    # siblings too, the configuration that made transcription 12% slower here.
+    cpu_threads: int = 0
 
 
 # --- Model management (first-run setup wizard) ----------------------------
@@ -124,3 +128,24 @@ class ErrorBody(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorBody
+
+
+class SpeechRegionsRequest(BaseModel):
+    """POST /speech-regions: where speech is in an audio file (Silero VAD)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    audioPath: str = Field(..., description="Absolute path to the audio file (16 kHz mono WAV is fastest).")
+    minSilenceMs: int = Field(300, ge=0, description="A pause at least this long splits two regions.")
+    padMs: int = Field(100, ge=0, description="Padding added on each side of a region.")
+    threshold: float = Field(0.5, gt=0, lt=1, description="Speech probability threshold.")
+
+
+class SpeechRegion(BaseModel):
+    startMs: int
+    endMs: int
+
+
+class SpeechRegionsResponse(BaseModel):
+    durationMs: int
+    regions: List[SpeechRegion]

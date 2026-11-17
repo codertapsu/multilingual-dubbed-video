@@ -85,6 +85,19 @@ export const NVIDIA_SMI_QUERIES: readonly string[] = [
   '--query-gpu=name,memory.total,driver_version',
 ];
 
+/**
+ * A system_profiler VRAM string in MB: "8 GB", "1536 MB", "4" (GB). The unit
+ * used to be ignored and every number read as GB, so an older Intel Mac's
+ * "1536 MB" became 1.5 TB of VRAM and every model looked like it would fit.
+ */
+export function parseVramMb(text: string): number | undefined {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(GB|MB)?\b/i.exec(text);
+  if (!m) return undefined;
+  const n = Number.parseFloat(m[1]!);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.round(m[2]?.toUpperCase() === 'MB' ? n : n * 1024);
+}
+
 /** `system_profiler SPDisplaysDataType -json` */
 export function parseSystemProfiler(stdout: string): GpuInfo[] {
   const parsed = JSON.parse(stdout) as {
@@ -93,10 +106,10 @@ export function parseSystemProfiler(stdout: string): GpuInfo[] {
   return (parsed.SPDisplaysDataType ?? [])
     .filter((d) => d.sppci_model)
     .map((d) => {
-      const vram = d.spdisplays_vram ? Number.parseInt(d.spdisplays_vram, 10) : NaN;
+      const vramMb = d.spdisplays_vram ? parseVramMb(d.spdisplays_vram) : undefined;
       return {
         name: d.sppci_model as string,
-        ...(Number.isFinite(vram) ? { vramMb: vram * 1024 } : {}),
+        ...(vramMb !== undefined ? { vramMb } : {}),
       };
     });
 }

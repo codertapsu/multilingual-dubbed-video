@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { ProjectSettings } from '@videodubber/shared';
-import { classifyWorkload } from './workload.js';
+import { classifyWorkload, lastHeavyStep } from './workload.js';
 import { isGpuPack, isHeavyPack } from '../engines/engineManager.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 
@@ -48,6 +48,50 @@ describe('classifyWorkload and the GPU voice pack', () => {
       fromStep: 'render',
     });
     expect(w.needsHeavyEngine).toBe(false);
+  });
+});
+
+describe('classifyWorkload and the context engine', () => {
+  // Argos + Piper is light by its providers, but with the Gemma chat installed
+  // its repairs and auto-fit start llama.cpp, which takes the heavy lane.
+  const lightSettings = { ...settings, ttsProviderId: 'piper-local' } as ProjectSettings;
+  const lightRegistry = { ...registry, getTts: () => local() } as unknown as ProviderRegistry;
+  const gemmaChat = local('local-llm');
+
+  it('admits a light run as heavy when its context work runs on the local chat model', () => {
+    expect(classifyWorkload(lightSettings, lightRegistry).needsHeavyEngine).toBe(false);
+    const w = classifyWorkload(lightSettings, lightRegistry, { contextEngine: gemmaChat });
+    expect(w.needsHeavyEngine).toBe(true);
+    expect(w.heavyFamily).toBe('local-llm');
+  });
+
+  it('keeps the lane free when the run never reaches a step that uses it', () => {
+    expect(
+      classifyWorkload(lightSettings, lightRegistry, { contextEngine: gemmaChat, fromStep: 'audio-mix' }).needsHeavyEngine,
+    ).toBe(false);
+    // From alignment, only auto-fit would use it.
+    const noAutoFit = { ...lightSettings, autoFitOverflow: false } as ProjectSettings;
+    expect(classifyWorkload(noAutoFit, lightRegistry, { contextEngine: gemmaChat, fromStep: 'alignment' }).needsHeavyEngine).toBe(
+      false,
+    );
+    expect(
+      classifyWorkload(lightSettings, lightRegistry, { contextEngine: gemmaChat, fromStep: 'alignment' }).needsHeavyEngine,
+    ).toBe(true);
+  });
+
+  it('leaves a cloud run cloud-only when its context engine is a cloud model', () => {
+    const cloud = { getStt: () => ({ isLocal: false }), getTranslation: () => ({ isLocal: false }), getTts: () => ({ isLocal: false }) };
+    const w = classifyWorkload(settings, cloud as unknown as ProviderRegistry, { contextEngine: { isLocal: false } });
+    expect(w).toMatchObject({ needsHeavyEngine: false, cloudOnly: true });
+  });
+});
+
+describe('lastHeavyStep', () => {
+  it('is alignment (auto-fit re-translates and re-voices), or audio-mix when vocal separation runs there', () => {
+    expect(lastHeavyStep(settings)).toBe('alignment');
+    expect(lastHeavyStep({ ...settings, originalAudioMode: 'replace-vocals' })).toBe('audio-mix');
+    // No separation engine wired: the mix falls back to ducking, which is ffmpeg only.
+    expect(lastHeavyStep({ ...settings, originalAudioMode: 'replace-vocals' }, { separationAvailable: false })).toBe('alignment');
   });
 });
 

@@ -2,7 +2,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LocalJobOrchestrator } from './orchestrator.js';
+import { LocalJobOrchestrator, sanitizeSubtitleStyle } from './orchestrator.js';
 import type { ProviderReadiness } from './providers/readiness.js';
 import { loadConfig } from './config.js';
 import { EventBusRegistry } from './events.js';
@@ -165,9 +165,32 @@ describe('LocalJobOrchestrator extras', () => {
     expect(merged.segments[0].translatedText).toBe('Xin chào các bạn');
     expect(merged.segments[0].locked).toBe(true);
 
-    // Aligned file updated with the fresh duration.
+    // Aligned file updated from the fresh clip, measured like the alignment
+    // step does: the fake's 80/220 ms edge silence is trimmed to 50/80 ms pads.
     const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8'));
-    expect(aligned[0]).toMatchObject({ segmentId: 'seg_0001', generatedDurationMs: 900, status: 'ok' });
+    expect(aligned[0]).toMatchObject({
+      segmentId: 'seg_0001',
+      generatedDurationMs: 730,
+      trimStartMs: 30,
+      trimEndMs: 760,
+      status: 'ok',
+    });
+  });
+
+  it('a Tighten that shortens nothing re-voices the line without turning its source into a locked translation', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+    // An untranslated line, and no instruction-following model in the registry.
+    const [seg] = makeSegments([[0, 1000, '你好']]);
+    const { translatedText: _none, ...untranslated } = seg!;
+    await fsp.writeFile(paths.translatedJson, JSON.stringify({ segments: [untranslated] }), 'utf8');
+
+    const result = await orchestrator.refitSegment(project.id, 'seg_0001');
+    expect(result.shortened).toBe(false);
+    const saved = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')).segments[0];
+    expect(saved.translatedText).toBeUndefined();
+    expect(saved.locked).toBeUndefined();
   });
 
   it('probe persists mediaInfo and rejects videos without audio', async () => {
@@ -414,6 +437,72 @@ describe('run queue (simultaneous-dub capacity)', () => {
     expect((await store.getProject(crashed.id)).status).toBe('paused');
     const state = await sched.queueState();
     expect(state.entries.map((e) => e.projectId)).toContain(queuedProject.id);
+  });
+});
+
+describe('burned-in subtitle style edits', () => {
+  it('merges position / cover changes, keeps only well-formed fields, and clears an empty style', async () => {
+    const video = await writeDummyVideo(tmp);
+    const p = await orchestrator.createProject(createProjectInput(video));
+
+    let { project } = await orchestrator.updateProjectSettings(p.id, { burnSubtitleStyle: { position: 'raised' } });
+    expect(project.settings.burnSubtitleStyle).toEqual({ position: 'raised' });
+
+    ({ project } = await orchestrator.updateProjectSettings(p.id, {
+      burnSubtitleStyle: { coverOriginal: true, coverOpacity: 7, primaryColor: 'red', evil: '<script>' } as never,
+    }));
+    expect(project.settings.burnSubtitleStyle).toEqual({ position: 'raised', coverOriginal: true });
+
+    ({ project } = await orchestrator.updateProjectSettings(p.id, {
+      burnSubtitleStyle: { position: 'sideways', coverOriginal: 'yes' } as never,
+    }));
+    expect(project.settings.burnSubtitleStyle).toEqual({ position: 'raised', coverOriginal: true });
+  });
+
+  it('sanitizeSubtitleStyle drops everything it does not know', () => {
+    expect(sanitizeSubtitleStyle({ junk: 1 })).toBeUndefined();
+    expect(sanitizeSubtitleStyle(null)).toBeUndefined();
+    expect(sanitizeSubtitleStyle({ sizePercent: 6, outlineColor: '#000000', coverHeightPercent: 90 })).toEqual({
+      sizePercent: 6,
+      outlineColor: '#000000',
+    });
+  });
+});
+
+describe('heavy-lane hand-over', () => {
+  it('releases the heavy lane once alignment is done, before mixing and rendering', async () => {
+    const video = await writeDummyVideo(tmp);
+    const p = await orchestrator.createProject(createProjectInput(video, { name: 'GPU' }));
+    const order: string[] = [];
+    const buses = new EventBusRegistry();
+    buses.get(p.id).subscribe((e) => {
+      if (e.type === 'step' && (e.step.status === 'running' || e.step.status === 'completed')) {
+        order.push(`${e.step.id}:${e.step.status}`);
+      }
+    });
+    const s = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media: new FakeMediaService(),
+      registry: fakeRegistry(
+        new FakeSttProvider(makeSegments([[0, 1000, 'hi']])),
+        new FakeTranslationProvider(),
+        new FakeTtsProvider(() => 900),
+      ),
+      bus: buses,
+      engines: {
+        heavyLaneOwner: () => undefined,
+        releaseHeavyLane: (owner: string) => order.push(`release:${owner === p.id ? 'run' : owner}`),
+      } as never,
+    });
+
+    await s.runPipeline(p.id);
+    // A whole (fake) dub: give it room on a loaded machine (the 1 s default flaked under a parallel build).
+    await vi.waitFor(async () => expect((await store.getProject(p.id)).status).toBe('completed'), { timeout: 15_000 });
+
+    const released = order.indexOf('release:run');
+    expect(released).toBeGreaterThan(order.indexOf('alignment:completed'));
+    expect(released).toBeLessThan(order.indexOf('audio-mix:running'));
   });
 });
 

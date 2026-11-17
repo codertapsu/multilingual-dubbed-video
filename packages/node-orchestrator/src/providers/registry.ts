@@ -17,7 +17,12 @@
  * The registry is the single composition point, so tests can build a registry
  * out of mocked providers and inject it into the pipeline runner.
  */
-import { AppErrorException, type CloudServiceId, type SystemProfile } from '@videodubber/shared';
+import {
+  AppErrorException,
+  type CloudServiceId,
+  type LocalModelPreferences,
+  type SystemProfile,
+} from '@videodubber/shared';
 import type { OrchestratorConfig } from '../config.js';
 import { CredentialsStore } from '../credentials/credentialsStore.js';
 import type {
@@ -42,6 +47,7 @@ import {
   installedPacksForProvider,
   resolveLocalLlmChatModel,
   resolveLocalLlmModelPath,
+  resolveWhisperCppModel,
 } from '../engines/packSelection.js';
 import { ContextRepairTranslationProvider } from './translation/contextRepairProvider.js';
 import { availablePacks } from '../engines/enginePackCatalog.js';
@@ -170,9 +176,12 @@ export function createDefaultRegistry(
   engines?: EngineManager,
   store?: EnginePackStore,
   profile?: SystemProfile,
+  /** The user's local-model choices, read at every engine start (Settings → Engines). */
+  localModels: () => Promise<LocalModelPreferences | undefined> = async () => undefined,
 ): ProviderRegistry {
   const registry = new ProviderRegistry();
   const timeout = config.workerRequestTimeoutMs;
+  const chosenModels = async (): Promise<LocalModelPreferences> => (await localModels().catch(() => undefined)) ?? {};
 
   // True if the machine has ANY installable pack for a provider — the right OS/arch
   // AND (when we know the hardware) an accelerator the build can use. Used to avoid
@@ -223,7 +232,14 @@ export function createDefaultRegistry(
     // is the local STT, so we don't show a "needs engine pack" dead end.
     if (hasRunnablePack('whisper-cpp')) {
       registry.registerStt(
-        new WhisperCppProvider(engines, () => requireInstalledPack(store, 'whisper-cpp'), timeout),
+        new WhisperCppProvider(
+          engines,
+          () => requireInstalledPack(store, 'whisper-cpp'),
+          // The model is the PROJECT's (its speech-model setting), not "the best
+          // installed" — see resolveWhisperCppModel.
+          (sttModel) => resolveWhisperCppModel(store, sttModel),
+          timeout,
+        ),
       );
     }
     // Local-LLM translation (llama.cpp runtime + a TranslateGemma model) — only
@@ -245,7 +261,7 @@ export function createDefaultRegistry(
           // down when a working Vulkan/CPU build is installed alongside it.
           const packIds = await installedPacksForProvider(store, 'local-llm', process.platform, process.arch, profile);
           if (packIds.length === 0) await requireInstalledPack(store, 'local-llm'); // throws the actionable error
-          const model = await resolveLocalLlmModelPath(store);
+          const model = await resolveLocalLlmModelPath(store, (await chosenModels()).translation);
           const baseUrl = await engines.ensureRunningFirstUsable(packIds, { exclusive: true, model });
           return { baseUrl, headers: engines.authHeaders(baseUrl) };
         },
@@ -270,7 +286,7 @@ export function createDefaultRegistry(
       resolveBaseUrl: async () => {
         const packIds = await installedPacksForProvider(store, 'local-llm', process.platform, process.arch, profile);
         if (packIds.length === 0) await requireInstalledPack(store, 'local-llm'); // throws the actionable error
-        const chatModel = await resolveLocalLlmChatModel(store);
+        const chatModel = await resolveLocalLlmChatModel(store, undefined, (await chosenModels()).chat);
         const baseUrl = await engines.ensureRunningFirstUsable(packIds, {
           exclusive: true,
           model: chatModel.modelPath,

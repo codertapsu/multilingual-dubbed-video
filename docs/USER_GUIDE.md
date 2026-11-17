@@ -133,6 +133,18 @@ Click **+ New project** and work through the wizard:
    subtitles burned permanently into the picture.
 4. **Start.**
 
+The engines start from the best ones **installed on this computer**: if you have
+installed the GPU transcription engine, the local AI translator or the neural
+Vietnamese voice, a new project uses them without you picking them (a choice you
+saved in Settings → Processing defaults still wins). If an engine the app picked
+cannot start, transcription falls back to the built-in engine and says so in the
+log; an engine you chose yourself is never swapped behind your back.
+
+Subtitles are timed for reading: each one stays up long enough to read (about 17
+characters a second, at least a second, never more than 7 seconds unless the
+voice is still speaking), stays up until its dub voice has finished, and long
+lines break into two balanced rows.
+
 The **Processing** screen then shows nine steps running in order, with live
 progress:
 
@@ -194,6 +206,13 @@ What you can do, and how:
 - **Render.** **Render video** re-mixes the dub from the timeline and renders the
   final file; transcription and translation are reused, so it takes seconds to
   minutes, not the whole pipeline again.
+- **Place burned-in subtitles.** With subtitles burned in, the Project tab has
+  **Subtitle position** (bottom, raised above the video's own subtitles, or top)
+  and **Cover the original subtitles**, which lays a solid band over the bottom
+  strip where many videos — Chinese dramas especially — have their own subtitles
+  burned in. **Render quality → Automatic** (the default for new projects) uses
+  your graphics card's video encoder when it works, which is several times faster
+  with the same picture quality, and the software encoder otherwise.
 
 Lines you edit by hand are **locked**: the automatic passes that shorten
 overflowing lines or polish the translation leave them exactly as you wrote
@@ -267,7 +286,8 @@ button tells you whether it is still live.
 | **Language** | The app's own display language — English or Tiếng Việt. It changes immediately and is remembered. |
 | **This computer** | What VideoDubber measured about your machine: the transcription model it recommends, and how many dubs it will run at once. You can lower that limit or pause the queue. |
 | **Processing defaults** | Which engine each phase of a *new* project uses. You can still change them per project. |
-| **Cloud API keys** | Optional. Only needed if you choose a cloud engine for a phase. |
+| **Cloud API keys** | Optional. Only needed if you choose a cloud engine for a phase. Under the Anthropic key you choose the Claude model used for translation and review: Opus (best), Sonnet (about half the cost) or Haiku (cheapest). |
+| **Claude** | Connect Claude Desktop or Claude Code so Claude can run dubs for you — see [`MCP.md`](MCP.md). |
 | **Engines** | Optional downloadable "engine packs" — see below. |
 | **Translation packs** | Offline translation language packs. Non-English pairs go through English, so e.g. Chinese → Vietnamese needs both the Chinese → English and English → Vietnamese packs. |
 | **Storage** | How much disk the downloaded models, packs and caches are using, and a button to delete all of it. Your projects are never touched. |
@@ -296,7 +316,7 @@ the download size. Typical entries:
 |---|---|---|
 | **VieNeu Neural TTS v3 — NVIDIA GPU** | The natural Vietnamese neural voice, about 4× faster than on the CPU (a 21-minute video took 2½ minutes instead of 9½ on an RTX 3050) | Windows with an NVIDIA card and a recent driver; 3.4–4.5 GB |
 | **VieNeu Neural TTS v3** | The same voices on the processor, far more natural than the built-in Piper voice | Every other machine |
-| **whisper.cpp (GPU)** | Faster transcription on the graphics card | An NVIDIA card, or Apple Silicon |
+| **whisper.cpp (GPU)** + its speech model | Faster transcription on the graphics card: a 31-minute video in about a minute on an RTX 3050 | Windows with an NVIDIA card. The program (0.7 GB) plus the speech model your projects use (large-v3-turbo: 1.5 GB) |
 | **llama.cpp + TranslateGemma** | Local AI translation that reads context, better than the offline language packs | Sized to your machine: the largest model that fits your video memory (or RAM) well is suggested |
 
 Installs run in the background while the app is open, with a progress bar; you

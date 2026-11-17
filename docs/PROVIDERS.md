@@ -45,7 +45,7 @@ per project in the new-project wizard — and changed again at any time.
 | Phase | Provider id | Engine | Runs | Needs |
 |---|---|---|---|---|
 | STT | `faster-whisper` | faster-whisper (CTranslate2, int8/CUDA), worker `:5101` | local | — |
-| STT | `whisper-cpp` | whisper.cpp server (Metal/CUDA/Vulkan) — accelerated Whisper | local | engine pack |
+| STT | `whisper-cpp` | whisper.cpp server (CUDA, Windows) — accelerated Whisper | local | engine pack + model pack |
 | STT | `openai-stt` | OpenAI `whisper-1` transcription API | cloud | OpenAI key |
 | Translation | `argos` | Argos Translate (offline neural MT), worker `:5102` | local | — |
 | Translation | `ollama` | Local LLM via Ollama (default `translategemma:4b`) | local | Ollama daemon |
@@ -54,8 +54,8 @@ per project in the new-project wizard — and changed again at any time.
 | Translation | `argos-llm-repair` | **Argos draft + Gemma repair** (offline, context-aware): Argos drafts instantly, the local Gemma instruct model fixes pronouns/terms/cohesion with document context | local | runtime + chat model pack |
 | Refine (optional step) | any provider with `supportsRefinement` (the cloud LLMs, `llama-cpp-chat`) | **Review & refine**: a second pass after Translate re-reads the whole transcript with the character sheet and polishes every line for consistency/naturalness (`settings.refineProviderId`; off by default) | per provider | per provider |
 | Translation | `openai-translate` | OpenAI chat model (default `gpt-4o-mini`) | cloud | OpenAI key |
-| Translation | `anthropic-translate` | Anthropic Claude (default `claude-haiku-4-5`) | cloud | Anthropic key |
-| Translation | `gemini-translate` | Google Gemini (default `gemini-2.0-flash`) | cloud | Gemini key |
+| Translation | `anthropic-translate` | Anthropic Claude through the official SDK — default **Claude Opus 5.5**; Sonnet 5.5 and Haiku 5.5 in Settings → Cloud API keys ([Claude](#claude)) | cloud | Anthropic key |
+| Translation | `gemini-translate` | Google Gemini (default `gemini-3.5-flash`) | cloud | Gemini key |
 | TTS | `piper-local` | Piper → system voice → silent fallback, worker `:5103` | local | — |
 | TTS | `neural-tts` | **Vietnamese** neural voice — VieNeu-TTS v3-Turbo, 48 kHz, 10 preset voices. Vietnamese only; it is not a multilingual engine | local | engine pack |
 | TTS | `omnivoice` | OmniVoice multilingual neural voices (600+ languages; Apple Silicon / PyTorch MPS) — **on hold, not in releases** ([OMNIVOICE.md](OMNIVOICE.md)) | local | engine pack (disabled) |
@@ -78,7 +78,8 @@ for the per-hardware-tier matrix behind the recommendations.
 
 | Pack | Provides | Delivery |
 |---|---|---|
-| `whisper-cpp-cuda` / `-vulkan` | Accelerated STT (`whisper-cpp`) | native binary |
+| `whisper-cpp-cuda` | Accelerated STT **runtime** (`whisper-cpp`) | native binary |
+| `whisper-model-tiny` … `-large-v3-turbo` | The ggml speech model it loads: the **project's** speech model, never another size (PhoWhisper / distil have none; use faster-whisper for those). Pressing Start downloads a missing one | model download |
 | `llama-cpp-metal` / `-cuda` / `-vulkan` | Local LLM translation **runtime** (`llama-cpp`) | native binary |
 | `translategemma-4b` / `-12b` / `-27b` | **TranslateGemma** GGUF weights the runtime loads (4B from 8 GB; 12B/27B with a GPU/Apple-Silicon) | model download |
 | `chat-gemma3-4b` / `-12b` | **Gemma 3 instruct** GGUF weights for the context-aware tiers (`llama-cpp-chat`, `argos-llm-repair`) — TranslateGemma cannot follow instructions, so the pronoun/glossary sheet needs these | model download |
@@ -209,6 +210,28 @@ Add keys in **Settings → Cloud API keys**. Storage rules:
 > **translated text** for cloud TTS. The video file itself is never uploaded.
 > Review the provider's data-retention terms before enabling.
 
+### Claude
+
+Claude goes through Anthropic's official SDK (`@anthropic-ai/sdk`, loaded only on the
+first Claude request), in `providers/cloud/claudeMessages.ts`:
+
+- **Model:** chosen under the Anthropic key in Settings → Cloud API keys — Claude
+  Opus 5.5 (default, the most natural and consistent translation), Sonnet 5.5 (about
+  half the cost) or Haiku 5.5 (cheapest, fastest). It used to be fixed at Claude Haiku
+  4.5 unless `credentials.json` was edited by hand; a model set that way still shows
+  as "set by hand".
+- **Every reply is checked.** A refusal (`stop_reason: "refusal"`) or a reply cut off
+  at the token limit fails the step with that reason. Before, both quietly left the
+  affected lines in the source language.
+- **Structured output:** when a caller passes a JSON schema (the translation batch,
+  the review pass, the character sheet) it becomes Claude's structured output, so the
+  reply always parses.
+- **Server-side fallbacks** on Claude Opus 5.x: a request its safety classifiers
+  decline is re-run on Anthropic's recommended model inside the same call. Not sent
+  for Haiku (it has none) or through a custom `baseUrl`.
+- Thinking is adaptive and shares the token budget with the answer, so requests leave
+  room for both and are streamed.
+
 ### Voice cloning is excluded
 
 The cloud TTS adapter uses stock voices only. Cloning a real person's voice requires
@@ -318,6 +341,9 @@ projects honestly record whether anything left the machine.
 | `CLOUD_CREDENTIALS_MISSING` | The phase uses a cloud provider but no key is configured | Add the key in Settings → Cloud API keys, or switch the phase to a local provider |
 | `CLOUD_REQUEST_FAILED` (HTTP 401/403) | The service rejected the key | Re-check the key with the Test button; regenerate it if needed |
 | `CLOUD_REQUEST_FAILED` (other) | Quota, rate limit, network, or service outage | Retry; check the provider's status page and your plan/quota |
+| `CLOUD_REQUEST_FAILED` "Claude declined this request" | Claude's safety classifiers refused the batch (the category is shown) | Retry; translate those lines with a local engine; or edit the line that triggers it |
+| `CLOUD_REQUEST_FAILED` "reply was cut off" | Claude ran out of output tokens mid-batch | Retry; if it repeats, pick another Claude model in Settings → Cloud API keys |
+| `CLOUD_REQUEST_FAILED` "model is not available" | The chosen Claude model is not enabled for this key | Pick another model under the Anthropic key in Settings |
 | `WORKER_TIMEOUT` | The service didn't answer in time | Retry; long audio uploads need a stable connection |
 | `ENGINE_PACK_MISSING` | The phase uses an engine that isn't installed | Install the engine pack in Settings → Engines, or pick another provider |
 | `ENGINE_PACK_FAILED` | A pack download/verify/build failed | Check network + disk; retry. Corrupt downloads are discarded automatically |

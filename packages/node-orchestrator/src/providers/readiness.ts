@@ -34,7 +34,11 @@ import {
   pickInstalledLocalLlmModel,
   pickInstalledPack,
   recommendedPackFor,
+  resolveWhisperCppModel,
+  whisperCppModelPackFor,
+  whisperCppUnsupportedModelError,
 } from '../engines/packSelection.js';
+import { findPack } from '../engines/enginePackCatalog.js';
 import { OLLAMA_MODEL, OLLAMA_URL, type ProviderRegistry } from './registry.js';
 
 /** Why a provider is (not) ready. `ready` means usable right now. */
@@ -109,6 +113,17 @@ export interface ReadinessDeps {
    * listing) => model-presence gating is skipped.
    */
   installedModels?: () => Promise<InstalledModels>;
+  /**
+   * Is this engine pack being installed right now? Lets the gate say "still
+   * downloading" for a model whose download already started (by a previous
+   * Start, or when the project was created) instead of "not installed".
+   * Omitted => nothing is ever reported as downloading.
+   */
+  packInstalling?: (packId: string) => boolean;
+  /** Platform/arch for runtime-pack lookups; default this machine. Tests set
+   * them so a Windows-only engine is exercised on every OS. */
+  platform?: NodeJS.Platform;
+  arch?: string;
 }
 
 /** Just the provider fields readiness cares about (instances + descriptors satisfy this). */
@@ -193,6 +208,9 @@ export async function describeProviderReadiness(
   ctx: ReadinessContext,
   /** Whether THIS phase's default-pipeline model is not yet downloaded (project-scoped checks only). */
   modelMissing = false,
+  /** The project's speech model, for providers whose weights depend on it
+   * (whisper.cpp). Omitted in the generic /providers listing. */
+  sttModel?: string,
 ): Promise<ProviderReadiness> {
   const name = provider.displayName ?? provider.id;
   const base = { phase, providerId: provider.id };
@@ -272,6 +290,55 @@ export async function describeProviderReadiness(
       };
     }
     return ready;
+  }
+
+  // whisper.cpp needs its runtime AND the ggml model of the project's own speech
+  // model. The generic branch below checked only the runtime, so a run was let
+  // through to die at step 3 ("failed to open 'models/ggml-base.en.bin'").
+  if (provider.id === 'whisper-cpp') {
+    const usable = deps.packUsable ?? ((id: string) => isPackUsable(deps.enginePackStore, id));
+    const runtime = await pickInstalledPack(deps.enginePackStore, 'whisper-cpp', deps.platform, deps.arch);
+    if (!runtime || !(await usable(runtime))) {
+      return {
+        ...base,
+        status: 'engine-pack-missing',
+        ready: false,
+        message: `${name} needs the whisper.cpp engine pack.`,
+        remediation: 'Install it in Settings → Engines, or pick faster-whisper for speech-to-text.',
+        action: { kind: 'install-pack', ref: recommendedPackFor('whisper-cpp', deps.platform, deps.arch)?.id ?? 'whisper-cpp' },
+      };
+    }
+    if (sttModel === undefined) return ready; // generic listing: the model is per project
+    const modelPack = whisperCppModelPackFor(sttModel);
+    if (!modelPack) {
+      // No download fixes this one, so no install action: the user must pick.
+      const { message, remediation } = whisperCppUnsupportedModelError(sttModel).appError;
+      return {
+        ...base,
+        status: 'model-missing',
+        ready: false,
+        message,
+        ...(remediation ? { remediation } : {}),
+        action: { kind: 'guide', ref: 'whisper-cpp-model' },
+      };
+    }
+    const installed = await resolveWhisperCppModel(deps.enginePackStore, sttModel).then(
+      () => true,
+      () => false,
+    );
+    if (installed) return ready;
+    if (deps.packInstalling?.(modelPack)) return whisperModelDownloading(base, modelPack);
+    const pack = findPack(modelPack);
+    return {
+      ...base,
+      status: 'engine-pack-missing',
+      ready: false,
+      message: `${name} needs the "${sttModel}" speech model (about ${gbOf(pack?.approxSizeMb)}), which is not downloaded yet.`,
+      remediation:
+        `Press Start (or Retry) to download it, or install "${pack?.displayName ?? modelPack}" in Settings → Engines. ` +
+        'Or pick faster-whisper for speech-to-text.',
+      action: { kind: 'install-pack', ref: modelPack },
+    };
   }
 
   if (provider.requiresEnginePack) {
@@ -398,9 +465,51 @@ export async function checkProviderReadiness(
 
   return Promise.all(
     phases.map((p) =>
-      describeProviderReadiness(p.phase, providerFor(p.phase, deps.registry, project), deps, ctx, modelMissing(p.phase)),
+      describeProviderReadiness(
+        p.phase,
+        providerFor(p.phase, deps.registry, project),
+        deps,
+        ctx,
+        modelMissing(p.phase),
+        // The runner's own default when a project never set one (runner.ts).
+        p.phase === 'stt' ? (project.settings.sttModel ?? 'small') : undefined,
+      ),
     ),
   );
+}
+
+const gbOf = (mb: number | undefined): string => (mb ? `${(mb / 1024).toFixed(1)} GB` : 'a few GB');
+
+function whisperModelDownloading(
+  base: { phase: ProviderPhase; providerId: string },
+  packId: string,
+): ProviderReadiness {
+  const model = packId.replace(/^whisper-model-/, '');
+  return {
+    ...base,
+    status: 'model-missing',
+    ready: false,
+    message: `The whisper.cpp speech model "${model}" (about ${gbOf(findPack(packId)?.approxSizeMb)}) is downloading.`,
+    remediation: 'Press Start (or Retry) again when it finishes. Its progress shows in Settings → Engines.',
+    action: { kind: 'guide', ref: 'downloading-models' },
+  };
+}
+
+/**
+ * The model pack a not-ready result is waiting for, when the app may fetch it
+ * by itself at Start: only whisper.cpp's speech model. The user already
+ * installed the runtime and chose this model for the project, and the message
+ * names the size — the same footing as a new language's faster-whisper model,
+ * which downloads on its own. Runtimes, keys and Ollama stay the user's call.
+ */
+export function selfInstallingModelPack(r: ProviderReadiness): string | undefined {
+  if (r.ready || r.providerId !== 'whisper-cpp' || r.action?.kind !== 'install-pack' || !r.action.ref) return undefined;
+  return findPack(r.action.ref)?.providerId === 'whisper-cpp-model' ? r.action.ref : undefined;
+}
+
+/** What the gate reports once {@link selfInstallingModelPack}'s download has started. */
+export function downloadStartedReadiness(r: ProviderReadiness, packId: string): ProviderReadiness {
+  return whisperModelDownloading({ phase: r.phase, providerId: r.providerId }, packId);
 }
 
 const STATUS_CODE: Record<Exclude<ReadinessStatus, 'ready'>, ErrorCode> = {

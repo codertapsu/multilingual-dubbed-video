@@ -43,7 +43,13 @@ import { EngineManager, isGpuPack } from './engines/engineManager.js';
 import { systemVcDeps } from './engines/vcRuntime.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
-import { isPackUsable, resolveActivePackSelections } from './engines/packSelection.js';
+import {
+  companionRuntimeFor,
+  installedPacksForProvider,
+  isPackUsable,
+  pickInstalledLocalLlmChatModel,
+  resolveActivePackSelections,
+} from './engines/packSelection.js';
 import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engines/engineRecommendation.js';
 import { configureUvHome, resolveUvPath, uvObtainable } from './engines/uv.js';
 import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
@@ -58,10 +64,22 @@ import { describeStorage, clearStorage } from './storage.js';
 import { LocalJobOrchestrator } from './orchestrator.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { createDefaultRegistry, OLLAMA_MODEL } from './providers/registry.js';
-import { buildReadinessContext, checkProviderReadiness, describeProviderReadiness, type ReadinessDeps } from './providers/readiness.js';
+import {
+  buildReadinessContext,
+  checkProviderReadiness,
+  describeProviderReadiness,
+  downloadStartedReadiness,
+  selfInstallingModelPack,
+  type ProviderReadiness,
+  type ReadinessDeps,
+} from './providers/readiness.js';
 import { getWorkerJson, postWorkerJson, probeWorkerHealth } from './providers/workerHttp.js';
 import { OllamaPullManager, listOllamaModels } from './providers/ollamaModels.js';
 import { computeRequiredResources, hasRequiredResources } from './setup/requiredResources.js';
+import { recommendProjectSettings } from './projectDefaults.js';
+import { sttWorkerSpeechMap } from './pipeline/speechMap.js';
+import { performanceCoresFromSttWorker } from './system/performanceCores.js';
+import { claudeIntegrationStatus, setClaudeDesktopConnection } from './integrations/claude.js';
 import { MEDIA_SERVICE_METHODS, type PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
 import { buildCatalog, findPiperVoice, translatableLanguages } from './setup/catalog.js';
@@ -230,6 +248,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         warn: (m) => console.warn(`[engines] ${m}`),
       },
       ...(onWindows ? { vcRuntimeState: () => systemVcDeps(() => undefined).detect() } : {}),
+      cpuThreads: performanceCoresFromSttWorker(config.sttWorkerUrl),
     });
   const engineBus = options.engineBus ?? new EngineEventBus();
   const engineInstaller =
@@ -247,14 +266,18 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // on this machine (e.g. whisper.cpp only where an NVIDIA/Metal pack exists).
   // Best-effort: on detection failure the registry falls back to OS/arch gating.
   const registryProfile = options.registry ? undefined : await getSystemProfile().catch(() => undefined);
+  // First-run setup: config/state store (also the user's preferences, which the
+  // registry reads for the chosen local models), the global setup SSE bus, and
+  // the model installer that streams progress over it. Declared before the
+  // readiness deps so the run gate can read the installed-model inventory.
+  const setupStore = options.setupStore ?? new SetupStore(config.configDir);
   const registry =
-    options.registry ?? createDefaultRegistry(config, credentials, engineManager, enginePackStore, registryProfile);
+    options.registry ??
+    createDefaultRegistry(config, credentials, engineManager, enginePackStore, registryProfile, async () =>
+      (await setupStore.getPreferences()).localModels,
+    );
   const bus = options.bus ?? new EventBusRegistry();
 
-  // First-run setup: config/state store, the global setup SSE bus, and the model
-  // installer that streams progress over it. Declared here (before the readiness
-  // deps) so the run gate can read the installed-model inventory from setupStore.
-  const setupStore = options.setupStore ?? new SetupStore(config.configDir);
   const setupBus = options.setupBus ?? new SetupEventBus();
   // Source-video downloader (experimental): its own bus, so a long download
   // never interleaves with first-run setup progress on the same stream.
@@ -304,7 +327,21 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     // Block a run whose selected default model (whisper/argos/piper) for this
     // language hasn't finished downloading, instead of failing mid-pipeline.
     installedModels: () => setupStore.getStatus().then((s) => s.installed),
+    packInstalling: (id) => engineInstaller.isInstalling(id),
   });
+  /**
+   * Start downloading the whisper.cpp speech model a project is waiting for
+   * (see selfInstallingModelPack) and report it as downloading, so pressing
+   * Start or Retry is enough: the user does not have to find the model among
+   * the packs in Settings → Engines.
+   */
+  const startModelDownloads = (results: ProviderReadiness[]): ProviderReadiness[] =>
+    results.map((r) => {
+      const packId = selfInstallingModelPack(r);
+      if (!packId) return r;
+      void engineInstaller.install(packId);
+      return downloadStartedReadiness(r, packId);
+    });
 
   const orchestrator =
     options.orchestrator ??
@@ -316,6 +353,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       bus,
       separation,
       alignment,
+      // Anchors transcript lines to when they are spoken (the STT worker's VAD).
+      speechMap: sttWorkerSpeechMap(config.sttWorkerUrl),
       // Engine lifecycle + preferences: the scheduler releases a finished run's
       // heavy-engine lane, and reads the user's simultaneous-dub limit.
       engines: engineManager,
@@ -329,11 +368,16 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
             .map((rec) => findPack(rec.id)?.providerId)
             .filter((family): family is string => family !== undefined),
         ),
+      // The built-in Gemma chat can run: a llama.cpp runtime and a chat model.
+      localChatAvailable: async () =>
+        (await installedPacksForProvider(enginePackStore, 'local-llm')).length > 0 &&
+        (await pickInstalledLocalLlmChatModel(enginePackStore)) !== undefined,
       setup: setupStore,
       // Gate runs on provider readiness so an unready provider (e.g. Ollama with
       // no daemon, a missing engine pack, or an unconfigured cloud key) fails
       // fast with remediation instead of dying mid-pipeline.
-      checkReadiness: (project, fromStep) => checkProviderReadiness(project, readinessDeps(), fromStep),
+      checkReadiness: async (project, fromStep) =>
+        startModelDownloads(await checkProviderReadiness(project, readinessDeps(), fromStep)),
     });
 
   // Re-establish the dubbing queue from disk: projects left `queued` re-enter in
@@ -360,6 +404,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
+
+  /**
+   * Headers for the Server-Sent-Event streams, which hijack the reply — so the
+   * cors plugin above never sees them — with the SAME origin rule. They used to
+   * send `Access-Control-Allow-Origin: *`, which let any web page open in the
+   * user's browser read download links, project logs and engine events off
+   * 127.0.0.1.
+   */
+  const sseHeaders = (req: FastifyRequest): Record<string, string> => {
+    const origin = req.headers.origin;
+    return {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      Vary: 'Origin',
+      ...(origin && allowedOrigin.test(origin) ? { 'Access-Control-Allow-Origin': origin } : {}),
+    };
+  };
 
   // Stop any running engine servers (whisper.cpp / llama.cpp / uv-env workers)
   // when the orchestrator shuts down, so no child process is orphaned.
@@ -519,12 +581,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   app.get('/setup/events', (req, reply) => {
     // Raw SSE headers; hijack the reply so Fastify doesn't try to serialize.
-    reply.raw.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-    });
+    reply.raw.writeHead(200, sseHeaders(req)).flushHeaders();
     reply.hijack();
 
     const write = (payload: unknown): void => {
@@ -676,12 +733,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   );
 
   app.get('/download/events', (req, reply) => {
-    reply.raw.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-    });
+    reply.raw.writeHead(200, sseHeaders(req)).flushHeaders();
     reply.hijack();
 
     const write = (payload: unknown): void => {
@@ -730,6 +782,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           : current.concurrency !== undefined
             ? { concurrency: current.concurrency }
             : {}),
+        // Per job: a field sent as "" or null goes back to automatic.
+        ...(body.localModels !== undefined || current.localModels !== undefined
+          ? { localModels: { ...current.localModels, ...(body.localModels ?? {}) } }
+          : {}),
       });
       // A limit change (or un-pausing) may let queued dubs start immediately.
       void orchestrator.pumpQueue();
@@ -796,6 +852,43 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
+  // Settings for a new project: the user's saved choices where usable, else the
+  // best INSTALLED engines for this machine (projectDefaults.ts). The wizard,
+  // Settings → "Apply recommended" and the MCP server all start here, so a
+  // GPU engine the user installed is actually used by the next project.
+  app.get(
+    '/project-defaults',
+    async (req: FastifyRequest<{ Querystring: { sourceLanguage?: string; targetLanguage?: string } }>, reply) => {
+      try {
+        const described = registry.describe();
+        const rdeps = readinessDeps();
+        const ctx = await buildReadinessContext(rdeps);
+        const usable = async (phase: 'stt' | 'translation' | 'refine' | 'tts', id: string): Promise<boolean> => {
+          const list = phase === 'stt' ? described.stt : phase === 'tts' ? described.tts : described.translation;
+          const traits = list.find((p) => p.id === id);
+          if (!traits) return false; // not offered on this machine at all
+          const r = await describeProviderReadiness(phase, traits, rdeps, ctx);
+          // A bundled worker that is still booting is usable by the time a run starts.
+          return r.ready || r.status === 'worker-loading';
+        };
+        return await recommendProjectSettings(
+          {
+            providerDefaults: async () => (await setupStore.getPreferences()).providerDefaults,
+            usable,
+            recommendedSttModel: async () =>
+              (await buildSystemResponse().catch(() => undefined))?.recommendation.whisperModel,
+          },
+          {
+            sourceLanguage: (req.query.sourceLanguage ?? '').trim(),
+            targetLanguage: (req.query.targetLanguage ?? '').trim() || 'vi-VN',
+          },
+        );
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
   // Pre-run readiness for a specific project's SELECTED providers, so the UI can
   // disable "Run" + show remediation before the click. The run gate
   // (orchestrator) is the real guarantee; this is the friendly pre-empt.
@@ -821,7 +914,25 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       const request = computeRequiredResources(project.settings, status.installed);
       const installing = hasRequiredResources(request);
       if (installing) void installer.run(request);
-      return { installing, request };
+      // A whisper.cpp project's speech model is an engine pack, not a setup
+      // resource, so it starts here by the same rule as at Start. Reported
+      // separately: `installing` tells the wizard to wait for the SETUP run,
+      // whose events never mention engine packs, so folding this in would
+      // leave Start disabled forever. The run gate reports it as downloading.
+      const enginePacks: string[] = [];
+      try {
+        for (const r of await checkProviderReadiness(project, readinessDeps())) {
+          const packId = selfInstallingModelPack(r);
+          if (!packId) continue;
+          void engineInstaller.install(packId);
+          enginePacks.push(packId);
+        }
+      } catch {
+        // Only a head start: the run gate checks again (and starts the
+        // download) at Start. A readiness error here must not cost the wizard
+        // the `installing` answer for the setup run it already started.
+      }
+      return { installing, request, ...(enginePacks.length > 0 ? { enginePacks } : {}) };
     } catch (err) {
       return sendError(reply, err);
     }
@@ -963,7 +1074,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // When several installed packs serve the SAME function (four Gemma chat
       // models, say), tell the UI which one actually runs — otherwise every row
       // reads "Installed" and the user can't tell what they're getting.
-      const activeSelections = await resolveActivePackSelections(enginePackStore).catch(() => []);
+      const chosen = (await setupStore.getPreferences().catch(() => undefined))?.localModels;
+      const activeSelections = await resolveActivePackSelections(enginePackStore, undefined, chosen ?? {}).catch(() => []);
       return { available, installed, updatable, activeSelections };
     } catch (err) {
       return sendError(reply, err);
@@ -1013,6 +1125,29 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
+  // ---- Claude (MCP) ---------------------------------------------------------
+  // Settings → Claude: how Claude Desktop / Claude Code start VideoDubber's MCP
+  // server, and a one-click connect for Claude Desktop (integrations/claude.ts).
+  // The command written is always this app's own binary — never from the request.
+  app.get('/integrations/claude', async (_req, reply) => {
+    try {
+      return await claudeIntegrationStatus();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post(
+    '/integrations/claude/desktop',
+    async (req: FastifyRequest<{ Body: { connect?: boolean } }>, reply) => {
+      try {
+        return await setClaudeDesktopConnection(req.body?.connect !== false);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
   app.post('/engines/install', async (req: FastifyRequest<{ Body: { packId?: string } }>, reply) => {
     try {
       const packId = req.body?.packId;
@@ -1021,7 +1156,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       }
       // Kick off asynchronously; progress observed via GET /engines/events.
       void engineInstaller.install(packId);
-      return reply.status(202).send({ started: true });
+      // A model pack cannot run without its runtime: install the best one for
+      // this machine alongside it when none is installed (companionRuntimeFor).
+      const profile = (await buildSystemResponse().catch(() => undefined))?.profile;
+      const companion = profile ? await companionRuntimeFor(enginePackStore, packId, profile) : undefined;
+      if (companion && !engineInstaller.isInstalling(companion)) void engineInstaller.install(companion);
+      return reply.status(202).send({ started: true, ...(companion ? { alsoInstalling: [companion] } : {}) });
     } catch (err) {
       return sendError(reply, err);
     }
@@ -1042,12 +1182,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   });
 
   app.get('/engines/events', (req, reply) => {
-    reply.raw.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-    });
+    reply.raw.writeHead(200, sseHeaders(req)).flushHeaders();
     reply.hijack();
     const write = (payload: unknown): void => {
       reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -1305,15 +1440,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
-  // A dub clip tempo-fitted like the final mix, for the editor's live preview.
+  // A dub clip trimmed and tempo-fitted like the final mix, for the editor's
+  // live preview. `trimStart`/`trimEnd` are the unit's alignment trim (ms).
   app.get(
     '/projects/:id/units/:unitId/fitted',
     async (
-      req: FastifyRequest<{ Params: { id: string; unitId: string }; Querystring: { ratio?: string } }>,
+      req: FastifyRequest<{
+        Params: { id: string; unitId: string };
+        Querystring: { ratio?: string; trimStart?: string; trimEnd?: string };
+      }>,
       reply,
     ) => {
       try {
-        const file = await orchestrator.getFittedClip(req.params.id, req.params.unitId, Number(req.query.ratio ?? '1'));
+        const { ratio, trimStart, trimEnd } = req.query;
+        const trim =
+          trimStart !== undefined && trimEnd !== undefined
+            ? { startMs: Number(trimStart), endMs: Number(trimEnd) }
+            : undefined;
+        const file = await orchestrator.getFittedClip(req.params.id, req.params.unitId, Number(ratio ?? '1'), trim);
         return await sendFileWithRanges(req, reply, file);
       } catch (err) {
         return sendError(reply, err);
@@ -1327,6 +1471,18 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     async (req: FastifyRequest<{ Params: { id: string; segId: string } }>, reply) => {
       try {
         return await orchestrator.refitSegment(req.params.id, req.params.segId);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // What the text passes did: character sheet, line checks, review, auto-fit.
+  app.get(
+    '/projects/:id/translation-report',
+    async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+      try {
+        return await orchestrator.getTranslationReport(req.params.id);
       } catch (err) {
         return sendError(reply, err);
       }
@@ -1459,13 +1615,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     const projectBus = bus.get(projectId);
 
     // Raw SSE headers; hijack the reply so Fastify doesn't try to serialize.
-    reply.raw.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      // Allow the webview/browser to read the stream cross-origin.
-      'Access-Control-Allow-Origin': '*',
-    });
+    reply.raw.writeHead(200, sseHeaders(req)).flushHeaders();
     reply.hijack();
 
     const write = (payload: unknown): void => {
@@ -1598,6 +1748,12 @@ export function installProcessLifecycle(app: FastifyInstance, config: Orchestrat
  */
 export async function startServer(options: CreateServerOptions = {}): Promise<FastifyInstance> {
   const config = options.config ?? loadConfig();
+  // Engine packs run on the BUNDLED CPython, which writes bytecode caches next
+  // to its sources — inside the install folder (87 __pycache__ dirs on the
+  // maintainer's machine). The uninstaller removes only the files it installed,
+  // so those dirs, and the install folder with them, were left behind. Every
+  // Python this process starts (engines, uv, the GPU probe) inherits this.
+  process.env.PYTHONPYCACHEPREFIX ??= join(config.configDir, 'cache', 'pycache');
   const app = await createServer({ ...options, config });
   await app.listen({ host: config.host, port: config.port });
   installProcessLifecycle(app, config);

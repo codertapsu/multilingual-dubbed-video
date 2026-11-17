@@ -369,6 +369,21 @@ export interface UpdatePreferences {
   providerDefaults?: ProviderDefaults;
   /** How many projects may dub at once (see {@link ConcurrencyPreferences}). */
   concurrency?: ConcurrencyPreferences;
+  /** Which installed local model to use, when the user picked one (Settings → Engines). */
+  localModels?: LocalModelPreferences;
+}
+
+/**
+ * The installed model pack the user chose for each local-LLM job. Absent means
+ * automatic: the most capable installed model that fits this machine's
+ * graphics card (packSelection.ts). A choice wins even when the hardware
+ * advice says otherwise: the app recommends, it never restricts.
+ */
+export interface LocalModelPreferences {
+  /** TranslateGemma pack id, for the `llama-cpp` translator. */
+  translation?: string;
+  /** Gemma instruct pack id, for the context-aware translators and the review pass. */
+  chat?: string;
 }
 
 /** User control over simultaneous dubbing runs. */

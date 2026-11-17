@@ -129,4 +129,16 @@ describe('SetupStore preferences round-trip', () => {
     const reloaded = await store.getPreferences();
     expect(reloaded.autoUpdate).toBe(true);
   });
+
+  it('keeps the chosen local models; "" goes back to automatic; junk is dropped', async () => {
+    await store.savePreferences({ autoUpdate: true, localModels: { translation: 'translategemma-27b', chat: 'chat-gemma4-12b' } });
+    expect((await store.getPreferences()).localModels).toEqual({
+      translation: 'translategemma-27b',
+      chat: 'chat-gemma4-12b',
+    });
+    await store.savePreferences({ autoUpdate: true, localModels: { translation: '', chat: 'chat-gemma4-12b' } });
+    expect((await store.getPreferences()).localModels).toEqual({ chat: 'chat-gemma4-12b' });
+    await store.savePreferences({ autoUpdate: true, localModels: { translation: '../../etc', chat: '' } as never });
+    expect((await store.getPreferences()).localModels).toBeUndefined();
+  });
 });

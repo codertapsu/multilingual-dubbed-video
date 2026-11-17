@@ -17,6 +17,7 @@
 import { AppErrorException } from '@videodubber/shared';
 import type {
   BuildTtsTimelineInput,
+  ClipTrim,
   DuckAndMixInput,
   PipelineMediaService,
   TimelineStretchReport,
@@ -87,7 +88,16 @@ interface MediaWorkerModule {
     durationMs: number,
     opts?: MediaWorkerRunOptions,
   ): Promise<TimelineFilmstrip>;
-  renderFittedClip?(input: string, output: string, ratio: number, opts?: MediaWorkerRunOptions): Promise<string>;
+  renderFittedClip?(
+    input: string,
+    output: string,
+    ratio: number,
+    opts?: MediaWorkerRunOptions & { trim?: ClipTrim },
+  ): Promise<string>;
+  measureSpeech?(
+    input: string,
+    opts?: { noiseDb?: number; minSilenceMs?: number; signal?: AbortSignal },
+  ): ReturnType<NonNullable<PipelineMediaService['measureSpeech']>>;
 }
 
 /**
@@ -191,8 +201,15 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
       : {}),
     ...(typeof mod.renderFittedClip === 'function'
       ? {
-          renderFittedClip: (i: string, o: string, r: number, signal?: AbortSignal) =>
-            mod.renderFittedClip!(i, o, r, runOpts(signal)),
+          renderFittedClip: (i: string, o: string, r: number, trim?: ClipTrim, signal?: AbortSignal) =>
+            mod.renderFittedClip!(i, o, r, { ...runOpts(signal), ...(trim ? { trim } : {}) }),
+        }
+      : {}),
+    // Where the speech is inside a dub clip (broken-clip check, edge silence).
+    ...(typeof mod.measureSpeech === 'function'
+      ? {
+          measureSpeech: (p: string, o?: { noiseDb?: number; minSilenceMs?: number }, signal?: AbortSignal) =>
+            mod.measureSpeech!(p, { ...(o ?? {}), ...(signal ? { signal } : {}) }),
         }
       : {}),
     // clip16kMono is optional on the interface: only expose it when the loaded

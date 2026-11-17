@@ -258,6 +258,30 @@
               }
             </select>
           </label>
+          @if (s.subtitleExportMode === 'burned-in') {
+            <label class="setting-row">
+              <span class="label">{{ 'editor.subtitle-position' | translate }}</span>
+              <select
+                [ngModel]="s.burnSubtitleStyle?.position ?? 'bottom'"
+                (ngModelChange)="onBurnStyleChange({ position: $event })"
+                [disabled]="redubbing()"
+              >
+                @for (p of subtitlePositions; track p) {
+                  <option [value]="p">{{ subtitlePositionLabels[p] | translate }}</option>
+                }
+              </select>
+            </label>
+            <label class="setting-row">
+              <span class="label">{{ 'editor.cover-original' | translate }}</span>
+              <input
+                type="checkbox"
+                [ngModel]="s.burnSubtitleStyle?.coverOriginal ?? false"
+                (ngModelChange)="onBurnStyleChange({ coverOriginal: $event })"
+                [disabled]="redubbing()"
+              />
+            </label>
+            <p class="hint">{{ 'editor.cover-original-hint' | translate }}</p>
+          }
           <label class="setting-row">
             <span class="label">{{ 'editor.render-quality' | translate }}</span>
             <select
@@ -388,6 +412,11 @@
     </section>
   } @else if (store.project()) {
     <section class="panel-block muted ctx-card empty-ctx">
+      @if (sheetFailure(); as failure) {
+        <div class="badge badge-warning" role="alert">
+          {{ 'editor.sheet-failed' | translate: { engine: failure.engine, why: failure.why } }}
+        </div>
+      }
       <span>
         {{ 'editor.no-sheet' | translate }}
       </span>

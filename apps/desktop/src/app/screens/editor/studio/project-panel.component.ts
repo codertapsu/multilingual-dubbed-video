@@ -13,6 +13,8 @@ import {
   REDUB_STAGES,
   RENDER_QUALITY_LABELS,
   SPEED_OPTIONS,
+  SUBTITLE_POSITION_LABELS,
+  SUBTITLE_POSITIONS,
   TIME_STRETCH_ENGINE_LABELS,
   ttsEngineParam,
 } from '../../../core/util/settings-options';
@@ -22,6 +24,7 @@ import type {
   ProjectSettings,
   RenderQuality,
   SubtitleExportMode,
+  SubtitleStyle,
   TranslationDocContext,
 } from '../../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, WhisperModelInfo } from '../../../core/models/setup';
@@ -81,7 +84,9 @@ export class ProjectPanelComponent implements OnInit {
   protected readonly processingLabels = PROCESSING_MODE_LABELS;
   protected readonly duckingOptions = DUCKING_OPTIONS;
   protected readonly speedOptions = SPEED_OPTIONS;
-  protected readonly renderQualities: readonly RenderQuality[] = ['quality', 'fast'];
+  protected readonly renderQualities: readonly RenderQuality[] = ['auto', 'quality', 'fast'];
+  protected readonly subtitlePositions = SUBTITLE_POSITIONS;
+  protected readonly subtitlePositionLabels = SUBTITLE_POSITION_LABELS;
   protected readonly subtitleModes: readonly SubtitleExportMode[] = ALL_SUBTITLE_EXPORT_MODES;
 
   protected readonly draft = signal<ProjectSettings | null>(null);
@@ -124,6 +129,12 @@ export class ProjectPanelComponent implements OnInit {
   // -------- character sheet --------
   protected readonly ctxDraft = signal<CtxDraft | null>(null);
   readonly ctxDirty = signal(false);
+  /**
+   * The app tried to build the character sheet and failed (the model and why).
+   * The pipeline logs it, but a log line is easy to miss, and without a sheet
+   * names and forms of address drift across the video.
+   */
+  protected readonly sheetFailure = signal<{ engine: string; why: string } | null>(null);
   protected readonly ctxSaving = signal(false);
 
   ngOnInit(): void {
@@ -163,6 +174,19 @@ export class ProjectPanelComponent implements OnInit {
       }
     } catch {
       /* the sheet just shows its empty state */
+    }
+    try {
+      const sheet = (await this.ipc.getTranslationReport(projectId)).translation.characterSheet;
+      this.sheetFailure.set(
+        sheet?.status === 'failed'
+          ? {
+              engine: sheet.engine ?? '',
+              why: (sheet.attempts ?? []).map((a) => a.error).find((e) => !!e) ?? sheet.reason ?? '',
+            }
+          : null,
+      );
+    } catch {
+      /* no report (an older orchestrator, or no translation yet): no warning */
     }
   }
 
@@ -206,6 +230,11 @@ export class ProjectPanelComponent implements OnInit {
         if (rec) this.draft.update((d) => (d ? { ...d, ttsVoiceId: rec.id } : d));
       });
     }
+  }
+
+  /** Burned-in subtitle placement / the band that hides a source's own subtitles. */
+  protected onBurnStyleChange(patch: Partial<SubtitleStyle>): void {
+    this.draft.update((d) => (d ? { ...d, burnSubtitleStyle: { ...d.burnSubtitleStyle, ...patch } } : d));
   }
 
   protected onNumberSettingChange<K extends keyof ProjectSettings>(key: K, value: unknown): void {

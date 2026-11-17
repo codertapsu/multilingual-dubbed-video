@@ -29,6 +29,7 @@ import type {
 } from '../../core/models';
 import type {
   ArgosPair,
+  ClaudeIntegration,
   CloudCredentialInfo,
   ConcurrencyPreferences,
   CloudServiceId,
@@ -57,6 +58,9 @@ interface ArgosPackRow extends ArgosPair {
 
 /** Outcome of the most recent "Check for updates" action. */
 type CheckOutcome = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error';
+
+/** Mirrors DEFAULT_CLAUDE_MODEL in the orchestrator (providers/cloud/claudeMessages.ts). */
+const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5';
 
 /** Display metadata per cloud service. */
 const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> = {
@@ -368,6 +372,39 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return Boolean(active && active.packId !== pack.id && this.isEngineInstalled(pack.id));
   }
 
+  /**
+   * The local-LLM model packs the user may pick between (TranslateGemma sizes,
+   * Gemma chat models). The app picks automatically — the most capable one that
+   * fits the graphics card — but the choice is the user's: a slower, better
+   * model is a legitimate trade.
+   */
+  private static readonly MODEL_JOB: Readonly<Record<string, 'translation' | 'chat'>> = {
+    'local-llm-model': 'translation',
+    'local-llm-chat-model': 'chat',
+  };
+
+  protected isChoosableModel(pack: EnginePackInfo): boolean {
+    return pack.providerId in SettingsComponent.MODEL_JOB && this.isEngineInstalled(pack.id);
+  }
+
+  /** The running model of this pack's job was picked by the user, not automatically. */
+  protected isModelChosenByUser(pack: EnginePackInfo): boolean {
+    return this.activeSelectionFor(pack)?.chosenByUser === true;
+  }
+
+  /** Use this model for its job (`use`), or go back to the automatic choice. */
+  protected async chooseModel(pack: EnginePackInfo, use: boolean): Promise<void> {
+    const job = SettingsComponent.MODEL_JOB[pack.providerId];
+    if (!job) return;
+    this.error.set(null);
+    try {
+      await this.ipc.saveAppPreferences({ localModels: { [job]: use ? pack.id : '' } });
+      await this.loadEngines();
+    } catch (err) {
+      this.error.set(toAppError(err));
+    }
+  }
+
   /** Display name of the pack actually used for this pack's function. */
   protected activePackName(pack: EnginePackInfo): string {
     const active = this.activeSelectionFor(pack);
@@ -617,7 +654,46 @@ export class SettingsComponent implements OnInit, OnDestroy {
         .getAppPreferences()
         .then((prefs) => this.defaults.set(prefs.providerDefaults ?? {}))
         .catch(() => undefined),
+      this.ipc
+        .getClaudeIntegration()
+        .then((c) => this.claude.set(c))
+        .catch(() => undefined),
     ]);
+  }
+
+  // ----------------------------- Claude (MCP) -----------------------------
+
+  /** How Claude Desktop / Claude Code start VideoDubber's MCP server here. */
+  protected readonly claude = signal<ClaudeIntegration | null>(null);
+  protected readonly claudeBusy = signal(false);
+  /** Set after connecting/disconnecting: Claude Desktop only reads its config at start. */
+  protected readonly claudeJustChanged = signal(false);
+  protected readonly claudeCopied = signal(false);
+
+  protected async connectClaudeDesktop(connect: boolean): Promise<void> {
+    if (this.claudeBusy()) return;
+    this.claudeBusy.set(true);
+    this.error.set(null);
+    try {
+      this.claude.set(await this.ipc.setClaudeDesktopConnection(connect));
+      this.claudeJustChanged.set(true);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.claudeBusy.set(false);
+    }
+  }
+
+  protected async copyClaudeCodeCommand(): Promise<void> {
+    const command = this.claude()?.claudeCode?.command;
+    if (!command) return;
+    try {
+      await navigator.clipboard.writeText(command);
+      this.claudeCopied.set(true);
+      setTimeout(() => this.claudeCopied.set(false), 2500);
+    } catch {
+      // No clipboard access: the command is on screen and selectable.
+    }
   }
 
   protected patchDefault<K extends keyof ProviderDefaults>(key: K, value: ProviderDefaults[K]): void {
@@ -639,22 +715,56 @@ export class SettingsComponent implements OnInit, OnDestroy {
     }
   }
 
-  /** One-click: adopt the hardware-aware recommendation as the defaults. */
+  /**
+   * One-click: adopt the hardware-aware recommendation as the defaults — the
+   * recommended speech model, and every engine back to "Automatic", which the
+   * orchestrator resolves to the best engine INSTALLED on this machine
+   * (projectDefaults.ts). It used to set only the model, so a user who had
+   * installed the recommended GPU engines kept dubbing on the CPU.
+   */
   protected async applyRecommended(): Promise<void> {
     const rec = this.system()?.recommendation;
     if (!rec) return;
-    this.defaults.update((d) => ({
-      ...d,
-      sttModel: rec.whisperModel,
-      // The recommendation only proposes cloud where it clearly helps; keys may
-      // not be configured yet, so we keep local defaults and let the user pick
-      // cloud explicitly — except the whisper model, which is always safe.
-    }));
+    this.defaults.set({ sttModel: rec.whisperModel });
     await this.saveDefaults();
   }
 
   protected credentialFor(service: CloudServiceId): CloudCredentialInfo | undefined {
     return this.credentials().find((c) => c.service === service);
+  }
+
+  /**
+   * The Claude model used for translation and review. It could only be changed
+   * by hand-editing credentials.json, so every Claude user ran the old default
+   * (Claude Haiku 4.5). A model saved by hand stays selectable as "other".
+   */
+  protected claudeModel(): string {
+    return this.credentialFor('anthropic')?.model ?? DEFAULT_CLAUDE_MODEL;
+  }
+
+  /** `label` is a TRANSLATION KEY; `{id}` fills in a hand-set model's name. */
+  protected claudeModels(): { id: string; label: string }[] {
+    const choices = [
+      { id: 'claude-opus-5-5', label: 'settings.keys.claude.opus' },
+      { id: 'claude-sonnet-5-5', label: 'settings.keys.claude.sonnet' },
+      { id: 'claude-haiku-5-5', label: 'settings.keys.claude.haiku' },
+    ];
+    const current = this.claudeModel();
+    return choices.some((c) => c.id === current) ? choices : [...choices, { id: current, label: 'settings.keys.claude.other' }];
+  }
+
+  protected async saveClaudeModel(model: string): Promise<void> {
+    if (this.credBusy() || model === this.claudeModel()) return;
+    this.credBusy.set('anthropic');
+    this.error.set(null);
+    try {
+      const res = await this.ipc.saveCredential({ service: 'anthropic', model });
+      this.credentials.set(res.services);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.credBusy.set(null);
+    }
   }
 
   protected keyInputFor(service: CloudServiceId): string {

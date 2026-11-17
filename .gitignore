@@ -31,6 +31,8 @@ target/
 apps/desktop/src-tauri/binaries/*
 !apps/desktop/src-tauri/binaries/.gitkeep
 !apps/desktop/src-tauri/binaries/README.md
+# Written by build-orchestrator.{ps1,sh} for each bundle (version/commit/time).
+scripts/package/build-stamp.json
 
 # ===== Staged engine-pack worker source (apps/desktop/src-tauri/resources) =====
 # Copied from workers/tts-engine-neural/ by scripts/package/stage-engine-src.sh

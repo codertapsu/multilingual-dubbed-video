@@ -133,6 +133,12 @@ if (-not $SkipEngineSrc) {
   if ($LASTEXITCODE -ne 0) { throw "stage-engine-src.mjs failed ($LASTEXITCODE)" }
 }
 
+# `resources/fonts` is a DECLARED Tauri resource: the burned-in subtitle font
+# (a few hundred KB), so every build stages it.
+Write-Host "`n### Subtitle font ############################################"
+& node (Join-Path $ScriptDir "stage-fonts.mjs")
+if ($LASTEXITCODE -ne 0) { throw "stage-fonts.mjs failed ($LASTEXITCODE)" }
+
 # `resources/default-models` is a DECLARED Tauri resource - always exists.
 $DmRes = Join-Path $RepoRoot "apps\desktop\src-tauri\resources\default-models"
 # Bundling the default models is OPT-IN ($env:BUNDLE_DEFAULT_MODELS = '1'): it
@@ -232,5 +238,9 @@ if ($env:ASSERT_BUNDLE -ne '0') {
     Write-Host "          Re-run with network, or set `$env:ASSERT_BUNDLE = '0' to ship a degraded build on purpose."
     exit 1
   }
-  Write-Host "OK bundle assertion passed: default models + uv + CPython are all bundled."
+  if ($env:BUNDLE_DEFAULT_MODELS -eq '1') {
+    Write-Host "OK bundle assertion passed: default models + uv + CPython are bundled."
+  } else {
+    Write-Host "OK bundle assertion passed: uv + CPython are bundled (default models are downloaded at first run; BUNDLE_DEFAULT_MODELS=1 bundles them)."
+  }
 }

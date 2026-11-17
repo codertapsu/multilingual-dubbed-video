@@ -6,7 +6,14 @@ import { AppErrorException, type Project } from '@videodubber/shared';
 import type { CredentialsStore } from '../credentials/credentialsStore.js';
 import { EnginePackStore } from '../engines/enginePackStore.js';
 import { recommendedPackFor } from '../engines/packSelection.js';
-import { assertRunReady, checkProviderReadiness, type OllamaProbe } from './readiness.js';
+import {
+  assertRunReady,
+  checkProviderReadiness,
+  downloadStartedReadiness,
+  selfInstallingModelPack,
+  type OllamaProbe,
+  type ReadinessDeps,
+} from './readiness.js';
 import { availablePacks } from '../engines/enginePackCatalog.js';
 import { ProviderRegistry } from './registry.js';
 import { FakeSttProvider, FakeTtsProvider } from '../test/fixtures.js';
@@ -325,6 +332,127 @@ describe('managed llama.cpp (TranslateGemma) readiness', () => {
     await installModel();
     const results = await checkProviderReadiness(llamaProject, { registry: reg(), credentials: fakeCreds([]), enginePackStore: store });
     expect(results.find((r) => r.phase === 'translation')!.ready).toBe(true);
+  });
+});
+
+// The run gate used to check only whisper.cpp's RUNTIME, so a project whose
+// speech model was never downloaded started anyway and died at step 3 with
+// "failed to open 'models/ggml-base.en.bin'". Runs on every OS: whisper.cpp is
+// Windows-only, so the platform is passed rather than read from the host.
+describe('whisper.cpp readiness (runtime + the project’s speech model)', () => {
+  let dir: string;
+  let store: EnginePackStore;
+  const win = { platform: 'win32' as const, arch: 'x64' };
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(os.tmpdir(), 'vd-rd-whisper-'));
+    store = new EnginePackStore(dir);
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const registry = (): ProviderRegistry => {
+    const r = new ProviderRegistry();
+    r.registerStt({
+      id: 'whisper-cpp',
+      displayName: 'whisper.cpp (accelerated, local)',
+      isLocal: true,
+      requiresEnginePack: 'whisper-cpp',
+      transcribe: async () => ({ segments: [], detectedLanguage: '', durationMs: 0 }),
+    } as never);
+    r.registerTranslation(fakeTranslation({ id: 'argos' }));
+    r.registerTts(new FakeTtsProvider());
+    return r;
+  };
+  const project = (sttModel?: string): Project =>
+    ({
+      settings: {
+        sttProviderId: 'whisper-cpp',
+        ...(sttModel ? { sttModel } : {}),
+        translationProviderId: 'argos',
+        ttsProviderId: 'piper-local',
+      },
+    }) as unknown as Project;
+  const install = async (id: string, file?: string): Promise<void> => {
+    const p = store.packDir(id);
+    await mkdir(p, { recursive: true });
+    if (file) await writeFile(path.join(p, file), 'x');
+    await store.add({ id, path: p, installedAt: '2026-11-17T00:00:00Z' });
+  };
+  const stt = async (sttModel: string | undefined, extra: Partial<ReadinessDeps> = {}) =>
+    (await checkProviderReadiness(project(sttModel), {
+      registry: registry(),
+      credentials: fakeCreds([]),
+      enginePackStore: store,
+      ...win,
+      ...extra,
+    })).find((r) => r.phase === 'stt')!;
+
+  it('asks for the runtime first', async () => {
+    const r = await stt('large-v3-turbo');
+    expect(r.ready).toBe(false);
+    expect(r.status).toBe('engine-pack-missing');
+    expect(r.action).toEqual({ kind: 'install-pack', ref: 'whisper-cpp-cuda' });
+  });
+
+  it('with the runtime but not the model, names the model and its size, and offers it', async () => {
+    await install('whisper-cpp-cuda', 'whisper-server.exe');
+    const r = await stt('large-v3-turbo');
+    expect(r.ready).toBe(false);
+    expect(r.status).toBe('engine-pack-missing');
+    expect(r.message).toContain('"large-v3-turbo"');
+    expect(r.message).toContain('1.5 GB');
+    expect(r.action).toEqual({ kind: 'install-pack', ref: 'whisper-model-large-v3-turbo' });
+    // ...which is what the run gate downloads by itself at Start.
+    expect(selfInstallingModelPack(r)).toBe('whisper-model-large-v3-turbo');
+    const started = downloadStartedReadiness(r, 'whisper-model-large-v3-turbo');
+    expect(started).toMatchObject({ ready: false, status: 'model-missing' });
+    expect(started.message).toMatch(/"large-v3-turbo" \(about 1\.5 GB\) is downloading/);
+  });
+
+  it('says "downloading" while the model is already being fetched', async () => {
+    await install('whisper-cpp-cuda', 'whisper-server.exe');
+    const r = await stt('large-v3-turbo', { packInstalling: (id) => id === 'whisper-model-large-v3-turbo' });
+    expect(r).toMatchObject({ ready: false, status: 'model-missing' });
+    expect(r.message).toMatch(/is downloading/);
+    // Already on its way: nothing more to start.
+    expect(selfInstallingModelPack(r)).toBeUndefined();
+  });
+
+  it('is ready with the runtime and the project’s own model', async () => {
+    await install('whisper-cpp-cuda', 'whisper-server.exe');
+    await install('whisper-model-large-v3-turbo', 'model.bin');
+    expect((await stt('large-v3-turbo')).ready).toBe(true);
+  });
+
+  it('another installed size does not stand in for the project’s model', async () => {
+    await install('whisper-cpp-cuda', 'whisper-server.exe');
+    await install('whisper-model-large-v3-turbo', 'model.bin');
+    const r = await stt('medium');
+    expect(r.ready).toBe(false);
+    expect(r.action?.ref).toBe('whisper-model-medium');
+  });
+
+  it('defaults to the runner’s "small" when the project never chose a model', async () => {
+    await install('whisper-cpp-cuda', 'whisper-server.exe');
+    expect((await stt(undefined)).action?.ref).toBe('whisper-model-small');
+  });
+
+  it('refuses a faster-whisper-only model with an explanation, and starts no download', async () => {
+    await install('whisper-cpp-cuda', 'whisper-server.exe');
+    const r = await stt('phowhisper-medium');
+    expect(r).toMatchObject({ ready: false, status: 'model-missing' });
+    expect(r.message).toMatch(/cannot run the "phowhisper-medium"/);
+    expect(r.remediation).toMatch(/faster-whisper/);
+    expect(r.action?.kind).not.toBe('install-pack');
+    expect(selfInstallingModelPack(r)).toBeUndefined();
+  });
+
+  it('never self-installs a runtime, or any other provider’s pack', () => {
+    const base = { phase: 'stt' as const, ready: false, status: 'engine-pack-missing' as const, message: '' };
+    expect(selfInstallingModelPack({ ...base, providerId: 'whisper-cpp', action: { kind: 'install-pack', ref: 'whisper-cpp-cuda' } })).toBeUndefined();
+    expect(selfInstallingModelPack({ ...base, providerId: 'llama-cpp', action: { kind: 'install-pack', ref: 'translategemma-4b' } })).toBeUndefined();
   });
 });
 

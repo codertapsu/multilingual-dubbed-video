@@ -55,6 +55,13 @@ export interface RenderFinalVideoResult {
   durationMs: number;
   /** Absolute paths to any sidecar subtitle files written. */
   sidecarSubtitlePaths: string[];
+  /**
+   * Burned-in only: the encoder that made the video stream, chosen per machine
+   * at run time (a hardware encoder that failed hands the encode to x264).
+   */
+  videoEncoder?: { codec: string; hardware: boolean; fallbackFrom?: string; fallbackReason?: string };
+  /** Burned-in only: the subtitle font libass was asked for, and the folder it was given. */
+  burnFont?: { family: string; fontsDir?: string };
 }
 
 /** FFmpeg-backed media operations. */

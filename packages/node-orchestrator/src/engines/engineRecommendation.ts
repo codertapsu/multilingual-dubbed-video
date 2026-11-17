@@ -15,6 +15,7 @@ import {
   NVIDIA_GPU_RE,
   gpuResidentFraction,
   gpuWeightBudgetMb,
+  gpuWorkingSetMb,
   outdatedNvidiaDriver,
   type EngineAccel,
   type EnginePackInfo,
@@ -171,18 +172,35 @@ export function recommendEnginePacks(
 
   // STT acceleration: always worth it on Apple Silicon (CPU-only otherwise);
   // worth it on machines with a capable GPU too.
-  if (profile.appleSilicon) {
-    takeBest(
-      'whisper-cpp',
-      'Apple Silicon: Metal-accelerated transcription is far faster than the CPU build.',
-      why('whisper-metal'),
-    );
-  } else if (profile.gpus.length > 0) {
-    takeBest(
-      'whisper-cpp',
-      'A GPU was detected: accelerated transcription is much faster than CPU.',
-      why('whisper-gpu', { gpu: nvidiaName ?? profile.gpus[0]!.name }),
-    );
+  const whisperRuntime = profile.appleSilicon
+    ? takeBest(
+        'whisper-cpp',
+        'Apple Silicon: Metal-accelerated transcription is far faster than the CPU build.',
+        why('whisper-metal'),
+      )
+    : profile.gpus.length > 0
+      ? takeBest(
+          'whisper-cpp',
+          'A GPU was detected: accelerated transcription is much faster than CPU.',
+          why('whisper-gpu', { gpu: nvidiaName ?? profile.gpus[0]!.name }),
+        )
+      : undefined;
+  // ...with the model it runs: the whisper.cpp build of the speech model this
+  // machine is recommended (large-v3-turbo from 8 GB of RAM). This panel used
+  // to suggest the runtime alone, which cannot transcribe anything:
+  // whisper-server started with no model and every whisper.cpp dub died at
+  // step 3. On an RTX 3050 turbo does a 10-minute chunk in ~16 s, against ~95 s
+  // for faster-whisper on the CPU.
+  const whisperModel = whisperRuntime
+    ? fitting.find((p) => p.id === `whisper-model-${rec.whisperModel}`)
+    : undefined;
+  if (whisperModel) {
+    const size = (whisperModel.approxSizeMb / 1024).toFixed(1);
+    out.push({
+      packId: whisperModel.id,
+      reason: `The speech model whisper.cpp needs to transcribe: Whisper ${rec.whisperModel} (~${size} GB), the size recommended for this computer.`,
+      reasonText: why('whisper-model', { model: rec.whisperModel, size }),
+    });
   }
 
   // Local LLM translation (TranslateGemma): the runtime binary PLUS the largest
@@ -217,7 +235,7 @@ export function recommendEnginePacks(
       pack &&
       packHardwareSupported(pack, profile) &&
       packFitsForSelection(pack, profile) &&
-      gpuResidentFraction(pack.approxSizeMb, profile) >= MIN_GPU_RESIDENT_FRACTION
+      gpuResidentFraction(gpuWorkingSetMb(pack), profile) >= MIN_GPU_RESIDENT_FRACTION
     );
   });
   const modelPackId = gpuPick ?? (ramGb >= 8 ? 'translategemma-4b' : undefined);
@@ -251,6 +269,37 @@ export function recommendEnginePacks(
               why('tg-gpu', { model, size: sizeGb, pct }),
             ];
     out.push({ packId: modelPack.id, reason, reasonText });
+  }
+
+  // The context-aware review model (Gemma instruct), which re-reads the whole
+  // translation with the character sheet: names, pronouns, forms of address.
+  // The translation audit of 2026-11-17 found TranslateGemma alone left about 4
+  // of 20 sampled lines acceptable, and about 15 of 20 after the review. Same
+  // GPU rule as above, on the ACTIVE weights: the 26B-A4B mixture-of-experts
+  // generated 24.5 tokens/s on an 8 GB RTX 3050 mostly off the card, faster
+  // than a dense 12B mostly on it (9.6). Without a GPU, only the 4B is quick
+  // enough to suggest.
+  if (runtimePack) {
+    const gpuBudget = gpuWeightBudgetMb(profile);
+    const chatPick = (['chat-gemma4-26b-a4b', 'chat-gemma4-12b', 'chat-gemma3-4b'] as const)
+      .map((id) => findPack(id))
+      .find(
+        (pack) =>
+          pack !== undefined &&
+          packHardwareSupported(pack, profile) &&
+          packFitsForSelection(pack, profile) &&
+          (gpuBudget > 0
+            ? gpuResidentFraction(gpuWorkingSetMb(pack), profile) >= MIN_GPU_RESIDENT_FRACTION
+            : pack.id === 'chat-gemma3-4b'),
+      );
+    if (chatPick) {
+      const sizeGb = (chatPick.approxSizeMb / 1024).toFixed(1);
+      out.push({
+        packId: chatPick.id,
+        reason: `${chatPick.displayName} (~${sizeGb} GB) reviews the whole translation for names, pronouns and forms of address; on a real Chinese dub that took acceptable lines from about 4 in 20 to 15 in 20.`,
+        reasonText: why('chat-review', { size: sizeGb }),
+      });
+    }
   }
 
   // Neural TTS: better voices (incl. the Vietnamese VieNeu upgrade) on capable

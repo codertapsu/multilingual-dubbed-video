@@ -22,6 +22,9 @@ import {
   resolveActivePackSelections,
   resolveLocalLlmChatModel,
   resolveLocalLlmModelPath,
+  resolveWhisperCppModel,
+  whisperCppModelPackFor,
+  companionRuntimeFor,
 } from './packSelection.js';
 import {
   nvidiaDriverSupportsPack,
@@ -191,6 +194,47 @@ describe('TranslateGemma model packs', () => {
     await store.add({ id: 'translategemma-27b', path: p27, installedAt: '2026-01-01T00:00:00Z' });
     expect((await pickInstalledLocalLlmModel(store, BIG_MACHINE()))?.packId).toBe('translategemma-12b'); // 27b skipped (no gguf)
 
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('gives llama.cpp and whisper.cpp the performance cores, and nothing when the count is unknown', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-threads-'));
+    const store = new EnginePackStore(dir);
+    for (const [id, bin] of [
+      ['llama-cpp-metal', 'llama-server'],
+      ['whisper-cpp-cuda', 'whisper-server'],
+    ] as const) {
+      const p = store.packDir(id);
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, bin), '#!/bin/sh\n');
+      await writeFile(path.join(p, `${bin}.exe`), '');
+      await store.add({ id, path: p, installedAt: '2026-01-01T00:00:00Z' });
+    }
+    const launch = async (threads: number | undefined) => {
+      const launches: { args: string[]; env: Record<string, string> }[] = [];
+      const manager = new EngineManager({
+        store,
+        allocatePort: async () => 52347,
+        healthProbe: async () => true,
+        spawnImpl: (_cmd, args, env) => {
+          launches.push({ args, env });
+          return { on: () => undefined, stderr: { on: () => undefined }, kill: () => true } as never;
+        },
+        startTimeoutMs: 1000,
+        cpuThreads: async () => threads,
+      });
+      await manager.ensureRunning('llama-cpp-metal', { model: '/models/a.gguf' });
+      await manager.ensureRunning('whisper-cpp-cuda', { model: '/models/w.bin' });
+      return launches;
+    };
+
+    const [llm, whisper] = await launch(6);
+    expect(llm!.env['LLAMA_ARG_THREADS']).toBe('6'); // env: older llama-server builds ignore it
+    expect(whisper!.args.join(' ')).toContain('-t 6');
+
+    const [llm2, whisper2] = await launch(undefined);
+    expect(llm2!.env).not.toHaveProperty('LLAMA_ARG_THREADS');
+    expect(whisper2!.args).not.toContain('-t');
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -463,6 +507,93 @@ describe('Gemma instruct chat-model packs (context-aware translation)', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  it('with a graphics card, picks the most capable model that sits mostly ON it; a user choice beats that', async () => {
+    // RAM alone used to decide: 32 GB of RAM next to a small card handed the
+    // 16.5 GB 27B to a card that held a fraction of it, and the dub's
+    // translation then ran mostly on the processor.
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-gpufit-'));
+    const store = new EnginePackStore(dir);
+    for (const id of ['translategemma-4b', 'translategemma-12b', 'translategemma-27b']) {
+      const p = store.packDir(id);
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, 'model.gguf'), 'x');
+      await store.add({ id, path: p, installedAt: '2026-01-01T00:00:00Z' });
+    }
+    const card = (vramMb: number): SystemProfile =>
+      profile({
+        platform: 'win32',
+        arch: 'x64',
+        totalRamMb: 32768,
+        gpus: [{ name: 'NVIDIA GeForce RTX 4070', vramMb, driverVersion: '600.00' }],
+        appleSilicon: false,
+      });
+
+    const twelveGb = (await pickInstalledLocalLlmModel(store, card(12 * 1024)))!;
+    expect(twelveGb.packId).toBe('translategemma-12b');
+    expect(twelveGb.skipped?.packId).toBe('translategemma-27b');
+    expect(twelveGb.skipped?.reason).toMatch(/graphics card/);
+
+    expect((await pickInstalledLocalLlmModel(store, card(24 * 1024)))!.packId).toBe('translategemma-27b');
+
+    // No usable GPU: RAM decides, as before.
+    const noGpu = profile({ platform: 'win32', arch: 'x64', totalRamMb: 32768, gpus: [], appleSilicon: false });
+    expect((await pickInstalledLocalLlmModel(store, noGpu))!.packId).toBe('translategemma-27b');
+
+    // The user's choice wins over the advice, and says it is theirs.
+    const chosen = (await pickInstalledLocalLlmModel(store, card(12 * 1024), 'translategemma-27b'))!;
+    expect(chosen).toMatchObject({ packId: 'translategemma-27b', chosenByUser: true });
+    expect(chosen.skipped).toBeUndefined();
+    // A choice that is no longer installed is ignored, not fatal.
+    expect((await pickInstalledLocalLlmModel(store, card(12 * 1024), 'translategemma-99b'))!.packId).toBe('translategemma-12b');
+
+    const active = await resolveActivePackSelections(store, card(12 * 1024), { translation: 'translategemma-4b' });
+    expect(active.find((a) => a.providerId === 'local-llm-model')).toMatchObject({
+      packId: 'translategemma-4b',
+      chosenByUser: true,
+    });
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('on an 8 GB RTX 3050 with 32 GB of RAM: TranslateGemma 12B, and the 26B-A4B for review (measured)', async () => {
+    // Measured as the app launches them (2026-11-17), generation tokens/s:
+    // TG 4B 59, TG 12B 8.6, TG 27B 2.0; Gemma 4 12B 9.6, Gemma 4 26B-A4B 24.5.
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-3050-'));
+    const store = new EnginePackStore(dir);
+    for (const id of [
+      'translategemma-4b',
+      'translategemma-12b',
+      'translategemma-27b',
+      'chat-gemma3-4b',
+      'chat-gemma3-12b',
+      'chat-gemma4-12b',
+      'chat-gemma4-26b-a4b',
+    ]) {
+      const p = store.packDir(id);
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, 'model.gguf'), 'x');
+      await store.add({ id, path: p, installedAt: '2026-01-01T00:00:00Z' });
+    }
+    const rtx3050 = profile({
+      platform: 'win32',
+      arch: 'x64',
+      totalRamMb: 32614,
+      gpus: [{ name: 'NVIDIA GeForce RTX 3050', vramMb: 8192, driverVersion: '600.00' }],
+      appleSilicon: false,
+    });
+    const translator = (await pickInstalledLocalLlmModel(store, rtx3050))!;
+    expect(translator.packId).toBe('translategemma-12b');
+    expect(translator.skipped?.packId).toBe('translategemma-27b');
+    // The MoE runs ~4B parameters per token: judged on those, it fits.
+    expect((await pickInstalledLocalLlmChatModel(store, rtx3050))!.packId).toBe('chat-gemma4-26b-a4b');
+
+    const recommended = recommendEnginePacks(rtx3050, recommendSetup(rtx3050), 'win32', 'x64').map((r) => r.packId);
+    expect(recommended).toContain('translategemma-12b');
+    expect(recommended).toContain('chat-gemma4-26b-a4b');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
   it('falls back to the least demanding install when NOTHING fits (run something, not nothing)', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-nofit-'));
     const store = new EnginePackStore(dir);
@@ -682,6 +813,7 @@ describe('hardware-aware engine recommendations', () => {
       'whisper-cpp-cuda', 'llama-cpp-metal', 'llama-cpp-cuda', 'llama-cpp-vulkan',
       'translategemma-4b', 'translategemma-12b', 'translategemma-27b',
       'tts-neural', 'translation-libretranslate',
+      'whisper-model-large-v3-turbo', 'whisper-model-large-v3', 'whisper-model-small',
     ]) {
       expect(findPack(id)?.version, id).toBeTruthy();
     }
@@ -744,7 +876,10 @@ describe('NVIDIA driver gate on CUDA packs', () => {
   };
 
   it('declares a driver floor on every CUDA pack, pinned to the toolkit in its own artifact URLs', () => {
-    const cuda = ENGINE_PACKS.filter((p) => p.accel === 'cuda');
+    // Model packs are weights: whisper.cpp's carry `cuda` only so they show where
+    // the CUDA runtime does, ship no CUDA code, and so have no toolkit or floor of
+    // their own — the runtime they need carries it.
+    const cuda = ENGINE_PACKS.filter((p) => p.accel === 'cuda' && p.packKind !== 'model');
     expect(cuda.length).toBeGreaterThan(0);
     for (const pack of cuda) {
       // The floor must exist...
@@ -1290,5 +1425,193 @@ describe('runtime fallback when the preferred engine cannot start', () => {
 
     await mgr.stopAll();
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+// whisper.cpp shipped as a runtime with no model: whisper-server, started
+// without `-m`, died opening its default `models/ggml-base.en.bin`, so every
+// whisper.cpp dub failed at step 3 — while the Recommended panel suggested the
+// engine to every NVIDIA machine.
+describe('whisper.cpp speech models', () => {
+  const MODEL_PACKS = ENGINE_PACKS.filter((p) => p.providerId === 'whisper-cpp-model');
+  const SIZES = ['tiny', 'base', 'small', 'medium', 'large-v3', 'large-v3-turbo'];
+
+  it('ships one model pack per standard Whisper size, pinned to a commit and checksummed', () => {
+    expect(MODEL_PACKS.map((p) => p.id).sort()).toEqual(SIZES.map((s) => `whisper-model-${s}`).sort());
+    for (const pack of MODEL_PACKS) {
+      expect(pack.packKind, pack.id).toBe('model');
+      expect(pack.kind, pack.id).toBe('stt');
+      expect(pack.version, pack.id).toBeTruthy();
+      const [artifact] = pack.artifacts;
+      expect(pack.artifacts, pack.id).toHaveLength(1);
+      // A commit, never `main`: a moved branch would change the bytes under a pinned sha256.
+      expect(artifact!.url, pack.id).toMatch(
+        /^https:\/\/huggingface\.co\/ggerganov\/whisper\.cpp\/resolve\/[0-9a-f]{40}\/ggml-[a-z0-9.-]+\.bin$/,
+      );
+      expect(artifact!.sha256, pack.id).toMatch(/^[0-9a-f]{64}$/);
+      expect(artifact!.destPath, pack.id).toBe('model.bin');
+      expect(artifact!.archive, pack.id).toBeFalsy();
+    }
+  });
+
+  it('every model is offered exactly where a whisper.cpp runtime is, and nowhere else', () => {
+    const machines: [NodeJS.Platform, string, SystemProfile][] = [
+      ['win32', 'x64', profile({ platform: 'win32', arch: 'x64', appleSilicon: false, gpus: [{ name: 'NVIDIA GeForce RTX 3050', vramMb: 8192, driverVersion: '621.24' }] })],
+      ['win32', 'x64', profile({ platform: 'win32', arch: 'x64', appleSilicon: false, gpus: [{ name: 'AMD Radeon 780M', vramMb: 4096 }] })],
+      ['win32', 'x64', profile({ platform: 'win32', arch: 'x64', appleSilicon: false, gpus: [] })],
+      ['darwin', 'arm64', profile()],
+      ['linux', 'x64', profile({ platform: 'linux', arch: 'x64', appleSilicon: false, gpus: [] })],
+    ];
+    for (const [platform, arch, machine] of machines) {
+      const shown = (p: EnginePackInfo): boolean =>
+        availablePacks(platform, arch).some((a) => a.id === p.id) && packHardwareSupported(p, machine);
+      const runtimeShown = packsForProvider('whisper-cpp', platform, arch).some((p) => shown(p));
+      for (const model of MODEL_PACKS) {
+        expect(shown(model), `${model.id} on ${platform}/${machine.gpus[0]?.name ?? 'no GPU'}`).toBe(runtimeShown);
+      }
+    }
+  });
+
+  it('maps a project speech model to its pack; PhoWhisper and distil have no whisper.cpp build', () => {
+    for (const size of SIZES) expect(whisperCppModelPackFor(size)).toBe(`whisper-model-${size}`);
+    expect(whisperCppModelPackFor('turbo')).toBe('whisper-model-large-v3-turbo');
+    expect(whisperCppModelPackFor(' large-v3-turbo ')).toBe('whisper-model-large-v3-turbo');
+    for (const fwOnly of ['phowhisper-medium', 'phowhisper-large', 'distil-large-v3.5']) {
+      expect(whisperCppModelPackFor(fwOnly), fwOnly).toBeUndefined();
+    }
+    // Every mapped pack exists — a renamed pack id must fail here, not at step 3.
+    for (const size of [...SIZES, 'turbo']) expect(findPack(whisperCppModelPackFor(size)!), size).toBeDefined();
+  });
+
+  describe('resolveWhisperCppModel', () => {
+    let dir: string;
+    let store: EnginePackStore;
+    beforeEach(async () => {
+      dir = await mkdtemp(path.join(os.tmpdir(), 'vd-wmodel-'));
+      store = new EnginePackStore(dir);
+    });
+    afterEach(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it('returns the installed model file', async () => {
+      const p = store.packDir('whisper-model-large-v3-turbo');
+      await mkdir(p, { recursive: true });
+      await writeFile(path.join(p, 'model.bin'), 'ggml');
+      await store.add({ id: 'whisper-model-large-v3-turbo', path: p, installedAt: '2026-11-17T00:00:00Z' });
+      expect(await resolveWhisperCppModel(store, 'large-v3-turbo')).toBe(path.join(p, 'model.bin'));
+      expect(await resolveWhisperCppModel(store, 'turbo')).toBe(path.join(p, 'model.bin'));
+    });
+
+    it('is ENGINE_PACK_MISSING when not installed, or recorded with no model file', async () => {
+      await expect(resolveWhisperCppModel(store, 'large-v3-turbo')).rejects.toMatchObject({
+        appError: { code: 'ENGINE_PACK_MISSING' },
+      });
+      const p = store.packDir('whisper-model-small');
+      await mkdir(p, { recursive: true }); // a half-finished download: the dir, no model.bin
+      await store.add({ id: 'whisper-model-small', path: p, installedAt: '2026-11-17T00:00:00Z' });
+      await expect(resolveWhisperCppModel(store, 'small')).rejects.toMatchObject({
+        appError: { code: 'ENGINE_PACK_MISSING', remediation: expect.stringContaining('Settings → Engines') },
+      });
+    });
+
+    it('names the faster-whisper-only models instead of offering a download that cannot exist', async () => {
+      await expect(resolveWhisperCppModel(store, 'phowhisper-medium')).rejects.toMatchObject({
+        appError: { code: 'STT_MODEL_MISSING', remediation: expect.stringContaining('faster-whisper') },
+      });
+    });
+  });
+
+  it('launches whisper-server WITH the model, auto language and beam search', () => {
+    const args = ENGINE_LAUNCH_SPECS['whisper-cpp']!.args({
+      exe: 'whisper-server.exe',
+      port: 51000,
+      packDir: '/packs/whisper-cpp-cuda',
+      model: '/packs/whisper-model-large-v3-turbo/model.bin',
+    });
+    const flag = (f: string): string | undefined => {
+      const i = args.indexOf(f);
+      return i >= 0 ? args[i + 1] : undefined;
+    };
+    expect(flag('-m')).toBe('/packs/whisper-model-large-v3-turbo/model.bin');
+    expect(flag('-l')).toBe('auto'); // whisper-server's default is `en`
+    expect(flag('-bs')).toBe('5');
+    expect(flag('--port')).toBe('51000');
+    expect(args).not.toContain('--vad');
+    expect(args).not.toContain('-sns');
+  });
+
+  it('restarts a running whisper-server when a project needs a different model', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-mgr-wm-'));
+    const store = new EnginePackStore(dir);
+    const p = store.packDir('whisper-cpp-cuda');
+    await mkdir(p, { recursive: true });
+    await writeFile(path.join(p, 'whisper-server.exe'), '');
+    await writeFile(path.join(p, 'whisper-server'), '');
+    await store.add({ id: 'whisper-cpp-cuda', path: p, installedAt: '2026-11-17T00:00:00Z' });
+
+    const models: (string | undefined)[] = [];
+    const manager = new EngineManager({
+      store,
+      allocatePort: async () => 51300 + models.length,
+      healthProbe: async () => true,
+      spawnImpl: (_cmd, args) => {
+        const i = args.indexOf('-m');
+        models.push(i >= 0 ? args[i + 1] : undefined);
+        return { on: () => undefined, stderr: { on: () => undefined }, kill: () => true } as never;
+      },
+      startTimeoutMs: 1000,
+    });
+
+    await manager.ensureRunning('whisper-cpp-cuda', { exclusive: true, model: '/m/turbo.bin' });
+    await manager.ensureRunning('whisper-cpp-cuda', { exclusive: true, model: '/m/turbo.bin' }); // reused
+    await manager.ensureRunning('whisper-cpp-cuda', { exclusive: true, model: '/m/small.bin' }); // swapped
+    expect(models).toEqual(['/m/turbo.bin', '/m/small.bin']);
+
+    await manager.stopAll();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('installing a model pack brings the best runtime this hardware can run, once', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-companion-'));
+    const store = new EnginePackStore(dir);
+    const nvidia = profile({
+      platform: 'win32', arch: 'x64', appleSilicon: false,
+      gpus: [{ name: 'NVIDIA GeForce RTX 3050', vramMb: 8192, driverVersion: '621.24' }],
+    });
+    const amdOnly = profile({ platform: 'win32', arch: 'x64', appleSilicon: false, gpus: [] });
+    expect(await companionRuntimeFor(store, 'translategemma-4b', nvidia, 'win32', 'x64')).toBe('llama-cpp-cuda');
+    expect(await companionRuntimeFor(store, 'chat-gemma3-4b', nvidia, 'win32', 'x64')).toBe('llama-cpp-cuda');
+    // No NVIDIA card: never the CUDA build; Vulkan runs on AMD/Intel.
+    expect(await companionRuntimeFor(store, 'translategemma-4b', amdOnly, 'win32', 'x64')).toBe('llama-cpp-vulkan');
+    expect(await companionRuntimeFor(store, 'whisper-model-large-v3-turbo', nvidia, 'win32', 'x64')).toBe('whisper-cpp-cuda');
+    expect(await companionRuntimeFor(store, 'translategemma-4b', profile(), 'darwin', 'arm64')).toBe('llama-cpp-metal');
+    // A runtime is not a model, and an installed runtime needs no companion.
+    expect(await companionRuntimeFor(store, 'llama-cpp-cuda', nvidia, 'win32', 'x64')).toBeUndefined();
+    const p = store.packDir('llama-cpp-vulkan');
+    await mkdir(p, { recursive: true });
+    await store.add({ id: 'llama-cpp-vulkan', path: p, installedAt: '2026-11-17T00:00:00Z' });
+    expect(await companionRuntimeFor(store, 'translategemma-12b', nvidia, 'win32', 'x64')).toBeUndefined();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('the Recommended panel pairs the runtime with the recommended model, never the runtime alone', () => {
+    const rtx3050 = profile({
+      platform: 'win32',
+      arch: 'x64',
+      appleSilicon: false,
+      totalRamMb: 32 * 1024,
+      gpus: [{ name: 'NVIDIA GeForce RTX 3050', vramMb: 8192, driverVersion: '621.24' }],
+    });
+    const recs = recommendEnginePacks(rtx3050, recommendSetup(rtx3050), 'win32', 'x64');
+    const ids = recs.map((r) => r.packId);
+    expect(ids).toContain('whisper-cpp-cuda');
+    expect(ids).toContain('whisper-model-large-v3-turbo');
+    const model = recs.find((r) => r.packId === 'whisper-model-large-v3-turbo')!;
+    expect(model.reasonText).toEqual({ key: 'engines.why.whisper-model', params: { model: 'large-v3-turbo', size: '1.5' } });
+
+    // No runtime recommended (a Mac) → no orphan model recommendation either.
+    const mac = recommendEnginePacks(profile(), recommendSetup(profile()), 'darwin', 'arm64').map((r) => r.packId);
+    expect(mac.some((id) => id.startsWith('whisper-model-'))).toBe(false);
   });
 });

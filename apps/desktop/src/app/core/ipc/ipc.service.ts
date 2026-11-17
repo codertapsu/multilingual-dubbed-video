@@ -35,6 +35,7 @@ import type {
   PreflightResult,
   ProvidersResponse,
   RunPreflightResult,
+  ClaudeIntegration,
   SaveCredentialRequest,
   SetupCatalog,
   SetupInstallRequest,
@@ -245,7 +246,7 @@ export class IpcService {
   refitSegment(
     projectId: string,
     segmentId: string,
-  ): Promise<SynthesizeSingleSegmentResult & { translatedText: string }> {
+  ): Promise<SynthesizeSingleSegmentResult & { translatedText: string; shortened?: boolean; reason?: string }> {
     return this.http(
       'POST',
       `/projects/${encodeURIComponent(projectId)}/segments/${encodeURIComponent(segmentId)}/refit`,
@@ -285,15 +286,35 @@ export class IpcService {
     return `${this.baseUrl}/file?path=${encodeURIComponent(path)}${v}`;
   }
 
-  /** URL of a dub clip tempo-fitted to `ratio` exactly like the final mix (preview). */
-  fittedClipUrl(projectId: string, unitId: string, ratio: number, version?: string | number): string {
+  /** URL of a dub clip trimmed and tempo-fitted to `ratio` exactly like the final mix (preview). */
+  fittedClipUrl(
+    projectId: string,
+    unitId: string,
+    ratio: number,
+    version?: string | number,
+    trim?: { startMs: number; endMs: number },
+  ): string {
     const v = version === undefined ? '' : `&v=${encodeURIComponent(String(version))}`;
-    return `${this.baseUrl}/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/fitted?ratio=${ratio.toFixed(3)}${v}`;
+    const t = trim ? `&trimStart=${Math.round(trim.startMs)}&trimEnd=${Math.round(trim.endMs)}` : '';
+    return `${this.baseUrl}/projects/${encodeURIComponent(projectId)}/units/${encodeURIComponent(unitId)}/fitted?ratio=${ratio.toFixed(3)}${t}${v}`;
   }
 
   /** GET /projects/:id/translation-context — the project's character sheet (or null). */
   getTranslationContext(projectId: string): Promise<{ context: TranslationDocContext | null }> {
     return this.http('GET', `/projects/${encodeURIComponent(projectId)}/translation-context`);
+  }
+
+  /**
+   * GET /projects/:id/translation-report — what the text passes did: the
+   * character sheet's fate, the line checks, the review and auto-fit. Only the
+   * sheet's status is read here; the rest is for the MCP server and support.
+   */
+  getTranslationReport(projectId: string): Promise<{
+    translation: {
+      characterSheet?: { status: string; engine?: string; reason?: string; attempts?: { mode: string; error?: string }[] };
+    };
+  }> {
+    return this.http('GET', `/projects/${encodeURIComponent(projectId)}/translation-report`);
   }
 
   /** PUT /projects/:id/translation-context — save the (edited) character sheet. */
@@ -493,6 +514,29 @@ export class IpcService {
   /** GET /providers — selectable providers per phase, with availability + readiness. */
   getProviders(): Promise<ProvidersResponse> {
     return this.http<ProvidersResponse>('GET', '/providers');
+  }
+
+  /** GET /integrations/claude — Claude Desktop / Claude Code connection status. */
+  getClaudeIntegration(): Promise<ClaudeIntegration> {
+    return this.http<ClaudeIntegration>('GET', '/integrations/claude');
+  }
+
+  /** POST /integrations/claude/desktop — add (or remove) VideoDubber in Claude Desktop's config. */
+  setClaudeDesktopConnection(connect: boolean): Promise<ClaudeIntegration> {
+    return this.http<ClaudeIntegration>('POST', '/integrations/claude/desktop', { connect });
+  }
+
+  /**
+   * GET /project-defaults — engines for a new project: saved choices where
+   * usable, else the best installed engines for this machine (with a note per
+   * phase the app picked).
+   */
+  getProjectDefaults(
+    sourceLanguage: string,
+    targetLanguage: string,
+  ): Promise<{ settings: ProjectSettings; notes: string[] }> {
+    const q = new URLSearchParams({ sourceLanguage, targetLanguage });
+    return this.http('GET', `/project-defaults?${q.toString()}`);
   }
 
   // ----- Source-video downloader (experimental) -----

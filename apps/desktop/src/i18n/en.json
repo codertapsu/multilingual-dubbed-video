@@ -515,7 +515,7 @@
     "regenerate": "Regenerate TTS",
     "synthesizing": "Synthesizing…",
     "tighten": "Tighten to fit",
-    "tighten-title": "Re-translate this line shorter so it fits its timing window, then re-synthesize"
+    "tighten-title": "Shorten this line's translation so it fits its time window, keeping its meaning, then re-voice it"
   },
   "studio": {
     "back": "Back to projects",

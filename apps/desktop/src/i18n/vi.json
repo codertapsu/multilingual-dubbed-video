@@ -515,7 +515,7 @@
     "regenerate": "Tạo lại giọng",
     "synthesizing": "Đang tổng hợp…",
     "tighten": "Rút gọn cho vừa",
-    "tighten-title": "Dịch lại dòng này ngắn hơn để vừa khung thời gian, rồi tổng hợp lại"
+    "tighten-title": "Rút gọn bản dịch của câu này cho vừa khung thời gian mà vẫn giữ ý, rồi tạo lại giọng"
   },
   "studio": {
     "back": "Quay lại danh sách dự án",

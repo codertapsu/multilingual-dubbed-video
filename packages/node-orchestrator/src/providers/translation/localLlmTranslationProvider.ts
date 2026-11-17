@@ -27,8 +27,10 @@ import {
   buildTranslationPrompt,
   parseTranslationReply,
   recoverBatch,
+  resumedBatch,
   sanitizeTranslatedLine,
   segmentsReplySchema,
+  translatedLines,
   type ChatOptions,
   type DubbingTranslationInput,
   type PromptSegment,
@@ -251,6 +253,11 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
   private readonly postJson: LocalPostJson;
   private readonly concurrency: number;
 
+  /** The model this provider is configured for, and how it is prompted. */
+  async modelIdentity(): Promise<string | undefined> {
+    return `${this.opts.model}/${this.mode}`;
+  }
+
   constructor(private readonly opts: LocalLlmOptions) {
     this.id = opts.id ?? 'local-llm';
     this.mode = opts.mode ?? 'raw-segment';
@@ -370,6 +377,15 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
     let previousBatch: PromptSegment[] | undefined;
     let rolling: RollingPair[] = [];
     for (const batch of batches) {
+      // Done before a pause: keep its lines, and let them carry the context on.
+      const resumed = resumedBatch(batch, input.resume);
+      if (resumed) {
+        for (const seg of batch) results.push({ id: seg.id, translatedText: resumed.get(seg.id)! });
+        rolling = collectRollingPairs(batch, resumed);
+        previousBatch = batch;
+        input.onProgress?.(results.length, input.segments.length);
+        continue;
+      }
       const context = useContext
         ? buildContextHeader({ analysis, previousPairs: rolling, sceneBreak: isSceneBreak(previousBatch, batch) })
         : undefined;
@@ -406,6 +422,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       for (const seg of batch) {
         results.push({ id: seg.id, translatedText: byId.get(seg.id) ?? seg.sourceText });
       }
+      input.onBatch?.(translatedLines(batch, byId));
       rolling = collectRollingPairs(batch, byId);
       previousBatch = batch;
       input.onProgress?.(results.length, input.segments.length);
@@ -430,6 +447,13 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       withFitWindows(input.segments as PromptSegment[]),
       this.concurrency,
       async (seg) => {
+        // Done before a pause.
+        const resumed = input.resume?.get(seg.id);
+        if (resumed !== undefined) {
+          done += 1;
+          input.onProgress?.(done, input.segments.length);
+          return { id: seg.id, translatedText: resumed } satisfies TranslationResultSegment;
+        }
         const reply = await this.complete(undefined, buildRawTranslationPrompt(source, target, seg, { perSecond }), endpoint, signal);
         let text = sanitizeTranslatedLine(stripTurnTokens(reply));
         if (!text) {
@@ -450,6 +474,7 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
         // Still empty: return it EMPTY. The pipeline's per-line check flags it
         // ('untranslated') and repairs it with a context model when one exists,
         // instead of this provider quietly substituting the source.
+        if (text) input.onBatch?.([{ id: seg.id, translatedText: text }]);
         done += 1;
         input.onProgress?.(done, input.segments.length);
         return { id: seg.id, translatedText: text } satisfies TranslationResultSegment;

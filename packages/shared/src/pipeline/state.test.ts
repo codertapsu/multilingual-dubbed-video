@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   createInitialPipelineState,
+  pausePipelineState,
+  resumePipelineState,
   setStepStatus,
 } from './state.js';
 import { PIPELINE_STEP_DEFS } from './steps.js';
@@ -174,5 +176,52 @@ describe('setStepStatus', () => {
     const later = '2026-02-02T02:02:02.000Z';
     const next = setStepStatus(state, 'probe-video', 'running', undefined, later);
     expect(next.updatedAt).toBe(later);
+  });
+});
+
+describe('pausePipelineState / resumePipelineState', () => {
+  const LATER = '2026-01-01T00:05:00.000Z';
+  const midTranslation = () => {
+    let state = createInitialPipelineState('p1', FIXED);
+    for (const id of ['probe-video', 'extract-audio', 'stt'] as const) state = setStepStatus(state, id, 'completed', undefined, FIXED);
+    return setStepStatus(state, 'translation', 'running', { progressPercent: 45 }, FIXED);
+  };
+
+  it('puts the running step back to pending with the progress it had, and pauses there', () => {
+    const paused = pausePipelineState(midTranslation(), LATER);
+    expect(paused.status).toBe('paused');
+    expect(paused.pausedAt).toBe(LATER);
+    expect(paused.pausedStep).toBe('translation');
+    expect(paused.currentStep).toBe('translation');
+    const step = paused.steps.find((s) => s.id === 'translation')!;
+    expect(step.status).toBe('pending');
+    expect(step.progressPercent).toBe(45);
+    expect(step.startedAt).toBeUndefined();
+    // Finished steps are untouched.
+    expect(paused.steps.filter((s) => s.status === 'completed').map((s) => s.id)).toEqual(['probe-video', 'extract-audio', 'stt']);
+  });
+
+  it('pauses at the next step when the run stopped between steps', () => {
+    const between = setStepStatus(midTranslation(), 'translation', 'completed', undefined, FIXED);
+    const paused = pausePipelineState(between, LATER);
+    expect(paused.pausedStep).toBe('refine');
+    expect(paused.steps.every((s) => s.status !== 'running')).toBe(true);
+  });
+
+  it('leaves a finished pipeline alone', () => {
+    let state = createInitialPipelineState('p1', FIXED);
+    for (const def of PIPELINE_STEP_DEFS) state = setStepStatus(state, def.id, 'completed', undefined, FIXED);
+    expect(pausePipelineState(state, LATER)).toBe(state);
+  });
+
+  it('resumes to a status read from the steps again, without the pause fields', () => {
+    const resumed = resumePipelineState(pausePipelineState(midTranslation(), LATER), LATER);
+    expect(resumed.status).toBe('idle');
+    expect(resumed.pausedAt).toBeUndefined();
+    expect(resumed.pausedStep).toBeUndefined();
+    expect(resumed.currentStep).toBe('translation');
+    // A pipeline that was never paused is returned as it is.
+    const fresh = createInitialPipelineState('p1', FIXED);
+    expect(resumePipelineState(fresh, LATER)).toBe(fresh);
   });
 });

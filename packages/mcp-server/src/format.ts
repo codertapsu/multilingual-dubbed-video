@@ -209,6 +209,11 @@ export function renderPipeline(p: PipelineState): string {
       'PAUSED FOR REVIEW: translation is done and no voice has been made yet. Review/rewrite lines ' +
         '(get_transcript, set_translations), then call start_dubbing to continue.',
     );
+  } else if (p.status === 'paused') {
+    lines.push(
+      `PAUSED${p.pausedStep ? ` at "${p.pausedStep}"` : ''}${p.pausedAt ? ` since ${p.pausedAt}` : ''}: ` +
+        'everything done so far is kept. Call start_dubbing (no fromStep) to continue from there.',
+    );
   }
   if (p.error && p.status === 'failed') lines.push(`Error: ${p.error}`);
   return lines.join('\n');

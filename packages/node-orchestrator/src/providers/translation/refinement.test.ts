@@ -6,6 +6,7 @@ import {
   detectContentMoves,
   swapsThirdPersonForYou,
   grewTooLong,
+  reviewBatchKey,
   reviewTranslations,
   type ReviewChat,
 } from './refinement.js';
@@ -144,6 +145,29 @@ describe('reviewTranslations', () => {
       },
     };
   }
+
+  it('saves each finished batch, then a resumed run sends only the batches not done', async () => {
+    const reply = (ids: string[], texts: Record<string, string>) =>
+      JSON.stringify({ segments: ids.map((id) => ({ id, text: texts[id] ?? drafts.get(id)! })) });
+    const input = { sourceLanguage: 'zh', targetLanguage: 'vi', segments, draftById: drafts, mode: 'refine' as const, skipAnalysis: true, batchSegments: 2 };
+
+    // First run: two batches (2 + 1 lines); the second reply is unusable.
+    const first = chat([reply(['seg_0001', 'seg_0002'], { seg_0001: 'Ngươi làm gì vậy?' }), 'not json', 'still not json']);
+    const saved: { ids: string[]; proposals: Record<string, string> }[] = [];
+    await reviewTranslations({ ...input, onBatch: (b) => saved.push(b) }, first);
+    // Only the usable batch is saved: a resumed run asks again for the other.
+    expect(saved).toEqual([expect.objectContaining({ ids: ['seg_0001', 'seg_0002'], proposals: { seg_0001: 'Ngươi làm gì vậy?' } })]);
+
+    // Resumed: the saved batch is not sent again, and its change still counts.
+    const second = chat([reply(['seg_0003'], { seg_0003: 'Không biết lượng sức mình.' })]);
+    const out = await reviewTranslations(
+      { ...input, resume: new Map(saved.map((b) => [reviewBatchKey(b.ids), b as never])) },
+      second,
+    );
+    expect(second.prompts).toHaveLength(1);
+    expect(second.prompts[0]).toContain('自不量力');
+    expect(out.changes.map((c) => c.id)).toEqual(['seg_0001', 'seg_0003']);
+  });
 
   it('applies good changes, refuses lines that fail the checks, and records before/after', async () => {
     const engine = chat([

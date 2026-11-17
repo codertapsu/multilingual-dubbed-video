@@ -162,9 +162,32 @@ progress:
 | 8 | Mix Audio | Mixes the new voice over the original background, optionally ducking it. |
 | 9 | Render Final Video | Produces the finished file, burning in subtitles if you chose that. |
 
-You can **cancel** at any point, and **retry a single step** — retrying re-runs
-that step and everything after it, and skips the steps whose output already
-exists. That is why re-running a project is much faster than the first run.
+You can **retry a single step** — retrying re-runs that step and everything
+after it, and skips the steps whose output already exists. That is why
+re-running a project is much faster than the first run.
+
+<a id="pausing-a-dub"></a>
+
+### Pausing a dub and continuing later
+
+A long dub can take hours on a computer without a fast graphics card. You do
+not have to wait for it:
+
+- **Pause** (on the Processing screen, while a dub runs) stops it at once and
+  keeps everything done so far. You can then close VideoDubber, or turn off the
+  computer.
+- **Continue dubbing** (on the same screen, or open the project from Home, where
+  it shows as *Paused*) picks up where it stopped. Finished steps are not
+  redone, and the step that was running keeps the part it had finished: the
+  lines already translated, the voice clips already made, the parts of the
+  speech already transcribed.
+- **Closing VideoDubber** while a dub runs pauses it the same way. If the
+  computer loses power or the app crashes mid-dub, the next start shows the
+  dub as paused at the step it was in; continuing redoes only the unfinished
+  part of that step.
+
+A paused dub frees its place in the queue for other dubs. Continuing it may
+make it wait for a free slot again ([RUN_QUEUE.md](RUN_QUEUE.md)).
 
 <a id="editing-a-dub"></a>
 

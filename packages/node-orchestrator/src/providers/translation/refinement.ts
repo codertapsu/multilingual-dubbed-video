@@ -157,6 +157,28 @@ export interface ReviewInput {
    * line's text under another's id (谢谢师尊 came back as "Không cần nói nhiều").
    */
   batchSegments?: number;
+  /**
+   * Batches an earlier, unfinished run of this same review finished (a pause,
+   * a closed app, a crash), by {@link reviewBatchKey}: kept as they were, and
+   * still the context for the next batch. Only the pipeline sets it, and only
+   * for an unchanged review (pipeline/translationCheckpoint.ts).
+   */
+  resume?: ReadonlyMap<string, ReviewedBatch>;
+  /** Each batch as it finishes (not one whose reply was unusable), so the pipeline can save it. */
+  onBatch?: (batch: ReviewedBatch) => void;
+}
+
+/** One finished review batch: every line's text after it, the changes kept, the proposals refused. */
+export interface ReviewedBatch {
+  ids: string[];
+  merged: Record<string, string>;
+  proposals: Record<string, string>;
+  rejected: ReviewRejection[];
+}
+
+/** Which batch a saved one is: its lines, in order. */
+export function reviewBatchKey(ids: readonly string[]): string {
+  return ids.join('\n');
 }
 
 /** A line the review actually changed. */
@@ -400,12 +422,23 @@ export async function reviewTranslations(
   let previousBatch: PromptSegment[] | undefined;
   let rolling: RollingPair[] = [];
   for (const batch of batches) {
+    const ids = batch.map((s) => s.id);
+    // Finished before a pause: as it was, and still the next batch's context.
+    const saved = input.resume?.get(reviewBatchKey(ids));
+    if (saved) {
+      for (const [id, text] of Object.entries(saved.proposals)) proposals.set(id, text);
+      rejected.push(...saved.rejected);
+      rolling = collectRollingPairs(batch, new Map(Object.entries(saved.merged)));
+      previousBatch = batch;
+      continue;
+    }
+    const rejectedBefore = rejected.length;
+    let unusable = false;
     const context = buildContextHeader({
       analysis,
       previousPairs: rolling,
       sceneBreak: isSceneBreak(previousBatch, batch),
     });
-    const ids = batch.map((s) => s.id);
     const ask = async (insist: boolean): Promise<Map<string, string>> =>
       parseTranslationReply(
         await chat.chatComplete(
@@ -429,7 +462,10 @@ export async function reviewTranslations(
         if (isCancellation(err)) throw err;
         byId = new Map();
       }
-      if (![...byId.keys()].some((id) => ids.includes(id))) failedBatches.push(ids);
+      if (![...byId.keys()].some((id) => ids.includes(id))) {
+        failedBatches.push(ids);
+        unusable = true;
+      }
     }
 
     const mergedById = new Map<string, string>();
@@ -484,6 +520,15 @@ export async function reviewTranslations(
     }
     rolling = collectRollingPairs(batch, mergedById);
     previousBatch = batch;
+    // An unusable reply is not saved: a resumed run asks again.
+    if (!unusable) {
+      input.onBatch?.({
+        ids,
+        merged: Object.fromEntries(mergedById),
+        proposals: Object.fromEntries(ids.filter((id) => proposals.has(id)).map((id) => [id, proposals.get(id)!])),
+        rejected: rejected.slice(rejectedBefore),
+      });
+    }
   }
 
   // Content that moved between adjacent cues: keep both drafts — unless a

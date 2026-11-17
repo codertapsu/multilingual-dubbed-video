@@ -382,8 +382,6 @@
     "degraded": "⚠ {{ services }} currently unavailable. The run may stall on the affected step until the service is back — services start a few seconds after launch.",
     "overall": "Overall progress",
     "overall-aria": "Overall pipeline progress",
-    "cancel": "Cancel",
-    "cancelling": "Cancelling…",
     "open-editor": "Open editor",
     "go-export": "Go to export",
     "steps-aria": "Pipeline steps",
@@ -393,7 +391,13 @@
     "logs": "Logs",
     "log-lines": "{{ count }} lines",
     "logs-aria": "Pipeline logs",
-    "no-logs": "No log output yet."
+    "no-logs": "No log output yet.",
+    "pause": "Pause",
+    "pausing": "Pausing…",
+    "pause-hint": "Your progress is saved: you can close VideoDubber or turn off the computer, and continue later.",
+    "paused-title": "⏸ Paused",
+    "paused-title-at": "⏸ Paused at “{{ step }}”",
+    "paused-body": "Everything done so far is saved, even if you close VideoDubber or turn off the computer. Continue dubbing picks up where it stopped: finished steps are not redone, and the step that was running keeps the part it had finished (translated lines, voice clips)."
   },
   "onboarding": {
     "title": "Welcome to VideoDubber",

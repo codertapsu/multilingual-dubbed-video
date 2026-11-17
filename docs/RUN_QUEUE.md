@@ -92,7 +92,9 @@ free slot" when the truth was "that engine is busy".
   marked failed and the queue moves on — it never stalls on one bad entry).
 - Settings are frozen while queued (the workload classification was made at
   enqueue; letting it change would make ordering decisions silently wrong).
-- Cancel on a queued project just removes it and restores its previous status.
+- Cancel (or Pause) on a queued project just removes it and restores its previous status.
+- Pausing a running dub frees its slot at once; the next queued dub starts. While the
+  app is closing, no queued dub starts in its place: they all wait for the next start.
 - **On restart** (`reconcileQueue()`): `queued` projects re-enter in order; a
   project left `running` by a crash is demoted to `paused`, deliberately NOT
   auto-resumed — see "Known gap" below.

@@ -111,6 +111,16 @@ voice ends, merged within a synthesis group rather than flashed. Never write
 `transcriptSegmentsToCues` output to a file directly: that is how cues shipped at 102 cps, 99 s
 long, or out of order.
 
+**A pause is a stop, never a failure.** Pause, the app quitting (the shell's `POST /shutdown`,
+SIGTERM) and `/cancel` all abort the run's signal, and the runner saves the pipeline `paused` at its
+step (`pausePipelineState`): the step goes back to `pending` keeping its progress, no error event.
+The next run treats that step as interrupted (its leftovers are never "already done") and continues
+there. The long text steps save every finished batch (`pipeline/translationCheckpoint.ts`), keyed by
+everything their result depends on and deleted once the step's result is written, so a finished
+step never gets its old checkpoint back. A dub the app died on is settled `paused` at the next start
+(`reconcileQueue`). The shell posted `/shutdown` long before the route existed: every Windows quit
+killed the dub mid-step.
+
 **The finished video is where the user chose: `projectOutputVideoPath(project)`** (shared
 `pipeline/output.ts`), never `paths.outputMp4`, for rendering it, checking it exists, and playing or
 serving it. In a chosen folder the files are `<name>.<lang>.mp4/.srt/.vtt`, named once when the

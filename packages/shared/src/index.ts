@@ -223,6 +223,8 @@ export type { PipelineStepDef } from './pipeline/steps.js';
 export {
   createInitialPipelineState,
   normalizePipelineState,
+  pausePipelineState,
+  resumePipelineState,
   setStepStatus,
 } from './pipeline/state.js';
 export type { StepPatch } from './pipeline/state.js';

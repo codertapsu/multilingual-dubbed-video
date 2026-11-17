@@ -382,8 +382,6 @@
     "degraded": "⚠ {{ services }} hiện không khả dụng. Tiến trình có thể dừng ở bước liên quan cho đến khi dịch vụ hoạt động trở lại — các dịch vụ khởi động sau khi mở ứng dụng vài giây.",
     "overall": "Tiến độ tổng thể",
     "overall-aria": "Tiến độ tổng thể của pipeline",
-    "cancel": "Huỷ",
-    "cancelling": "Đang huỷ…",
     "open-editor": "Mở trình chỉnh sửa",
     "go-export": "Tới trang xuất video",
     "steps-aria": "Các bước của pipeline",
@@ -393,7 +391,13 @@
     "logs": "Nhật ký",
     "log-lines": "{{ count }} dòng",
     "logs-aria": "Nhật ký pipeline",
-    "no-logs": "Chưa có nhật ký."
+    "no-logs": "Chưa có nhật ký.",
+    "pause": "Tạm dừng",
+    "pausing": "Đang tạm dừng…",
+    "pause-hint": "Tiến độ được lưu lại: bạn có thể đóng VideoDubber hoặc tắt máy, rồi tiếp tục sau.",
+    "paused-title": "⏸ Đã tạm dừng",
+    "paused-title-at": "⏸ Đã tạm dừng ở bước “{{ step }}”",
+    "paused-body": "Mọi phần đã làm đều được lưu, kể cả khi bạn đóng VideoDubber hay tắt máy. Bấm Tiếp tục lồng tiếng để làm tiếp từ chỗ đã dừng: các bước đã xong không phải làm lại, và bước đang dở vẫn giữ phần đã hoàn thành (các dòng đã dịch, các đoạn giọng đọc)."
   },
   "onboarding": {
     "title": "Chào mừng đến với VideoDubber",

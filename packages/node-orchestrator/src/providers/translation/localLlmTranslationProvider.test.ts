@@ -344,3 +344,48 @@ describe('buildRawTranslationPrompt (TranslateGemma shape)', () => {
     expect(prompt.endsWith(':\n\n\nLine one.\nLine two.')).toBe(true);
   });
 });
+
+describe('LocalLlmTranslationProvider — continuing a paused translation', () => {
+  const settings = {
+    resolveBaseUrl: async () => 'http://127.0.0.1:8080',
+    timeoutMs: 1000,
+  };
+  const three = [0, 1, 2].map((i) => ({ id: `seg_${i}`, sourceText: `Hello ${i}.` }));
+
+  it('chat mode: a batch done before the pause is not sent again; a partly done one is sent whole', async () => {
+    const { post, calls } = spy({
+      content: JSON.stringify({ segments: three.map((s) => ({ id: s.id, text: `Xin chào ${s.id}.` })) }),
+    });
+    const provider = new LocalLlmTranslationProvider({ id: 'llama-cpp-chat', backend: 'llama-cpp', mode: 'chat-json-batch', model: 'gemma-3-it', postJson: post, ...settings });
+    const saved: string[] = [];
+    const base = { sourceLanguage: 'en', targetLanguage: 'vi', segments: three, onBatch: (lines: { id: string }[]) => saved.push(...lines.map((l) => l.id)) };
+
+    const done = new Map(three.map((s) => [s.id, `Đã dịch ${s.id}`]));
+    const all = await provider.translateSegments({ ...base, resume: done } as never);
+    expect(calls).toHaveLength(0);
+    expect(all.segments.map((s) => s.translatedText)).toEqual(three.map((s) => `Đã dịch ${s.id}`));
+    expect(saved).toEqual([]);
+
+    const part = await provider.translateSegments({ ...base, resume: new Map([['seg_0', 'Đã dịch seg_0']]) } as never);
+    expect(calls).toHaveLength(1);
+    expect(part.segments.map((s) => s.translatedText)).toEqual(three.map((s) => `Xin chào ${s.id}.`));
+    // The finished batch is reported so the pipeline can save it.
+    expect(saved).toEqual(['seg_0', 'seg_1', 'seg_2']);
+  });
+
+  it('TranslateGemma (line by line): skips the lines done before the pause and reports each new one', async () => {
+    const { post, calls } = spy({ content: 'Xin chào.<end_of_turn>' });
+    const provider = new LocalLlmTranslationProvider({ id: 'llama-cpp', backend: 'llama-cpp', model: 'translategemma', postJson: post, ...settings });
+    const saved: string[] = [];
+    const out = await provider.translateSegments({
+      sourceLanguage: 'en',
+      targetLanguage: 'vi',
+      segments: three,
+      resume: new Map([['seg_1', 'Đã dịch.']]),
+      onBatch: (lines: { id: string }[]) => saved.push(...lines.map((l) => l.id)),
+    } as never);
+    expect(calls).toHaveLength(2);
+    expect(out.segments.map((s) => s.translatedText)).toEqual(['Xin chào.', 'Đã dịch.', 'Xin chào.']);
+    expect(saved.sort()).toEqual(['seg_0', 'seg_2']);
+  });
+});

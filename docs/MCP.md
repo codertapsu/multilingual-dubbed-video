@@ -116,7 +116,8 @@ http://127.0.0.1:5100` or set `VIDEODUBBER_URL`.
 | `download_video`, `get_download` | Fetch a video from a link and follow the download. |
 | `list_projects`, `get_project` | Projects, and one project's progress, step by step, with the end of its log. `waitSeconds` (up to 50) waits for progress. |
 | `create_project` | Create a project from a video file, starting from the same automatic settings the New Project wizard uses (the best engines installed here), with any overrides. `saveTo` chooses the folder for the finished video. Can start the dub at once. |
-| `start_dubbing`, `cancel_dubbing` | Start, continue, redo from a step, or stop. |
+| `start_dubbing` | Start, continue (after a pause, a review pause or a closed app), or redo from a step. |
+| `pause_dubbing`, `cancel_dubbing` | Pause a running dub: it keeps everything done so far, and `start_dubbing` continues it later, also after the app was closed. `cancel_dubbing` does the same, and takes a queued dub out of the queue. |
 | `update_settings` | Change project settings; reports which step must re-run for the change to take effect. |
 | `get_transcript` | The lines with timing, source text, translation, and each line's speaking budget (e.g. `≤13 syllables`) and current length. Can page and show only lines that need attention. |
 | `set_translations` | Write translations for lines (all of them while the project is paused for review). |

@@ -380,6 +380,24 @@ describe('HTTP: /file byte ranges and the timeline routes', () => {
     expect(reset.statusCode).toBe(200);
     expect((reset.json() as { outputFileName?: string }).outputFileName).toBeUndefined();
   });
+
+  it('pauses through POST /projects/:id/pause (a project not running is a no-op)', async () => {
+    const created = await app.inject({ method: 'POST', url: '/projects', payload: createProjectInput(await writeDummyVideo(tmp)) });
+    const { id } = created.json() as { id: string };
+    const res = await app.inject({ method: 'POST', url: `/projects/${id}/pause` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ ok: true });
+  });
+
+  it("accepts the shell's POST /shutdown, and refuses one from a web page", async () => {
+    // Another site can make a browser send a simple POST here: CORS only hides the answer.
+    const foreign = await app.inject({ method: 'POST', url: '/shutdown', headers: { origin: 'https://example.com' } });
+    expect(foreign.statusCode).toBe(403);
+    // The shell sends no Origin; the app's own pages may.
+    expect((await app.inject({ method: 'POST', url: '/shutdown', headers: { origin: 'http://tauri.localhost' } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: '/shutdown' })).statusCode).toBe(200);
+  });
+
   it('round-trips a PATCH through the timeline route, and maps a bad edit to 400', async () => {
     const created = await app.inject({
       method: 'POST',

@@ -2,6 +2,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setStepStatus } from '@videodubber/shared';
 import { LocalJobOrchestrator, sanitizeSubtitleStyle } from './orchestrator.js';
 import type { ProviderReadiness } from './providers/readiness.js';
 import { loadConfig } from './config.js';
@@ -652,6 +653,99 @@ describe('LocalJobOrchestrator — choosing where a project is saved', () => {
     });
     expect((await store.getProject(project.id)).outputDir).toBe(paths.renderDir);
     expect(await fsp.readFile(paths.outputMp4, 'utf8')).toBe('video');
+  });
+});
+
+describe('LocalJobOrchestrator — pausing a dub', () => {
+  /** A speech-to-text engine that works until it is stopped, with capacity for one dub. */
+  function slowOrchestrator(): LocalJobOrchestrator {
+    const stt = {
+      id: 'faster-whisper',
+      displayName: 'slow',
+      isLocal: true,
+      transcribe: (_input: unknown, signal?: AbortSignal) =>
+        new Promise<never>((_, reject) => {
+          signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        }),
+    };
+    return new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media: new FakeMediaService(),
+      registry: fakeRegistry(stt, new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+      setup: {
+        getPreferences: async () => ({
+          autoUpdate: true,
+          concurrency: { mode: 'manual' as const, maxProjects: 1, paused: false },
+        }),
+      },
+    });
+  }
+
+  const sttRunning = async (projectId: string) =>
+    vi.waitFor(
+      async () => expect((await store.getPipeline(projectId)).steps.find((s) => s.id === 'stt')?.status).toBe('running'),
+      { timeout: 15_000 },
+    );
+
+  it('saves a paused dub as paused at its step, not failed, and continues it', async () => {
+    const o = slowOrchestrator();
+    const project = await o.createProject(createProjectInput(await writeDummyVideo(tmp)));
+    await o.runPipeline(project.id);
+    await sttRunning(project.id);
+
+    await o.pauseJob(project.id);
+    expect(o.isRunning(project.id)).toBe(false);
+    expect(await store.getPipeline(project.id)).toMatchObject({ status: 'paused', pausedStep: 'stt' });
+    expect((await store.getProject(project.id)).status).toBe('paused');
+
+    // Continue: the run starts again at speech-to-text.
+    expect(await o.runPipeline(project.id)).toEqual({ started: true, queued: false });
+    await sttRunning(project.id);
+    await o.pauseJob(project.id);
+  });
+
+  it('pauses every dub when the app closes, and starts no queued dub in their place', async () => {
+    const o = slowOrchestrator();
+    const video = await writeDummyVideo(tmp);
+    const a = await o.createProject(createProjectInput(video, { name: 'A' }));
+    const b = await o.createProject(createProjectInput(video, { name: 'B' }));
+    await o.runPipeline(a.id);
+    expect((await o.runPipeline(b.id)).queued).toBe(true);
+    await sttRunning(a.id);
+
+    await o.pauseAll();
+    expect(o.isRunning(a.id)).toBe(false);
+    expect((await store.getPipeline(a.id)).status).toBe('paused');
+    // The freed slot went to nobody: B waits for the next start.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(o.isRunning(b.id)).toBe(false);
+    expect((await store.getProject(b.id)).status).toBe('queued');
+  });
+
+  it('Pause on a dub that nothing runs any more settles it as paused', async () => {
+    const project = await orchestrator.createProject(createProjectInput(await writeDummyVideo(tmp)));
+    await store.savePipeline(setStepStatus(await store.getPipeline(project.id), 'probe-video', 'running'));
+    await store.saveProject({ ...project, status: 'running' });
+    await orchestrator.pauseJob(project.id);
+    expect(await store.getPipeline(project.id)).toMatchObject({ status: 'paused', pausedStep: 'probe-video' });
+    expect((await store.getProject(project.id)).status).toBe('paused');
+  });
+
+  it('marks a dub the app died on as paused, its pipeline too', async () => {
+    const project = await orchestrator.createProject(createProjectInput(await writeDummyVideo(tmp)));
+    // The computer went off mid-translation: both still say "running".
+    let pipeline = await store.getPipeline(project.id);
+    for (const id of ['probe-video', 'extract-audio', 'stt'] as const) pipeline = setStepStatus(pipeline, id, 'completed');
+    await store.savePipeline(setStepStatus(pipeline, 'translation', 'running', { progressPercent: 40 }));
+    await store.saveProject({ ...project, status: 'running' });
+
+    await orchestrator.reconcileQueue();
+    const after = await store.getPipeline(project.id);
+    expect(after).toMatchObject({ status: 'paused', pausedStep: 'translation' });
+    expect(after.steps.find((s) => s.id === 'translation')).toMatchObject({ status: 'pending', progressPercent: 40 });
+    expect((await store.getProject(project.id)).status).toBe('paused');
   });
 });
 

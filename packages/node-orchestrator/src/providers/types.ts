@@ -37,6 +37,13 @@ export interface CancellableTranslationProvider extends TranslationProvider {
    * {@link TranslationRefiner.chatComplete}.
    */
   supportsRefinement?: boolean;
+  /**
+   * The model this provider would translate with right now, when that can
+   * change without the provider's id changing (the Claude model chosen in
+   * Settings, the local chat model installed). Part of a translation
+   * checkpoint's key, so a model switched during a pause starts fresh.
+   */
+  modelIdentity?(): Promise<string | undefined>;
 }
 
 /**

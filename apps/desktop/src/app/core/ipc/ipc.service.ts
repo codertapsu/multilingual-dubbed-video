@@ -177,6 +177,15 @@ export class IpcService {
     );
   }
 
+  /**
+   * POST /projects/:id/pause — stop a dub and keep everything it has done;
+   * {@link runPipeline} continues it, after a restart too. HTTP in both modes
+   * (no Rust command needed).
+   */
+  pausePipeline(projectId: string): Promise<{ ok: boolean }> {
+    return this.http<{ ok: boolean }>('POST', `/projects/${encodeURIComponent(projectId)}/pause`);
+  }
+
   retryPipelineStep(projectId: string, stepId: PipelineStepId): Promise<{ started?: boolean }> {
     return this.call<{ started?: boolean }>(
       'retry_pipeline_step',

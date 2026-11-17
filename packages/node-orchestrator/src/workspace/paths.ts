@@ -56,6 +56,14 @@ export interface WorkspacePaths {
   readonly translatedAlignedJson: string;
   /** The project's translation character sheet (cast/glossary/pronoun plan). */
   readonly translationContextJson: string;
+  /**
+   * The lines an unfinished translation step has done so far (its resume
+   * point after a pause or a crash; pipeline/translationCheckpoint.ts).
+   * Removed when the step finishes.
+   */
+  readonly translationCheckpointJson: string;
+  /** The batches an unfinished review pass has done so far (same idea). */
+  readonly refineCheckpointJson: string;
   /** Report of the optional review-and-refine pass (also its resume marker). */
   readonly refineReportJson: string;
   /** Per-cue subtitle timing overrides (voice-synced), applied to every sidecar
@@ -138,6 +146,8 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     translatedVtt: path.join(subtitlesDir, 'translated.vtt'),
     translatedAlignedJson: path.join(subtitlesDir, 'translated.aligned.json'),
     translationContextJson: path.join(subtitlesDir, 'translation_context.json'),
+    translationCheckpointJson: path.join(subtitlesDir, 'translation.partial.json'),
+    refineCheckpointJson: path.join(subtitlesDir, 'refine.partial.json'),
     refineReportJson: path.join(subtitlesDir, 'refine_report.json'),
     cueTimingJson: path.join(subtitlesDir, 'cue_timing.json'),
 

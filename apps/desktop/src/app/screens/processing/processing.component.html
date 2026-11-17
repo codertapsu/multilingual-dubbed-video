@@ -65,6 +65,26 @@
     </div>
   }
 
+  <!-- Paused by the user, or by the app closing mid-run: everything done is
+       kept, and Continue picks up at the step it stopped in. -->
+  @if (isPaused()) {
+    <div class="card banner-info stack" role="status">
+      <strong>
+        @if (pausedStep(); as step) {
+          {{ 'processing.paused-title-at' | translate: { step: stepLabels[step] | translate } }}
+        } @else {
+          {{ 'processing.paused-title' | translate }}
+        }
+      </strong>
+      <p class="muted">{{ 'processing.paused-body' | translate }}</p>
+      <div class="row">
+        <button type="button" class="btn btn-primary" (click)="resume()" [disabled]="resuming()">
+          {{ (resuming() ? 'processing.continuing' : 'processing.continue-dubbing') | translate }}
+        </button>
+      </div>
+    </div>
+  }
+
   <!-- Live service-health: warn if a required bundled service drops mid-run. -->
   @if (degradedServices().length > 0) {
     <div class="card banner-warning" role="alert">
@@ -91,14 +111,10 @@
 
     <div class="row">
       @if (isRunning()) {
-        <button
-          type="button"
-          class="btn btn-danger"
-          (click)="cancel()"
-          [disabled]="cancelling()"
-        >
-          {{ (cancelling() ? 'processing.cancelling' : 'processing.cancel') | translate }}
+        <button type="button" class="btn" (click)="pause()" [disabled]="pausing()">
+          {{ (pausing() ? 'processing.pausing' : 'processing.pause') | translate }}
         </button>
+        <span class="hint">{{ 'processing.pause-hint' | translate }}</span>
       }
       @if (isComplete()) {
         <button type="button" class="btn btn-primary" (click)="goToEditor()">
@@ -115,7 +131,7 @@
       <li class="step-item" [attr.data-status]="step.status">
         <div class="step-head">
           <span class="step-label">{{ stepLabels[step.id] | translate }}</span>
-          <vd-status-badge [status]="step.status" />
+          <vd-status-badge [status]="isPaused() && step.id === pausedStep() ? 'paused' : step.status" />
         </div>
 
         @if (step.status === 'running' || step.progressPercent > 0) {

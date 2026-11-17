@@ -15,6 +15,7 @@ import {
   toAppError,
   segmentsToSrt,
   segmentsToVtt,
+  pausePipelineState,
   projectOutputFiles,
   projectOutputVideoPath,
   type AlignedSegment,
@@ -271,6 +272,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   private readonly workloads = new Map<string, RunWorkload>();
   /** Serializes {@link pump}; `pumpAgain` coalesces requests that arrive mid-pump. */
   private pumping = false;
+  /** The app is closing (pauseAll): no queued dub may start any more. */
+  private closing = false;
   /** Projects whose finished files are moving to another folder (setProjectOutputDir). */
   private readonly movingOutput = new Set<string>();
   /** Projects being re-rendered from the Export screen (renderFinalVideo), which no run tracks. */
@@ -354,29 +357,60 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     return this.scheduleRun(project, undefined);
   }
 
-  /** Pause == cancel for the MVP (the run can be re-started/resumed). */
-  async pauseJob(jobId: string): Promise<void> {
-    await this.cancelJob(jobId);
-  }
-
   /**
-   * Cancel a run. A RUNNING job is aborted between steps; a QUEUED one is
-   * simply removed from the queue (nothing to abort) and its previous status
-   * restored.
+   * Pause a dub: stop it at once and keep everything it has done, so it can
+   * continue later — also after VideoDubber is closed or the computer turned
+   * off. The runner saves it as `paused` at its step (finished steps and the
+   * step's own saved work are reused; runner.ts). Resolves once that is on
+   * disk. A QUEUED project just leaves the queue, its previous status restored.
    */
-  async cancelJob(jobId: string): Promise<void> {
+  async pauseJob(jobId: string): Promise<void> {
     if (this.queued.has(jobId)) {
       await this.dequeue(jobId);
       return;
     }
     const job = this.running.get(jobId);
-    if (!job) return;
-    job.controller.abort(new AppErrorException('CANCELLED', 'Cancelled by user.'));
+    if (!job) {
+      // Nothing runs it, yet it may still read "running" (the app died mid-run
+      // and has not restarted since): Pause settles it.
+      const project = await this.deps.store.getProject(jobId).catch(() => undefined);
+      if (project) await this.settleStaleRun(project);
+      return;
+    }
+    job.controller.abort(new AppErrorException('CANCELLED', 'Paused by the user.'));
     try {
       await job.promise;
     } catch {
       /* the run handles its own errors */
     }
+  }
+
+  /** Stopping a dub is pausing it: nothing done is thrown away (POST /cancel, the MCP cancel_dubbing). */
+  async cancelJob(jobId: string): Promise<void> {
+    await this.pauseJob(jobId);
+  }
+
+  /**
+   * The app is closing: pause every running dub, so each saves its progress
+   * and continues at the next start (POST /shutdown, SIGTERM). Bounded, and
+   * the shell gives the whole stop 8 s: a step that does not answer its
+   * signal in time is left as it is, and the next start finds it "running"
+   * with nothing running and marks it paused too (reconcileQueue).
+   */
+  async pauseAll(timeoutMs = 4000): Promise<void> {
+    this.closing = true;
+    this.stopScheduler();
+    const jobs = [...this.running.values()];
+    if (jobs.length === 0) return;
+    for (const job of jobs) job.controller.abort(new AppErrorException('CANCELLED', 'Paused: VideoDubber is closing.'));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.allSettled(jobs.map((j) => j.promise)),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
   }
 
   /** Reset a step + downstream and re-run from there (resumable retry). */
@@ -1289,8 +1323,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // A non-empty queue always wins: starting a fresh request ahead of projects
     // that are already waiting would jump the FIFO order and defeat the
     // head-reservation that keeps the queue starvation-free.
+    // Quitting (pauseAll): a dub asked for now waits in the queue, which the
+    // next start resumes, instead of starting a run nothing would pause.
     const decision =
-      this.queue.length > 0
+      this.queue.length > 0 || this.closing
         ? { start: [] as string[] }
         : decideAdmissions(
             [{ projectId: project.id, points: workload.points, needsHeavyEngine: workload.needsHeavyEngine }],
@@ -1365,6 +1401,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * another path — while remaining in the queue.)
    */
   private async pump(): Promise<void> {
+    // Quitting: a slot freed by a pause must not start the next queued dub.
+    if (this.closing) return;
     if (this.pumping) {
       this.pumpAgain = true;
       return;
@@ -1562,12 +1600,33 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       this.queue.push(p.id);
       this.queued.add(p.id);
     }
+    // A dub the app died on (closed, crashed, the computer turned off) is
+    // paused, not silently resumed.
     for (const p of projects) {
-      if (p.status === 'running' && !this.running.has(p.id)) {
-        await this.deps.store.saveProject({ ...p, status: 'paused' }).catch(() => undefined);
-      }
+      if (this.running.has(p.id) || this.queued.has(p.id)) continue;
+      await this.settleStaleRun(p);
     }
     if (this.queue.length > 0) void this.pump();
+  }
+
+  /**
+   * A project saved as running that nothing runs (the app died mid-run): saved
+   * as paused, and its pipeline too. The pipeline used to stay "running", which
+   * the processing screen showed as a dub in progress with no way to continue
+   * it. Best-effort; never throws.
+   */
+  private async settleStaleRun(project: Project): Promise<void> {
+    const pipeline = await this.deps.store.getPipeline(project.id).catch(() => undefined);
+    const stale = pipeline !== undefined && (pipeline.status === 'running' || pipeline.steps.some((s) => s.status === 'running'));
+    if (stale) {
+      const paused = pausePipelineState(pipeline);
+      await this.deps.store.savePipeline(paused).catch(() => undefined);
+      // A screen already open on it shows the live state over the saved one.
+      this.deps.bus.get(project.id).emit({ type: 'state', pipeline: paused });
+    }
+    if (project.status === 'running' || (stale && project.status !== 'paused')) {
+      await this.deps.store.saveProject({ ...project, status: 'paused' }).catch(() => undefined);
+    }
   }
 
   /** Live scheduler state for the UI (GET /queue). */

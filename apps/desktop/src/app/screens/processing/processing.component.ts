@@ -64,6 +64,8 @@ export class ProcessingComponent implements OnInit, OnDestroy {
 
   protected readonly actionError = signal<AppError | null>(null);
   protected readonly cancelling = signal(false);
+  protected readonly pausing = signal(false);
+  protected readonly resuming = signal(false);
 
   /** Live health of the bundled services (polled while on this screen). */
   protected readonly workersHealth = signal<WorkersHealth | null>(null);
@@ -111,6 +113,19 @@ export class ProcessingComponent implements OnInit, OnDestroy {
   protected readonly hasFailure = computed(() => this.overallStatus() === 'failed');
   /** Paused at the transcript-review checkpoint (reviewBeforeSynthesis). */
   protected readonly awaitingReview = computed(() => this.pipeline()?.awaitingReview === true);
+  /**
+   * Paused by the user, or by the app closing mid-run: Continue picks it up.
+   * Not once Continue has put it in the queue (its pipeline stays "paused"
+   * until a slot frees): the queue card says what happens next.
+   */
+  protected readonly isPaused = computed(
+    () => this.overallStatus() === 'paused' && !this.awaitingReview() && !this.isQueued(),
+  );
+  /** The step a paused dub continues at. */
+  protected readonly pausedStep = computed<PipelineStepId | null>(() => {
+    const p = this.pipeline();
+    return p?.status === 'paused' ? (p.pausedStep ?? p.currentStep ?? null) : null;
+  });
   protected readonly continuing = signal(false);
 
   // -------- run queue (waiting for a free slot) --------
@@ -208,6 +223,42 @@ export class ProcessingComponent implements OnInit, OnDestroy {
       this.actionError.set(toAppError(err));
     } finally {
       this.cancelling.set(false);
+    }
+  }
+
+  /**
+   * Pause the dub: it stops at once and keeps everything done so far, so the
+   * user can close the app (or turn the computer off) and continue later.
+   */
+  protected async pause(): Promise<void> {
+    if (this.pausing()) return;
+    this.pausing.set(true);
+    this.actionError.set(null);
+    try {
+      await this.ipc.pausePipeline(this.id());
+      // The paused state also arrives over SSE; this covers a dropped stream.
+      await this.store.loadProject(this.id());
+    } catch (err) {
+      this.actionError.set(toAppError(err));
+    } finally {
+      this.pausing.set(false);
+    }
+  }
+
+  /** Continue a paused dub where it stopped (it may queue behind other dubs). */
+  protected async resume(): Promise<void> {
+    if (this.resuming()) return;
+    this.resuming.set(true);
+    this.actionError.set(null);
+    this.events.clearError();
+    try {
+      await this.ipc.runPipeline(this.id());
+      this.events.connect(this.id());
+      await this.refreshQueue();
+    } catch (err) {
+      this.actionError.set(toAppError(err));
+    } finally {
+      this.resuming.set(false);
     }
   }
 

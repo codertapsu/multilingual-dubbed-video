@@ -511,7 +511,7 @@ so the scheduler gives one **owner** at a time rather than silently stealing the
 engine mid-run and thrashing both jobs. Work belonging to a different owner gets
 `ENGINE_BUSY` instead.
 
-This is expected, not a fault: wait for the running dub to finish (or cancel it),
+This is expected, not a fault: wait for the running dub to finish (or pause it),
 then retry. It most often appears when you regenerate a single segment in the
 editor while a full run is going. The admission rules and the simultaneous-dub
 limit are explained in [`RUN_QUEUE.md`](RUN_QUEUE.md).
@@ -521,7 +521,7 @@ limit are explained in [`RUN_QUEUE.md`](RUN_QUEUE.md).
 ### `RUN_IN_PROGRESS`
 This project already has a pipeline run going, and the action you asked for would
 conflict with it — starting a second run, changing project settings, or re-dubbing.
-Wait for the run to finish, or cancel it from the Processing screen, then retry.
+Wait for the run to finish, or pause it from the Processing screen, then retry.
 
 Note this is *per project*: other projects can run at the same time, bounded by the
 simultaneous-dub limit in Settings → This computer ([`RUN_QUEUE.md`](RUN_QUEUE.md)).
@@ -529,8 +529,13 @@ simultaneous-dub limit in Settings → This computer ([`RUN_QUEUE.md`](RUN_QUEUE
 <a id="cancelled"></a>
 
 ### `CANCELLED`
-You cancelled the pipeline (`POST /projects/:id/cancel`). This is expected. Re-running
-resumes: completed steps with existing artifacts are skipped.
+A run was stopped. Stopping a dub now **pauses** it instead (Pause on the
+Processing screen, `POST /projects/:id/pause`, or closing the app): the project
+shows *Paused* with a **Continue dubbing** button, and no error. If you still see
+this code, it comes from an older version or a component that stopped on its own;
+continuing resumes: completed steps with existing artifacts are skipped, and the
+interrupted step reuses what it had saved. See
+[Pausing a dub](USER_GUIDE.md#pausing-a-dub).
 
 <a id="unknown"></a>
 <a id="unknown-error"></a>

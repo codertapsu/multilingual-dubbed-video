@@ -151,7 +151,7 @@ describe('VideoDubber MCP server', () => {
       [
         'adjust_lines', 'cancel_dubbing', 'create_project', 'download_video', 'get_download', 'get_project',
         'get_status', 'get_transcript', 'get_translation_context', 'get_translation_report', 'install_engine', 'list_engines',
-        'list_languages', 'list_projects', 'list_providers', 'list_voices', 'open_output_folder',
+        'list_languages', 'list_projects', 'list_providers', 'list_voices', 'open_output_folder', 'pause_dubbing',
         'regenerate_voices', 'render_video', 'set_save_folder', 'set_translation_context', 'set_translations',
         'start_dubbing', 'update_settings',
       ].sort(),
@@ -493,6 +493,28 @@ describe('VideoDubber MCP server', () => {
     expect(out).toContain('Review (120 lines): 1 changed, 1 refused by the checks.');
     expect(out).toContain('refused seg_0004: fails line checks: wrong-script');
     expect(out).toContain('Auto-fit (3 over-long unit(s)): 1 line(s) shortened, 1 refused, 1 still long.');
+  });
+
+  it('pause_dubbing pauses, and get_project says where it stopped and how to continue', async () => {
+    let paused = false;
+    fake.routes.set('POST /projects/proj_1/pause', () => {
+      paused = true;
+      return { ok: true };
+    });
+    fake.routes.set('GET /projects/proj_1', () => ({
+      project: project({ status: paused ? 'paused' : 'running' }),
+      pipeline: paused
+        ? pipeline({ status: 'paused', currentStep: 'tts', pausedStep: 'tts', pausedAt: '2026-11-17T10:00:00Z' })
+        : pipeline({ status: 'running', currentStep: 'tts' }),
+    }));
+    await connect();
+
+    const r = await call('pause_dubbing', { projectId: 'proj_1' });
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain('Paused at "tts"');
+    const g = await call('get_project', { projectId: 'proj_1' });
+    expect(g.text).toContain('PAUSED at "tts" since 2026-11-17T10:00:00Z');
+    expect(g.text).toContain('start_dubbing');
   });
 
   it('get_project waits for the dub to move on, then reports it', async () => {

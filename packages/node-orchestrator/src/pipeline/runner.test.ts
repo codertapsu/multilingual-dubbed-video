@@ -17,6 +17,8 @@ import {
   type TtsResult,
 } from '@videodubber/shared';
 import { PipelineRunner, planSttChunks, translationProgress, type RunnerDeps } from './runner.js';
+import type { DubbingTranslationInput } from '../providers/translation/llmTranslationProvider.js';
+import type { PipelineEvent } from '../events.js';
 import type { SpeechMapService } from './speechMap.js';
 import type { PipelineMediaService } from '../media.js';
 import { ProjectStore } from '../workspace/projectStore.js';
@@ -1419,5 +1421,262 @@ describe('PipelineRunner — a folder chosen for the finished video', () => {
 
     await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
     await expect(fsp.stat(path.join(dubs, 'Clip.vi.mp4'))).resolves.toBeTruthy();
+  });
+});
+
+describe('PipelineRunner — pausing and continuing', () => {
+  /**
+   * A translator that works in batches of two lines like the LLM ones: it
+   * skips batches the resume map covers, reports each finished batch, and can
+   * stop (as an aborted request does) once the run is paused.
+   */
+  function batchingTranslator(onSent: (ids: string[]) => void): TranslationProvider {
+    return {
+      id: 'argos',
+      displayName: 'batching-mt',
+      isLocal: true,
+      async translateSegments(input: TranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
+        const x = input as DubbingTranslationInput;
+        const out: { id: string; translatedText: string }[] = [];
+        for (let i = 0; i < x.segments.length; i += 2) {
+          const batch = x.segments.slice(i, i + 2);
+          if (batch.every((seg) => x.resume?.has(seg.id))) {
+            out.push(...batch.map((seg) => ({ id: seg.id, translatedText: x.resume!.get(seg.id)! })));
+            continue;
+          }
+          if (signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+          onSent(batch.map((seg) => seg.id));
+          const lines = batch.map((seg) => ({ id: seg.id, translatedText: `[vi] ${seg.sourceText}` }));
+          out.push(...lines);
+          x.onBatch?.(lines);
+          x.onProgress?.(out.length, x.segments.length);
+          // A real batch takes seconds: the progress report lands before the next.
+          await new Promise((r) => setTimeout(r, 5));
+        }
+        return { segments: out };
+      },
+    };
+  }
+
+  async function sixLineProject() {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+    const stt = new FakeSttProvider(
+      makeSegments(Array.from({ length: 6 }, (_, i) => [i * 1000, i * 1000 + 900, `line ${i + 1}`] as [number, number, string])),
+    );
+    const sent: string[][] = [];
+    let pauseAfter = Infinity;
+    const controllers: AbortController[] = [];
+    const translation = batchingTranslator((ids) => {
+      sent.push(ids);
+      if (sent.length === pauseAfter) controllers.at(-1)!.abort();
+    });
+    const bus = buses.get(project.id);
+    const events: PipelineEvent[] = [];
+    bus.subscribe((e) => events.push(e));
+    const runner = new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(stt, translation, new FakeTtsProvider()),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    });
+    const run = async (opts: { pauseAfterBatch?: number } = {}) => {
+      pauseAfter = opts.pauseAfterBatch ?? Infinity;
+      const controller = new AbortController();
+      controllers.push(controller);
+      await runner.run(await store.getProject(project.id), { signal: controller.signal });
+    };
+    return { project, paths, stt, sent, events, run };
+  }
+
+  it('pauses mid-translation without failing, then continues with the batches it had saved', async () => {
+    const { project, paths, stt, sent, events, run } = await sixLineProject();
+
+    await run({ pauseAfterBatch: 2 });
+    const paused = await store.getPipeline(project.id);
+    expect(paused.status).toBe('paused');
+    expect(paused.pausedStep).toBe('translation');
+    const step = paused.steps.find((x) => x.id === 'translation')!;
+    expect(step.status).toBe('pending');
+    expect(step.progressPercent).toBeGreaterThan(0);
+    expect(paused.steps.find((x) => x.id === 'stt')!.status).toBe('completed');
+    expect((await store.getProject(project.id)).status).toBe('paused');
+    // A pause is not an error: nothing red on screen.
+    expect(events.some((e) => e.type === 'error')).toBe(false);
+    const saved = JSON.parse(await fsp.readFile(paths.translationCheckpointJson, 'utf8')) as { data: Record<string, string> };
+    expect(Object.keys(saved.data)).toHaveLength(4);
+    expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toContain('Paused at "Translate"');
+
+    await run();
+    // Only the third batch was translated again; speech-to-text was not redone.
+    expect(sent).toEqual([
+      ['seg_0001', 'seg_0002'],
+      ['seg_0003', 'seg_0004'],
+      ['seg_0005', 'seg_0006'],
+    ]);
+    expect(stt.calls).toBe(1);
+    const done = await store.getPipeline(project.id);
+    expect(done.status).toBe('completed');
+    expect(done.pausedAt).toBeUndefined();
+    const doc = JSON.parse(await fsp.readFile(paths.translatedJson, 'utf8')) as { segments: TranscriptSegment[] };
+    expect(doc.segments.map((x) => x.translatedText)).toEqual([1, 2, 3, 4, 5, 6].map((n) => `[vi] line ${n}`));
+    // The checkpoint served: a later re-translation starts fresh.
+    await expect(fsp.stat(paths.translationCheckpointJson)).rejects.toThrow();
+    const log = await fsp.readFile(paths.pipelineLog, 'utf8');
+    expect(log).toContain('Continuing the paused dub at "Translate"');
+    expect(log).toContain('Continuing the translation: 4 of 6 lines');
+  });
+
+  it('starts the translation over when what it depends on changed during the pause', async () => {
+    const { project, paths, sent, run } = await sixLineProject();
+    await run({ pauseAfterBatch: 1 });
+    // The user corrected a transcribed line while paused.
+    const doc = JSON.parse(await fsp.readFile(paths.sourceJson, 'utf8')) as { segments: TranscriptSegment[] };
+    doc.segments[0]!.sourceText = 'line one, corrected';
+    await fsp.writeFile(paths.sourceJson, JSON.stringify(doc), 'utf8');
+    await run();
+    expect(sent[0]).toEqual(['seg_0001', 'seg_0002']);
+    expect(sent.slice(1)).toEqual([
+      ['seg_0001', 'seg_0002'],
+      ['seg_0003', 'seg_0004'],
+      ['seg_0005', 'seg_0006'],
+    ]);
+    expect((await store.getPipeline(project.id)).status).toBe('completed');
+  });
+
+  it('keeps the batches of a translator that never reads the character sheet when one appears', async () => {
+    // A line-by-line translator (TranslateGemma) gets its sheet after
+    // translating: one appearing during the pause changes nothing it made.
+    const { paths, sent, run } = await sixLineProject();
+    await run({ pauseAfterBatch: 1 });
+    await fsp.writeFile(
+      paths.translationContextJson,
+      JSON.stringify({ synopsis: 'A trip.', pronounGuide: '', cast: [], glossary: [] }),
+      'utf8',
+    );
+    await run();
+    expect(sent).toEqual([
+      ['seg_0001', 'seg_0002'],
+      ['seg_0003', 'seg_0004'],
+      ['seg_0005', 'seg_0006'],
+    ]);
+  });
+
+  it('paused between steps, it continues at the next one', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+    const controller = new AbortController();
+    const stt: SttProvider = {
+      id: 'faster-whisper',
+      displayName: 'stops-after',
+      isLocal: true,
+      async transcribe() {
+        // The pause lands as the step finishes: the step completes, the next never starts.
+        controller.abort();
+        return { segments: makeSegments([[0, 1000, 'Hello']]) };
+      },
+    };
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(stt, new FakeTranslationProvider(), new FakeTtsProvider()),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: controller.signal });
+
+    const paused = await store.getPipeline(project.id);
+    expect(paused.status).toBe('paused');
+    expect(paused.steps.find((x) => x.id === 'stt')!.status).toBe('completed');
+    expect(paused.pausedStep).toBe('translation');
+    expect(paused.steps.every((x) => x.status !== 'running')).toBe(true);
+  });
+
+  it('does not take what the paused step left on disk as done', async () => {
+    // An artifact that exists is complete (atomic writes), but the step it
+    // belongs to was cut off: it runs again rather than being skipped.
+    const { project, deps, media } = await buildProject();
+    const controller = new AbortController();
+    const renderFinalVideo = media.renderFinalVideo.bind(media);
+    let renders = 0;
+    media.renderFinalVideo = async (input) => {
+      renders += 1;
+      const result = await renderFinalVideo(input);
+      if (renders === 1) {
+        controller.abort();
+        throw Object.assign(new Error('ffmpeg was stopped'), { name: 'AbortError' });
+      }
+      return result;
+    };
+    const runner = new PipelineRunner(deps);
+    await runner.run(project, { signal: controller.signal });
+    expect((await store.getPipeline(project.id)).pausedStep).toBe('render');
+
+    await runner.run(await store.getProject(project.id), { signal: new AbortController().signal });
+    expect(renders).toBe(2);
+    expect((await store.getPipeline(project.id)).status).toBe('completed');
+  });
+});
+
+describe('PipelineRunner — continuing after a pause (review findings)', () => {
+  it('a re-dub paused mid-voice redoes alignment, mix and render on Continue, not just the paused step', async () => {
+    // The old run's aligned.json, mix and video are still on disk: they must
+    // not pass for this dub's ("outputs already present").
+    const { project, deps, media } = await buildProject();
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+
+    const controller = new AbortController();
+    const tts = deps.registry.getTts() as FakeTtsProvider;
+    const synthesize = tts.synthesizeSegments.bind(tts);
+    tts.synthesizeSegments = async (input, signal) => {
+      controller.abort();
+      return synthesize(input, signal);
+    };
+    await new PipelineRunner(deps).run(await store.getProject(project.id), { retryFromStep: 'tts', signal: controller.signal });
+    tts.synthesizeSegments = synthesize;
+    const paused = await store.getPipeline(project.id);
+    expect(paused.status).toBe('paused');
+
+    media.calls.length = 0;
+    await new PipelineRunner(deps).run(await store.getProject(project.id), { signal: new AbortController().signal });
+    const after = await store.getPipeline(project.id);
+    expect(after.status).toBe('completed');
+    for (const id of ['alignment', 'audio-mix', 'render'] as const) {
+      expect(after.steps.find((s) => s.id === id)?.status, id).toBe('completed');
+    }
+    expect(media.calls.some((c) => c.startsWith('renderFinalVideo:'))).toBe(true);
+  });
+
+  it('a burst of progress reported just before a step returns never puts the finished step back to running', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+    const translation: TranslationProvider = {
+      id: 'argos',
+      displayName: 'bursty',
+      isLocal: true,
+      async translateSegments(input: TranslationInput): Promise<TranslationResult> {
+        // What a resumed translation does: every saved batch reported at once.
+        const report = (input as DubbingTranslationInput).onProgress;
+        for (let i = 1; i <= 40; i++) report?.(i, 40);
+        return { segments: input.segments.map((s) => ({ id: s.id, translatedText: `[vi] ${s.sourceText}` })) };
+      },
+    };
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(new FakeSttProvider(makeSegments([[0, 1000, 'Hello']])), translation, new FakeTtsProvider()),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+    // Let any straggler land, then look.
+    await new Promise((r) => setTimeout(r, 50));
+    const pipeline = await store.getPipeline(project.id);
+    expect(pipeline.status).toBe('completed');
+    expect(pipeline.steps.every((s) => s.status === 'completed' || s.status === 'skipped')).toBe(true);
   });
 });

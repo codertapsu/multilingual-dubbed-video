@@ -89,10 +89,50 @@ export interface DubbingTranslationExtras {
    * for nine, which reads as stuck to a user and to Claude (get_project).
    */
   onProgress?: (done: number, total: number) => void;
+  /**
+   * Lines an earlier, unfinished run of this same translation already did, by
+   * id (a pause, a closed app, a crash). A batch whose lines are all here is
+   * not sent again, and still serves as context for the next one. Only the
+   * pipeline sets it, and only for an unchanged translation
+   * (pipeline/translationCheckpoint.ts).
+   */
+  resume?: ReadonlyMap<string, string>;
+  /**
+   * Each batch's lines as it finishes, the ones the engine really translated
+   * (a line left in the source is not one), so the pipeline can save them.
+   */
+  onBatch?: (lines: readonly TranslationResultSegment[]) => void;
 }
 
 /** A {@link TranslationInput} with the pipeline's extras. */
 export type DubbingTranslationInput = TranslationInput & DubbingTranslationExtras;
+
+/**
+ * The lines of `batch` from an earlier run, when every one of them is there. A
+ * batch with any line missing is translated again whole: its lines are written
+ * together, as one passage.
+ */
+export function resumedBatch(
+  batch: readonly { id: string }[],
+  resume: ReadonlyMap<string, string> | undefined,
+): Map<string, string> | undefined {
+  if (!resume || resume.size === 0 || batch.length === 0) return undefined;
+  const lines = new Map<string, string>();
+  for (const seg of batch) {
+    const text = resume.get(seg.id);
+    if (text === undefined) return undefined;
+    lines.set(seg.id, text);
+  }
+  return lines;
+}
+
+/** The lines of a finished batch the engine really translated, for {@link DubbingTranslationExtras.onBatch}. */
+export function translatedLines(
+  batch: readonly { id: string }[],
+  byId: ReadonlyMap<string, string>,
+): TranslationResultSegment[] {
+  return batch.filter((s) => byId.has(s.id)).map((s) => ({ id: s.id, translatedText: byId.get(s.id)! }));
+}
 
 /** JSON schema for a `{"segments":[{"id","text"}]}` reply covering exactly `ids`. */
 export function segmentsReplySchema(ids: readonly string[]): Record<string, unknown> {
@@ -637,6 +677,13 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
       : this.callOpenAiCompatible(baseUrl, cred.apiKey, model, user, signal, sys);
   }
 
+  /** The model and endpoint the next request goes to (both come from Settings). */
+  async modelIdentity(): Promise<string | undefined> {
+    const cred = await this.credentials.get(this.credentialService);
+    const defaults = SERVICE_DEFAULTS[this.credentialService];
+    return `${cred.model ?? defaults.model}@${(cred.baseUrl ?? defaults.baseUrl).replace(/\/$/, '')}`;
+  }
+
   async translateSegments(input: DubbingTranslationInput, signal?: AbortSignal): Promise<TranslationResult> {
     const cred = await requireCredential(this.credentials, this.credentialService);
     const defaults = SERVICE_DEFAULTS[this.credentialService];
@@ -692,6 +739,15 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     let previousBatch: PromptSegment[] | undefined;
     let rolling: RollingPair[] = [];
     for (const batch of batches) {
+      // Done before a pause: keep its lines, and let them carry the context on.
+      const resumed = resumedBatch(batch, input.resume);
+      if (resumed) {
+        for (const seg of batch) results.push({ id: seg.id, translatedText: resumed.get(seg.id)! });
+        rolling = collectRollingPairs(batch, resumed);
+        previousBatch = batch;
+        input.onProgress?.(results.length, input.segments.length);
+        continue;
+      }
       const context = useContext
         ? buildContextHeader({ analysis, previousPairs: rolling, sceneBreak: isSceneBreak(previousBatch, batch) })
         : undefined;
@@ -713,6 +769,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
         // pipeline continues; the runner + editor surface it for review.
         results.push({ id: seg.id, translatedText: byId.get(seg.id) ?? seg.sourceText });
       }
+      input.onBatch?.(translatedLines(batch, byId));
       rolling = collectRollingPairs(batch, byId);
       previousBatch = batch;
       input.onProgress?.(results.length, input.segments.length);

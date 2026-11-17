@@ -55,6 +55,16 @@ export interface PipelineState {
    * Cleared when the next run starts.
    */
   awaitingReview?: boolean;
+  /**
+   * The run was paused, by the user or because the app closed (or the
+   * computer went off) in the middle of it: when, and the step it stopped in.
+   * Every finished step is kept, and the paused step keeps what it can of its
+   * own work (speech-to-text chunks, translated batches, voice clips), so the
+   * next run continues there. `status` is 'paused' meanwhile. Cleared when
+   * the next run starts.
+   */
+  pausedAt?: string;
+  pausedStep?: PipelineStepId;
   /** ISO-8601 last-updated timestamp. */
   updatedAt: string;
 }

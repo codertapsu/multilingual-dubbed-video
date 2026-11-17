@@ -430,10 +430,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     };
   };
 
-  // Stop any running engine servers (whisper.cpp / llama.cpp / uv-env workers)
-  // when the orchestrator shuts down, so no child process is orphaned.
+  // On the way out, pause the dubs in progress first (each saves its progress
+  // and continues at the next start), then stop any running engine servers
+  // (whisper.cpp / llama.cpp / uv-env workers) so no child process is orphaned.
   app.addHook('onClose', async () => {
-    orchestrator.stopScheduler();
+    await orchestrator.pauseAll();
     await engineManager.stopAll();
   });
 
@@ -1361,6 +1362,36 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
+  // Pause a dub: it stops at once, keeps everything done so far, and POST
+  // /projects/:id/run continues it later, after a restart too. Answers once
+  // the paused state is saved.
+  app.post('/projects/:id/pause', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      await orchestrator.pauseJob(req.params.id);
+      return { ok: true };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // The shell's graceful stop when the app quits (sidecar.rs,
+  // request_graceful_stop). It has posted here for a long time, but the route
+  // did not exist: on Windows, where there is no SIGTERM to catch, every quit
+  // ended in a kill after an 8-second wait, and a dub in progress was cut off
+  // mid-step. Now the dubs in progress are paused (their progress saved) and
+  // the process leaves through the same close as on SIGTERM. Refused from any
+  // web page but the app's own: CORS only hides the answer, it does not stop a
+  // simple POST from another site from arriving.
+  app.post('/shutdown', async (req, reply) => {
+    const origin = req.headers.origin;
+    if (origin && !allowedOrigin.test(origin)) {
+      return reply.status(403).send({ error: { code: 'UNKNOWN', message: 'Not allowed from this origin.' } });
+    }
+    await orchestrator.pauseAll();
+    setImmediate(() => requestShutdown());
+    return { ok: true };
+  });
+
   app.post(
     '/projects/:id/retry',
     async (req: FastifyRequest<{ Params: { id: string }; Body: { stepId: PipelineStepId } }>, reply) => {
@@ -1733,6 +1764,11 @@ async function sendFileWithRanges(req: FastifyRequest, reply: FastifyReply, file
  * Idempotent: repeated calls (embedders, tests) install the handlers once.
  */
 let lifecycleInstalled = false;
+/**
+ * Leave the process the graceful way (POST /shutdown). A no-op until
+ * installProcessLifecycle runs: a server embedded in a test must not exit.
+ */
+let requestShutdown: () => void = () => undefined;
 export function installProcessLifecycle(app: FastifyInstance, config: OrchestratorConfig): void {
   if (lifecycleInstalled) return;
   lifecycleInstalled = true;
@@ -1743,6 +1779,7 @@ export function installProcessLifecycle(app: FastifyInstance, config: Orchestrat
     closing = true;
     void app.close().finally(() => process.exit(0));
   };
+  requestShutdown = shutdown;
   for (const sig of ['SIGTERM', 'SIGINT'] as const) {
     process.once(sig, shutdown);
   }

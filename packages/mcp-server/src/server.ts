@@ -149,6 +149,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         'For the best translation, create the project with reviewBeforeSynthesis=true: the run pauses after a quick draft translation, you read the whole transcript, record names/terms/forms of address with set_translation_context, rewrite the lines with set_translations, then start_dubbing continues with your text.',
         'Every line must be speakable in its own time slot: get_transcript shows each line\'s budget at the voice\'s pace (e.g. "≤13 syllables (aim 11)") and the current length in [brackets]. Aim for the target and never exceed the ceiling, but keep the full meaning: an over-short line is a worse dub than a slightly fast one. Never merge or split lines. Fix every line marked NEEDS FIX.',
         'Changing settings, engines or downloads is the user\'s machine: say what you are about to install (sizes are in list_engines) before doing it.',
+        'A long dub can be paused (pause_dubbing) and continued later with start_dubbing, also after the app was closed: nothing done is lost. get_project says when a dub is paused.',
       ].join('\n'),
     },
   );
@@ -616,7 +617,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Start, continue or redo a dub',
       description:
-        'Start the dub, continue it after a review pause, or redo it from a step (fromStep) after changing settings or the translation. Finished steps are reused. If an engine or model is missing the app says what to install; whisper.cpp speech models start downloading by themselves.',
+        'Start the dub, continue it after a pause (pause_dubbing, a review pause, or the app having been closed), or redo it from a step (fromStep) after changing settings or the translation. Finished steps are reused. If an engine or model is missing the app says what to install; whisper.cpp speech models start downloading by themselves.',
       inputSchema: z.object({
         projectId: z.string(),
         fromStep: z.enum(STEP_IDS).optional().describe('Redo from this step on; omit to start or continue.'),
@@ -627,16 +628,35 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
   );
 
   server.registerTool(
+    'pause_dubbing',
+    {
+      title: 'Pause a dub',
+      description:
+        'Pause a running dub. It stops at once and keeps everything done so far, including the part of the current step it saved (translated batches, speech-to-text chunks, voice clips); the user can then close the app or turn off the computer. start_dubbing continues it from there. A queued dub just leaves the queue.',
+      inputSchema: z.object({ projectId: z.string() }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId }, ctx) => {
+      const signal = ctx.mcpReq.signal;
+      await api.post(`/projects/${encodeURIComponent(projectId)}/pause`, {}, { signal });
+      const { pipeline } = await getProject(projectId, signal);
+      const where = pipeline.status === 'paused' && pipeline.pausedStep ? ` at "${pipeline.pausedStep}"` : '';
+      return text(`Paused${where}. Everything done so far is kept; start_dubbing continues from there.`);
+    }),
+  );
+
+  server.registerTool(
     'cancel_dubbing',
     {
       title: 'Stop a dub',
-      description: 'Stop a running or queued dub. Finished steps are kept; start_dubbing resumes.',
+      description:
+        'Stop a running dub (the same as pause_dubbing: nothing done is thrown away) or take a queued one out of the queue. start_dubbing continues it.',
       inputSchema: z.object({ projectId: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId }, ctx) => {
       await api.post(`/projects/${encodeURIComponent(projectId)}/cancel`, {}, { signal: ctx.mcpReq.signal });
-      return text('Stopped. start_dubbing resumes from where it stopped.');
+      return text('Stopped. start_dubbing continues from where it stopped.');
     }),
   );
 

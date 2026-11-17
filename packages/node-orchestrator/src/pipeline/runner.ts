@@ -20,9 +20,12 @@
  * a retry starting at or before that step). pipeline.json is persisted after
  * every transition.
  *
- * CANCELLATION: a per-run flag + AbortController is checked between (and
- * during) steps. Cancelling throws/propagates CANCELLED and leaves the current
- * step `failed` with a CANCELLED error, so it can be retried.
+ * PAUSING: the run's AbortSignal is checked between (and during) steps. When it
+ * is aborted — the user paused, or the app is closing — the run stops where it
+ * is and the pipeline is saved as `paused` at that step (pausePipelineState),
+ * never as a failure. The next run continues there: finished steps are skipped,
+ * and the paused step reuses what it saved of its own work (speech-to-text
+ * chunks, translated batches, voice clips).
  *
  * Everything is dependency-injected (store, media, registry, event bus) so the
  * runner is fully testable without ffmpeg or live workers.
@@ -30,6 +33,8 @@
 import fsp from 'node:fs/promises';
 import {
   AppErrorException,
+  pausePipelineState,
+  resumePipelineState,
   setStepStatus,
   toAppError,
   toWhisperLanguage,
@@ -49,7 +54,7 @@ import {
 import { alignSegments, summarizeAlignment, type AlignInputSegment } from '../alignment/align.js';
 import { applyClipTiming, measureClip, type MeasuredClip } from '../alignment/clipSpeech.js';
 import type { DubbingTranslationInput, PromptSegment } from '../providers/translation/llmTranslationProvider.js';
-import { reviewTranslations } from '../providers/translation/refinement.js';
+import { reviewBatchKey, reviewTranslations, type ReviewedBatch } from '../providers/translation/refinement.js';
 import { contextEngineCandidates, FallbackContextChat } from '../providers/translation/contextEngine.js';
 import {
   applyReviewOutcome,
@@ -81,6 +86,14 @@ import {
 } from '../providers/translation/speechFit.js';
 import { isTranslationRefiner } from '../providers/types.js';
 import { writeJsonAtomic, writeTextAtomic } from '../workspace/projectStore.js';
+import {
+  checkpointKey,
+  CheckpointWriter,
+  readCheckpoint,
+  readTranslationCheckpoint,
+  translationCheckpointKey,
+  TranslationCheckpointWriter,
+} from './translationCheckpoint.js';
 import { displayCuesFor, writeCueOverrides } from '../workspace/subtitleTiming.js';
 import {
   estimateGroupDriftMs,
@@ -473,6 +486,22 @@ export class PipelineRunner {
 
     let state = await store.getPipeline(project.id);
 
+    // Continuing a paused dub. The step it stopped in was cut off part-way, so
+    // whatever it left on disk is not taken as "already done" (`interrupted`
+    // below); it runs again and reuses what it saved of its own work.
+    const resumedStep = state.pausedStep;
+    const resumeIndex = resumedStep ? pipelineStepIndex(resumedStep) : Infinity;
+    if (state.pausedAt !== undefined || state.status === 'paused') {
+      state = resumePipelineState(state);
+      await store.savePipeline(state);
+      bus.emit({ type: 'state', pipeline: state });
+      if (resumedStep) {
+        logger.info(
+          `Continuing the paused dub at "${pipelineStepLabel(resumedStep)}"; everything finished before the pause is kept.`,
+        );
+      }
+    }
+
     // If retrying from a step, reset that step + all downstream to pending.
     if (options.retryFromStep) {
       state = this.resetFromStep(state, options.retryFromStep);
@@ -518,7 +547,13 @@ export class PipelineRunner {
         // artifacts atomically (media-worker/src/atomic.ts), so a present
         // artifact really is a complete one; this is the second lock on the same
         // door, for artifacts written by an older version of the app.
-        const interrupted = stepState?.status === 'failed' || stepState?.status === 'running';
+        //
+        // Nor at or after the step a paused dub continues at: the steps after
+        // it are pending because this dub has not reached them, and the files
+        // on disk are an earlier run's. A voice re-dub paused mid-synthesis
+        // skipped alignment, mix and render on Continue and kept the old dub.
+        const interrupted =
+          stepState?.status === 'failed' || stepState?.status === 'running' || pipelineStepIndex(stepId) >= resumeIndex;
         if (!forceRun && !interrupted && stepState?.status !== 'completed' && (await this.outputsExist(stepId, paths, project))) {
           logger.info(`Skipping "${pipelineStepLabel(stepId)}" — outputs already present.`);
           state = await transition(this.deps, state, stepId, 'skipped');
@@ -530,14 +565,40 @@ export class PipelineRunner {
 
         // Mid-step progress: re-emit the step as "running" with an updated
         // percent. Called sparingly (per chunk/batch), so it never floods SSE.
-        const onProgress: StepProgress = async (fraction) => {
+        // Writes go one at a time, and none is made once the run is stopping or
+        // the step has returned: translation reports without waiting, so a
+        // "running 84%" queued behind a burst of resumed batches landed after
+        // the step was saved completed, and put a finished dub back to
+        // "running" — or after a pause was saved, with nothing running.
+        let progressWrite: Promise<unknown> = Promise.resolve();
+        let stepReturned = false;
+        const onProgress: StepProgress = (fraction) => {
+          if (options.signal.aborted || stepReturned) return Promise.resolve();
           const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
-          state = await transition(this.deps, state, stepId, 'running', { progressPercent: pct });
+          const write = progressWrite.then(async () => {
+            if (stepReturned) return;
+            state = await transition(this.deps, state, stepId, 'running', { progressPercent: pct });
+          });
+          progressWrite = write.catch(() => undefined);
+          return write;
         };
 
         try {
           await this.executeStep(stepId, project, paths, options.signal, onProgress);
         } catch (err) {
+          // Pausing (or the app closing) aborts the run's signal: that stops the
+          // dub where it is, it does not fail it. Before, the step was marked
+          // failed and the project "failed", with a CANCELLED error on screen.
+          // The reports made before the stop still land, so the paused step
+          // keeps its latest percent.
+          if (options.signal.aborted) {
+            await progressWrite;
+            stepReturned = true;
+            state = await this.pauseRun(state, project);
+            return;
+          }
+          stepReturned = true;
+          await progressWrite;
           const appError = toAppError(err);
           logger.errorWithCause(`Step "${pipelineStepLabel(stepId)}" failed`, appError);
           state = await transition(this.deps, state, stepId, 'failed', { error: appError.message });
@@ -547,6 +608,8 @@ export class PipelineRunner {
           return;
         }
 
+        stepReturned = true;
+        await progressWrite;
         state = await transition(this.deps, state, stepId, 'completed', { progressPercent: 100 });
         logger.info(`Step "${pipelineStepLabel(stepId)}" completed.`);
 
@@ -573,23 +636,37 @@ export class PipelineRunner {
       await this.markProjectStatus(project, 'completed');
       bus.emit({ type: 'done' });
     } catch (err) {
-      // Top-level catch handles cancellation between steps.
-      const appError = toAppError(err);
-      if (appError.code === 'CANCELLED') {
-        logger.warn('Pipeline cancelled.');
-        // Mark the current running step as failed/cancelled so it can be retried.
-        const current = state.steps.find((s) => s.status === 'running');
-        if (current) {
-          state = await transition(this.deps, state, current.id, 'failed', { error: 'Cancelled' });
-        }
-        await this.markProjectStatus(project, 'paused');
-        bus.emit({ type: 'error', error: appError });
+      // Paused between steps (the check at the top of the loop).
+      if (options.signal.aborted) {
+        state = await this.pauseRun(state, project);
         return;
       }
+      const appError = toAppError(err);
       logger.errorWithCause('Pipeline failed', appError);
       bus.emit({ type: 'error', error: appError });
       await this.markProjectStatus(project, 'failed');
     }
+  }
+
+  /**
+   * The run stopped part-way and continues later: a pause, or the app closing.
+   * Saved as `paused` at its step (pausePipelineState), never as a failure: the
+   * step keeps its progress, the project shows "Paused" with a Continue
+   * button, and no error is raised.
+   */
+  private async pauseRun(state: PipelineState, project: Project): Promise<PipelineState> {
+    const { store, bus, logger } = this.deps;
+    const paused = pausePipelineState(state);
+    await store.savePipeline(paused);
+    bus.emit({ type: 'state', pipeline: paused });
+    const step = paused.steps.find((s) => s.id === paused.pausedStep);
+    if (step) bus.emit({ type: 'step', step });
+    await this.markProjectStatus(project, 'paused');
+    logger.info(
+      `Paused${paused.pausedStep ? ` at "${pipelineStepLabel(paused.pausedStep)}"` : ''}. ` +
+        'Everything done so far is saved: continue any time, also after closing VideoDubber or restarting the computer.',
+    );
+    return paused;
   }
 
   /** Persist a project status change (best-effort; never throws). */
@@ -1132,9 +1209,48 @@ export class PipelineRunner {
         this.deps.logger.info(`Translated ${done}/${total} lines...`),
       ),
     };
+    // Where an unfinished run of this same translation stopped (a pause, a
+    // closed app, a crash): its finished batches are reused and every new one
+    // is saved as it lands (translationCheckpoint.ts). Per engine: a fallback
+    // engine's lines are its own.
+    const checkpointFor = async (p: TranslationProviderRef) => {
+      const key = translationCheckpointKey({
+        providerId: p.id,
+        model: (await p.modelIdentity?.().catch(() => undefined)) ?? p.displayName,
+        ...languages,
+        segments: input.segments,
+        // Only a translator that reads the sheet is changed by it. A line-by-
+        // line one (TranslateGemma) gets its sheet AFTER translating, so a
+        // pause during the repair pass would otherwise find a new key and
+        // translate everything again.
+        ...(documentContext && isTranslationRefiner(p) ? { documentContext } : {}),
+        ...(rate.perSecond !== undefined ? { speechRate: rate.perSecond } : {}),
+      });
+      const saved = await readTranslationCheckpoint(paths.translationCheckpointJson, key);
+      if (saved.size > 0) {
+        this.deps.logger.info(
+          `Continuing the translation: ${saved.size} of ${sourceSegments.length} lines were done before it stopped.`,
+        );
+      }
+      return { saved, writer: new TranslationCheckpointWriter(paths.translationCheckpointJson, key, saved) };
+    };
+    let checkpoint = await checkpointFor(provider);
+    const translateWith = async (p: TranslationProviderRef) => {
+      const resumable: DubbingTranslationInput = {
+        ...input,
+        resume: checkpoint.saved,
+        onBatch: (lines) => checkpoint.writer.add(lines),
+      };
+      try {
+        return await p.translateSegments(resumable, signal);
+      } finally {
+        // Stopped or not, what was translated is on disk before the step ends.
+        await checkpoint.writer.flush();
+      }
+    };
     let result: Awaited<ReturnType<TranslationProviderRef['translateSegments']>>;
     try {
-      result = await provider.translateSegments(input, signal);
+      result = await translateWith(provider);
     } catch (err) {
       const fallback = this.translationFallbackFor(project, provider.id, err);
       if (!fallback || signal.aborted) throw err;
@@ -1144,7 +1260,8 @@ export class PipelineRunner {
       );
       await this.recordFallback(project.id, 'translation', fallback.id);
       provider = fallback;
-      result = await provider.translateSegments(input, signal);
+      checkpoint = await checkpointFor(provider);
+      result = await translateWith(provider);
     }
 
     // A provider that ignores skipAnalysis may still return a sheet: keep it.
@@ -1259,6 +1376,9 @@ export class PipelineRunner {
     }
 
     await writeTranscriptAtomic(paths, pass.segments);
+    // translated.json holds the translation now; a later re-translation of
+    // this project must start fresh, not from these lines.
+    await checkpoint.writer.discard();
     await updateTranslationReport(reportPath, {
       ...(sheetStatus ? { characterSheet: sheetStatus } : {}),
       speechRate: { ...(rate.perSecond !== undefined ? { perSecond: rate.perSecond } : {}), source: rate.source },
@@ -1344,21 +1464,57 @@ export class PipelineRunner {
       }
     }
 
-    const outcome = await reviewTranslations(
-      {
-        ...languages,
-        segments: promptSegments,
-        draftById: new Map(segments.map((s) => [s.id, (s.translatedText ?? '').trim()])),
-        ...(documentContext ? { documentContext } : {}),
-        mode: 'refine',
-        ...(rate.perSecond !== undefined ? { perSecond: rate.perSecond } : {}),
-        skipAnalysis: true,
-        // A small local model mixes lines up in big batches (refinement.ts).
-        ...(provider.isLocal ? { batchSegments: 8 } : {}),
-      },
-      provider,
-      signal,
-    );
+    // Where an unfinished run of this same review stopped (a pause, a closed
+    // app, a crash): its finished batches are kept, and each new one is saved
+    // as it lands (translationCheckpoint.ts). The drafts are in the key: a line
+    // edited during the pause gets the whole transcript reviewed again.
+    const batchSegments = provider.isLocal ? 8 : undefined;
+    const reviewKey = checkpointKey([
+      'refine',
+      1,
+      provider.id,
+      (await provider.modelIdentity?.().catch(() => undefined)) ?? provider.displayName,
+      languages.sourceLanguage,
+      languages.targetLanguage,
+      promptSegments.map((s) => [s.id, s.sourceText, s.startMs ?? null, s.endMs ?? null, s.speakerId ?? null]),
+      segments.map((s) => [s.id, (s.translatedText ?? '').trim(), s.locked === true]),
+      documentContext ?? null,
+      rate.perSecond ?? null,
+      batchSegments ?? null,
+    ]);
+    const finished = (await readCheckpoint<ReviewedBatch[]>(paths.refineCheckpointJson, reviewKey)) ?? [];
+    if (finished.length > 0) {
+      this.deps.logger.info(
+        `Continuing the review: ${finished.reduce((n, b) => n + b.ids.length, 0)} of ${segments.length} lines were reviewed before it stopped.`,
+      );
+    }
+    const checkpoint = new CheckpointWriter<ReviewedBatch[]>(paths.refineCheckpointJson, reviewKey);
+    let outcome: Awaited<ReturnType<typeof reviewTranslations>>;
+    try {
+      outcome = await reviewTranslations(
+        {
+          ...languages,
+          segments: promptSegments,
+          draftById: new Map(segments.map((s) => [s.id, (s.translatedText ?? '').trim()])),
+          ...(documentContext ? { documentContext } : {}),
+          mode: 'refine',
+          ...(rate.perSecond !== undefined ? { perSecond: rate.perSecond } : {}),
+          skipAnalysis: true,
+          // A small local model mixes lines up in big batches (refinement.ts).
+          ...(batchSegments !== undefined ? { batchSegments } : {}),
+          resume: new Map(finished.map((b) => [reviewBatchKey(b.ids), b])),
+          onBatch: (batch) => {
+            finished.push(batch);
+            checkpoint.save(finished);
+          },
+        },
+        provider,
+        signal,
+      );
+    } finally {
+      // Stopped or not, what was reviewed is on disk before the step ends.
+      await checkpoint.flush();
+    }
 
     // Locked lines were read as context but are never replaced; every line's
     // quality flags are refreshed from its final text.
@@ -1382,6 +1538,8 @@ export class PipelineRunner {
       draft: TRANSLATION_DRAFT_FILE,
       finishedAt: new Date().toISOString(),
     });
+    // The review is in translated.json and its report: a later review starts fresh.
+    await checkpoint.discard();
     if (outcome.failedBatches.length > 0) {
       this.deps.logger.warn(
         `The review model returned no usable reply for ${outcome.failedBatches.length} batch(es) even after a retry ` +

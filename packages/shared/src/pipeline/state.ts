@@ -194,6 +194,41 @@ export function setStepStatus(
   };
 }
 
+/**
+ * The pipeline after its run stopped part-way and will continue later (a
+ * pause, or an app that closed mid-run): the step that was running goes back
+ * to `pending`, keeping the progress it had reported, and the pipeline is
+ * `paused` at that step. Stopped between steps, it is paused at the next one.
+ * A pipeline with nothing left to do is returned unchanged.
+ */
+export function pausePipelineState(state: PipelineState, now: string = new Date().toISOString()): PipelineState {
+  const pausedStep = computeCurrentStep(state.steps);
+  if (pausedStep === undefined) return state;
+  const steps: PipelineStepState[] = state.steps.map((step) => {
+    if (step.status !== 'running') return { ...step };
+    const { startedAt: _startedAt, finishedAt: _finishedAt, error: _error, ...rest } = step;
+    return { ...rest, status: 'pending' };
+  });
+  return {
+    ...state,
+    steps,
+    progressPercent: rollUpProgress(steps),
+    currentStep: pausedStep,
+    status: 'paused',
+    error: undefined,
+    pausedAt: now,
+    pausedStep,
+    updatedAt: now,
+  };
+}
+
+/** The pipeline as a new run starts: no longer paused, its status read from its steps again. */
+export function resumePipelineState(state: PipelineState, now: string = new Date().toISOString()): PipelineState {
+  if (state.pausedAt === undefined && state.pausedStep === undefined && state.status !== 'paused') return state;
+  const { pausedAt: _pausedAt, pausedStep: _pausedStep, ...rest } = state;
+  return { ...rest, status: rollUpStatus(state.steps), currentStep: computeCurrentStep(state.steps), updatedAt: now };
+}
+
 /** Clamp a percentage into the 0..100 integer range. */
 function clampPercent(p: number): number {
   if (!Number.isFinite(p)) return 0;

@@ -365,6 +365,17 @@ const DEFAULT_TTS_UNITS_PER_REQUEST = 48;
 const TTS_FIRST_PASS_SHARE = 0.8;
 
 /**
+ * Alignment's progress bar, by phase: measuring the clips, then auto-fit
+ * (shortening lines with the context model, then re-voicing them), then
+ * re-voicing the still-too-long units at their natural pace. Measuring used to
+ * fill the whole bar, so a 31-minute dub sat at "alignment 100%" for the 4.5
+ * minutes of the other two, which reads as stuck.
+ */
+const ALIGN_MEASURED = 0.5;
+const ALIGN_SHORTENED = 0.7;
+const ALIGN_REFITTED = 0.85;
+
+/**
  * A synthesizeGroups progress callback: maps (done, total) onto [from, to] of
  * the step's bar and logs "<verb> done/total <noun>..." at most once per tenth
  * of the run, so a long synthesis reads as progress in the log, not a hang.
@@ -772,7 +783,7 @@ export class PipelineRunner {
       case 'translation':
         return this.stepTranslation(project, paths, signal, onProgress);
       case 'refine':
-        return this.stepRefine(project, paths, signal);
+        return this.stepRefine(project, paths, signal, onProgress);
       case 'tts':
         await this.stepTts(project, paths, signal, onProgress);
         this.freshClips = true;
@@ -1405,7 +1416,12 @@ export class PipelineRunner {
    * pre-review transcript is kept as translated.draft.json — before, the
    * draft was overwritten and the report kept at most 200 bare ids.
    */
-  private async stepRefine(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
+  private async stepRefine(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress: StepProgress = async () => {},
+  ): Promise<void> {
     throwIfCancelled(signal);
     const providerId = project.settings.refineProviderId;
     const writeReport = (report: object): Promise<void> => writeJsonAtomic(paths.refineReportJson, report);
@@ -1502,6 +1518,9 @@ export class PipelineRunner {
           skipAnalysis: true,
           // A small local model mixes lines up in big batches (refinement.ts).
           ...(batchSegments !== undefined ? { batchSegments } : {}),
+          onProgress: translationProgress(onProgress, (done, total) =>
+            this.deps.logger.info(`Reviewed ${done}/${total} lines...`),
+          ),
           resume: new Map(finished.map((b) => [reviewBatchKey(b.ids), b])),
           onBatch: (batch) => {
             finished.push(batch);
@@ -1844,7 +1863,7 @@ export class PipelineRunner {
           // silent multi-minute wait. Concurrent emits only race on the percent.
           probedCount++;
           if (probedCount === groups.length || probedCount % progressEvery === 0) {
-            await onProgress(probedCount / groups.length);
+            await onProgress((probedCount / groups.length) * ALIGN_MEASURED);
           }
         }
       }),
@@ -1891,8 +1910,10 @@ export class PipelineRunner {
         totalDurationMs,
         signal,
         voiceRate,
+        onProgress,
       );
     }
+    await onProgress(ALIGN_REFITTED);
 
     // Native-rate fit: when the engine honors a speed parameter (Piper, OpenAI),
     // re-synthesize still-too-long units AT the required rate instead of leaving
@@ -1907,6 +1928,7 @@ export class PipelineRunner {
       settings,
       totalDurationMs,
       signal,
+      onProgress,
     );
 
     // The step's resume artifact: written atomically, like every artifact that
@@ -2127,6 +2149,7 @@ export class PipelineRunner {
     totalDurationMs: number | undefined,
     signal: AbortSignal,
     voiceRate: number | undefined,
+    onProgress: StepProgress = async () => {},
   ): Promise<AlignedSegment[]> {
     throwIfCancelled(signal);
     const conflicts = aligned.filter(needsDurationFit);
@@ -2153,6 +2176,7 @@ export class PipelineRunner {
         : [];
     });
     this.deps.logger.info(`Auto-fit: shortening the lines of ${units.length} overflowing/over-stretched unit(s)...`);
+    await onProgress(ALIGN_MEASURED + 0.05);
     const documentContext = await readDocContext(paths.translationContextJson);
     let outcome: ShortenOutcome;
     try {
@@ -2220,7 +2244,14 @@ export class PipelineRunner {
     // ONE synthesis pass for every changed unit, batched per voice and rate
     // like the TTS step (synthesizeGroups) — after all LLM work is done.
     throwIfCancelled(signal);
-    await this.synthesizeGroups(project, paths, changedGroups, signal);
+    await onProgress(ALIGN_SHORTENED);
+    await this.synthesizeGroups(
+      project,
+      paths,
+      changedGroups,
+      signal,
+      ttsProgress(onProgress, ALIGN_SHORTENED, ALIGN_REFITTED, (m) => this.deps.logger.info(m), 'Auto-fit: re-voiced', 'unit(s)'),
+    );
     for (const id of outcome.accepted.keys()) {
       const seg = segById.get(id);
       if (seg) delete seg.ttsStale;
@@ -2260,6 +2291,7 @@ export class PipelineRunner {
     settings: { maxSpeedRatio: number; allowedOverflowMs: number },
     totalDurationMs: number | undefined,
     signal: AbortSignal,
+    onProgress: StepProgress = async () => {},
   ): Promise<AlignedSegment[]> {
     const MIN_NATIVE_RATE = 1.05;
     const tts = this.deps.registry.getTts(project.settings.ttsProviderId);
@@ -2274,8 +2306,10 @@ export class PipelineRunner {
     );
 
     const requestedSpeed = new Map<string, number>();
-    for (const a of targets) {
+    const report = ttsProgress(onProgress, ALIGN_REFITTED, 1, (m) => this.deps.logger.info(m), 'Re-voiced', 'over-long unit(s)');
+    for (const [i, a] of targets.entries()) {
       throwIfCancelled(signal);
+      if (i > 0) await report(i, targets.length);
       const group = groupById.get(a.segmentId);
       const input = inputById.get(a.segmentId);
       if (!group || !input) continue;

@@ -158,6 +158,11 @@ export interface ReviewInput {
    */
   batchSegments?: number;
   /**
+   * Lines reviewed so far, out of all of them, as batches finish. The step
+   * reported nothing of its own: a 16-minute review sat at "refine 0%".
+   */
+  onProgress?: (done: number, total: number) => void;
+  /**
    * Batches an earlier, unfinished run of this same review finished (a pause,
    * a closed app, a crash), by {@link reviewBatchKey}: kept as they were, and
    * still the context for the next batch. Only the pipeline sets it, and only
@@ -421,6 +426,7 @@ export async function reviewTranslations(
   const system = 'You are a professional subtitle/dubbing translator. Respond with strict JSON only.';
   let previousBatch: PromptSegment[] | undefined;
   let rolling: RollingPair[] = [];
+  let reviewed = 0;
   for (const batch of batches) {
     const ids = batch.map((s) => s.id);
     // Finished before a pause: as it was, and still the next batch's context.
@@ -430,6 +436,8 @@ export async function reviewTranslations(
       rejected.push(...saved.rejected);
       rolling = collectRollingPairs(batch, new Map(Object.entries(saved.merged)));
       previousBatch = batch;
+      reviewed += batch.length;
+      input.onProgress?.(reviewed, timed.length);
       continue;
     }
     const rejectedBefore = rejected.length;
@@ -529,6 +537,8 @@ export async function reviewTranslations(
         rejected: rejected.slice(rejectedBefore),
       });
     }
+    reviewed += batch.length;
+    input.onProgress?.(reviewed, timed.length);
   }
 
   // Content that moved between adjacent cues: keep both drafts — unless a

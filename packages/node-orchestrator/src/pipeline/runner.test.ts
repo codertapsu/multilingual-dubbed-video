@@ -1621,6 +1621,22 @@ describe('PipelineRunner — pausing and continuing', () => {
   });
 });
 
+describe('PipelineRunner — alignment progress', () => {
+  it('measuring the clips fills half the bar, not all of it, and the bar only moves forward', async () => {
+    // It filled the whole bar, so a long dub sat at "alignment 100%" through
+    // the minutes of auto-fit and re-voicing that followed.
+    const { project, deps } = await buildProject();
+    const seen: number[] = [];
+    deps.bus.subscribe((e) => {
+      if (e.type === 'step' && e.step.id === 'alignment' && e.step.status === 'running') seen.push(e.step.progressPercent);
+    });
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    expect(seen).toContain(50);
+    expect(seen.every((p) => p < 100)).toBe(true);
+    expect([...seen].sort((a, b) => a - b)).toEqual(seen);
+  });
+});
+
 describe('PipelineRunner — continuing after a pause (review findings)', () => {
   it('a re-dub paused mid-voice redoes alignment, mix and render on Continue, not just the paused step', async () => {
     // The old run's aligned.json, mix and video are still on disk: they must

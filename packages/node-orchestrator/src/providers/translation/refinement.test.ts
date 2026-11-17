@@ -146,15 +146,17 @@ describe('reviewTranslations', () => {
     };
   }
 
-  it('saves each finished batch, then a resumed run sends only the batches not done', async () => {
+  it('reports progress and each finished batch, then a resumed run sends only the batches not done', async () => {
     const reply = (ids: string[], texts: Record<string, string>) =>
       JSON.stringify({ segments: ids.map((id) => ({ id, text: texts[id] ?? drafts.get(id)! })) });
     const input = { sourceLanguage: 'zh', targetLanguage: 'vi', segments, draftById: drafts, mode: 'refine' as const, skipAnalysis: true, batchSegments: 2 };
 
     // First run: two batches (2 + 1 lines); the second reply is unusable.
     const first = chat([reply(['seg_0001', 'seg_0002'], { seg_0001: 'Ngươi làm gì vậy?' }), 'not json', 'still not json']);
+    const progress: string[] = [];
     const saved: { ids: string[]; proposals: Record<string, string> }[] = [];
-    await reviewTranslations({ ...input, onBatch: (b) => saved.push(b) }, first);
+    await reviewTranslations({ ...input, onProgress: (d, t) => progress.push(`${d}/${t}`), onBatch: (b) => saved.push(b) }, first);
+    expect(progress).toEqual(['2/3', '3/3']);
     // Only the usable batch is saved: a resumed run asks again for the other.
     expect(saved).toEqual([expect.objectContaining({ ids: ['seg_0001', 'seg_0002'], proposals: { seg_0001: 'Ngươi làm gì vậy?' } })]);
 

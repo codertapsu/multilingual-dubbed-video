@@ -378,6 +378,13 @@ export class EngineInstaller {
     if (resolved.extraIndexUrls.length > 0) {
       indexArgs.push('--index-strategy', 'unsafe-best-match');
     }
+    // Dependencies a package declares but the engine never imports (vieneu
+    // 3.8's gradio demo) are dropped with uv overrides; see uvRequirements.
+    if (resolved.overrides?.length) {
+      const overrideFile = path.join(packDir, 'overrides.txt');
+      await fsp.writeFile(overrideFile, `${resolved.overrides.join('\n')}\n`, 'utf8');
+      indexArgs.push('--override', overrideFile);
+    }
     this.deps.bus.emit({ type: 'progress', packId: pack.id, percent: null, message: `Installing ${pack.displayName} dependencies (this can take a few minutes)…` });
     await this.run(uv, ['pip', 'install', '--python', venvDir, ...indexArgs, '-r', reqFile], uvEnv);
 

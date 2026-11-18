@@ -825,7 +825,8 @@ describe('hardware-aware engine recommendations', () => {
     expect(recs).toContain('llama-cpp-metal');
     // 32 GB Apple Silicon is accelerated + workstation-class → the 27B model.
     expect(recs).toContain('translategemma-27b');
-    expect(recs).toContain('tts-neural');
+    // VieNeu through SDK 3.8 (25 voices + cloning); the 3.0.5 pack stays installable.
+    expect(recs).toContain('tts-vieneu');
     // separation-audio + alignment-whisperx are unimplemented stubs (gated in
     // DISABLED_PACK_IDS), so they are NEVER recommended — even on a 32 GB Mac.
     expect(recs).not.toContain('separation-audio');

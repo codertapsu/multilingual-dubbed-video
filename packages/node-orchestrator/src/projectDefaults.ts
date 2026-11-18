@@ -117,10 +117,16 @@ export async function recommendProjectSettings(
   // --- voice
   if (saved.ttsProviderId && (await deps.usable('tts', saved.ttsProviderId))) {
     settings.ttsProviderId = saved.ttsProviderId;
-  } else if (baseLanguage(input.targetLanguage) === 'vi' && (await deps.usable('tts', 'neural-tts'))) {
-    settings.ttsProviderId = 'neural-tts';
-    autoPicked.push('tts');
-    notes.push('Voice: VieNeu natural Vietnamese voices (installed).');
+  } else if (baseLanguage(input.targetLanguage) === 'vi') {
+    // VieNeu 3.8 (25 voices) first, then the 3.0.5 engine with its ten.
+    for (const id of ['vieneu-tts', 'neural-tts']) {
+      if (await deps.usable('tts', id)) {
+        settings.ttsProviderId = id;
+        autoPicked.push('tts');
+        notes.push('Voice: VieNeu natural Vietnamese voices (installed).');
+        break;
+      }
+    }
   }
 
   if (autoPicked.length > 0) settings.autoSelectedPhases = autoPicked;

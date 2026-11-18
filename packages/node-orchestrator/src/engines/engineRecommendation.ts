@@ -302,23 +302,23 @@ export function recommendEnginePacks(
     }
   }
 
-  // Neural TTS: better voices (incl. the Vietnamese VieNeu upgrade) on capable
-  // machines. The catalog lists the GPU build first, so an NVIDIA machine that
-  // fits it is offered that one, with the speed-up in the reason; everyone else
-  // gets the CPU build.
+  // Neural TTS: better voices on capable machines, now VieNeu through SDK 3.8
+  // (25 voices and cloning; the 3.0.5 packs stay installable for the ten older
+  // voices). The catalog lists the GPU build first, so an NVIDIA machine that
+  // fits it is offered that one; everyone else gets the CPU build.
   if (rec.tier !== 'constrained') {
-    const gpuPack = fitting.find((p) => p.providerId === 'neural-tts' && p.accel === 'cuda');
+    const gpuPack = fitting.find((p) => p.providerId === 'vieneu-tts' && p.accel === 'cuda');
     if (gpuPack && nvidiaName) {
       out.push({
         packId: gpuPack.id,
-        reason: `Natural Vietnamese voices generated on your ${nvidiaName}: about 4× faster than on the CPU (a 21-minute video took 2½ minutes on an RTX 3050), with the same voices.`,
-        reasonText: why('vieneu-gpu', { gpu: nvidiaName }),
+        reason: `The newest VieNeu voices (25 natural Vietnamese voices and voice cloning), generated on your ${nvidiaName} many lines at a time.`,
+        reasonText: why('vieneu38-gpu', { gpu: nvidiaName }),
       });
     } else {
       takeBest(
-        'neural-tts',
-        'More natural neural voices, including a better Vietnamese voice than Piper.',
-        why('vieneu-cpu'),
+        'vieneu-tts',
+        '25 natural Vietnamese voices across the three regions, and voice cloning from a short recording, on the CPU.',
+        why('vieneu38-cpu'),
       );
     }
   }

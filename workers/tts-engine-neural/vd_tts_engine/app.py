@@ -21,12 +21,15 @@ is copied from the per-project clip cache instead of re-synthesized
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import clipcache, voices
@@ -35,7 +38,17 @@ from .wavio import read_wav_duration_ms, write_silent_wav
 
 logger = logging.getLogger("vd_tts_engine")
 
-_engine = VieNeuEngine()
+
+def _make_engine() -> Any:
+    """The adapter for this pack: VieNeu SDK 3.8 (``VIENEU_VARIANT=v38``), else 3.0.5 / v2."""
+    if (os.environ.get("VIENEU_VARIANT") or "").strip().lower() == "v38":
+        from .engine38 import VieNeu38Engine  # noqa: PLC0415
+
+        return VieNeu38Engine()
+    return VieNeuEngine()
+
+
+_engine = _make_engine()
 
 
 def _warmup() -> None:
@@ -99,10 +112,20 @@ class SegmentIn(BaseModel):
     endMs: int = Field(..., ge=0)
 
 
+class VoiceRefIn(BaseModel):
+    """A cloned voice: the enrollment file the orchestrator keeps, and its hash."""
+
+    model_config = ConfigDict(extra="ignore")
+    file: str
+    fingerprint: str = Field(..., min_length=8, max_length=128)
+
+
 class SynthesizeRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     language: str
     voiceId: str | None = None
+    # Set for a voice profile (cloning); voiceId then names the profile.
+    voiceRef: VoiceRefIn | None = None
     segments: list[SegmentIn] = Field(default_factory=list)
     outputDir: str
     speed: float = Field(default=1.0, gt=0.0)
@@ -131,10 +154,27 @@ class Voice(BaseModel):
     language: str
     displayName: str
     engine: str
+    # Set by engines that know them (VieNeu 3.8); the catalog has the rest.
+    gender: str | None = None
+    accent: str | None = None
+    recommended: bool | None = None
 
 
 class VoicesResponse(BaseModel):
     voices: list[Voice]
+
+
+class EnrollRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    referencePath: str
+    outPath: str
+    denoise: bool = True
+
+
+class EnrollResponse(BaseModel):
+    fingerprint: str
+    engineVersion: str
+    codeFrames: int = 0
 
 
 class HealthResponse(BaseModel):
@@ -152,6 +192,23 @@ class HealthResponse(BaseModel):
     device: str | None = None
     deviceName: str | None = None
     deviceNote: str | None = None
+    # Which adapter answers ("v3" = SDK 3.0.5, "v38" = SDK 3.8) and what it can do.
+    variant: str | None = None
+    cloning: bool = False
+    sdkVersion: str | None = None
+
+
+def _error(status: int, code: str, message: str) -> JSONResponse:
+    """The orchestrator's worker error envelope ({ error: AppError })."""
+    return JSONResponse(status_code=status, content={"error": {"code": code, "message": message}})
+
+
+def _voice_ref(req: SynthesizeRequest) -> Any:
+    if req.voiceRef is None:
+        return None
+    from .engine38 import VoiceRef  # noqa: PLC0415
+
+    return VoiceRef(file=req.voiceRef.file, fingerprint=req.voiceRef.fingerprint)
 
 
 # ---- routes ----------------------------------------------------------------
@@ -159,6 +216,7 @@ class HealthResponse(BaseModel):
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    sdk_version = getattr(_engine, "sdk_version", None)
     return HealthResponse(
         engines={voices.ENGINE_NAME: _engine.available(), "fallback": True},
         loaded=_engine.loaded(),
@@ -166,6 +224,9 @@ def health() -> HealthResponse:
         device=_engine.device,
         deviceName=_engine.device_name,
         deviceNote=_engine.device_note,
+        variant=_engine.variant,
+        cloning=bool(getattr(_engine, "supports_cloning", False)),
+        sdkVersion=sdk_version() if callable(sdk_version) else None,
     )
 
 
@@ -178,6 +239,20 @@ def warmup() -> HealthResponse:
 
 @app.get("/voices", response_model=VoicesResponse)
 def list_voices(language: str | None = None) -> VoicesResponse:
+    if hasattr(_engine, "voices"):  # VieNeu 3.8: the SDK's own table is authoritative
+        items = [
+            Voice(
+                id=v.id,
+                language=voices.ENGINE_LANGUAGE,
+                displayName=v.display_name,
+                engine=voices.ENGINE_NAME,
+                gender=v.gender,
+                accent=v.accent,
+                recommended=v.recommended or None,
+            )
+            for v in _engine.voices(language)
+        ]
+        return VoicesResponse(voices=items)
     items = [
         Voice(id=v.id, language=voices.ENGINE_LANGUAGE, displayName=v.display_name, engine=voices.ENGINE_NAME)
         for v in voices.voices_for_language(_engine.variant, language)
@@ -185,10 +260,39 @@ def list_voices(language: str | None = None) -> VoicesResponse:
     return VoicesResponse(voices=items)
 
 
+@app.post("/enroll", response_model=EnrollResponse)
+def enroll(req: EnrollRequest) -> Any:
+    """Make a cloned voice from a reference clip (VieNeu 3.8 only)."""
+    if not getattr(_engine, "supports_cloning", False):
+        return _error(422, "VOICE_ENGINE_CANNOT_CLONE", "This VieNeu engine only speaks its preset voices.")
+    try:
+        out = _engine.enroll(req.referencePath, req.outPath, denoise=req.denoise)
+    except FileNotFoundError:
+        return _error(422, "VOICE_REFERENCE_REJECTED", f"The reference recording is missing: {req.referencePath}")
+    except Exception as exc:  # noqa: BLE001 - the engine's own message is the useful part
+        logger.warning("Enrollment failed: %s", exc)
+        return _error(422, "VOICE_REFERENCE_REJECTED", f"Could not make a voice from this recording: {exc}")
+    return EnrollResponse(**out)
+
+
 @app.post("/synthesize-segments", response_model=SynthesizeResponse)
-def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
+def synthesize_segments(req: SynthesizeRequest) -> Any:
     out_dir = Path(req.outputDir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    ref = _voice_ref(req)
+    # The voice never falls back: a voice this engine does not have stops the
+    # request (the orchestrator stops the run with the reason) instead of
+    # speaking every line in the default voice or in silence.
+    if ref is not None and not getattr(_engine, "supports_cloning", False):
+        return _error(422, "VOICE_ENGINE_CANNOT_CLONE", "This VieNeu engine only speaks its preset voices.")
+    validate = getattr(_engine, "validate_voice", None)
+    if callable(validate):
+        try:
+            validate(req.voiceId, ref)
+        except ValueError as exc:
+            return _error(422, "TTS_VOICE_MISSING", str(exc))
+    extra = {"voice_ref": ref} if ref is not None else {}
 
     fallback_count = 0
     reused_count = 0
@@ -201,7 +305,7 @@ def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
     #    instead of redoing every finished clip (clipcache.py).
     for i, seg in enumerate(req.segments):
         try:
-            key = _engine.clip_key(seg.text, req.voiceId)
+            key = _engine.clip_key(seg.text, req.voiceId, **extra)
             cached = clipcache.lookup(out_dir, key)
             if cached is not None:
                 clipcache.materialize(cached, outs[i])
@@ -218,7 +322,7 @@ def synthesize_segments(req: SynthesizeRequest) -> SynthesizeResponse:
         partials = [clipcache.partial_for(final) for _, final in misses]
         try:
             errors = _engine.synth_many(
-                [req.segments[i].text for i, _ in misses], [str(p) for p in partials], req.voiceId, req.speed
+                [req.segments[i].text for i, _ in misses], [str(p) for p in partials], req.voiceId, req.speed, **extra
             )
         except Exception as exc:  # noqa: BLE001 - e.g. the model failed to load
             errors = [exc] * len(misses)

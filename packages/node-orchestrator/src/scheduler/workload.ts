@@ -180,6 +180,7 @@ export function heavyFamilyLabel(family: string | undefined): string {
     case 'omnivoice':
       return 'OmniVoice speech synthesis';
     case 'neural-tts':
+    case 'vieneu-tts':
       return 'the VieNeu voice on the GPU';
     default:
       return 'a downloadable local engine';

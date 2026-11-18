@@ -24,12 +24,21 @@ export interface ResolvedUvRequirements {
   extraIndexUrls: string[];
   /** The PyTorch CUDA build chosen for this machine's GPU, for GPU packs. */
   torchCudaBuild?: TorchCudaBuild;
+  /** Lines of a uv `--override` file (see UvRequirementSpec.overrides). */
+  overrides?: string[];
 }
 
 /** A pack's requirement spec: a common base plus per-platform overlays. */
 interface UvRequirementSpec {
   /** Pinned requirements common to all platforms. */
   base: string[];
+  /**
+   * uv overrides. A requirement with a marker that never holds
+   * (`gradio ; sys_platform == 'never'`) REMOVES a dependency a package
+   * declares but the engine never imports, which uv documents as the way to
+   * drop one; everything else still resolves (and is pinned) normally.
+   */
+  overrides?: string[];
   /** Extra index URLs applied on all platforms. */
   extraIndexUrls?: string[];
   /** Platform-specific additions (merged onto `base`). */
@@ -139,6 +148,54 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
     ],
     torchCuda: true,
   },
+  // VieNeu-TTS v3-Turbo through SDK 3.8 (the `vieneu-tts` provider): 25 preset
+  // voices and voice cloning, beside the 3.0.5 packs above, which keep the ten
+  // voices projects already use (four of them are gone from 3.8). 3.8 declares
+  // gradio (its web demo) and librosa (an optional reference trim it falls back
+  // from) as hard dependencies; neither is imported for synthesis or cloning,
+  // and gradio alone is ~60 packages, so both are overridden away. The
+  // remaining set resolves to 37 packages on Windows x64 and 36 on macOS 14
+  // arm64 (uv 0.11.32, 2026-11-18); every transitive pin the engine relies on
+  // is listed so nothing floats.
+  'tts-vieneu': {
+    base: [
+      'vieneu==3.8.4',
+      'sea-g2p==0.10.0',
+      'soxr==1.1.0',
+      'kaldi-native-fbank==1.23.1',
+      'tokenizers==0.23.3',
+      'pyyaml==6.0.3',
+      'soundfile==0.14.0',
+      'numpy==2.5.4',
+      'fastapi==0.162.0',
+      'uvicorn==0.54.0',
+      'onnxruntime==1.31.1',
+      'huggingface_hub==2.4.0',
+    ],
+    overrides: ["gradio ; sys_platform == 'never'", "librosa ; sys_platform == 'never'"],
+  },
+  // The same on an NVIDIA GPU: PyTorch (CUDA build per card), transformers and
+  // safetensors on top, exactly as tts-neural-cuda adds them to tts-neural.
+  'tts-vieneu-cuda': {
+    base: [
+      'vieneu==3.8.4',
+      'sea-g2p==0.10.0',
+      'soxr==1.1.0',
+      'kaldi-native-fbank==1.23.1',
+      'tokenizers==0.23.3',
+      'pyyaml==6.0.3',
+      'soundfile==0.14.0',
+      'numpy==2.5.4',
+      'fastapi==0.162.0',
+      'uvicorn==0.54.0',
+      'onnxruntime==1.31.1',
+      'huggingface_hub==2.4.0',
+      'transformers==5.22.2',
+      'safetensors==0.8.0',
+    ],
+    overrides: ["gradio ; sys_platform == 'never'", "librosa ; sys_platform == 'never'"],
+    torchCuda: true,
+  },
   // VieNeu-TTS v2 (24 kHz): pin vieneu 2.7.0, the last release where v2 is the
   // native default and llama-cpp-python + the ONNX NeuCodec decoder are CORE deps
   // (so preset-voice synthesis is CPU + torch-free). The extra index serves CPU
@@ -223,5 +280,6 @@ export function resolveUvRequirements(
     ],
     extraIndexUrls,
     ...(torchCudaBuild ? { torchCudaBuild } : {}),
+    ...(spec.overrides?.length ? { overrides: [...spec.overrides] } : {}),
   };
 }

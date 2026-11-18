@@ -109,6 +109,9 @@ export const PIPER_VI_RATE = 4.6;
 export const ENGINE_DEFAULT_RATES: Readonly<Record<string, Readonly<Record<string, number>>>> = {
   'neural-tts': { vi: 3.5 },
   'neural-tts-v2': { vi: 3.5 },
+  // The same v3-Turbo checkpoint as neural-tts; its own measured pace is
+  // learned per voice from the first dub (speechFit's per-voice key).
+  'vieneu-tts': { vi: 3.5 },
   'piper-local': { vi: PIPER_VI_RATE },
 };
 

@@ -319,6 +319,11 @@ export function createDefaultRegistry(
     registry.registerTts(
       new NeuralTtsProvider('neural-tts', 'VieNeu Neural TTS v3 (Vietnamese)', 'neural-tts', engines, store, timeout),
     );
+    // VieNeu through SDK 3.8: 25 voices and voice cloning, its own packs, so the
+    // ten 3.0.5 voices above keep sounding the same in existing projects.
+    registry.registerTts(
+      new NeuralTtsProvider('vieneu-tts', 'VieNeu-TTS 3.8 (25 Vietnamese voices)', 'vieneu-tts', engines, store, timeout),
+    );
     // OmniVoice — massively-multilingual neural TTS, Apple Silicon ONLY (MLX).
     // Registered only where its pack can actually run, so it isn't offered as a
     // permanently-uninstallable option on Windows/Intel. (Its pack `tts-omnivoice`

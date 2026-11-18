@@ -247,10 +247,10 @@ describe('recommending the GPU voice pack', () => {
         },
       ]),
     );
-    const voice = r.find((x) => findPack(x.packId)?.providerId === 'neural-tts');
-    expect(voice?.packId).toBe('tts-neural-cuda');
+    const voice = r.find((x) => findPack(x.packId)?.providerId === 'vieneu-tts');
+    expect(voice?.packId).toBe('tts-vieneu-cuda');
     expect(voice?.reasonText).toEqual({
-      key: 'engines.why.vieneu-gpu',
+      key: 'engines.why.vieneu38-gpu',
       params: { gpu: 'NVIDIA GeForce RTX 3050' },
     });
   });
@@ -266,16 +266,14 @@ describe('recommending the GPU voice pack', () => {
         },
       ]),
     );
-    expect(r.find((x) => findPack(x.packId)?.providerId === 'neural-tts')?.packId).toBe(
-      'tts-neural',
-    );
+    expect(r.find((x) => findPack(x.packId)?.providerId === 'vieneu-tts')?.packId).toBe('tts-vieneu');
   });
 
   it('offers the CPU build without an NVIDIA card', () => {
     const r = rec(pc([{ name: 'AMD Radeon RX 7600' }]));
-    const voice = r.find((x) => findPack(x.packId)?.providerId === 'neural-tts');
-    expect(voice?.packId).toBe('tts-neural');
-    expect(voice?.reasonText.key).toBe('engines.why.vieneu-cpu');
+    const voice = r.find((x) => findPack(x.packId)?.providerId === 'vieneu-tts');
+    expect(voice?.packId).toBe('tts-vieneu');
+    expect(voice?.reasonText.key).toBe('engines.why.vieneu38-cpu');
   });
 
   it('gives every recommendation a translatable reason', () => {

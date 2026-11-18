@@ -53,7 +53,7 @@ function prependPath(dir: string, existing: string | undefined): string {
  * model cache pinned to the pack dir, the variant (v2/v3) selector, and the
  * device: the GPU pack runs the PyTorch checkpoint on CUDA, everything else the
  * ONNX export on the CPU (vd_tts_engine/engine.py). */
-function neuralTtsEnv(packDir: string, variant: 'v2' | 'v3', packId?: string): Record<string, string> {
+function neuralTtsEnv(packDir: string, variant: 'v2' | 'v3' | 'v38', packId?: string): Record<string, string> {
   return {
     PYTHONPATH: prependPath(engineSrcDir(), process.env.PYTHONPATH),
     VD_PACK_DIR: packDir,
@@ -286,6 +286,15 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     pythonModule: 'vd_tts_engine',
     args: ({ port }) => ['--port', String(port)],
     env: ({ packDir }) => neuralTtsEnv(packDir, 'v2'),
+    healthPath: '/health',
+    heavy: false,
+  },
+  // VieNeu v3-Turbo through SDK 3.8 (tts-vieneu / tts-vieneu-cuda): the same
+  // server, its 3.8 adapter (vd_tts_engine/engine38.py) chosen by the variant.
+  'vieneu-tts': {
+    pythonModule: 'vd_tts_engine',
+    args: ({ port }) => ['--port', String(port)],
+    env: ({ packDir, packId }) => neuralTtsEnv(packDir, 'v38', packId),
     healthPath: '/health',
     heavy: false,
   },

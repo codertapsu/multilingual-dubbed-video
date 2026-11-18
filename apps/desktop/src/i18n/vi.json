@@ -1071,6 +1071,8 @@
       "chat-review": "Mô hình rà soát (~{{ size }} GB) đọc lại toàn bộ bản dịch để giữ đúng tên riêng, đại từ và cách xưng hô. Trên một bản lồng tiếng phim Trung Quốc thật, số câu dịch dùng được tăng từ khoảng 4/20 lên 15/20.",
       "vieneu-gpu": "Giọng tiếng Việt tự nhiên được tạo ngay trên {{ gpu }}: nhanh hơn khoảng 4 lần so với chạy bằng CPU (một video 21 phút chỉ mất 2,5 phút trên RTX 3050), vẫn các giọng đọc như cũ.",
       "vieneu-cpu": "Giọng tiếng Việt tự nhiên hơn hẳn giọng Piper có sẵn, chạy bằng CPU.",
+      "vieneu38-gpu": "Bộ giọng VieNeu mới nhất (25 giọng tiếng Việt tự nhiên và tính năng nhân bản giọng), được tạo ngay trên {{ gpu }}, nhiều câu cùng lúc.",
+      "vieneu38-cpu": "25 giọng tiếng Việt tự nhiên của cả ba miền, cùng tính năng nhân bản giọng từ một đoạn ghi âm ngắn, chạy bằng CPU.",
       "separator": "Giữ nguyên nhạc nền và hiệu ứng âm thanh gốc dưới giọng lồng tiếng, thay vì vặn nhỏ tất cả.",
       "whisperx": "Căn thời gian chính xác đến từng từ, và giọng riêng cho từng người nói trong video có nhiều người."
     }

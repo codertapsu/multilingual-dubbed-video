@@ -41,10 +41,13 @@ class PinnedRepo:
     files: Sequence[str]
     # Files that must exist for the snapshot to count as complete.
     required: Sequence[str]
+    # Folder name under models/, when one repo is fetched as several subsets
+    # (VieNeu 3.8's fp32 and int8 CPU graphs, its PyTorch checkpoint).
+    folder: str | None = None
 
     @property
     def dirname(self) -> str:
-        return self.repo_id.replace("/", "__")
+        return self.folder or self.repo_id.replace("/", "__")
 
 
 # Commits read from the Hub API on 2026-11-07. Bump deliberately: the codec's
@@ -60,6 +63,68 @@ CODEC = PinnedRepo(
     revision="6aa02b01e445cc585582cf0ba480bc3ea6c8dd68",
     files=("*.json", "*.py", "*.safetensors"),
     required=("config.json", "modeling_moss_audio_tokenizer.py", "model-00001-of-00001.safetensors"),
+)
+
+
+# --- VieNeu through SDK 3.8 (the `vieneu-tts` packs, engine38.py) -------------
+#
+# 3.8 reads the "update" architecture (speaker embedding + reference codes), on
+# the CPU from ONNX graphs, on the GPU from a PyTorch checkpoint, plus two files
+# at the repo root that cloning needs (the speaker encoder and the reference
+# denoiser). Unpinned, the SDK fetches all of them from `main` on first use and
+# the codec's ONNX export from a second repo the same way. Each subset below is
+# its own folder so the fp32 and int8 CPU graphs can live side by side.
+V38_REVISION = "61b85e3d937fbbacb387714180e8182823512523"
+_V38_ROOT_FILES = ("config.json", "tokenizer.json", "speaker_encoder.onnx", "denoiser.onnx")
+_V38_GRAPHS = (
+    "vieneu_prefill.onnx",
+    "vieneu_decode_step.onnx",
+    "vieneu_acoustic_cached.onnx",
+    "vieneu_backbone_shared.data",
+    "vieneu_v3_heads.npz",
+    "config.json",
+    "tokenizer.json",
+)
+
+
+def _v38_onnx(subfolder: str, folder: str) -> PinnedRepo:
+    return PinnedRepo(
+        repo_id="pnnbao-ump/VieNeu-TTS-v3-Turbo",
+        revision=V38_REVISION,
+        files=(*_V38_ROOT_FILES, f"{subfolder}/*"),
+        required=(*_V38_ROOT_FILES[2:], *(f"{subfolder}/{name}" for name in _V38_GRAPHS)),
+        folder=folder,
+    )
+
+
+# fp32 (~546 MB) is the quality default; int8 (~236 MB) is ~3x faster per frame
+# but "can produce garbled audio" on CPUs without VNNI (the SDK's own warning).
+V38_ONNX = {
+    "fp32": _v38_onnx("onnx_update", "vieneu38-onnx-fp32"),
+    "int8": _v38_onnx("onnx_int8", "vieneu38-onnx-int8"),
+}
+V38_ONNX_SUBFOLDER = {"fp32": "onnx_update", "int8": "onnx_int8"}
+V38_TORCH = PinnedRepo(
+    repo_id="pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    revision=V38_REVISION,
+    files=(*_V38_ROOT_FILES, "special_tokens_map.json", "update/*"),
+    required=(*_V38_ROOT_FILES[2:], "update/config.json", "update/model.safetensors", "update/tokenizer.json"),
+    folder="vieneu38-torch",
+)
+# The MOSS codec's ONNX export (decoder for synthesis, encoder for cloning).
+# Plain ONNX graphs: no code from this repo runs.
+CODEC_ONNX = PinnedRepo(
+    repo_id="OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX",
+    revision="ceff0d0749bfb3fa2d61149794ec6feef0d1e1ae",
+    files=("*.onnx", "*.data", "*.json"),
+    required=(
+        "moss_audio_tokenizer_decode_full.onnx",
+        "moss_audio_tokenizer_decode_shared.data",
+        "moss_audio_tokenizer_decode_step.onnx",
+        "moss_audio_tokenizer_encode.onnx",
+        "moss_audio_tokenizer_encode.data",
+        "codec_browser_onnx_meta.json",
+    ),
 )
 
 

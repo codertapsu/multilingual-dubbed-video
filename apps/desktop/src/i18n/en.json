@@ -1071,6 +1071,8 @@
       "chat-review": "A review model (~{{ size }} GB) that re-reads the whole translation for names, pronouns and forms of address. On a real Chinese dub it took acceptable lines from about 4 in 20 to 15 in 20.",
       "vieneu-gpu": "Natural Vietnamese voices generated on your {{ gpu }}: about 4× faster than on the CPU (a 21-minute video took 2½ minutes on an RTX 3050), with the same voices.",
       "vieneu-cpu": "Far more natural Vietnamese voices than the built-in Piper voice, generated on the CPU.",
+      "vieneu38-gpu": "The newest VieNeu voices (25 natural Vietnamese voices and voice cloning), generated on your {{ gpu }} many lines at a time.",
+      "vieneu38-cpu": "25 natural Vietnamese voices across the three regions, and voice cloning from a short recording, on the CPU.",
       "separator": "Keeps the original music and sound effects under the dub instead of turning everything down.",
       "whisperx": "Word-accurate timing, and a separate voice for each speaker in videos with several people talking."
     }

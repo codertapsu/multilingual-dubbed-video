@@ -703,6 +703,51 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
       'Apache-2.0 — VieNeu-TTS v3 code + weights. Uses the MOSS-Audio-Tokenizer-Nano codec and sea-g2p (verify their licenses). Preset voices only. Output is NOT watermarked: vieneu 3.0.5 declares the unrelated PyPI `perth` package instead of Resemble’s `resemble-perth`, so its watermarker never initializes (workers/tts-engine-neural/README.md).',
   },
 
+  // --- neural TTS: VieNeu-TTS v3-Turbo, SDK 3.8 (25 voices + voice cloning) --
+  // A separate provider (`vieneu-tts`) beside the 3.0.5 packs above, which keep
+  // the ten voices existing projects use: 3.8 dropped four of them, including
+  // the old default, so upgrading those packs in place would change voices
+  // under finished projects. Same model checkpoint; the GPU build first, as
+  // for tts-neural-cuda (recommendEnginePacks takes the first that fits).
+  {
+    id: 'tts-vieneu-cuda',
+    kind: 'tts',
+    packKind: 'python-uv',
+    displayName: 'VieNeu-TTS 3.8 — NVIDIA GPU (25 Vietnamese voices + voice cloning)',
+    description:
+      'The newest VieNeu voices (25 presets across Northern, Central and Southern accents) and voice cloning from a short recording, generated on your NVIDIA graphics card many lines at a time. If the card cannot be used it keeps working on the CPU. Downloads PyTorch with CUDA (~2.5 GB, the right build for your card is picked automatically) and the model (~600 MB) on first use.',
+    providerId: 'vieneu-tts',
+    version: `3.8.4+torch${TORCH_GPU_VERSION}`,
+    platforms: ['win32'],
+    arch: ['x64'],
+    accel: 'cuda',
+    tier: 'performance',
+    minVramMb: 2048,
+    minNvidiaDriver: TORCH_CU126_MIN_DRIVER_WIN,
+    minRamMb: 4096,
+    approxSizeMb: 4600,
+    artifacts: [{ url: 'uv-env://tts-vieneu-cuda', approxSizeMb: 4600, destPath: 'venv' }],
+    licenseNote:
+      'Apache-2.0: VieNeu-TTS v3 code, weights and all 25 preset voices (the speakers consented; generated audio may be used commercially), the MOSS-Audio-Tokenizer-Nano codec and sea-g2p. PyTorch (BSD-3-Clause) ships NVIDIA CUDA runtime libraries under NVIDIA’s CUDA EULA. Cloning: you must have the right to use the voice you clone.',
+  },
+  {
+    id: 'tts-vieneu',
+    kind: 'tts',
+    packKind: 'python-uv',
+    displayName: 'VieNeu-TTS 3.8 (25 Vietnamese voices + voice cloning)',
+    description:
+      'The newest VieNeu voices: 25 natural Vietnamese presets across Northern, Central and Southern accents, and voice cloning from a 3–8 second recording, all on the CPU without PyTorch. The model (~640 MB) downloads on first use at a pinned revision. Installs beside the VieNeu v3 pack, whose ten voices stay available.',
+    providerId: 'vieneu-tts',
+    version: '3.8.4',
+    accel: 'cpu',
+    tier: 'performance',
+    minRamMb: 4096,
+    approxSizeMb: 900,
+    artifacts: [{ url: 'uv-env://tts-vieneu', approxSizeMb: 900, destPath: 'venv' }],
+    licenseNote:
+      'Apache-2.0: VieNeu-TTS v3 code, weights and all 25 preset voices (the speakers consented; generated audio may be used commercially), the MOSS-Audio-Tokenizer-Nano codec and sea-g2p. Cloning: you must have the right to use the voice you clone. Output is not watermarked.',
+  },
+
   // --- neural TTS: OmniVoice multilingual (uv-managed Python env, MLX) ------
   // Apple-Silicon-ONLY: mlx-audio runs OmniVoice (k2-fsa) via Apple's MLX (Metal),
   // so the pack is gated to darwin/arm64 — offered ONLY where it can actually run.

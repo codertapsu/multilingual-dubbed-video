@@ -26,6 +26,8 @@ export interface AlignmentService {
     opts: { diarize: boolean },
     signal?: AbortSignal,
   ): Promise<TranscriptSegment[] | null>;
+  /** Whether `align` can do anything here (see SeparationService.available). */
+  available?(): Promise<boolean>;
 }
 
 export class WhisperxAlignmentProvider implements AlignmentService {
@@ -34,6 +36,10 @@ export class WhisperxAlignmentProvider implements AlignmentService {
     private readonly store: EnginePackStore,
     private readonly timeoutMs: number,
   ) {}
+
+  async available(): Promise<boolean> {
+    return (await pickInstalledPack(this.store, 'whisperx')) !== undefined;
+  }
 
   async align(
     audioPath: string,

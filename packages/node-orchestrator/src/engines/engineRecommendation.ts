@@ -330,8 +330,10 @@ export function recommendEnginePacks(
       'Keep the original music & effects under the dub instead of ducking everything.',
       why('separator'),
     );
+    // By PROVIDER id, like every takeBest: this said 'alignment-whisperx' (the
+    // pack id) and could never match, whatever the machine.
     takeBest(
-      'alignment-whisperx',
+      'whisperx',
       'Word-accurate timing and per-speaker voices for multi-speaker videos.',
       why('whisperx'),
     );

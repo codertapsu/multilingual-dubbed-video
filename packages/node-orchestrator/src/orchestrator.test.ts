@@ -14,6 +14,7 @@ import {
   FakeTranslationProvider,
   FakeTtsProvider,
   createProjectInput,
+  defaultSettings,
   fakeRegistry,
   makeSegments,
   writeDummyVideo,
@@ -508,6 +509,43 @@ describe('heavy-lane hand-over', () => {
     const released = order.indexOf('release:run');
     expect(released).toBeGreaterThan(order.indexOf('alignment:completed'));
     expect(released).toBeLessThan(order.indexOf('audio-mix:running'));
+  });
+
+  it('holds the lane through the mix only when a separation engine can actually run', async () => {
+    // The server always wires separation; with no engine installed, "replace
+    // the voices" falls back to ducking, which needs no lane at all.
+    for (const available of [false, true]) {
+      const video = await writeDummyVideo(tmp);
+      const p = await orchestrator.createProject(
+        createProjectInput(video, { name: `S-${available}`, settings: defaultSettings({ originalAudioMode: 'replace-vocals' }) }),
+      );
+      const order: string[] = [];
+      const buses = new EventBusRegistry();
+      buses.get(p.id).subscribe((e) => {
+        if (e.type === 'step' && (e.step.status === 'running' || e.step.status === 'completed')) order.push(`${e.step.id}:${e.step.status}`);
+      });
+      const s = new LocalJobOrchestrator({
+        config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+        store,
+        media: new FakeMediaService(),
+        registry: fakeRegistry(
+          new FakeSttProvider(makeSegments([[0, 1000, 'hi']])),
+          new FakeTranslationProvider(),
+          new FakeTtsProvider(() => 900),
+        ),
+        bus: buses,
+        separation: { separate: async () => null, available: async () => available },
+        engines: {
+          heavyLaneOwner: () => undefined,
+          releaseHeavyLane: (owner: string) => order.push(`release:${owner === p.id ? 'run' : owner}`),
+        } as never,
+      });
+      await s.runPipeline(p.id);
+      await vi.waitFor(async () => expect((await store.getProject(p.id)).status).toBe('completed'), { timeout: 15_000 });
+      const released = order.indexOf('release:run');
+      if (available) expect(released).toBeGreaterThan(order.indexOf('audio-mix:completed'));
+      else expect(released).toBeLessThan(order.indexOf('audio-mix:running'));
+    }
   });
 });
 

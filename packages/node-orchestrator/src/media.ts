@@ -113,6 +113,12 @@ export interface SeparationService {
     outputDir: string,
     signal?: AbortSignal,
   ): Promise<{ vocalsPath: string; accompanimentPath: string } | null>;
+  /**
+   * Whether `separate` can do anything here (an engine is installed). Admission
+   * asks this: a service that is merely wired, with no engine behind it, must
+   * not put a run in the heavy lane.
+   */
+  available?(): Promise<boolean>;
 }
 
 /**

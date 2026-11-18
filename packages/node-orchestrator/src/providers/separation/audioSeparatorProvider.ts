@@ -23,6 +23,10 @@ export class AudioSeparatorProvider implements SeparationService {
     private readonly timeoutMs: number,
   ) {}
 
+  async available(): Promise<boolean> {
+    return (await pickInstalledPack(this.store, 'audio-separator')) !== undefined;
+  }
+
   async separate(
     audioPath: string,
     outputDir: string,

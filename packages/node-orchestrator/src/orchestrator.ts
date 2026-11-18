@@ -1302,8 +1302,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const contextEngine = await this.contextEngineOf(project.settings);
     const workload = classifyWorkload(project.settings, this.deps.registry, {
       fromStep: retryFromStep,
-      separationAvailable: this.deps.separation !== undefined,
-      alignmentAvailable: this.deps.alignment !== undefined,
+      ...(await this.optionalEngines()),
       gpuFamilies,
       ...(contextEngine ? { contextEngine } : {}),
     });
@@ -1561,6 +1560,24 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /**
+   * Which optional engines can actually run here, for admission. Being wired is
+   * not enough: the server always wires separation and alignment, and with
+   * their packs disabled every "replace the voices" project took the heavy
+   * lane (and held it to the end of the mix) for an engine that never ran.
+   * A service without `available` is taken at its word. Never throws.
+   */
+  private async optionalEngines(): Promise<{ separationAvailable: boolean; alignmentAvailable: boolean }> {
+    const can = async (service: { available?(): Promise<boolean> } | undefined): Promise<boolean> =>
+      service ? ((await service.available?.().catch(() => false)) ?? true) : false;
+    const [separationAvailable, alignmentAvailable] = await Promise.all([can(this.deps.separation), can(this.deps.alignment)]);
+    this.lastOptionalEngines = { separationAvailable, alignmentAvailable };
+    return this.lastOptionalEngines;
+  }
+
+  /** The last answer of {@link optionalEngines}, for startRun (which must not await). */
+  private lastOptionalEngines: { separationAvailable: boolean; alignmentAvailable: boolean } | undefined;
+
+  /**
    * The engine a run's context work will use (the first candidate that can
    * answer: a configured cloud or review model is taken to, the built-in chat
    * only when it is installed), for admission. Never throws.
@@ -1584,6 +1601,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       .filter((p) => p.status === 'queued' && p.queue)
       .sort((a, b) => (a.queue!.queuedAt < b.queue!.queuedAt ? -1 : 1));
     const gpuFamilies = await this.gpuFamilies();
+    const engines = await this.optionalEngines();
     for (const p of queued) {
       if (this.queued.has(p.id) || this.running.has(p.id)) continue;
       const contextEngine = await this.contextEngineOf(p.settings);
@@ -1591,8 +1609,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         p.id,
         classifyWorkload(p.settings, this.deps.registry, {
           ...(p.queue?.fromStep ? { fromStep: p.queue.fromStep } : {}),
-          separationAvailable: this.deps.separation !== undefined,
-          alignmentAvailable: this.deps.alignment !== undefined,
+          ...engines,
           gpuFamilies,
           ...(contextEngine ? { contextEngine } : {}),
         }),
@@ -1719,7 +1736,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // Past its last heavy step the run only mixes and renders: hand the heavy
     // lane to the next queued dub instead of holding it to the end (see
     // lastHeavyStep). Its engines stay warm until someone else needs the GPU.
-    const handOver = lastHeavyStep(project.settings, { separationAvailable: this.deps.separation !== undefined });
+    const handOver = lastHeavyStep(project.settings, {
+      separationAvailable: this.lastOptionalEngines?.separationAvailable ?? this.deps.separation !== undefined,
+    });
     const stopWatching = bus.subscribe((event) => {
       if (event.type !== 'step' || event.step.id !== handOver) return;
       if (event.step.status !== 'completed' && event.step.status !== 'skipped') return;

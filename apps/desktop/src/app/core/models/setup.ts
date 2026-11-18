@@ -165,7 +165,8 @@ export type ProviderReadinessStatus =
   | 'daemon-unreachable'
   | 'model-missing'
   /** A local provider's bundled worker is still booting (briefly, after launch). */
-  | 'worker-loading';
+  | 'worker-loading'
+  | 'voice-mismatch';
 
 /** A one-click affordance that would make a not-ready provider ready. */
 export interface ProviderReadinessAction {

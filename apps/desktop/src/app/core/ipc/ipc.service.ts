@@ -59,6 +59,9 @@ import type {
   StorageClearRequest,
   StorageClearResult,
   StorageInfo,
+  VoiceEngineState,
+  VoiceInstallResult,
+  VoiceLibraryResponse,
 } from '../models';
 
 /** HTTP verbs the fetch fallback understands. */
@@ -465,6 +468,36 @@ export class IpcService {
    */
   setupInstallVoice(voiceId: string): Promise<{ started: boolean; voiceId: string }> {
     return this.http<{ started: boolean; voiceId: string }>('POST', '/setup/install-voice', { voiceId });
+  }
+
+  // ------------------------------------------------------------------ //
+  // Voice library (docs/VOICES.md)                                       //
+  // ------------------------------------------------------------------ //
+
+  /** GET /voices — every voice (presets + profiles) with its state here. */
+  voiceLibrary(params: { projectId?: string } = {}): Promise<VoiceLibraryResponse> {
+    const q = params.projectId ? `?projectId=${encodeURIComponent(params.projectId)}` : '';
+    return this.http<VoiceLibraryResponse>('GET', `/voices${q}`);
+  }
+
+  /** GET /voices/engines — each voice engine with its packs and install state. */
+  async voiceEngines(): Promise<VoiceEngineState[]> {
+    return (await this.http<{ engines: VoiceEngineState[] }>('GET', '/voices/engines')).engines ?? [];
+  }
+
+  /** URL of a voice's preview (served, verified and cached by the orchestrator). */
+  voicePreviewUrl(voiceId: string): string {
+    return `${this.baseUrl}/voices/${encodeURIComponent(voiceId)}/preview`;
+  }
+
+  /** PUT /voices/:id/favorite */
+  setVoiceFavorite(voiceId: string, favorite: boolean): Promise<{ id: string; favorite: boolean }> {
+    return this.http('PUT', `/voices/${encodeURIComponent(voiceId)}/favorite`, { favorite });
+  }
+
+  /** POST /voices/:id/install — the voice, and its engine pack when missing (202). */
+  installLibraryVoice(voiceId: string, packId?: string): Promise<VoiceInstallResult> {
+    return this.http('POST', `/voices/${encodeURIComponent(voiceId)}/install`, packId ? { packId } : {});
   }
 
   // ------------------------------------------------------------------ //

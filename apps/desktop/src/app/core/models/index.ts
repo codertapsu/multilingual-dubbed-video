@@ -12,6 +12,8 @@
  * timestamp helpers) are imported directly from `@videodubber/shared` at the
  * point of use.
  */
+import type { VoiceEngineInfo as VoiceEngineInfoBase } from '@videodubber/shared';
+
 export type {
   // Primitive aliases / unions
   LanguageCode,
@@ -84,4 +86,36 @@ export type {
   // Errors
   ErrorCode,
   AppError,
+  // Voices (library, cloning)
+  VoiceEngineId,
+  VoiceEngineInfo,
+  VoiceEntry,
+  VoiceLibraryItem,
+  VoiceLibraryResponse,
+  VoiceLicense,
+  VoiceLicenseCategory,
+  VoiceInstallResult,
+  VoiceProfile,
+  VoiceConsent,
+  VoiceReferenceChecks,
 } from '@videodubber/shared';
+
+/** One engine pack as the voice screens show it (GET /voices/engines). */
+export interface VoicePackState {
+  id: string;
+  displayName: string;
+  /** 'cuda' (NVIDIA GPU), 'metal' (Apple chip), 'cpu'… */
+  accel?: string;
+  approxSizeMb: number;
+  installed: boolean;
+  available: boolean;
+  fits: boolean;
+  installing: boolean;
+}
+
+/** A voice engine with its packs and install state (GET /voices/engines). */
+export interface VoiceEngineState extends VoiceEngineInfoBase {
+  installed: boolean;
+  available: boolean;
+  packs: VoicePackState[];
+}

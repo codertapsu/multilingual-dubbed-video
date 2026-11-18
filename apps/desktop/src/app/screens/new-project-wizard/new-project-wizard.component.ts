@@ -9,7 +9,7 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
 import { IpcService } from '../../core/ipc/ipc.service';
 import { SetupEventsService } from '../../core/ipc/setup-events.service';
@@ -43,6 +43,8 @@ import type {
 } from '../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { describeVoice } from '../../shared/voice-library/voice-filter';
+import { libraryEngineFor, voiceOptions } from '../../shared/voice-library/voice-options';
 
 /** Wizard step index. */
 type WizardStep = 1 | 2;
@@ -102,6 +104,7 @@ function defaultSettings(): ProjectSettings {
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     FormsModule,
+    RouterLink,
     ErrorBannerComponent,
     DownloadProgressListComponent,
     BusyIndicatorComponent,
@@ -209,8 +212,11 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   /** Download percent of the in-flight voice (0..100, or null = indeterminate). */
   protected readonly voiceDownloadPercent = signal<number | null>(null);
 
-  /** Show the voice picker for the local Piper engine or a VieNeu neural engine. */
-  protected readonly showVoicePicker = computed(() => this.voiceEngine() !== null);
+  /** Show the voice picker for Piper, a VieNeu engine, or any engine of the voice library. */
+  protected readonly showVoicePicker = computed(() => this.voiceEngine() !== null || this.libraryEngine() !== null);
+
+  /** Engines whose voices come from the voice library (VieNeu 3.8, ZeroTTS, Kokoro, Supertonic). */
+  protected readonly libraryEngine = computed(() => libraryEngineFor(this.settings().ttsProviderId));
 
   /** Which voice catalog to list for the selected TTS provider (null = no picker). */
   protected readonly voiceEngine = computed<'piper' | 'neural-v2' | 'neural-v3' | 'omnivoice' | null>(() => {
@@ -553,11 +559,18 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   private async loadVoicesForTarget(): Promise<void> {
     const language = this.settings().targetLanguage;
     const engine = this.voiceEngine();
-    if (!engine) return;
+    const libraryEngine = this.libraryEngine();
+    if (!engine && !libraryEngine) return;
     this.voicesLoading.set(true);
     try {
       const [voices, status] = await Promise.all([
-        this.ipc.setupListVoices(language, engine),
+        libraryEngine
+          ? this.ipc
+              .voiceLibrary()
+              .then((lib) =>
+                voiceOptions(lib.voices, libraryEngine, language, (v) => describeVoice(v, (k) => this.translate.instant(k))),
+              )
+          : this.ipc.setupListVoices(language, engine!),
         // Only Piper voices are tracked as individually installed.
         engine === 'piper' ? this.ipc.setupGetStatus().catch(() => null) : Promise.resolve(null),
       ]);
@@ -872,7 +885,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
  * pinning that only applies to VieNeu never took effect. Order matters: v3 must
  * be checked first so a machine with BOTH installed gets the newer engine.
  */
-const VIETNAMESE_NEURAL_ENGINE_IDS = ['neural-tts', 'neural-tts-v2'] as const;
+const VIETNAMESE_NEURAL_ENGINE_IDS = ['vieneu-tts', 'neural-tts', 'neural-tts-v2'] as const;
 
 /**
  * The best available VieNeu engine for Vietnamese, or null when none is

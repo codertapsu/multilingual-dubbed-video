@@ -1,0 +1,254 @@
+<section class="page stack">
+  <header>
+    <h1>{{ 'voices.title' | translate }}</h1>
+    <p class="muted">{{ 'voices.subtitle' | translate }}</p>
+  </header>
+
+  <vd-error-banner [error]="error()" (dismiss)="error.set(null)" />
+
+  <!-- ===================== Engines: who speaks the voices ===================== -->
+  <div class="card stack">
+    <div class="row-between">
+      <h2>{{ 'voices.engines-heading' | translate }}</h2>
+    </div>
+    <p class="hint">{{ 'voices.engines-help' | translate }}</p>
+    <div class="engines">
+      @for (engine of engines(); track engine.id) {
+        <div class="engine" [class.engine-off]="!engine.available">
+          <div class="row-between">
+            <strong>{{ engineName(engine.id) }}</strong>
+            @if (engine.installed) {
+              <span class="badge badge-completed">{{ 'voices.engine-ready' | translate }}</span>
+            } @else if (!engine.available) {
+              <span class="badge badge-skipped">{{ 'voices.engine-unavailable' | translate }}</span>
+            }
+          </div>
+          <p class="hint">{{ 'voices.engine-about.' + engine.id | translate }}</p>
+          <div class="chips">
+            @if (engine.cloning) {
+              <span class="chip">{{ 'voices.can-clone' | translate }}</span>
+            }
+            @if (engine.archived) {
+              <span class="chip chip-warn" [title]="'voices.archived-help' | translate">{{ 'voices.archived' | translate }}</span>
+            }
+            <span class="badge badge-{{ licenseTone(engine.license.category) }}" [title]="engine.license.label">
+              {{ engine.license.label }}
+            </span>
+          </div>
+          @if (!engine.installed && engine.packs.length > 0) {
+            <div class="packs">
+              @for (pack of engine.packs; track pack.id) {
+                @if (pack.available || pack.installing) {
+                  @let p = progress()[pack.id];
+                  <div class="pack">
+                    <span class="grow" [title]="pack.displayName">
+                      {{ packLabel(pack) }} · {{ sizeLabel(pack.approxSizeMb) }}
+                      @if (pack.fits) {
+                        <span class="badge badge-completed">{{ 'voices.fits' | translate }}</span>
+                      } @else {
+                        <span class="badge badge-warning" [title]="'voices.may-be-slow-help' | translate">{{ 'voices.may-be-slow' | translate }}</span>
+                      }
+                    </span>
+                    @if (p || pack.installing) {
+                      <span class="muted small">
+                        {{ p?.percent != null ? p!.percent + '%' : ('voices.installing' | translate) }}
+                      </span>
+                    } @else {
+                      <button type="button" class="btn btn-sm" (click)="installPack(engine, pack)">
+                        {{ 'voices.install' | translate }}
+                      </button>
+                    }
+                  </div>
+                }
+              }
+            </div>
+          }
+        </div>
+      }
+    </div>
+  </div>
+
+  <!-- ===================== Filters ===================== -->
+  <div class="card stack">
+    <div class="filters">
+      <label class="search">
+        <span class="visually-hidden">{{ 'voices.search' | translate }}</span>
+        <input
+          type="search"
+          [placeholder]="'voices.search-placeholder' | translate"
+          [ngModel]="filter().query"
+          (ngModelChange)="setFilter('query', $event)"
+        />
+      </label>
+      <label>
+        <span>{{ 'voices.language' | translate }}</span>
+        <select [ngModel]="filter().language" (ngModelChange)="setFilter('language', $event)">
+          <option value="">{{ 'voices.all-languages' | translate }}</option>
+          @for (l of languages(); track l.code) {
+            <option [value]="l.code">{{ languageName(l.code) }} ({{ l.count }})</option>
+          }
+        </select>
+      </label>
+      <label>
+        <span>{{ 'voices.engine-label' | translate }}</span>
+        <select [ngModel]="filter().engine" (ngModelChange)="setFilter('engine', $event)">
+          <option value="">{{ 'voices.all-engines' | translate }}</option>
+          @for (id of engineIds(); track id) {
+            <option [value]="id">{{ engineName(id) }}</option>
+          }
+        </select>
+      </label>
+      <label>
+        <span>{{ 'voices.gender' | translate }}</span>
+        <select [ngModel]="filter().gender" (ngModelChange)="setFilter('gender', $event)">
+          <option value="">{{ 'voices.any' | translate }}</option>
+          <option value="female">{{ 'voices.female' | translate }}</option>
+          <option value="male">{{ 'voices.male' | translate }}</option>
+        </select>
+      </label>
+      @if (showAccent()) {
+        <label>
+          <span>{{ 'voices.accent' | translate }}</span>
+          <select [ngModel]="filter().accent" (ngModelChange)="setFilter('accent', $event)">
+            <option value="">{{ 'voices.any' | translate }}</option>
+            <option value="north">{{ 'voices.accent-north' | translate }}</option>
+            <option value="central">{{ 'voices.accent-central' | translate }}</option>
+            <option value="south">{{ 'voices.accent-south' | translate }}</option>
+          </select>
+        </label>
+      }
+      <label>
+        <span>{{ 'voices.license' | translate }}</span>
+        <select [ngModel]="filter().license" (ngModelChange)="setFilter('license', $event)">
+          <option value="">{{ 'voices.any' | translate }}</option>
+          @for (c of licenses; track c) {
+            <option [value]="c">{{ 'voices.license-cat.' + c | translate }}</option>
+          }
+        </select>
+      </label>
+      <label class="check">
+        <input type="checkbox" [ngModel]="filter().installedOnly" (ngModelChange)="setFilter('installedOnly', $event)" />
+        {{ 'voices.installed-only' | translate }}
+      </label>
+      <label class="check">
+        <input type="checkbox" [ngModel]="filter().favoritesOnly" (ngModelChange)="setFilter('favoritesOnly', $event)" />
+        {{ 'voices.favorites-only' | translate }}
+      </label>
+      <button type="button" class="btn btn-ghost btn-sm" (click)="clearFilters()">{{ 'voices.clear-filters' | translate }}</button>
+    </div>
+    <div class="row-between">
+      <span class="muted">{{ 'voices.count' | translate: { shown: visible().length, total: library().length } }}</span>
+      <button type="button" class="btn btn-ghost btn-sm" (click)="showLicenseHelp.set(!showLicenseHelp())" [attr.aria-expanded]="showLicenseHelp()">
+        {{ 'voices.license-help-toggle' | translate }}
+      </button>
+    </div>
+    @if (showLicenseHelp()) {
+      <dl class="license-help">
+        @for (c of licenses; track c) {
+          <dt><span class="badge badge-{{ licenseTone(c) }}">{{ 'voices.license-cat.' + c | translate }}</span></dt>
+          <dd>{{ 'voices.license-explain.' + c | translate }}</dd>
+        }
+      </dl>
+    }
+  </div>
+
+  <!-- ===================== The list ===================== -->
+  @if (loading()) {
+    <p class="muted">{{ 'voices.loading' | translate }}</p>
+  } @else if (visible().length === 0) {
+    <div class="card"><p class="muted">{{ 'voices.none' | translate }}</p></div>
+  } @else {
+    <ul class="voices" role="list">
+      @for (v of shown(); track v.id) {
+        @let p = installing(v);
+        <li class="voice" [class.voice-installed]="v.installed">
+          <button
+            type="button"
+            class="icon-btn star"
+            [class.on]="v.favorite"
+            [attr.aria-pressed]="v.favorite"
+            [attr.aria-label]="(v.favorite ? 'voices.unfavorite' : 'voices.favorite') | translate"
+            [title]="(v.favorite ? 'voices.unfavorite' : 'voices.favorite') | translate"
+            (click)="toggleFavorite(v)"
+          >
+            {{ v.favorite ? '★' : '☆' }}
+          </button>
+          <button
+            type="button"
+            class="icon-btn play"
+            [disabled]="!v.hasPreview"
+            [attr.aria-label]="(playing() === v.id ? 'voices.stop' : 'voices.play') | translate: { name: v.name }"
+            [title]="(v.hasPreview ? (playing() === v.id ? 'voices.stop' : 'voices.play') : 'voices.no-preview') | translate: { name: v.name }"
+            (click)="togglePreview(v)"
+          >
+            {{ playing() === v.id ? '■' : '▶' }}
+          </button>
+          <div class="who">
+            <div class="name-line">
+              <strong>{{ v.name }}</strong>
+              @if (v.recommended) {
+                <span class="badge badge-info">{{ 'voices.recommended' | translate }}</span>
+              }
+              @if (v.gender) {
+                <span class="chip">{{ 'voices.' + v.gender | translate }}</span>
+              }
+              @if (v.accent) {
+                <span class="chip">{{ 'voices.accent-' + v.accent | translate }}</span>
+              }
+              @if (v.quality) {
+                <span class="chip">{{ 'voices.quality.' + v.quality | translate }}</span>
+              }
+              @if (v.speakers?.length) {
+                <span class="chip" [title]="'voices.speakers-help' | translate">
+                  {{ 'voices.n-speakers' | translate: { count: v.speakers!.length } }}
+                </span>
+              }
+              @for (t of v.tags ?? []; track t) {
+                <span class="chip chip-soft">{{ tagLabel(t) }}</span>
+              }
+            </div>
+            <div class="meta muted small">
+              <span>{{ languagesOf(v) }}</span>
+              <span>· {{ engineName(v.engine) }}</span>
+              @if (v.sizeMb > 0) {
+                <span>· {{ sizeLabel(v.sizeMb) }}</span>
+              }
+              @if (previewError() === v.id) {
+                <span class="warn">· {{ 'voices.preview-failed' | translate }}</span>
+              }
+            </div>
+          </div>
+          <span class="badge badge-{{ licenseTone(v.license.category) }} license" [title]="licenseTitle(v)">
+            {{ v.license.label }}
+          </span>
+          <div class="action">
+            @if (v.installed) {
+              <span class="ok">✓ {{ 'voices.installed' | translate }}</span>
+            } @else if (p) {
+              <span class="muted small" [title]="p.message">
+                {{ p.percent != null ? p.percent + '%' : ('voices.installing' | translate) }}
+              </span>
+            } @else if (v.engine === 'openai') {
+              <span class="muted small">{{ 'voices.needs-key' | translate }}</span>
+            } @else if (!v.engineAvailable) {
+              <span class="muted small">{{ 'voices.engine-unavailable' | translate }}</span>
+            } @else if (v.kind === 'preset') {
+              <button type="button" class="btn btn-sm btn-primary" (click)="install(v)">
+                @if (v.engine === 'piper' || v.engineInstalled) {
+                  {{ 'voices.install' | translate }}
+                } @else {
+                  {{ 'voices.install-with-engine' | translate }}
+                }
+              </button>
+            }
+          </div>
+        </li>
+      }
+    </ul>
+    @if (shown().length < visible().length) {
+      <button type="button" class="btn" (click)="showMore()">
+        {{ 'voices.show-more' | translate: { count: visible().length - shown().length } }}
+      </button>
+    }
+  }
+</section>

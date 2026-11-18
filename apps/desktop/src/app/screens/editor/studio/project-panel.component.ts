@@ -4,7 +4,9 @@ import { Router, RouterLink } from '@angular/router';
 
 import { IpcService } from '../../../core/ipc/ipc.service';
 import { toAppError } from '../../../core/state/project.store';
-import { TranslatePipe } from '../../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../../core/i18n';
+import { describeVoice } from '../../../shared/voice-library/voice-filter';
+import { libraryEngineFor, voiceOptions } from '../../../shared/voice-library/voice-options';
 import { PIPELINE_STEP_LABELS, PROCESSING_MODE_LABELS, SUBTITLE_EXPORT_MODE_LABELS, ALL_SUBTITLE_EXPORT_MODES } from '../../../core/util/format';
 import {
   DUCKING_OPTIONS,
@@ -74,6 +76,7 @@ const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libret
 })
 export class ProjectPanelComponent implements OnInit {
   private readonly ipc = inject(IpcService);
+  private readonly translate = inject(TranslateService);
   private readonly router = inject(Router);
   protected readonly store = inject(StudioStore);
 
@@ -197,6 +200,21 @@ export class ProjectPanelComponent implements OnInit {
    * fail at synthesis); the full list feeds the default-voice picker here.
    */
   private async reloadVoices(ttsProviderId: string | undefined, language: string, forStudio: boolean): Promise<void> {
+    // Engines of the voice library (VieNeu 3.8, ZeroTTS, Kokoro, Supertonic):
+    // every voice ships with the engine pack, so all of them are usable.
+    const libraryEngine = libraryEngineFor(ttsProviderId);
+    if (libraryEngine) {
+      try {
+        const lib = await this.ipc.voiceLibrary();
+        const voices = voiceOptions(lib.voices, libraryEngine, language, (v) => describeVoice(v, (k) => this.translate.instant(k)));
+        this.draftVoices.set(voices);
+        if (forStudio) this.store.voices.set(voices);
+      } catch {
+        this.draftVoices.set([]);
+        if (forStudio) this.store.voices.set([]);
+      }
+      return;
+    }
     const engine = ttsEngineParam(ttsProviderId);
     if (!engine) {
       this.draftVoices.set([]);

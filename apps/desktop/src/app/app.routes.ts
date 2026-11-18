@@ -71,6 +71,13 @@ export const APP_ROUTES: Routes = [
       import('./screens/export/export.component').then((m) => m.ExportComponent),
   },
   {
+    // The voice library: browse, preview, install and favourite voices of
+    // every engine, each with its licence (docs/VOICES.md).
+    path: 'voices',
+    title: 'VideoDubber — Voices',
+    loadComponent: () => import('./screens/voices/voices.component').then((m) => m.VoicesComponent),
+  },
+  {
     path: 'download',
     title: 'VideoDubber — Download source video',
     loadComponent: () =>

@@ -33,6 +33,7 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
           >{{ 'nav.projects' | translate }}</a
         >
         <a routerLink="/new" routerLinkActive="active">{{ 'nav.new-project' | translate }}</a>
+        <a routerLink="/voices" routerLinkActive="active">{{ 'nav.voices' | translate }}</a>
         <a routerLink="/download" routerLinkActive="active">{{ 'nav.download' | translate }}</a>
         <a routerLink="/settings" routerLinkActive="active">{{ 'nav.settings' | translate }}</a>
         <!-- Help sits BEFORE the sponsor link: a stuck user scans the nav for

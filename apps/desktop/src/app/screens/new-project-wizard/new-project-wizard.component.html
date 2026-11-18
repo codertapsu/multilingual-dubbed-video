@@ -432,7 +432,11 @@
       @if (showVoicePicker()) {
         <fieldset>
           <legend>{{ 'wizard.voice' | translate }}</legend>
-          @if (voiceEngine() === 'omnivoice') {
+          @if (libraryEngine(); as engine) {
+            <p class="hint">
+              {{ 'wizard.voice-library' | translate: { lang: targetLanguageLabel(), engine: ('voices.engine.' + engine | translate) } }}
+            </p>
+          } @else if (voiceEngine() === 'omnivoice') {
             <p class="hint">
               {{ 'wizard.voice-omni' | translate: { lang: targetLanguageLabel() } }}
             </p>
@@ -477,6 +481,10 @@
                 {{ 'wizard.voice-needs-download' | translate }}
               </p>
             }
+          } @else if (libraryEngine(); as engine) {
+            <p class="muted">
+              {{ 'wizard.voice-library-none' | translate: { lang: targetLanguageLabel(), engine: ('voices.engine.' + engine | translate) } }}
+            </p>
           } @else if (voiceEngine() === 'omnivoice') {
             <p class="muted">
               {{ 'wizard.voice-omni-fail' | translate }}
@@ -490,6 +498,9 @@
               {{ 'wizard.voice-piper-none' | translate: { lang: targetLanguageLabel() } }}
             </p>
           }
+          <p class="hint">
+            <a routerLink="/voices">{{ 'wizard.voice-browse' | translate }}</a>
+          </p>
         </fieldset>
       }
 

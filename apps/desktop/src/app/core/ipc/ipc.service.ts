@@ -59,9 +59,14 @@ import type {
   StorageClearRequest,
   StorageClearResult,
   StorageInfo,
+  TimeRange,
+  VoiceConsentStatements,
   VoiceEngineState,
   VoiceInstallResult,
   VoiceLibraryResponse,
+  VoiceProfile,
+  VoiceReferenceAnalysis,
+  VoiceReferenceChecks,
 } from '../models';
 
 /** HTTP verbs the fetch fallback understands. */
@@ -498,6 +503,93 @@ export class IpcService {
   /** POST /voices/:id/install — the voice, and its engine pack when missing (202). */
   installLibraryVoice(voiceId: string, packId?: string): Promise<VoiceInstallResult> {
     return this.http('POST', `/voices/${encodeURIComponent(voiceId)}/install`, packId ? { packId } : {});
+  }
+
+  // ------------------------------------------------------------------ //
+  // Voice profiles: cloning (docs/VOICE_CLONING.md)                      //
+  // ------------------------------------------------------------------ //
+
+  async voiceProfiles(projectId?: string): Promise<VoiceProfile[]> {
+    const q = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
+    return (await this.http<{ profiles: VoiceProfile[] }>('GET', `/voice-profiles${q}`)).profiles ?? [];
+  }
+
+  voiceConsent(locale: string): Promise<VoiceConsentStatements> {
+    return this.http('GET', `/voice-profiles/consent?locale=${encodeURIComponent(locale)}`);
+  }
+
+  /** POST /voice-profiles/uploads — a recording's raw bytes. */
+  async uploadVoiceRecording(blob: Blob): Promise<{ uploadId: string }> {
+    const type = (blob.type || 'audio/wav').split(';')[0]!;
+    const res = await this.fetchWaitingForBackend(`${this.baseUrl}/voice-profiles/uploads`, {
+      method: 'POST',
+      headers: { 'Content-Type': type, Accept: 'application/json' },
+      body: blob,
+      signal: AbortSignal.timeout(10 * 60 * 1000),
+    });
+    const text = await res.text();
+    const json = text ? safeJsonParse(text) : undefined;
+    if (!res.ok) {
+      const envelope = json as { error?: unknown } | undefined;
+      throw envelope?.error ?? { code: 'UNKNOWN', message: `Upload failed (${res.status}).` };
+    }
+    return json as { uploadId: string };
+  }
+
+  analyzeVoiceReference(body: { uploadId?: string; path?: string; sourceName?: string }): Promise<VoiceReferenceAnalysis> {
+    return this.http('POST', '/voice-profiles/analyze', { engine: 'vieneu', ...body });
+  }
+
+  checkVoiceWindow(analysisId: string, window: TimeRange): Promise<{ window: TimeRange; checks: VoiceReferenceChecks }> {
+    return this.http('POST', `/voice-profiles/analysis/${encodeURIComponent(analysisId)}/check`, { window, engine: 'vieneu' });
+  }
+
+  voiceAnalysisAudioUrl(analysisId: string): string {
+    return `${this.baseUrl}/voice-profiles/analysis/${encodeURIComponent(analysisId)}/audio`;
+  }
+
+  createVoiceProfile(body: {
+    analysisId: string;
+    window: TimeRange;
+    name: string;
+    note?: string;
+    consent: { relation: string; statementVersion: string; locale: string; accepted: boolean };
+    keepRecording: boolean;
+    denoise: boolean;
+    projectId?: string;
+    source?: { kind: 'recording' | 'file'; fileName?: string };
+  }): Promise<VoiceProfile> {
+    return this.http('POST', '/voice-profiles', { engine: 'vieneu', ...body });
+  }
+
+  renameVoiceProfile(id: string, patch: { name?: string; note?: string }): Promise<VoiceProfile> {
+    return this.http('PATCH', `/voice-profiles/${encodeURIComponent(id)}`, patch);
+  }
+
+  deleteVoiceProfile(id: string): Promise<{ ok: boolean }> {
+    return this.http('DELETE', `/voice-profiles/${encodeURIComponent(id)}`);
+  }
+
+  /** A profile's kept recording or its preview; `v` busts the cache after a re-render. */
+  voiceProfileAudioUrl(id: string, kind: 'reference' | 'preview', v?: string | number): string {
+    return `${this.baseUrl}/voice-profiles/${encodeURIComponent(id)}/audio/${kind}${v !== undefined ? `?v=${encodeURIComponent(String(v))}` : ''}`;
+  }
+
+  /** A .vdvoice file: written into a folder (desktop app), or its download URL (browser). */
+  async exportVoiceProfile(id: string, includeRecording: boolean, dir: string | null): Promise<{ path?: string; url?: string }> {
+    if (dir) {
+      return this.http('POST', `/voice-profiles/${encodeURIComponent(id)}/export`, { dir, includeRecording });
+    }
+    return { url: `${this.baseUrl}/voice-profiles/${encodeURIComponent(id)}/export${includeRecording ? '?recording=1' : ''}` };
+  }
+
+  importVoiceProfile(bundle: unknown, consent: { relation: string; statementVersion: string; locale: string; accepted: boolean }): Promise<VoiceProfile> {
+    return this.http('POST', '/voice-profiles/import', { bundle, consent });
+  }
+
+  /** Speak `text` (or the standard sentence) in a cloned voice; then play its preview. */
+  previewVoiceProfile(id: string, text?: string): Promise<{ ok: boolean }> {
+    return this.http('POST', `/voice-profiles/${encodeURIComponent(id)}/preview`, text ? { text } : {});
   }
 
   // ------------------------------------------------------------------ //

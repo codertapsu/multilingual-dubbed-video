@@ -6,6 +6,81 @@
 
   <vd-error-banner [error]="error()" (dismiss)="error.set(null)" />
 
+  <!-- ===================== My voices (cloning) ===================== -->
+  <div class="card stack">
+    <div class="row-between">
+      <h2>{{ 'voices.my-heading' | translate }}</h2>
+      <div class="row">
+        <button type="button" class="btn" (click)="cloneMode.set('import'); showClone.set(true)">{{ 'voices.my-import' | translate }}</button>
+        <button type="button" class="btn btn-primary" (click)="cloneMode.set('clone'); showClone.set(true)">{{ 'voices.my-clone' | translate }}</button>
+      </div>
+    </div>
+    <p class="hint">{{ 'voices.my-help' | translate }}</p>
+    @if (notice(); as n) {
+      <p class="ok" role="status">{{ n }}</p>
+    }
+    @if (profiles().length === 0) {
+      <p class="muted">{{ 'voices.my-empty' | translate }}</p>
+    } @else {
+      <ul class="voices" role="list">
+        @for (p of profiles(); track p.id) {
+          <li class="voice profile">
+            <button
+              type="button"
+              class="icon-btn play"
+              [attr.aria-label]="(playingProfile() === p.id ? 'voices.stop' : 'voices.play') | translate: { name: p.name }"
+              (click)="toggleProfilePreview(p)"
+            >
+              {{ playingProfile() === p.id ? '■' : '▶' }}
+            </button>
+            <div class="who">
+              <div class="name-line">
+                @if (editingId() === p.id) {
+                  <input
+                    type="text"
+                    maxlength="80"
+                    [ngModel]="editName()"
+                    (ngModelChange)="editName.set($event)"
+                    (keydown.enter)="saveRename(p)"
+                    (blur)="saveRename(p)"
+                    [attr.aria-label]="'voices.my-rename' | translate"
+                  />
+                } @else {
+                  <strong>{{ p.name }}</strong>
+                }
+                <span class="chip">{{ engineName(p.engine) }}</span>
+                @if (p.scope.kind === 'project') {
+                  <span class="chip">{{ 'voices.my-project-voice' | translate }}</span>
+                }
+                @if (!p.reference) {
+                  <span class="chip" [title]="'voices.my-no-recording-help' | translate">{{ 'voices.my-no-recording' | translate }}</span>
+                }
+              </div>
+              <div class="meta muted small">
+                <span>{{ 'voices.my-made' | translate: { date: dateLabel(p.createdAt) } }}</span>
+                <span [title]="p.consent.statementText">· {{ relationLabel(p) }}</span>
+                @if (p.note) {
+                  <span>· {{ p.note }}</span>
+                }
+              </div>
+            </div>
+            <div class="action row">
+              <button type="button" class="btn btn-ghost btn-sm" (click)="startRename(p)">{{ 'voices.my-rename' | translate }}</button>
+              @if (p.scope.kind === 'library') {
+                <button type="button" class="btn btn-ghost btn-sm" (click)="exportProfile(p)">{{ 'voices.my-export' | translate }}</button>
+              }
+              <button type="button" class="btn btn-ghost btn-sm" (click)="deleteProfile(p)">{{ 'voices.my-delete' | translate }}</button>
+            </div>
+          </li>
+        }
+      </ul>
+    }
+  </div>
+
+  @if (showClone()) {
+    <vd-voice-clone-dialog [mode]="cloneMode()" (created)="onCloned()" (closed)="showClone.set(false)" />
+  }
+
   <!-- ===================== Engines: who speaks the voices ===================== -->
   <div class="card stack">
     <div class="row-between">

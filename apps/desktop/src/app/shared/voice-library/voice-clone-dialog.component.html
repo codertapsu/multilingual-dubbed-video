@@ -1,0 +1,235 @@
+<div class="backdrop" (click)="close()"></div>
+<div class="dialog card stack" role="dialog" aria-modal="true" [attr.aria-label]="'voice-clone.title' | translate">
+  <div class="row-between">
+    <h2>{{ (mode() === 'import' ? 'voice-clone.import-title' : 'voice-clone.title') | translate }}</h2>
+    <button type="button" class="btn btn-ghost btn-sm" (click)="close()" [attr.aria-label]="'voice-clone.close' | translate">✕</button>
+  </div>
+
+  <ol class="steps" aria-hidden="true">
+    @for (s of mode() === 'import' ? ['rights', 'source'] : ['rights', 'source', 'check', 'save']; track s) {
+      <li [class.on]="step() === s">{{ 'voice-clone.step.' + s | translate }}</li>
+    }
+  </ol>
+
+  <vd-error-banner [error]="error()" (dismiss)="error.set(null)" />
+
+  <!-- ===================== The engine ===================== -->
+  @if (step() === 'engine') {
+    <p>{{ 'voice-clone.engine-needed' | translate }}</p>
+    @if (enginePack(); as pack) {
+      <p class="hint">{{ 'voice-clone.engine-size' | translate: { pack: pack.displayName, size: (pack.approxSizeMb / 1024).toFixed(1) } }}</p>
+      <div class="row">
+        <button type="button" class="btn btn-primary" [disabled]="busy() === 'install'" (click)="installEngine()">
+          {{ (busy() === 'install' ? 'voice-clone.engine-installing' : 'voice-clone.engine-install') | translate }}
+        </button>
+      </div>
+    } @else {
+      <p class="muted">{{ 'voice-clone.engine-unavailable' | translate }}</p>
+    }
+  }
+
+  <!-- ===================== 1. Rights ===================== -->
+  @if (step() === 'rights') {
+    <p>{{ 'voice-clone.rights-intro' | translate }}</p>
+    <fieldset class="stack-sm">
+      <legend>{{ 'voice-clone.whose' | translate }}</legend>
+      <label class="choice">
+        <input type="radio" name="relation" [checked]="relation() === 'self'" (change)="relation.set('self'); accepted.set(false)" />
+        {{ 'voice-clone.relation-self' | translate }}
+      </label>
+      <label class="choice">
+        <input type="radio" name="relation" [checked]="relation() === 'authorized'" (change)="relation.set('authorized'); accepted.set(false)" />
+        {{ 'voice-clone.relation-authorized' | translate }}
+      </label>
+    </fieldset>
+    <blockquote class="statement">{{ statement() }}</blockquote>
+    <label class="choice">
+      <input type="checkbox" [checked]="accepted()" (change)="accepted.set(!accepted())" />
+      {{ 'voice-clone.agree' | translate }}
+    </label>
+    <p class="hint">{{ 'voice-clone.rights-honest' | translate }}</p>
+    <div class="row">
+      <button type="button" class="btn btn-primary" [disabled]="!accepted()" (click)="toSource()">{{ 'voice-clone.next' | translate }}</button>
+    </div>
+  }
+
+  <!-- ===================== 2. Source: a voice file (import mode) ===================== -->
+  @if (step() === 'source' && mode() === 'import') {
+    <p class="hint">{{ 'voice-clone.import-voice-help' | translate }}</p>
+    <label class="btn btn-primary">
+      {{ 'voice-clone.choose-voice-file' | translate }}
+      <input type="file" class="visually-hidden" accept=".vdvoice,application/json" (change)="onVoiceFile($event)" [disabled]="!!busy()" />
+    </label>
+    @if (busy() === 'create') {
+      <p class="muted" role="status">{{ 'voice-clone.importing' | translate }}</p>
+    }
+  }
+
+  <!-- ===================== 2. Source ===================== -->
+  @if (step() === 'source' && mode() === 'clone') {
+    <div class="seg-control" role="tablist">
+      <button type="button" role="tab" [class.active]="tab() === 'record'" [attr.aria-selected]="tab() === 'record'" (click)="tab.set('record')">
+        {{ 'voice-clone.tab-record' | translate }}
+      </button>
+      <button type="button" role="tab" [class.active]="tab() === 'import'" [attr.aria-selected]="tab() === 'import'" (click)="tab.set('import')">
+        {{ 'voice-clone.tab-import' | translate }}
+      </button>
+    </div>
+
+    @if (tab() === 'record') {
+      <p class="hint">{{ 'voice-clone.record-help' | translate }}</p>
+      @if (mics().length > 1) {
+        <label class="field">
+          <span>{{ 'voice-clone.microphone' | translate }}</span>
+          <select [ngModel]="mic()" (ngModelChange)="mic.set($event)" [disabled]="recorder.state() === 'recording'">
+            <option value="">{{ 'voice-clone.microphone-default' | translate }}</option>
+            @for (m of mics(); track m.deviceId) {
+              <option [value]="m.deviceId">{{ m.label || m.deviceId }}</option>
+            }
+          </select>
+        </label>
+      }
+      <div class="script">
+        <span class="muted small">{{ 'voice-clone.script-label' | translate }}</span>
+        <p>{{ 'voice-clone.script' | translate }}</p>
+      </div>
+      <div class="row">
+        @if (recorder.state() === 'recording') {
+          <button type="button" class="btn btn-danger" (click)="stopRecording()">■ {{ 'voice-clone.stop' | translate }}</button>
+          <span class="mono">{{ recorder.seconds().toFixed(1) }} s</span>
+          <div class="meter" role="meter" [attr.aria-valuenow]="recorder.level()" aria-valuemin="0" aria-valuemax="1" [attr.aria-label]="'voice-clone.level' | translate">
+            <div class="meter-fill" [style.width.%]="recorder.level() * 100"></div>
+          </div>
+        } @else {
+          <button type="button" class="btn btn-primary" [disabled]="recorder.state() === 'starting' || !!busy()" (click)="startRecording()">
+            ● {{ (recordingUrl() ? 'voice-clone.record-again' : 'voice-clone.record') | translate }}
+          </button>
+        }
+      </div>
+      @if (recorder.error(); as e) {
+        <p class="warn" role="alert">{{ 'voice-clone.' + e | translate }}</p>
+      }
+      @if (recordingUrl(); as url) {
+        <audio [src]="url" controls></audio>
+        <div class="row">
+          <button type="button" class="btn btn-primary" [disabled]="!!busy()" (click)="useRecording()">{{ 'voice-clone.use-recording' | translate }}</button>
+        </div>
+      }
+    } @else {
+      <p class="hint">{{ 'voice-clone.import-help' | translate }}</p>
+      <label class="btn">
+        {{ 'voice-clone.choose-file' | translate }}
+        <input type="file" class="visually-hidden" accept="audio/*,video/*,.m4a,.mp3,.wav,.ogg,.opus,.flac,.webm,.mp4,.mov,.mkv" (change)="onFile($event)" [disabled]="!!busy()" />
+      </label>
+      @if (fileName(); as f) {
+        <span class="muted">{{ f }}</span>
+      }
+    }
+    @if (busy() === 'upload' || busy() === 'analyze') {
+      <p class="muted" role="status">{{ (busy() === 'upload' ? 'voice-clone.uploading' : 'voice-clone.analyzing') | translate }}</p>
+    }
+  }
+
+  <!-- ===================== 3. Check ===================== -->
+  @if (step() === 'check' && analysis(); as a) {
+    <p class="hint">{{ 'voice-clone.check-help' | translate }}</p>
+    <svg class="wave" [attr.viewBox]="'0 0 ' + (a.peaks.length || 1) + ' 100'" preserveAspectRatio="none" role="img" [attr.aria-label]="'voice-clone.waveform' | translate">
+      @for (r of regionRects(); track $index) {
+        <rect class="speech" [attr.x]="r.x" y="0" [attr.width]="r.w" height="100" />
+      }
+      @if (windowRect(); as w) {
+        <rect class="window" [attr.x]="w.x" y="0" [attr.width]="w.w" height="100" />
+      }
+      @for (b of bars(); track b.x) {
+        <rect class="bar" [attr.x]="b.x" [attr.y]="50 - b.h / 2" width="0.8" [attr.height]="b.h" />
+      }
+    </svg>
+    <div class="legend muted small">
+      <span><i class="swatch speech"></i>{{ 'voice-clone.legend-speech' | translate }}</span>
+      <span><i class="swatch window"></i>{{ 'voice-clone.legend-window' | translate }}</span>
+      @if (a.detector === 'energy') {
+        <span [title]="'voice-clone.detector-energy-help' | translate">{{ 'voice-clone.detector-energy' | translate }}</span>
+      }
+    </div>
+    <div class="sliders">
+      <label class="field">
+        <span>{{ 'voice-clone.window-start' | translate: { s: seconds(window().startMs) } }}</span>
+        <input type="range" min="0" [max]="maxStart()" step="100" [ngModel]="window().startMs" (ngModelChange)="setStart($event)" />
+      </label>
+      <label class="field">
+        <span>{{ 'voice-clone.window-length' | translate: { s: seconds(windowLength()) } }}</span>
+        <input type="range" [min]="minLength" [max]="maxLength()" step="100" [ngModel]="windowLength()" (ngModelChange)="setLength($event)" />
+      </label>
+      <button type="button" class="btn btn-sm" (click)="toggleWindowPlayback()">
+        {{ (playingWindow() ? 'voice-clone.stop' : 'voice-clone.play-window') | translate }}
+      </button>
+    </div>
+
+    @if (checks(); as c) {
+      <ul class="checks">
+        <li [class.ok]="!c.warnings.includes('too-short') && !c.warnings.includes('short')">
+          {{ 'voice-check.speech' | translate: { s: seconds(c.speechMs) } }}
+        </li>
+        @for (w of c.warnings; track w) {
+          <li [class.bad]="w === 'too-short'" [class.warn]="w !== 'too-short'">
+            <strong>{{ 'voice-check.' + w | translate }}</strong>
+            <span class="muted"> {{ 'voice-check.fix.' + w | translate }}</span>
+          </li>
+        }
+        @if (c.warnings.length === 0) {
+          <li class="ok">{{ 'voice-check.all-good' | translate }}</li>
+        }
+      </ul>
+    }
+    <label class="choice">
+      <input type="checkbox" [checked]="denoise()" (change)="denoise.set(!denoise())" />
+      {{ 'voice-clone.denoise' | translate }}
+    </label>
+    <p class="hint">{{ 'voice-clone.denoise-help' | translate }}</p>
+    <div class="row">
+      <button type="button" class="btn" (click)="step.set('source')">{{ 'voice-clone.back' | translate }}</button>
+      <button type="button" class="btn btn-primary" [disabled]="refused() || busy() === 'check'" (click)="step.set('save')">
+        {{ 'voice-clone.next' | translate }}
+      </button>
+    </div>
+  }
+
+  <!-- ===================== 4. Save ===================== -->
+  @if (step() === 'save') {
+    <label class="field">
+      <span>{{ 'voice-clone.name' | translate }}</span>
+      <input type="text" maxlength="80" [ngModel]="name()" (ngModelChange)="name.set($event)" />
+    </label>
+    <label class="field">
+      <span>{{ 'voice-clone.note' | translate }}</span>
+      <input type="text" maxlength="500" [ngModel]="note()" (ngModelChange)="note.set($event)" [placeholder]="'voice-clone.note-placeholder' | translate" />
+    </label>
+    <label class="choice">
+      <input type="checkbox" [checked]="keepRecording()" (change)="keepRecording.set(!keepRecording())" />
+      {{ 'voice-clone.keep-recording' | translate }}
+    </label>
+    <p class="hint">{{ 'voice-clone.keep-recording-help' | translate }}</p>
+    <p class="hint">{{ 'voice-clone.local-only' | translate }}</p>
+    <div class="row">
+      <button type="button" class="btn" [disabled]="busy() === 'create'" (click)="step.set('check')">{{ 'voice-clone.back' | translate }}</button>
+      <button type="button" class="btn btn-primary" [disabled]="!name().trim() || busy() === 'create'" (click)="save()">
+        {{ (busy() === 'create' ? 'voice-clone.creating' : 'voice-clone.create') | translate }}
+      </button>
+    </div>
+    @if (busy() === 'create') {
+      <p class="muted" role="status">{{ 'voice-clone.creating-help' | translate }}</p>
+    }
+  }
+
+  <!-- ===================== Done ===================== -->
+  @if (step() === 'done' && profile(); as p) {
+    <p>{{ 'voice-clone.done' | translate: { name: p.name } }}</p>
+    <div class="row">
+      <button type="button" class="btn" (click)="togglePreview()">
+        {{ (playingPreview() ? 'voice-clone.stop' : 'voice-clone.play-preview') | translate }}
+      </button>
+      <button type="button" class="btn btn-primary" (click)="close()">{{ 'voice-clone.finish' | translate }}</button>
+    </div>
+    <p class="hint">{{ 'voice-clone.done-help' | translate }}</p>
+  }
+</div>

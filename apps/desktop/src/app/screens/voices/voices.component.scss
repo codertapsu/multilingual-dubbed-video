@@ -130,6 +130,10 @@
   border-color: var(--vd-success);
 }
 
+.voice.profile {
+  grid-template-columns: auto 1fr auto;
+}
+
 .who {
   min-width: 0;
   display: flex;

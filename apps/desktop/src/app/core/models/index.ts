@@ -12,7 +12,10 @@
  * timestamp helpers) are imported directly from `@videodubber/shared` at the
  * point of use.
  */
-import type { VoiceEngineInfo as VoiceEngineInfoBase } from '@videodubber/shared';
+import type {
+  VoiceEngineInfo as VoiceEngineInfoBase,
+  VoiceReferenceChecks as VoiceReferenceChecksBase,
+} from '@videodubber/shared';
 
 export type {
   // Primitive aliases / unions
@@ -111,6 +114,30 @@ export interface VoicePackState {
   available: boolean;
   fits: boolean;
   installing: boolean;
+}
+
+/** A window of a recording (ms). */
+export interface TimeRange {
+  startMs: number;
+  endMs: number;
+}
+
+/** POST /voice-profiles/analyze — what is in a recording, and the best window. */
+export interface VoiceReferenceAnalysis {
+  analysisId: string;
+  durationMs: number;
+  regions: TimeRange[];
+  detector: 'vad' | 'energy';
+  window: TimeRange;
+  checks: VoiceReferenceChecksBase;
+  peaks: number[];
+  sourceName?: string;
+}
+
+/** GET /voice-profiles/consent */
+export interface VoiceConsentStatements {
+  version: string;
+  statements: Record<'self' | 'authorized' | 'source-video', string>;
 }
 
 /** A voice engine with its packs and install state (GET /voices/engines). */

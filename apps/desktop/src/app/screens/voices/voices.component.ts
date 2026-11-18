@@ -19,9 +19,11 @@ import type {
   VoiceLibraryItem,
   VoiceLicenseCategory,
   VoicePackState,
+  VoiceProfile,
 } from '../../core/models';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
+import { VoiceCloneDialogComponent } from '../../shared/voice-library/voice-clone-dialog.component';
 import {
   baseLanguage,
   EMPTY_FILTER,
@@ -52,7 +54,7 @@ interface Progress {
 @Component({
   selector: 'vd-voices',
   standalone: true,
-  imports: [FormsModule, TranslatePipe, ErrorBannerComponent],
+  imports: [FormsModule, TranslatePipe, ErrorBannerComponent, VoiceCloneDialogComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './voices.component.html',
   styleUrl: './voices.component.scss',
@@ -76,6 +78,15 @@ export class VoicesComponent implements OnInit, OnDestroy {
   /** Install progress, by voice id (Piper) or pack id (engines). */
   protected readonly progress = signal<Record<string, Progress>>({});
   protected readonly showLicenseHelp = signal(false);
+
+  // ---- my voices (cloning) ---------------------------------------------------
+  protected readonly profiles = signal<VoiceProfile[]>([]);
+  protected readonly showClone = signal(false);
+  protected readonly cloneMode = signal<'clone' | 'import'>('clone');
+  protected readonly notice = signal<string | null>(null);
+  protected readonly editingId = signal<string | null>(null);
+  protected readonly editName = signal('');
+  protected readonly playingProfile = signal<string | null>(null);
 
   protected readonly visible = computed(() => filterVoices(this.library(), this.filter()));
   protected readonly shown = computed(() => this.visible().slice(0, this.limit()));
@@ -122,9 +133,14 @@ export class VoicesComponent implements OnInit, OnDestroy {
 
   protected async reload(): Promise<void> {
     try {
-      const [lib, engines] = await Promise.all([this.ipc.voiceLibrary(), this.ipc.voiceEngines()]);
+      const [lib, engines, profiles] = await Promise.all([
+        this.ipc.voiceLibrary(),
+        this.ipc.voiceEngines(),
+        this.ipc.voiceProfiles().catch(() => [] as VoiceProfile[]),
+      ]);
       this.library.set(lib.voices);
       this.engines.set(engines);
+      this.profiles.set(profiles);
       this.error.set(null);
     } catch (err) {
       this.error.set(err as AppError);
@@ -367,6 +383,94 @@ export class VoicesComponent implements OnInit, OnDestroy {
     const key = `voices.pack-accel.${pack.accel ?? 'cpu'}`;
     const label = this.i18n.instant(key);
     return label === key ? pack.displayName : label;
+  }
+
+  // ---- my voices -------------------------------------------------------------
+
+  protected onCloned(): void {
+    void this.reload();
+  }
+
+  protected toggleProfilePreview(p: VoiceProfile): void {
+    if (this.playingProfile() === p.id) {
+      this.stopPreview();
+      this.playingProfile.set(null);
+      return;
+    }
+    this.stopPreview();
+    const audio = new Audio(this.ipc.voiceProfileAudioUrl(p.id, 'preview', p.updatedAt));
+    this.audio = audio;
+    this.playingProfile.set(p.id);
+    audio.onended = () => this.playingProfile.set(null);
+    audio.onerror = () => this.playingProfile.set(null);
+    void audio.play().catch(() => this.playingProfile.set(null));
+  }
+
+  protected startRename(p: VoiceProfile): void {
+    this.editingId.set(p.id);
+    this.editName.set(p.name);
+  }
+
+  protected async saveRename(p: VoiceProfile): Promise<void> {
+    const name = this.editName().trim();
+    this.editingId.set(null);
+    if (!name || name === p.name) return;
+    try {
+      await this.ipc.renameVoiceProfile(p.id, { name });
+      await this.reload();
+    } catch (err) {
+      this.error.set(err as AppError);
+    }
+  }
+
+  protected async deleteProfile(p: VoiceProfile): Promise<void> {
+    const ok = await this.confirm.confirm({
+      title: this.i18n.instant('voices.my-delete-title', { name: p.name }),
+      message: this.i18n.instant('voices.my-delete-body'),
+      confirmLabel: this.i18n.instant('voices.my-delete-confirm'),
+    });
+    if (!ok) return;
+    try {
+      await this.ipc.deleteVoiceProfile(p.id);
+      await this.reload();
+    } catch (err) {
+      this.error.set(err as AppError);
+    }
+  }
+
+  /** Save a .vdvoice file: into a folder the user picks (app), or as a download (browser). */
+  protected async exportProfile(p: VoiceProfile): Promise<void> {
+    this.notice.set(null);
+    const includeRecording =
+      Boolean(p.reference) &&
+      (await this.confirm.confirm({
+        title: this.i18n.instant('voices.my-export-title', { name: p.name }),
+        message: this.i18n.instant('voices.my-export-recording'),
+        confirmLabel: this.i18n.instant('voices.my-export-with'),
+        cancelLabel: this.i18n.instant('voices.my-export-without'),
+        danger: false,
+      }));
+    try {
+      const dir = await this.ipc.pickFolder(this.i18n.instant('voices.my-export-folder'));
+      if (dir === null && this.ipc.inTauri) return; // cancelled the folder dialog
+      const res = await this.ipc.exportVoiceProfile(p.id, includeRecording, dir);
+      if (res.path) this.notice.set(this.i18n.instant('voices.my-exported', { path: res.path }));
+      else if (res.url) window.open(res.url, '_blank');
+    } catch (err) {
+      this.error.set(err as AppError);
+    }
+  }
+
+  protected relationLabel(p: VoiceProfile): string {
+    return this.i18n.instant(`voices.my-relation.${p.consent.relation}`);
+  }
+
+  protected dateLabel(iso: string): string {
+    try {
+      return new Date(iso).toLocaleDateString(this.i18n.locale());
+    } catch {
+      return iso.slice(0, 10);
+    }
   }
 
   protected sizeLabel(mb: number): string {

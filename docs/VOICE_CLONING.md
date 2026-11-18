@@ -65,6 +65,17 @@ dub's language. Accent carries over in part (a voice cloned from English speech
 speaks Vietnamese with a hint of it); choose lines without music or laughter
 under them.
 
+With the **Music & voice separation** engine installed, the app takes the music
+and sound effects out of the chosen lines first (a few seconds on a graphics
+card, about as long as the lines on a processor alone), and the check step says
+**Music taken out first**. A voice copied from lines with a film score under
+them comes out much cleaner that way: in Phase 0 (2026-11-18) a voice cloned
+from an old man's line over music garbled 2 of 30 test lines from the mix and
+none from the separated speech. For the whole-track choice the app uses the
+separated speech a render has already made, when there is one. Without the
+engine, or when another dub is using the graphics card, the lines are used as
+they are.
+
 ## A good recording
 
 | What the app says | What it means | What to do |

@@ -1309,6 +1309,8 @@
     "legend-window": "The part used",
     "detector-energy": "Speech found by level",
     "detector-energy-help": "The speech-to-text worker is not running, so speech was found by loudness; it may be less exact.",
+    "voices-isolated": "Music taken out first",
+    "voices-isolated-help": "Music & voice separation removed the music and sound effects from this audio first, so the voice is copied from the speech alone. Voices copied this way come out cleaner when the video has music under the dialogue.",
     "window-start": "Start: {{ s }} s",
     "window-length": "Length: {{ s }} s",
     "play-window": "▶ Play this part",

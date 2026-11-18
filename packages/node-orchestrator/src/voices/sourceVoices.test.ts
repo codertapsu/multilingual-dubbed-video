@@ -122,6 +122,36 @@ describe('voices from a project video', () => {
       expect((await fsp.readdir(path.join(tmp, 'work'))).every((n) => n.startsWith('va_'))).toBe(true);
     });
 
+    it("takes the lines' voices without the music when separation is installed, and the lines as they are when not", async () => {
+      const isolateVoices = vi.fn(async (_id: string, wav: string, workDir: string) => {
+        await fsp.mkdir(workDir, { recursive: true });
+        const out = path.join(workDir, 'vocals.wav');
+        await fsp.writeFile(out, tone(5000)); // shorter than the 7.15 s of joined lines: proves it was used
+        expect(path.basename(wav)).toBe('lines.wav');
+        return out;
+      });
+      const a = await analyzeProjectSource({ ...deps(), isolateVoices }, PROJECT, POLICY, { segmentIds: ['seg_0001', 'seg_0002'] });
+      expect(isolateVoices).toHaveBeenCalledWith(PROJECT, expect.any(String), expect.any(String), undefined);
+      expect(a.voicesIsolated).toBe(true);
+      expect(Math.abs(a.durationMs - 5000)).toBeLessThan(5);
+
+      const notNow = await analyzeProjectSource({ ...deps(), isolateVoices: async () => undefined }, PROJECT, POLICY, {
+        segmentIds: ['seg_0001', 'seg_0002'],
+      });
+      expect(notNow.voicesIsolated).toBeUndefined();
+      expect(Math.abs(notNow.durationMs - 7150)).toBeLessThan(5);
+    });
+
+    it('uses the separated voices a render already made for the whole track', async () => {
+      const vocals = path.join(tmp, 'p', 'vocals.wav');
+      await fsp.writeFile(vocals, tone(12_000));
+      const a = await analyzeProjectSource({ ...deps(), cachedVocals: async () => vocals }, PROJECT, POLICY);
+      expect(a.voicesIsolated).toBe(true);
+      expect(Math.abs(a.durationMs - 12_000)).toBeLessThan(5);
+      const raw = await analyzeProjectSource({ ...deps(), cachedVocals: async () => undefined }, PROJECT, POLICY);
+      expect(Math.abs(raw.durationMs - 30_000)).toBeLessThan(5);
+    });
+
     it('analyses the whole track without lines, and says when audio is not ready', async () => {
       const a = await analyzeProjectSource(deps(), PROJECT, POLICY);
       expect(a.origin).toEqual({ projectId: PROJECT });

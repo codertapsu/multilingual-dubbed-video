@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EnginePackStore } from '../../engines/enginePackStore.js';
 import { FakeMediaService } from '../../test/fixtures.js';
-import { AudioCppSeparationProvider, type CliRunner } from './audioCppSeparationProvider.js';
+import { AudioCppSeparationProvider, currentVocals, type CliRunner } from './audioCppSeparationProvider.js';
 
 const EXE = process.platform === 'win32' ? 'audiocpp_cli.exe' : 'audiocpp_cli';
 /** The processor-or-Metal runtime the catalog offers on this platform (none on Linux). */
@@ -83,10 +83,14 @@ describe.skipIf(!RUNTIME || process.arch !== (process.platform === 'darwin' ? 'a
 
     await p.separate(audio, path.dirname(audio));
     expect(run).toHaveBeenCalledTimes(1);
-    // A re-extracted track is separated again.
+    // A voice made from the video can use these voices as long as they match the track.
+    expect(await currentVocals(audio, path.dirname(audio))).toBe(out!.vocalsPath);
+    // A re-extracted track is separated again, and its old voices are not offered.
     await fsp.writeFile(audio, 'RIFF-another-track');
+    expect(await currentVocals(audio, path.dirname(audio))).toBeUndefined();
     await p.separate(audio, path.dirname(audio));
     expect(run).toHaveBeenCalledTimes(2);
+    expect(await currentVocals(path.join(tmp, 'nope.wav'), path.dirname(audio))).toBeUndefined();
   });
 
   it('falls back from the graphics card to the processor build when the card cannot run it', async () => {

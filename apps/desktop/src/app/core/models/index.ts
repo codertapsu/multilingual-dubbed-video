@@ -132,6 +132,8 @@ export interface VoiceReferenceAnalysis {
   checks: VoiceReferenceChecksBase;
   peaks: number[];
   sourceName?: string;
+  /** The music and effects were taken out of a video's lines first (music & voice separation). */
+  voicesIsolated?: boolean;
 }
 
 /** GET /voice-profiles/consent */

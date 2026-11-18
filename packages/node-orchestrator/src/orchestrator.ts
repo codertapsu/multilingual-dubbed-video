@@ -948,6 +948,16 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /**
+   * A one-off job for a project's editor outside this class (separating the
+   * voices of lines a voice is made from), under the editor's heavy-engine
+   * owner: it may use a free lane, never one a running dub holds, and a dub
+   * queued behind it is dispatched when it ends.
+   */
+  runEditorJob<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+    return this.withEditorLane(projectId, fn);
+  }
+
+  /**
    * Run an editor action under its own heavy-engine owner.
    *
    * Editor actions touch the SAME heavy engines a run uses, so they get their

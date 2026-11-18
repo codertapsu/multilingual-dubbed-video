@@ -56,7 +56,7 @@ import {
 } from './engines/packSelection.js';
 import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engines/engineRecommendation.js';
 import { configureUvHome, resolveUvPath, uvObtainable } from './engines/uv.js';
-import { AudioCppSeparationProvider } from './providers/separation/audioCppSeparationProvider.js';
+import { AudioCppSeparationProvider, currentVocals } from './providers/separation/audioCppSeparationProvider.js';
 import type { SeparationService } from './media.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 import { SherpaDiarizationProvider } from './providers/diarization/sherpaDiarizationProvider.js';
@@ -725,6 +725,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       media,
       prep: referencePrep,
       workRoot: join(config.configDir, 'voices', 'work'),
+      // Separate the voices of the joined lines when separation is installed.
+      // Never a reason to fail: busy (another dub holds the GPU) or broken, the
+      // lines are used as they are, unless the user cancelled.
+      isolateVoices: async (projectId, wavPath, workDir, signal) => {
+        if (!(await separation.available?.().catch(() => false))) return undefined;
+        try {
+          const out = await orchestrator.runEditorJob(projectId, () => separation.separate(wavPath, workDir, signal));
+          return out?.vocalsPath;
+        } catch (err) {
+          if (signal?.aborted) throw err;
+          console.warn(`[separation] Separating a voice reference failed (${String(err)}); using the lines as they are.`);
+          return undefined;
+        }
+      },
+      cachedVocals: async (projectId) => {
+        const paths = store.paths(projectId);
+        return currentVocals(paths.originalWav, paths.audioDir);
+      },
     },
     // New speaker voices join the table (replacing those speakers' old ones);
     // the orchestrator marks the lines whose voice that changes.

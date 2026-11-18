@@ -135,6 +135,17 @@ export interface SourceVoiceDeps {
   prep: ReferencePrep;
   /** Scratch space for joining lines (removed afterwards). */
   workRoot: string;
+  /**
+   * Music & voice separation, when installed: the voices of a short WAV
+   * without the music and effects under them (written under `workDir`), or
+   * undefined when it is not installed or cannot run now. A video's voice comes
+   * out cleaner from them: cloned from an old man's line over a film score,
+   * VieNeu garbled 2 of 30 lines from the mix (CER 10.8 %) and none from the
+   * separated voice (CER 2.8 %; Phase 0, 2026-11-18).
+   */
+  isolateVoices?: (projectId: string, wavPath: string, workDir: string, signal?: AbortSignal) => Promise<string | undefined>;
+  /** The project's own separated voices, when stems made from its audio as it is now exist. */
+  cachedVocals?: (projectId: string) => Promise<string | undefined>;
 }
 
 /** What to take a voice from: chosen lines, one speaker's lines, or (neither) the whole track. */
@@ -174,7 +185,15 @@ export async function analyzeProjectSource(
   }
   const segmentIds = selection.segmentIds ?? [];
   if (!selection.speakerId && segmentIds.length === 0) {
-    return deps.prep.analyze(audio.audioPath, policy, { sourceName: 'video', origin: { projectId }, ...(signal ? { signal } : {}) });
+    // The whole track is too long to separate just for this; separated voices
+    // a render already made are used when they match the audio.
+    const vocals = await deps.cachedVocals?.(projectId).catch(() => undefined);
+    return deps.prep.analyze(vocals ?? audio.audioPath, policy, {
+      sourceName: 'video',
+      origin: { projectId },
+      ...(vocals ? { voicesIsolated: true } : {}),
+      ...(signal ? { signal } : {}),
+    });
   }
   const segments = await readProjectLines(audio.transcriptPath);
   let ranges: TimeRange[];
@@ -200,9 +219,11 @@ export async function analyzeProjectSource(
     }
     const joined = path.join(scratch, 'lines.wav');
     await fsp.writeFile(joined, encodePcmWav(joinPcm(parts)));
-    return await deps.prep.analyze(joined, policy, {
+    const vocals = deps.isolateVoices ? await deps.isolateVoices(projectId, joined, path.join(scratch, 'separated'), signal) : undefined;
+    return await deps.prep.analyze(vocals ?? joined, policy, {
       sourceName: selection.speakerId ?? `${usedIds.length} line(s)`,
       origin: { projectId, segmentIds: usedIds, ...(selection.speakerId ? { speakerId: selection.speakerId } : {}) },
+      ...(vocals ? { voicesIsolated: true } : {}),
       ...(signal ? { signal } : {}),
     });
   } finally {

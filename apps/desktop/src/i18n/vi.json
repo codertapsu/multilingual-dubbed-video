@@ -1309,6 +1309,8 @@
     "legend-window": "Đoạn dùng để nhân bản",
     "detector-energy": "Tìm tiếng nói theo âm lượng",
     "detector-energy-help": "Bộ nhận dạng giọng nói chưa chạy, nên ứng dụng tìm tiếng nói theo âm lượng; kết quả có thể kém chính xác hơn.",
+    "voices-isolated": "Đã tách bỏ nhạc nền",
+    "voices-isolated-help": "Tính năng tách nhạc và giọng nói đã loại bỏ nhạc nền và hiệu ứng âm thanh khỏi đoạn âm thanh này trước, nên giọng được sao chép chỉ từ lời nói. Giọng sao chép theo cách này rõ hơn khi video có nhạc chen dưới lời thoại.",
     "window-start": "Bắt đầu: {{ s }} giây",
     "window-length": "Độ dài: {{ s }} giây",
     "play-window": "▶ Nghe đoạn này",

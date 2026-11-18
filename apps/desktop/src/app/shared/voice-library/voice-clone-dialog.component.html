@@ -179,6 +179,9 @@
       @if (a.detector === 'energy') {
         <span [title]="'voice-clone.detector-energy-help' | translate">{{ 'voice-clone.detector-energy' | translate }}</span>
       }
+      @if (a.voicesIsolated) {
+        <span [title]="'voice-clone.voices-isolated-help' | translate">{{ 'voice-clone.voices-isolated' | translate }}</span>
+      }
     </div>
     <div class="sliders">
       <label class="field">

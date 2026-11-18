@@ -481,7 +481,8 @@ Stated plainly, so you are not hunting for a feature that is not there:
   voice separation* engine (~150 MB; the wizard installs it). It takes about a
   tenth of the video's length on a graphics card or Apple Silicon, about the
   video's length on a processor alone. Without it, the original is turned down
-  under the dub instead.
+  under the dub instead. Installed, it also takes the music out of the lines a
+  voice is copied from, which makes such voices cleaner.
 - **Voice cloning needs VieNeu-TTS 3.8** and speaks Vietnamese: make a voice in
   Voices → My voices from a recording or a file, after agreeing to a statement
   about whose voice it is ([VOICE_CLONING.md](VOICE_CLONING.md)).

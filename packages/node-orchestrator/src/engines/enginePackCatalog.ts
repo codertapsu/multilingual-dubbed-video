@@ -1025,7 +1025,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     packKind: 'model',
     displayName: 'Music & voice separation (HTDemucs)',
     description:
-      "Splits the original soundtrack into the voices and everything else, so “Replace the voices, keep the music” keeps the score and sound effects at full volume under the dub instead of turning them down. Takes about a tenth of the video's length on a graphics card or Apple Silicon, about the video's length on a processor alone.",
+      "Splits the original soundtrack into the voices and everything else, so “Replace the voices, keep the music” keeps the score and sound effects at full volume under the dub instead of turning them down, and a voice copied from the video is taken from the speech without the music under it. Takes about a tenth of the video's length on a graphics card or Apple Silicon, about the video's length on a processor alone.",
     providerId: 'audio-cpp-separation-model',
     version: 'htdemucs-q8_0@7a103b33',
     accel: 'cpu',

@@ -57,6 +57,8 @@ export interface ReferenceAnalysis {
   sourceName?: string;
   /** Made from a project's own audio (sourceVoices.ts): which project, which lines. */
   origin?: AnalysisOrigin;
+  /** The music and effects were taken out first (music & voice separation). */
+  voicesIsolated?: boolean;
 }
 
 export interface AnalysisOrigin {
@@ -73,6 +75,7 @@ export interface StoredAnalysis {
   detector: 'vad' | 'energy';
   sourceName?: string;
   origin?: AnalysisOrigin;
+  voicesIsolated?: boolean;
   createdAt: string;
 }
 
@@ -127,7 +130,7 @@ export class ReferencePrep {
   async analyze(
     inputPath: string,
     policy: VoiceReferencePolicy,
-    opts: { sourceName?: string; signal?: AbortSignal; origin?: AnalysisOrigin } = {},
+    opts: { sourceName?: string; signal?: AbortSignal; origin?: AnalysisOrigin; voicesIsolated?: boolean } = {},
   ): Promise<ReferenceAnalysis> {
     await this.sweep();
     const referenceClip = this.deps.media.referenceClip;
@@ -173,6 +176,7 @@ export class ReferencePrep {
       detector,
       ...(opts.sourceName ? { sourceName: opts.sourceName.slice(0, 200) } : {}),
       ...(opts.origin ? { origin: opts.origin } : {}),
+      ...(opts.voicesIsolated ? { voicesIsolated: true } : {}),
       createdAt: new Date(this.now()).toISOString(),
     };
     await fsp.writeFile(path.join(dir, 'analysis.json'), JSON.stringify(stored));

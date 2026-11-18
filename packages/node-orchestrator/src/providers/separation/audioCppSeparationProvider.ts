@@ -86,6 +86,27 @@ const isFile = (p: string) =>
     () => false,
   );
 
+/**
+ * The separated voices of `audioPath`, when stems made from it exactly as it
+ * is now are already in `<outputDir>/stems` (a render with "replace the
+ * voices" made them); undefined otherwise. Reads only, never separates.
+ */
+export async function currentVocals(audioPath: string, outputDir: string): Promise<string | undefined> {
+  const stemsDir = path.join(outputDir, 'stems');
+  const vocals = path.join(stemsDir, 'vocals.wav');
+  try {
+    const [stat, have] = await Promise.all([
+      fsp.stat(audioPath),
+      fsp.readFile(path.join(stemsDir, 'stems.json'), 'utf8').then((t) => JSON.parse(t) as StemsManifest),
+    ]);
+    const current =
+      have.model === MODEL_KEY && have.audio?.sizeBytes === stat.size && have.audio?.mtimeMs === Math.round(stat.mtimeMs);
+    return current && (await isFile(vocals)) ? vocals : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class AudioCppSeparationProvider implements SeparationService {
   constructor(private readonly deps: AudioCppSeparationDeps) {}
 

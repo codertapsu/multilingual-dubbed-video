@@ -795,25 +795,27 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
 
   // --- preset-voice ONNX engines (vd_tts_engine/presets.py) ----------------
   // Light CPU engines, measured in Phase 0 (2026-11-18) with 4 threads at
-  // real-time factors of 0.14-0.25 on an M-series Mac and 0.26-0.32 on an
-  // i5-13400F (ZeroTTS fp32: 1.2 there); models fetched once at pinned commits. Sizes
-  // are what an install took on Windows, venv plus models (ZeroTTS 226 + 862
-  // MB, Kokoro 134 + 365, Supertonic 115 + 383), rounded up.
+  // real-time factors of 0.14-0.25 on an M-series Mac and 0.26-0.41 on an
+  // i5-13400F (ZeroTTS int8; its fp32 graphs ran at 1.2 there, slower than
+  // real time); models fetched once at pinned commits. Sizes are what an install
+  // took on Windows, venv plus models (ZeroTTS 226 + 862 MB + its 309 MB int8
+  // copy, Kokoro 134 + 365, Supertonic 115 + 383), rounded up.
   {
     id: 'tts-zerotts',
     kind: 'tts',
     packKind: 'python-uv',
     displayName: 'ZeroTTS (8 Vietnamese voices)',
     description:
-      'Eight more natural Vietnamese voices (young, middle-aged and older; storytelling, news and commentary styles), on the CPU without PyTorch. About four times faster than real time on Apple Silicon, about real time on a Windows desktop processor. The model (~900 MB) downloads on first use.',
+      'Eight more natural Vietnamese voices (young, middle-aged and older; storytelling, news and commentary styles), on the CPU without PyTorch: the most accurate Vietnamese reader measured. About seven times faster than real time on Apple Silicon and two and a half times on a Windows desktop processor. The model (~900 MB) downloads on first use, then a faster copy of it is built once (about a minute).',
     providerId: 'zerotts',
-    version: '0.1.5',
+    // zerotts 0.1.5, speaking from int8 graphs built at first load.
+    version: '0.1.5+int8',
     accel: 'cpu',
     tier: 'balanced',
-    // Measured peak ~2.4-3 GB while speaking.
+    // Measured peak ~1.3-1.9 GB while speaking (int8), more while the int8 copy is built.
     minRamMb: 6144,
-    approxSizeMb: 1100,
-    artifacts: [{ url: 'uv-env://tts-zerotts', approxSizeMb: 1100, destPath: 'venv' }],
+    approxSizeMb: 1450,
+    artifacts: [{ url: 'uv-env://tts-zerotts', approxSizeMb: 1450, destPath: 'venv' }],
     licenseNote:
       'MIT: ZeroTTS code and weights (zeroweight.ai); its MOSS codec decoder is Apache-2.0. Its model card says the shipped voices are "for evaluation and demos", asks that synthetic speech be disclosed as synthetic, and forbids impersonating real people. Its unannounced voice-encoder file is not downloaded.',
   },

@@ -108,6 +108,85 @@ def test_zerotts_synthesizes_with_the_preset_name(tmp_path):
     assert out.stat().st_size > 44
 
 
+def _zerotts_folder(root: Path, revision: str = "rev1") -> Path:
+    src = root / "zeroweight-ai--ZeroTTS"
+    (src / "onnx" / "codec").mkdir(parents=True)
+    (src / "voices" / "maichi").mkdir(parents=True)
+    for name in presets.ZEROTTS_HOT_GRAPHS:
+        (src / "onnx" / name).write_bytes(b"fp32 " + name.encode())
+    (src / "onnx" / "codec" / "moss_audio_tokenizer_decode_step.onnx").write_bytes(b"codec")
+    (src / "voices" / "maichi" / "voice.npz").write_bytes(b"voice")
+    (src / "config.json").write_text("{}", encoding="utf-8")
+    (src / ".cache").mkdir()
+    (src / ".cache" / "junk").write_text("x", encoding="utf-8")
+    (src / ".vd-revision").write_text(revision, encoding="utf-8")
+    return src
+
+
+def test_zerotts_int8_is_built_once_beside_the_pinned_folder(tmp_path):
+    src = _zerotts_folder(tmp_path)
+    calls = []
+
+    def fake_quantize(a: Path, b: Path) -> None:
+        calls.append(a.name)
+        b.write_bytes(b"int8 " + a.name.encode())
+
+    out = presets.zerotts_int8(src, quantize=fake_quantize)
+    assert out == tmp_path / "zeroweight-ai--ZeroTTS-int8"
+    assert sorted(calls) == sorted(presets.ZEROTTS_HOT_GRAPHS)
+    # The hot graphs are int8, everything else is copied through, the HF cache is not.
+    assert (out / "onnx" / "prefix_step.onnx").read_bytes() == b"int8 prefix_step.onnx"
+    assert (out / "onnx" / "codec" / "moss_audio_tokenizer_decode_step.onnx").read_bytes() == b"codec"
+    assert (out / "voices" / "maichi" / "voice.npz").is_file()
+    assert not (out / ".cache").exists()
+    # Built once: a second load reuses it.
+    assert presets.zerotts_int8(src, quantize=fake_quantize) == out
+    assert len(calls) == 3
+    # A new model revision rebuilds it.
+    (src / ".vd-revision").write_text("rev2", encoding="utf-8")
+    presets.zerotts_int8(src, quantize=fake_quantize)
+    assert len(calls) == 6
+
+
+def test_a_failed_int8_build_leaves_nothing_that_looks_complete(tmp_path):
+    src = _zerotts_folder(tmp_path)
+
+    def broken(a: Path, b: Path) -> None:
+        if a.name == "local_frame_decode.onnx":
+            raise RuntimeError("out of memory")
+        b.write_bytes(b"int8")
+
+    with pytest.raises(RuntimeError):
+        presets.zerotts_int8(src, quantize=broken)
+    assert [p.name for p in tmp_path.iterdir()] == ["zeroweight-ai--ZeroTTS"]
+
+
+def test_zerotts_speaks_from_fp32_when_int8_cannot_be_built(tmp_path, monkeypatch):
+    seen = {}
+
+    class FakeZeroTTS:
+        sample_rate = 48_000
+
+        def __init__(self, model_dir, intra_op_num_threads, warmup):
+            seen["dir"] = Path(model_dir)
+
+    import types
+
+    monkeypatch.setitem(__import__("sys").modules, "zerotts", types.SimpleNamespace(ZeroTTS=FakeZeroTTS))
+    monkeypatch.setattr(presets, "zerotts_int8", lambda d: (_ for _ in ()).throw(ImportError("no onnx")))
+    eng = ZeroTTSEngine()
+    eng._load(tmp_path, 4)
+    assert seen["dir"] == tmp_path
+    assert eng.precision == "fp32"
+
+    monkeypatch.setattr(presets, "zerotts_int8", lambda d: d.parent / "int8")
+    eng._load(tmp_path, 4)
+    assert seen["dir"] == tmp_path.parent / "int8"
+    assert eng.precision == "int8"
+    # Never a device note: the runner logs that as a GPU-fallback warning.
+    assert eng.device_note is None
+
+
 def test_kokoro_reads_each_voice_in_its_own_language_at_the_rate(tmp_path):
     pytest.importorskip("numpy")
     calls = []

@@ -200,6 +200,9 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
   // set Phase 0 installed and ran on Windows and macOS (2026-11-18). None needs
   // PyTorch. ZeroTTS declares sounddevice (playback for its CLI) but never
   // imports it from the library, so it is overridden away like gradio above.
+  // onnx is what onnxruntime's quantizer needs to build ZeroTTS's int8 graphs
+  // once (presets.zerotts_int8: three times faster on a Windows CPU); ml-dtypes
+  // is onnx's own dependency, pinned a release back from the newest.
   'tts-zerotts': {
     base: [
       'zerotts==0.1.5',
@@ -212,6 +215,8 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
       'pyyaml==6.0.3',
       'fastapi==0.162.0',
       'uvicorn==0.54.0',
+      'onnx==1.23.2',
+      'ml-dtypes==0.6.0',
     ],
     overrides: ["sounddevice ; sys_platform == 'never'"],
   },

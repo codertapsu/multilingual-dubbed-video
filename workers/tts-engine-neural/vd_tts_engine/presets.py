@@ -237,9 +237,74 @@ ZEROTTS_VOICES = (
 )
 
 
+#: The three graphs on ZeroTTS's per-frame path; the codec decoder stays fp32.
+ZEROTTS_HOT_GRAPHS = ("text_encoder.onnx", "prefix_step.onnx", "local_frame_decode.onnx")
+#: Written last into an int8 folder: the fp32 revision it was built from + how.
+ZEROTTS_INT8_MARKER = ".vd-int8"
+ZEROTTS_INT8_RECIPE = "matmul-qint8-v1"
+
+
+def quantize_zerotts_graph(src: Path, dst: Path) -> None:
+    """One graph to int8, the way ZeroTTS's own tools/quantize_onnx_int8.py does
+    it (MIT, ZeroWeight AI): let ONNX Runtime fold the graph first, which removes
+    the Identity nodes the weights reach the MatMuls through (otherwise only 41 of
+    local_frame_decode's 561 MatMuls quantize), then dynamic-quantize the MatMuls."""
+    import onnxruntime as ort  # noqa: PLC0415
+    from onnxruntime.quantization import QuantType, quantize_dynamic  # noqa: PLC0415 - needs `onnx`
+
+    folded = dst.with_name(dst.name + ".opt")
+    options = ort.SessionOptions()
+    options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+    options.optimized_model_filepath = str(folded)
+    ort.InferenceSession(str(src), options, providers=["CPUExecutionProvider"])  # writes `folded`, never runs
+    try:
+        quantize_dynamic(str(folded), str(dst), weight_type=QuantType.QInt8, op_types_to_quantize=["MatMul"])
+    finally:
+        folded.unlink(missing_ok=True)
+
+
+def zerotts_int8(model_dir: Path, quantize: Any = quantize_zerotts_graph) -> Path:
+    """The int8 copy of a pinned ZeroTTS folder, built once beside it.
+
+    Why: ZeroTTS's fp32 graphs are memory-bound, and on a Windows desktop they
+    ran SLOWER than real time (i5-13400F, RTF 1.20 at 4 threads); the int8 copy
+    ran at 0.41 there and 0.14 on an M4 Pro (fp32 0.245), reading as accurately
+    (all eight voices: WER 5.3 % against 5.1 %, CER 2.2 % both, no garbled line;
+    Phase 0, 2026-11-18). ZeroTTS hosts no int8 copy, so it is built here: about
+    a minute on Windows, 6 s on the Mac, once per model revision, 309 MB.
+
+    Built in a ``.partial`` folder and renamed into place with its marker written
+    last, so a crash mid-build never leaves a folder that looks complete.
+    """
+    import shutil  # noqa: PLC0415
+
+    dest = model_dir.parent / f"{model_dir.name}-int8"
+    stamp = f"{(model_dir / pinned.MARKER).read_text(encoding='utf-8').strip()}|{ZEROTTS_INT8_RECIPE}"
+    try:
+        if (dest / ZEROTTS_INT8_MARKER).read_text(encoding="utf-8").strip() == stamp:
+            return dest
+    except OSError:
+        pass
+    tmp = model_dir.parent / f"{model_dir.name}-int8.partial-{os.getpid()}"
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        # Everything but the hot graphs (rewritten below) and the HF download cache.
+        shutil.copytree(model_dir, tmp, ignore=shutil.ignore_patterns(".cache", pinned.MARKER, *ZEROTTS_HOT_GRAPHS))
+        for name in ZEROTTS_HOT_GRAPHS:
+            quantize(model_dir / "onnx" / name, tmp / "onnx" / name)
+        (tmp / ZEROTTS_INT8_MARKER).write_text(stamp, encoding="utf-8")
+        shutil.rmtree(dest, ignore_errors=True)
+        os.replace(tmp, dest)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    return dest
+
+
 class ZeroTTSEngine(PresetEngine):
     """8 Vietnamese preset voices, 48 kHz. Generation samples from numpy's
-    global generator, so the per-voice seed makes it reproducible."""
+    global generator, so the per-voice seed makes it reproducible. Speaks from
+    int8 graphs (zerotts_int8), the fp32 ones only when those cannot be built."""
 
     name = "zerotts"
     variant = "zerotts"
@@ -248,11 +313,22 @@ class ZeroTTSEngine(PresetEngine):
     repo = pinned.ZEROTTS
     voices_table = ZEROTTS_VOICES
 
+    def __init__(self) -> None:
+        super().__init__()
+        #: "int8" or "fp32" once loaded. Not the device note: the runner logs
+        #: that as a warning (a GPU pack that fell back to the CPU).
+        self.precision: str | None = None
+
     def _load(self, model_dir: Path, threads: int) -> Any:
         from zerotts import ZeroTTS  # type: ignore  # noqa: PLC0415
 
-        logger.info("Loading ZeroTTS (%d threads)…", threads)
-        tts = ZeroTTS(model_dir, intra_op_num_threads=threads, warmup=True)
+        try:
+            graphs, self.precision = zerotts_int8(model_dir), "int8"
+        except Exception as exc:  # noqa: BLE001 - e.g. a pack built before `onnx` was in it
+            logger.warning("Could not build ZeroTTS's int8 graphs (%s); speaking with the fp32 ones.", exc)
+            graphs, self.precision = model_dir, "fp32"
+        logger.info("Loading ZeroTTS (%s, %d threads)…", self.precision, threads)
+        tts = ZeroTTS(graphs, intra_op_num_threads=threads, warmup=True)
         self.sample_rate = int(getattr(tts, "sample_rate", 48_000))
         return tts
 

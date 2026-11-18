@@ -150,7 +150,8 @@ describe('VideoDubber MCP server', () => {
     expect(names).toEqual(
       [
         'adjust_lines', 'cancel_dubbing', 'create_project', 'download_video', 'get_download', 'get_project',
-        'get_status', 'get_transcript', 'get_translation_context', 'get_translation_report', 'install_engine', 'list_engines',
+        'get_status', 'get_transcript', 'get_translation_context', 'get_translation_report', 'install_engine',
+        'install_voice', 'list_engines',
         'list_languages', 'list_projects', 'list_providers', 'list_voices', 'open_output_folder', 'pause_dubbing',
         'regenerate_voices', 'render_video', 'set_save_folder', 'set_translation_context', 'set_translations',
         'start_dubbing', 'update_settings',
@@ -567,6 +568,66 @@ describe('VideoDubber MCP server', () => {
     await connect();
     const r = await call('install_engine', { packId: 'whisper-model-large-v3-turbo' });
     expect(r.text).toBe('Installed whisper-model-large-v3-turbo.');
+  });
+
+  it('install_voice follows the engine it starts, and Piper voices on the setup stream', async () => {
+    const streams: Record<string, ServerResponse> = {};
+    for (const path of ['/engines/events', '/setup/events']) {
+      fake.routes.set(`GET ${path}`, (_q, _b, res) => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write(': ping\n\n');
+        streams[path] = res;
+      });
+    }
+    fake.routes.set('POST /voices/vieneu38-hai-dang/install', () => {
+      expect(Object.keys(streams).sort()).toEqual(['/engines/events', '/setup/events']);
+      setTimeout(() => streams['/engines/events']!.write(`data: ${JSON.stringify({ type: 'done', packId: 'tts-vieneu' })}\n\n`), 20);
+      return { started: true, enginePacks: ['tts-vieneu'], downloadMb: 900 };
+    });
+    await connect();
+    expect((await call('install_voice', { voiceId: 'vieneu38-hai-dang' })).text).toBe(
+      'Installed vieneu38-hai-dang (with the tts-vieneu engine).',
+    );
+
+    fake.routes.set('POST /voices/vi_VN-vivos-x_low%233/install', () => {
+      setTimeout(
+        () => streams['/setup/events']!.write(`data: ${JSON.stringify({ type: 'item-done', item: 'piper:vi_VN-vivos-x_low' })}\n\n`),
+        20,
+      );
+      return { started: true, enginePacks: [], downloadMb: 27 };
+    });
+    expect((await call('install_voice', { voiceId: 'vi_VN-vivos-x_low#3' })).text).toBe('Installed vi_VN-vivos-x_low#3.');
+  });
+
+  it('list_voices shows the provider, licence and state of each voice', async () => {
+    fake.routes.set('GET /voices', (req) => {
+      const q = new URL(req.url ?? '', 'http://fake').searchParams;
+      expect(q.get('language')).toBe('vi-VN');
+      expect(q.get('engine')).toBe('vieneu-classic'); // "neural" is the old name
+      return {
+        total: 1,
+        engines: [{ id: 'vieneu-classic', providerId: 'neural-tts' }],
+        voices: [
+          {
+            id: 'vieneu-v3-ngoc-lan',
+            kind: 'preset',
+            engine: 'vieneu-classic',
+            name: 'Ngọc Lan',
+            languages: ['vi-VN'],
+            gender: 'female',
+            license: { category: 'permissive', label: 'Apache-2.0' },
+            sizeMb: 0,
+            installed: true,
+            engineInstalled: true,
+            engineAvailable: true,
+            recommended: true,
+          },
+        ],
+      };
+    });
+    await connect();
+    const r = await call('list_voices', { language: 'vi-VN', engine: 'neural' });
+    expect(r.text).toContain('- vieneu-v3-ngoc-lan: Ngọc Lan [recommended] — neural-tts; vi-VN; female; licence Apache-2.0 (permissive); INSTALLED');
   });
 
   it('update_settings names the step to redo from', async () => {

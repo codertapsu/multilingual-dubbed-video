@@ -150,6 +150,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         'Every line must be speakable in its own time slot: get_transcript shows each line\'s budget at the voice\'s pace (e.g. "≤13 syllables (aim 11)") and the current length in [brackets]. Aim for the target and never exceed the ceiling, but keep the full meaning: an over-short line is a worse dub than a slightly fast one. Never merge or split lines. Fix every line marked NEEDS FIX.',
         'Changing settings, engines or downloads is the user\'s machine: say what you are about to install (sizes are in list_engines) before doing it.',
         'A long dub can be paused (pause_dubbing) and continued later with start_dubbing, also after the app was closed: nothing done is lost. get_project says when a dub is paused.',
+        'Voices: list_voices searches every engine\'s voices (and the user\'s cloned voices) with licences; install_voice downloads one. A cloned voice is made only by the user in the app (Voices screen), which records their consent: ask them to do it, never try to.',
       ].join('\n'),
     },
   );
@@ -324,16 +325,158 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Voices for a language',
       description:
-        'Voices available for a dub language. engine: "piper" (built in, downloads per voice), "neural" (VieNeu Vietnamese voices, needs the VieNeu pack), "omnivoice" (Apple Silicon).',
+        'The voice library: every voice for a dub language across engines (VieNeu 3.8 and the ten older VieNeu voices, ZeroTTS, Piper, Kokoro, Supertonic, OpenAI) plus the user\'s own cloned voices, best first, each with its licence and whether it is installed. A voice id goes into ttsVoiceId, and its engine\'s provider into ttsProviderId (shown per voice). Piper speakers of a multi-speaker model are "<id>#<speaker index>".',
       inputSchema: z.object({
-        language: z.string().describe('Dub language, e.g. "vi-VN".'),
-        engine: z.enum(['piper', 'neural', 'omnivoice']).default('piper'),
+        language: z.string().optional().describe('Dub language, e.g. "vi-VN" (all languages when omitted).'),
+        engine: z
+          .enum(['vieneu', 'vieneu-classic', 'zerotts', 'piper', 'kokoro', 'supertonic', 'openai', 'neural', 'omnivoice'])
+          .optional()
+          .describe('Only this engine ("neural" = the older VieNeu voices).'),
+        gender: z.enum(['female', 'male']).optional(),
+        license: z
+          .enum(['permissive', 'attribution', 'use-restricted', 'non-commercial', 'service-terms', 'unknown'])
+          .optional()
+          .describe('Only this licence category.'),
+        installed: z.boolean().optional().describe('true = only voices usable right now.'),
+        query: z.string().optional().describe('Free text: a name ("Hải Đăng"), a style ("tin tức"), a speaker.'),
+        limit: z.number().int().min(1).max(200).default(40),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    guarded(async ({ language, engine }, ctx) => {
-      const q = new URLSearchParams({ language, ...(engine !== 'piper' ? { engine } : {}) });
-      return text(JSON.stringify(await api.get(`/setup/voices?${q}`, { signal: ctx.mcpReq.signal }), null, 1));
+    guarded(async ({ language, engine, gender, license, installed, query, limit }, ctx) => {
+      if (engine === 'omnivoice') {
+        const q = new URLSearchParams({ language: language ?? 'vi-VN', engine });
+        return text(JSON.stringify(await api.get(`/setup/voices?${q}`, { signal: ctx.mcpReq.signal }), null, 1));
+      }
+      const q = new URLSearchParams({
+        limit: String(limit),
+        ...(language ? { language } : {}),
+        ...(engine ? { engine: engine === 'neural' ? 'vieneu-classic' : engine } : {}),
+        ...(gender ? { gender } : {}),
+        ...(license ? { license } : {}),
+        ...(installed !== undefined ? { installed: String(installed) } : {}),
+        ...(query ? { q: query } : {}),
+      });
+      type Item = {
+        id: string;
+        kind: string;
+        engine: string;
+        name: string;
+        languages: string[];
+        gender?: string;
+        accent?: string;
+        tags?: string[];
+        speakers?: { index: number; name: string }[];
+        license: { category: string; label: string };
+        sizeMb: number;
+        installed: boolean;
+        engineInstalled: boolean;
+        engineAvailable: boolean;
+        recommended?: boolean;
+      };
+      const res = await api.get<{ voices: Item[]; total: number; engines: { id: string; providerId: string }[] }>(
+        `/voices?${q}`,
+        { signal: ctx.mcpReq.signal },
+      );
+      const provider = new Map(res.engines.map((e) => [e.id, e.providerId]));
+      const rows = res.voices.map((v) => {
+        const state = v.installed
+          ? 'INSTALLED'
+          : !v.engineAvailable
+            ? 'not available on this computer'
+            : v.engine === 'openai'
+              ? 'needs an OpenAI API key'
+              : v.engineInstalled || v.engine === 'piper'
+                ? `install_voice downloads ~${Math.max(1, Math.round(v.sizeMb))} MB`
+                : 'install_voice also installs its engine (see list_engines for the size)';
+        const who = [v.gender, v.accent, ...(v.tags ?? [])].filter(Boolean).join(', ');
+        const speakers = v.speakers?.length ? ` ${v.speakers.length} speakers (append #index)` : '';
+        return `- ${v.id}: ${v.name}${v.kind === 'profile' ? ' (cloned voice)' : ''}${v.recommended ? ' [recommended]' : ''} — ${provider.get(v.engine as never) ?? v.engine}; ${v.languages.slice(0, 4).join(', ')}${v.languages.length > 4 ? ` +${v.languages.length - 4}` : ''}${who ? `; ${who}` : ''}${speakers}; licence ${v.license.label} (${v.license.category}); ${state}`;
+      });
+      return text(`${res.total} voice(s)${res.total > res.voices.length ? `, first ${res.voices.length}` : ''}:\n${rows.join('\n')}`);
+    }),
+  );
+
+  server.registerTool(
+    'install_voice',
+    {
+      title: 'Install a voice',
+      description:
+        'Download one voice from list_voices, and the engine that speaks it when that is not installed yet (an engine is 0.3-5 GB: tell the user what will download first). Works for up to ~45 s, then returns while the download continues in the app; call list_voices with installed=true to see when it is ready. Cloned voices cannot be made here: the user records or imports them in the app (Voices screen), which asks for their consent.',
+      inputSchema: z.object({ voiceId: z.string() }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    guarded(async ({ voiceId }, ctx) => {
+      type Started = { started: boolean; enginePacks: string[]; downloadMb: number };
+      type Ev = { type: string; packId?: string; item?: string; percent?: number | null; message?: string; error?: { message?: string; remediation?: string } };
+      const signal = ctx.mcpReq.signal;
+      const modelId = voiceId.split('#')[0]!;
+      let last = '';
+      // Set once the reply names the engine pack; the stream callbacks read it.
+      const watch: { pack?: string } = {};
+      let opened = 0;
+      let bothOpen!: () => void;
+      const ready = new Promise<void>((r) => (bothOpen = r));
+      const onOpen = () => {
+        opened += 1;
+        if (opened >= 2) bothOpen();
+      };
+      const report = (e: Ev) => {
+        last = `${e.percent != null ? `${Math.round(e.percent)}% ` : ''}${e.message ?? ''}`.trim();
+        void progress(ctx, e.percent ?? 0, 100, last);
+      };
+      // Subscribe BEFORE starting, or a fast download's events are gone. Both
+      // streams open (which one matters is known only from the reply); the
+      // unneeded one is closed at once.
+      const stopEngine = new AbortController();
+      const stopPiper = new AbortController();
+      const engineDone = api.followEvents<Ev>('/engines/events', {
+        timeoutMs: workBudgetMs,
+        signal: AbortSignal.any([signal, stopEngine.signal]),
+        onOpen,
+        until: (e) => e.packId !== undefined && e.packId === watch.pack && (e.type === 'done' || e.type === 'error'),
+        onEvent: (e) => {
+          if (e.packId === watch.pack && e.type === 'progress') report(e);
+        },
+      });
+      const piperDone = api.followEvents<Ev>('/setup/events', {
+        timeoutMs: workBudgetMs,
+        signal: AbortSignal.any([signal, stopPiper.signal]),
+        onOpen,
+        until: (e) => (e.type === 'item-done' && e.item === `piper:${modelId}`) || e.type === 'error',
+        onEvent: (e) => {
+          if (e.item === `piper:${modelId}` && e.type === 'progress') report(e);
+        },
+      });
+      await Promise.race([ready, sleep(3000)]);
+      let started: Started;
+      try {
+        started = await api.post<Started>(`/voices/${encodeURIComponent(voiceId)}/install`, {}, { signal });
+      } catch (err) {
+        stopEngine.abort();
+        stopPiper.abort();
+        throw err;
+      }
+      if (!started.started) {
+        stopEngine.abort();
+        stopPiper.abort();
+        return text(`${voiceId} is already installed.`);
+      }
+      watch.pack = started.enginePacks[0];
+      (watch.pack ? stopPiper : stopEngine).abort();
+      const end = await (watch.pack ? engineDone : piperDone);
+      stopEngine.abort();
+      stopPiper.abort();
+      if (end?.type === 'done' || end?.type === 'item-done') {
+        return text(`Installed ${voiceId}${watch.pack ? ` (with the ${watch.pack} engine)` : ''}.`);
+      }
+      if (end?.type === 'error') {
+        return {
+          isError: true,
+          content: [{ type: 'text', text: `Installing ${voiceId} failed: ${end.error?.message ?? 'unknown error'}${end.error?.remediation ? `\nHow to fix: ${end.error.remediation}` : ''}` }],
+        };
+      }
+      return text(`${voiceId} is still downloading in the app${last ? ` (${last})` : ''}. Call list_voices with installed=true later to see when it is ready.`);
     }),
   );
 

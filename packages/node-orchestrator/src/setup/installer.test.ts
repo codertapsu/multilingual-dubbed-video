@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +10,13 @@ import { SetupInstaller, WHISPER_REPOS } from './installer.js';
 import { SetupEventBus } from './setupBus.js';
 import { SetupStore } from './setupStore.js';
 import { setWorkerTransport, type RawWorkerResponse } from '../providers/workerHttp.js';
+
+// The voice catalog pins every Piper file to a sha256, which the fake bodies
+// below cannot match. Most tests exercise the transfer itself, so by default
+// the catalog "does not know" the voice and the unpinned curated entry is used;
+// the checksum tests program a pinned voice here.
+const catalogVoice = vi.hoisted(() => vi.fn<(id: string) => unknown>(() => undefined));
+vi.mock('./voicesCatalog.js', () => ({ resolvePiperVoice: (id: string) => catalogVoice(id) }));
 
 let tmp: string;
 let store: SetupStore;
@@ -134,6 +142,66 @@ describe('SetupInstaller', () => {
     expect(
       events.some((e) => e.type === 'progress' && e.message.includes('already present')),
     ).toBe(true);
+  });
+
+  describe('a voice pinned by the catalog', () => {
+    const onnx = new Uint8Array(4096).fill(9);
+    const json = new Uint8Array([123, 125]);
+    const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
+
+    beforeEach(() => {
+      catalogVoice.mockImplementation((id) =>
+        id === 'xx_XX-pinned-medium'
+          ? {
+              id,
+              language: 'xx-XX',
+              label: 'Pinned',
+              approxSizeMb: 1,
+              url: 'https://example.test/rev/xx.onnx',
+              configUrl: 'https://example.test/rev/xx.onnx.json',
+              sha256: sha(onnx),
+              bytes: onnx.byteLength,
+              configSha256: sha(json),
+              configBytes: json.byteLength,
+            }
+          : undefined,
+      );
+    });
+    afterEach(() => catalogVoice.mockReset());
+
+    it('installs it when every byte matches', async () => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+        fileResponse(String(input).endsWith('.json') ? json : onnx),
+      );
+      const installer = new SetupInstaller({ config: config(), store, bus, fetchImpl: fetchMock as unknown as typeof fetch });
+      await installer.run({ piperVoices: ['xx_XX-pinned-medium'] });
+      expect(events.some((e) => e.type === 'error')).toBe(false);
+      expect((await store.getStatus()).installed.piperVoices).toEqual(['xx_XX-pinned-medium']);
+    });
+
+    it('discards a download that does not match its sha256, and never records the voice', async () => {
+      const tampered = new Uint8Array(4096).fill(1); // right size, wrong bytes
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+        fileResponse(String(input).endsWith('.json') ? json : tampered),
+      );
+      const installer = new SetupInstaller({
+        config: config(),
+        store,
+        bus,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        sleepImpl: async () => undefined,
+      });
+      await installer.run({ piperVoices: ['xx_XX-pinned-medium'] });
+
+      const error = events.find((e) => e.type === 'error');
+      expect(error?.type === 'error' && error.error.message).toContain('did not match its checksum');
+      // Every attempt started over rather than resuming a bad partial.
+      expect(fetchMock.mock.calls.length).toBe(4);
+      const piperDir = path.join(tmp, 'models', 'piper');
+      const left = await fsp.readdir(piperDir).catch(() => []);
+      expect(left).toEqual([]);
+      expect((await store.getStatus()).installed.piperVoices).toEqual([]);
+    });
   });
 
   it('re-downloads when only one half of the voice pair is present', async () => {

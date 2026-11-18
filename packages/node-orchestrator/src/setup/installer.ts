@@ -15,7 +15,8 @@
  *
  * Only one install runs at a time (guarded by {@link SetupInstaller.isRunning}).
  */
-import { createWriteStream, type Dirent } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, createWriteStream, type Dirent } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { renameReplacing } from '../fsRename.js';
@@ -72,6 +73,34 @@ const DOWNLOAD_BACKOFF_MS = [1000, 3000, 8000];
  * cause of the failure was "permanent".
  */
 const permanentFailures = new WeakSet<AppErrorException>();
+
+/** The checksum and size a downloaded file must match (from the voice catalog). */
+interface FilePin {
+  sha256: string;
+  bytes?: number;
+}
+
+function pinOf(sha256: string | undefined, bytes: number | undefined): FilePin | undefined {
+  return sha256 ? { sha256, ...(bytes ? { bytes } : {}) } : undefined;
+}
+
+/** Throw (and delete the file) unless it has the pinned size and sha256. */
+async function verifyPinned(filePath: string, pin: FilePin, label: string, url: string): Promise<void> {
+  const size = await fileSizeOrZero(filePath);
+  let digest = '';
+  if (pin.bytes === undefined || size === pin.bytes) {
+    const hash = createHash('sha256');
+    await streamPipeline(createReadStream(filePath), hash);
+    digest = hash.digest('hex');
+  }
+  if ((pin.bytes !== undefined && size !== pin.bytes) || digest !== pin.sha256.toLowerCase()) {
+    await fsp.rm(filePath, { force: true }).catch(() => undefined);
+    throw new AppErrorException('TTS_VOICE_MISSING', `The download for "${label}" did not match its checksum.`, {
+      cause: `${url}: expected ${pin.bytes ?? '?'} bytes / sha256 ${pin.sha256}, got ${size} bytes${digest ? ` / ${digest}` : ''}`,
+      remediation: 'The damaged file was discarded and the download starts over. A proxy that rewrites downloads is the usual cause.',
+    });
+  }
+}
 
 /** Size of a file in bytes, or 0 when it does not exist. */
 async function fileSizeOrZero(filePath: string): Promise<number> {
@@ -361,10 +390,10 @@ export class SetupInstaller {
   /** Download a Piper voice (.onnx + .onnx.json) into <modelsDir>/piper. */
   private async installPiperVoice(voiceId: string): Promise<void> {
     const item = `piper:${voiceId}`;
-    // Curated voices first; otherwise resolve ANY voice from the full
-    // rhasspy/piper-voices catalog so users can lazily download any voice for
-    // their target language. Both yield .onnx + .onnx.json URLs.
-    const voice = findPiperVoice(voiceId) ?? resolvePiperVoice(voiceId);
+    // The voice catalog first: its URLs are pinned to a commit and its files
+    // carry a sha256 the download is checked against. The curated list is the
+    // fallback only for an id the catalog does not know.
+    const voice = resolvePiperVoice(voiceId) ?? findPiperVoice(voiceId);
     if (!voice) {
       throw new AppErrorException('TTS_VOICE_MISSING', `Unknown Piper voice id "${voiceId}".`, {
         remediation: 'Pick a voice from GET /setup/catalog (curated) or GET /setup/voices?language=… (full).',
@@ -395,9 +424,16 @@ export class SetupInstaller {
     // The .onnx model is the large file — report percent for it. The small
     // .onnx.json config is fetched without per-byte progress.
     this.emitProgress(item, 0, `Downloading voice "${voice.label}"…`);
-    await this.downloadFile(voice.url, onnxPath, item, voice.label);
+    await this.downloadFile(voice.url, onnxPath, item, voice.label, false, pinOf(voice.sha256, voice.bytes));
     this.emitProgress(item, null, `Downloading voice config for "${voice.label}"…`);
-    await this.downloadFile(voice.configUrl, configPath, item, voice.label, true);
+    await this.downloadFile(
+      voice.configUrl,
+      configPath,
+      item,
+      voice.label,
+      true,
+      pinOf(voice.configSha256, voice.configBytes),
+    );
 
     await this.deps.store.addPiperVoice(voiceId);
     this.emitProgress(item, 100, `Voice "${voice.label}" ready.`);
@@ -425,6 +461,7 @@ export class SetupInstaller {
     item: string,
     label: string,
     quiet = false,
+    pin?: FilePin,
   ): Promise<void> {
     const tmpPath = `${destPath}.download`;
     let lastError: AppErrorException | undefined;
@@ -433,6 +470,10 @@ export class SetupInstaller {
       const resumeFrom = await fileSizeOrZero(tmpPath);
       try {
         await this.downloadAttempt(url, tmpPath, item, label, quiet, resumeFrom);
+        // A pinned file must be exactly the bytes the catalog recorded. A
+        // mismatch is not resumable (the partial itself may be the problem), so
+        // it is discarded and the next attempt starts from zero.
+        if (pin) await verifyPinned(tmpPath, pin, label, url);
         await renameReplacing(tmpPath, destPath);
         return;
       } catch (err) {

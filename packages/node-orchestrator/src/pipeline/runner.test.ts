@@ -1,7 +1,7 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AppErrorException,
   type AlignedSegment,
@@ -20,6 +20,7 @@ import { PipelineRunner, planSttChunks, translationProgress, type RunnerDeps } f
 import type { DubbingTranslationInput } from '../providers/translation/llmTranslationProvider.js';
 import type { PipelineEvent } from '../events.js';
 import type { SpeechMapService } from './speechMap.js';
+import type { DiarizationService } from '../providers/diarization/sherpaDiarizationProvider.js';
 import type { PipelineMediaService } from '../media.js';
 import { ProjectStore } from '../workspace/projectStore.js';
 import { EventBusRegistry } from '../events.js';
@@ -1015,6 +1016,7 @@ describe('PipelineRunner — speech-to-text timing and fallback', () => {
     settings?: Partial<Project['settings']>;
     engines: SttProvider[];
     speechMap?: SpeechMapService;
+    diarization?: DiarizationService;
   }) {
     const video = await writeDummyVideo(tmp);
     const project = await store.createProject(
@@ -1031,9 +1033,47 @@ describe('PipelineRunner — speech-to-text timing and fallback', () => {
       bus,
       logger: new ProjectLogger(paths.pipelineLog, bus),
       ...(opts.speechMap ? { speechMap: opts.speechMap } : {}),
+      ...(opts.diarization ? { diarization: opts.diarization } : {}),
     };
     return { project, paths, deps };
   }
+
+  it('gives each line its speaker when speaker detection is on, and detects once per audio', async () => {
+    const lines = makeSegments([
+      [1000, 3000, '你好'],
+      [3500, 6000, '我很好'],
+      [7000, 9000, '再见'],
+    ]);
+    const { provider } = sttEngine('faster-whisper', lines);
+    const diarize = vi.fn(async () => [
+      { startMs: 900, endMs: 3100, speaker: 5 },
+      { startMs: 3400, endMs: 6100, speaker: 2 },
+      { startMs: 6900, endMs: 9100, speaker: 5 },
+    ]);
+    const { project, paths, deps } = await build({
+      engines: [provider],
+      settings: { diarize: true },
+      diarization: { diarize, available: async () => true, modelKey: 'test-model' },
+    });
+    const runner = new PipelineRunner(deps);
+    await runner.run(project, { signal: new AbortController().signal });
+    expect((await readSource(paths.sourceJson)).map((s) => s.speakerId)).toEqual(['SPEAKER_00', 'SPEAKER_01', 'SPEAKER_00']);
+    expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toContain('Found 2 speaker(s)');
+    await runner.run(project, { retryFromStep: 'stt', signal: new AbortController().signal });
+    expect(diarize).toHaveBeenCalledTimes(1);
+  });
+
+  it('dubs on without speakers, and says why, when speaker detection is not installed', async () => {
+    const { provider } = sttEngine('faster-whisper', makeSegments([[1000, 3000, '你好']]));
+    const { project, paths, deps } = await build({
+      engines: [provider],
+      settings: { diarize: true },
+      diarization: { diarize: async () => null, available: async () => false, modelKey: 'none' },
+    });
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    expect((await readSource(paths.sourceJson))[0]!.speakerId).toBeUndefined();
+    expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toContain('Speaker detection is on, but its engine is not installed');
+  });
 
   const readSource = async (p: string) =>
     (JSON.parse(await fsp.readFile(p, 'utf8')) as { segments: TranscriptSegment[] }).segments;

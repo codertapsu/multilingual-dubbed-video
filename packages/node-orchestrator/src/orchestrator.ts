@@ -66,6 +66,7 @@ import { KeyedMutex } from './keyedMutex.js';
 import { ProjectLogger } from './logging.js';
 import type { ClipTrim, PipelineMediaService, SeparationService } from './media.js';
 import type { AlignmentService } from './providers/alignment/whisperxProvider.js';
+import type { DiarizationService } from './providers/diarization/sherpaDiarizationProvider.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { assertRunReady, type ProviderReadiness } from './providers/readiness.js';
 import {
@@ -106,6 +107,8 @@ export interface OrchestratorDeps {
   separation?: SeparationService;
   /** Optional forced-alignment/diarization engine for tighter timing. */
   alignment?: AlignmentService;
+  /** Optional speaker detection: who says each line (the diarize setting). */
+  diarization?: DiarizationService;
   /** Where speech is in a project's audio, to anchor transcript lines (see RunnerDeps). */
   speechMap?: SpeechMapService;
   /** Engine lifecycle manager, so a finished run releases its heavy-engine lane. */
@@ -322,6 +325,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       logger,
       ...(this.deps.separation ? { separation: this.deps.separation } : {}),
       ...(this.deps.alignment ? { alignment: this.deps.alignment } : {}),
+      ...(this.deps.diarization ? { diarization: this.deps.diarization } : {}),
       ...(this.deps.speechMap ? { speechMap: this.deps.speechMap } : {}),
       // How fast each voice really speaks, measured from its clips and kept
       // between runs, so the next translation budgets lines at the voice's pace.

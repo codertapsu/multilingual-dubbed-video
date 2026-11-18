@@ -111,10 +111,12 @@ export function classifyWorkload(
     isHeavyEngineFamily(family) || (family !== undefined && opts.gpuFamilies?.has(family) === true);
   let heavyFamily = providers.find((p) => heavy(p.requiresEnginePack))?.requiresEnginePack;
   // Two pipeline options pull in heavy engine packs without going through a
-  // provider id: vocal separation (audio-mix) and forced alignment/diarization
-  // (inside the STT step). Both degrade gracefully when their engine isn't
-  // installed — the runner falls back to ducking / the original timestamps —
-  // so they only claim the heavy lane when the engine is actually wired.
+  // provider id: vocal separation (audio-mix) and forced alignment (inside the
+  // STT step). Both degrade gracefully when their engine isn't installed — the
+  // runner falls back to ducking / the original timestamps — so they only
+  // claim the heavy lane when the engine can run. Speaker detection does not:
+  // its engine is light (CPU, ~150 MB), unlike the WhisperX pass that once
+  // carried it.
   if (
     !heavyFamily &&
     settings.originalAudioMode === 'replace-vocals' &&
@@ -125,7 +127,7 @@ export function classifyWorkload(
   }
   if (
     !heavyFamily &&
-    (settings.forcedAlignment === true || settings.diarize === true) &&
+    settings.forcedAlignment === true &&
     opts.alignmentAvailable !== false &&
     willRun(PHASE_STEP.stt)
   ) {

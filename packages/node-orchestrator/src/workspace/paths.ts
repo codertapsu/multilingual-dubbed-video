@@ -39,6 +39,8 @@ export interface WorkspacePaths {
   readonly synthesisGroupsJson: string;
   /** Where speech is in original_16k_mono.wav (cache; see pipeline/speechMap.ts). */
   readonly speechRegionsJson: string;
+  /** Who speaks when in original_16k_mono.wav (cache; see pipeline/diarization.ts). */
+  readonly diarizationJson: string;
 
   /** Scratch dir for chunked-STT clips + per-chunk transcript checkpoints. */
   readonly sttChunksDir: string;
@@ -133,6 +135,7 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     finalMixWav: path.join(audioDir, 'final_mix.wav'),
     synthesisGroupsJson: path.join(audioDir, 'synthesis_groups.json'),
     speechRegionsJson: path.join(audioDir, 'speech_regions.json'),
+    diarizationJson: path.join(audioDir, 'diarization.json'),
 
     sttChunksDir,
     sttChunkWav: (index: number) => path.join(sttChunksDir, `chunk_${padSegmentIndex(index)}.wav`),

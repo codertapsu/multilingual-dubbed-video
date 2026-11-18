@@ -58,6 +58,7 @@ import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './
 import { configureUvHome, resolveUvPath, uvObtainable } from './engines/uv.js';
 import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
+import { SherpaDiarizationProvider } from './providers/diarization/sherpaDiarizationProvider.js';
 import { EventBusRegistry } from './events.js';
 import { checkWorkersHealth } from './health.js';
 import { toHttpError } from './httpErrors.js';
@@ -279,6 +280,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const separation =
     options.separation ?? new AudioSeparatorProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
   const alignment = new WhisperxAlignmentProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
+  const diarization = new SherpaDiarizationProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
 
   // Hardware profile so the registry only offers providers whose packs can run
   // on this machine (e.g. whisper.cpp only where an NVIDIA/Metal pack exists).
@@ -392,6 +394,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       bus,
       separation,
       alignment,
+      diarization,
       // Anchors transcript lines to when they are spoken (the STT worker's VAD).
       speechMap: sttWorkerSpeechMap(config.sttWorkerUrl),
       // Engine lifecycle + preferences: the scheduler releases a finished run's

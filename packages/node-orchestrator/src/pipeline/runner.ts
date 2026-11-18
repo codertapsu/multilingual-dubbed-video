@@ -113,6 +113,8 @@ import type { ProjectLogger } from '../logging.js';
 import { describeStretch } from '../media.js';
 import type { PipelineMediaService, SeparationService, TimelineSegmentInput } from '../media.js';
 import type { AlignmentService } from '../providers/alignment/whisperxProvider.js';
+import type { DiarizationService } from '../providers/diarization/sherpaDiarizationProvider.js';
+import { assignSpeakers, cachedSpeakerTurns } from './diarization.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
 import { fileExistsNonEmpty, padSegmentIndex, segmentIdToIndex, type WorkspacePaths } from '../workspace/paths.js';
@@ -130,10 +132,15 @@ export interface RunnerDeps {
    */
   separation?: SeparationService;
   /**
-   * Optional forced-alignment/diarization engine. Absent => forcedAlignment /
-   * diarize settings are skipped with a warning.
+   * Optional forced-alignment engine. Absent => the forcedAlignment setting is
+   * skipped with a warning.
    */
   alignment?: AlignmentService;
+  /**
+   * Optional speaker detection (who says each line) for the diarize setting.
+   * Absent or not installed => the lines keep no speaker, with a warning.
+   */
+  diarization?: DiarizationService;
   /**
    * Where speech is in the audio (the STT worker's VAD). Anchors transcript
    * lines to when they are spoken; absent => lines without word timings keep
@@ -876,36 +883,30 @@ export class PipelineRunner {
     let { segments } = transcript;
     const { detectedLanguage } = transcript;
 
-    // Optional forced-alignment / diarization refinement (WhisperX engine pack).
-    // Tightens word timestamps (±50 ms) and, when diarization is on, tags each
-    // segment with a speakerId for per-speaker voices. Skipped (with a warning)
-    // when requested but the engine pack isn't installed.
-    if ((project.settings.forcedAlignment || project.settings.diarize) && this.deps.alignment) {
+    // Optional forced alignment (WhisperX engine pack, not shipped yet):
+    // tighter word timestamps (±50 ms). Said, not silent, when it cannot run.
+    if (project.settings.forcedAlignment) {
       throwIfCancelled(signal);
-      this.deps.logger.info(
-        `Refining timing${project.settings.diarize ? ' + diarizing speakers' : ''} via forced alignment...`,
-      );
-      const refined = await this.deps.alignment
-        .align(
-          paths.original16kMonoWav,
-          segments,
-          detectedLanguage || project.settings.sourceLanguage,
-          { diarize: project.settings.diarize === true },
-          signal,
-        )
-        .catch((err: unknown) => {
-          this.deps.logger.warn(`Alignment failed (${String(err)}); keeping the original timestamps.`);
-          return null;
-        });
+      const refined = this.deps.alignment
+        ? await this.deps.alignment
+            .align(paths.original16kMonoWav, segments, detectedLanguage || project.settings.sourceLanguage, { diarize: false }, signal)
+            .catch((err: unknown) => {
+              throwIfCancelled(signal);
+              this.deps.logger.warn(`Alignment failed (${String(err)}); keeping the original timestamps.`);
+              return null;
+            })
+        : null;
       if (refined && refined.length > 0) {
         segments = refined;
         this.deps.logger.info('Forced alignment complete (word-accurate timing).');
+      } else if (refined === null) {
+        this.deps.logger.warn('Forced alignment is on, but no alignment engine is installed: using the default timestamps.');
       }
-    } else if (project.settings.forcedAlignment || project.settings.diarize) {
-      this.deps.logger.warn(
-        'Forced alignment/diarization was requested but the "Forced alignment + diarization" engine pack is not installed — using the default timestamps.',
-      );
     }
+
+    // Speaker detection: who says each line, before anchoring so a line it
+    // splits keeps its speaker (pipeline/diarization.ts).
+    if (project.settings.diarize) segments = await this.detectSpeakers(paths, segments, signal);
 
     segments = await this.anchorToSpeech(
       paths,
@@ -979,6 +980,38 @@ export class PipelineRunner {
       ...fresh,
       settings: { ...settings, [field]: providerId, ...(auto.length > 0 ? { autoSelectedPhases: auto } : {}) },
     });
+  }
+
+  /**
+   * Who says each line (speaker detection, pipeline/diarization.ts). Best
+   * effort, and said: without the engine, or when it fails, the lines keep no
+   * speaker and the dub goes on in the project voice. A pause still stops.
+   */
+  private async detectSpeakers(paths: WorkspacePaths, segments: TranscriptSegment[], signal: AbortSignal): Promise<TranscriptSegment[]> {
+    const service = this.deps.diarization;
+    if (!service || !(await service.available().catch(() => false))) {
+      this.deps.logger.warn(
+        'Speaker detection is on, but its engine is not installed (Settings → Engines → Speaker detection): the lines keep no speaker.',
+      );
+      return segments;
+    }
+    throwIfCancelled(signal);
+    this.deps.logger.info('Detecting who says each line...');
+    try {
+      const turns = await cachedSpeakerTurns(service, paths.original16kMonoWav, paths.diarizationJson, {}, signal);
+      if (!turns) return segments;
+      const out = assignSpeakers(segments, turns);
+      const speakers = new Set(out.map((s) => s.speakerId).filter(Boolean)).size;
+      const nobody = out.filter((s) => !s.speakerId).length;
+      this.deps.logger.info(
+        `Found ${speakers} speaker(s)${nobody > 0 ? `; ${nobody} line(s) could not be given one (set them in the editor)` : ''}.`,
+      );
+      return out;
+    } catch (err) {
+      throwIfCancelled(signal);
+      this.deps.logger.warn(`Speaker detection failed (${String(err)}): the lines keep no speaker.`);
+      return segments;
+    }
   }
 
   /**

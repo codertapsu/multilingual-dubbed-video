@@ -28,6 +28,35 @@ The voice appears in **My voices** and in every voice picker (wizard, editor)
 of projects whose voice engine is **VieNeu-TTS 3.8**. Rename or delete it from
 My voices; deleting removes the recording, the voice data and the statement.
 
+## The voice of the person in the video
+
+The dub can sound like the person speaking in the original video. Both ways
+need the project's audio, so the dub must have reached speech-to-text once.
+
+- **One speaker** (a vlog, a lecture, narration): in the editor, **Project tab →
+  Voice from this video → Copy the speaker's voice…**. The app reads the video's
+  own audio and proposes its clearest 8 seconds; the Check step is the same as
+  above. When the voice is made, it is proposed as the project's voice; it takes
+  effect when you re-dub from text-to-speech (nothing before that changes).
+- **Several speakers:** select one person's lines (in the line list or on the
+  timeline: Ctrl/⌘-click adds a line, Shift-click a range), then in the **Line
+  tab** choose **Make a voice from these lines…**. Pick lines of that person
+  only (lines of two people make a mixed voice), about 10 seconds of clear
+  speech in total; the app joins them with a short pause, at most 60 seconds.
+  The new voice is given to those lines when the project speaks with VieNeu-TTS
+  3.8; then **re-voice** them to hear it. Do this once per speaker, and drag a
+  voice onto that person's other lines.
+
+The statement for these voices is: *I have the right to use the voices in this
+video for its dub* (and the same commitments as below). Such a voice **stays in
+its project**: it is not in My voices, it cannot be exported, and it is deleted
+with the project. The Project tab lists them, with a play button and Delete.
+
+The source video may be in any language: the voice is copied, then speaks the
+dub's language. Accent carries over in part (a voice cloned from English speech
+speaks Vietnamese with a hint of it); choose lines without music or laughter
+under them.
+
 ## A good recording
 
 | What the app says | What it means | What to do |
@@ -108,4 +137,8 @@ Before a voice is made you agree to a statement such as:
 | `<data>/voices/work/` | Recordings being checked; removed after a day |
 
 `<data>` is the app's data folder (Settings → Storage shows it). API:
-`docs/VOICES.md` lists the routes; cloning's are under `/voice-profiles`.
+`docs/VOICES.md` lists the routes; cloning's are under `/voice-profiles`, and
+`POST /projects/:id/voices/analyze { segmentIds? }` prepares a project's own
+speech (`voices/sourceVoices.ts`). For such an analysis the server, not the
+client, decides the voice's project, its source (`project-lines` or
+`project-speaker`) and the statement it needs.

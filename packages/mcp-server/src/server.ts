@@ -338,12 +338,14 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           .optional()
           .describe('Only this licence category.'),
         installed: z.boolean().optional().describe('true = only voices usable right now.'),
+        kind: z.enum(['preset', 'profile']).optional().describe('"profile" = only the voices the user cloned.'),
+        projectId: z.string().optional().describe("Also list this project's own cloned voices."),
         query: z.string().optional().describe('Free text: a name ("Hải Đăng"), a style ("tin tức"), a speaker.'),
         limit: z.number().int().min(1).max(200).default(40),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
-    guarded(async ({ language, engine, gender, license, installed, query, limit }, ctx) => {
+    guarded(async ({ language, engine, gender, license, installed, kind, projectId, query, limit }, ctx) => {
       if (engine === 'omnivoice') {
         const q = new URLSearchParams({ language: language ?? 'vi-VN', engine });
         return text(JSON.stringify(await api.get(`/setup/voices?${q}`, { signal: ctx.mcpReq.signal }), null, 1));
@@ -355,6 +357,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         ...(gender ? { gender } : {}),
         ...(license ? { license } : {}),
         ...(installed !== undefined ? { installed: String(installed) } : {}),
+        ...(kind ? { kind } : {}),
+        ...(projectId ? { projectId } : {}),
         ...(query ? { q: query } : {}),
       });
       type Item = {

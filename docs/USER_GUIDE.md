@@ -217,6 +217,12 @@ What you can do, and how:
   any line or clip** on the timeline. Select several lines first to re-voice them
   all at once. **Speaking rate** reads a line faster or slower (a faster reading
   fits a long line more naturally than stretching the audio).
+- **Make the dub sound like the person in the video.** In the Project tab,
+  **Voice from this video** copies the voice of a video with one speaker. With
+  several speakers, select one person's lines (Ctrl/⌘-click adds a line) and
+  choose **Make a voice from these lines…** in the Line tab; do it once per
+  speaker. These voices need VieNeu-TTS 3.8 and stay in the project
+  ([VOICE_CLONING.md](VOICE_CLONING.md#the-voice-of-the-person-in-the-video)).
 - **Hear it immediately.** Press **Space**. The preview plays your edited dub
   over the video — moved lines play from their new place, without re-rendering.
   **Final mix / Original / Dub only** switches what you hear; the sliders set the
@@ -459,7 +465,8 @@ Stated plainly, so you are not hunting for a feature that is not there:
 
 - **No speaker detection.** Every line is dubbed in one voice. You can assign a
   different voice per line by hand in the Editor (drag a voice onto the lines a
-  speaker says), but the app will not work out who is speaking. (The diarization engine pack is not built — it is hidden from
+  speaker says, or make a voice from that speaker's own lines), but the app will
+  not work out who is speaking. (The diarization engine pack is not built — it is hidden from
   Settings → Engines rather than shipped broken.)
 - **No music/voice separation.** "Keep the music, replace the speech" is not
   available; the background is turned *down* under the new voice, not separated

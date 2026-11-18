@@ -119,6 +119,8 @@ re-pin: read each file's `lfs.oid` (its sha256) and size from
 | `tts-neural` | all | ships — VieNeu-TTS v3-Turbo, Vietnamese |
 | `tts-neural-cuda` | Windows x64 + NVIDIA | ships — the same voices on the GPU via PyTorch; listed before `tts-neural` so NVIDIA machines are recommended it |
 | `tts-neural-v2` | Windows | **disabled** (`DISABLED_PACK_IDS`) — unvalidated path, Windows-only wheels, CC BY-NC voices; superseded by `tts-neural` |
+| `tts-vieneu` | all | ships — VieNeu-TTS v3-Turbo through SDK **3.8.4** (provider `vieneu-tts`): 25 voices and voice cloning, torch-free on the CPU. Beside `tts-neural`, not instead of it: 3.8 dropped four of its ten voices. gradio and librosa, which 3.8 declares but never imports for synthesis, are removed with uv overrides (`overrides` in `uvRequirements.ts`, `--override` in the installer). Model files pinned in `vd_tts_engine/pinned.py` (`V38_*`, `CODEC_ONNX`) |
+| `tts-vieneu-cuda` | Windows x64 + NVIDIA | ships — the same on the GPU (PyTorch, CUDA build per card as `tts-neural-cuda`), listed first so NVIDIA machines are recommended it |
 | `tts-omnivoice` | macOS arm64 | **ON HOLD** (`DISABLED_PACK_IDS`) pending output-quality work; see [OMNIVOICE.md](OMNIVOICE.md) |
 | `separation-audio` | all | **disabled** — its `vd_separator` worker is an unimplemented stub |
 | `alignment-whisperx` | all | **disabled** — its `vd_whisperx` worker is an unimplemented stub |

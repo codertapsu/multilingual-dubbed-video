@@ -26,6 +26,18 @@ Visual C++ Runtime, which the app installs for you before the download (Windows
 asks once for permission;
 [details](TROUBLESHOOTING.md#engines-need-the-microsoft-visual-c-runtime)).
 
+> **VieNeu-TTS 3.8 (25 voices + voice cloning).** A newer engine,
+> **VieNeu-TTS 3.8** (`tts-vieneu`, and `tts-vieneu-cuda` for NVIDIA cards),
+> installs beside the two packs above. It is the same v3-Turbo model through
+> the SDK's 3.8 release: 25 preset voices across Northern, Central and Southern
+> accents (default **Hải Đăng**), and voice cloning from a 3–8 second
+> recording ([VOICE_CLONING.md](VOICE_CLONING.md)). It is what new Vietnamese
+> projects get once installed. The packs above stay because 3.8 dropped four of
+> their ten voices (Ngọc Lan, Gia Bảo, Trọng Hữu, Bình An): a project made with
+> one of those keeps its voice. Install either engine, or both, from the
+> **Voices** screen or Settings → Engines; [VOICES.md](VOICES.md) lists every
+> engine and voice.
+
 > **History — where did "v2" go?** An earlier VieNeu v2 pack (`tts-neural-v2`) is
 > still defined in the catalog but is in `DISABLED_PACK_IDS`, so it never appears
 > in Settings → Engines and cannot be installed. It was withdrawn because its

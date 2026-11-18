@@ -255,3 +255,13 @@ export {
   setStepStatus,
 } from './pipeline/state.js';
 export type { StepPatch } from './pipeline/state.js';
+export {
+  SPEAKER_ID_RE,
+  isSpeakerId,
+  nextSpeakerId,
+  sanitizeSpeakerVoices,
+  speakerNumber,
+  summarizeSpeakers,
+  voiceForLine,
+} from './pipeline/speakers.js';
+export type { LineVoiceSettings, SpeakerSummary } from './pipeline/speakers.js';

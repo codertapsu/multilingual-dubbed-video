@@ -399,6 +399,12 @@ export interface SegmentPatch {
   endMs?: number;
   /** Voice override; `null` returns the line to the speaker/project voice. */
   voiceId?: string | null;
+  /**
+   * Who says the line ("SPEAKER_00"...); `null` makes it nobody's. Diarization
+   * sets it; the user corrects it. Changing it re-voices the line only when its
+   * voice changes with it (a speaker voice is assigned).
+   */
+  speakerId?: string | null;
   /** Speaking-rate override (0.5..2); `null` returns it to natural rate. */
   speakingRate?: number | null;
   /** Explicitly lock/unlock the line against automatic rewriting. */

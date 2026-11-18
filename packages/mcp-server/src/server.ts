@@ -73,6 +73,7 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   ttsProviderId: 'tts',
   ttsVoiceId: 'tts',
   synthesisGrouping: 'tts',
+  speakerVoices: 'tts',
   maxSpeedRatio: 'alignment',
   allowedOverflowMs: 'alignment',
   autoFitOverflow: 'alignment',
@@ -130,6 +131,12 @@ const editableSettings = z
       .partial()
       .describe('Only for subtitleExportMode burned-in. Many Chinese videos have their own subtitles burned in at the bottom.'),
     diarize: z.boolean().describe('Detect speakers (needs the alignment engine).'),
+    speakerVoices: z
+      .array(z.object({ speakerId: z.string().regex(/^SPEAKER_\d{2,3}$/), voiceId: z.string() }))
+      .max(100)
+      .describe(
+        'The voice of each speaker ("SPEAKER_00"…, as get_transcript shows them), replacing the whole table; [] clears it. A line\'s own voice still wins. Lines whose voice this changes need regenerate_voices.',
+      ),
   })
   .partial();
 
@@ -979,7 +986,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Adjust timing, voice or rate of lines',
       description:
-        'Move or trim lines (startMs/endMs on the original timeline; lines never overlap or pass a neighbour), pick a voice (voiceId; null = project voice), set a speaking rate (0.5-2; null = natural), or lock/unlock a line against automatic rewriting. Voice/rate/timing changes need regenerate_voices.',
+        'Move or trim lines (startMs/endMs on the original timeline; lines never overlap or pass a neighbour), pick a voice (voiceId; null = the speaker/project voice), set who says it (speakerId "SPEAKER_00"…; null = nobody), set a speaking rate (0.5-2; null = natural), or lock/unlock a line against automatic rewriting. Voice/rate/timing changes, and a speaker change that changes the voice, need regenerate_voices.',
       inputSchema: z.object({
         projectId: z.string(),
         changes: z
@@ -989,6 +996,11 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
               startMs: z.number().int().min(0).optional(),
               endMs: z.number().int().min(0).optional(),
               voiceId: z.string().nullable().optional(),
+              speakerId: z
+                .string()
+                .regex(/^SPEAKER_\d{2,3}$/)
+                .nullable()
+                .optional(),
               speakingRate: z.number().min(0.5).max(2).nullable().optional(),
               locked: z.boolean().optional(),
             }),

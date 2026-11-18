@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AppErrorException, type TranscriptSegment } from '@videodubber/shared';
+import { AppErrorException, voiceForLine, type TranscriptSegment } from '@videodubber/shared';
 import { makeSegments } from '../test/fixtures.js';
 import {
   alignmentInputsForUnits,
@@ -79,6 +79,31 @@ describe('applySegmentPatches', () => {
     const cleared = applySegmentPatches(set.segments, [{ id: 'seg_0003', voiceId: null }]);
     expect(cleared.segments[2]!.voiceId).toBeUndefined();
     expect([...cleared.voiceChanged]).toEqual(['seg_0003']);
+  });
+
+  it('gives a line to another speaker, re-voicing it only when its voice moves with it', () => {
+    const settings = { ttsVoiceId: 'project', speakerVoices: [{ speakerId: 'SPEAKER_01', voiceId: 'anna' }] };
+    const voiceOf = (l: TranscriptSegment) => voiceForLine(l, settings);
+    // SPEAKER_00 has no voice of its own: the line keeps the project voice.
+    const quiet = applySegmentPatches(base, [{ id: 'seg_0001', speakerId: 'SPEAKER_00' }], { voiceOf });
+    expect(quiet.segments[0]).toMatchObject({ speakerId: 'SPEAKER_00' });
+    expect(quiet.segments[0]!.ttsStale).toBeUndefined();
+    expect([...quiet.speakerChanged]).toEqual(['seg_0001']);
+    // SPEAKER_01 speaks with Anna: the line must be voiced again.
+    const moved = applySegmentPatches(quiet.segments, [{ id: 'seg_0001', speakerId: 'SPEAKER_01' }], { voiceOf });
+    expect(moved.segments[0]).toMatchObject({ speakerId: 'SPEAKER_01', ttsStale: true });
+    // A line with its own voice keeps it, whoever says it.
+    const own = applySegmentPatches(
+      base.map((s, i) => (i === 1 ? { ...s, voiceId: 'own' } : s)),
+      [{ id: 'seg_0002', speakerId: 'SPEAKER_01' }],
+      { voiceOf },
+    );
+    expect(own.segments[1]!.ttsStale).toBeUndefined();
+    // null makes it nobody's; the same speaker again changes nothing.
+    const none = applySegmentPatches(moved.segments, [{ id: 'seg_0001', speakerId: null }], { voiceOf });
+    expect(none.segments[0]!.speakerId).toBeUndefined();
+    expect(applySegmentPatches(moved.segments, [{ id: 'seg_0001', speakerId: 'SPEAKER_01' }]).speakerChanged.size).toBe(0);
+    expectInvalid(() => applySegmentPatches(base, [{ id: 'seg_0001', speakerId: 'Anna' }]), /SPEAKER_00/);
   });
 
   it('stores a 1× rate as "no override" so the line still groups with its neighbours', () => {

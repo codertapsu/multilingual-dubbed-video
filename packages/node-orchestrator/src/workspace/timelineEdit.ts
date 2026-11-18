@@ -22,7 +22,7 @@
  *    change marks the clip stale; a timing change does neither (the audio is
  *    unchanged, only where it plays).
  */
-import { AppErrorException, type SegmentPatch, type TranscriptSegment } from '@videodubber/shared';
+import { AppErrorException, isSpeakerId, type SegmentPatch, type TranscriptSegment } from '@videodubber/shared';
 import type { AlignInputSegment } from '../alignment/align.js';
 import type { ClipTiming } from '../alignment/clipSpeech.js';
 import type { SynthesisGroup } from '../pipeline/grouping.js';
@@ -46,6 +46,8 @@ export interface PatchOutcome {
   voiceChanged: Set<string>;
   rateChanged: Set<string>;
   lockChanged: Set<string>;
+  /** Lines given to another speaker (or to none). */
+  speakerChanged: Set<string>;
 }
 
 function invalid(message: string): never {
@@ -66,7 +68,14 @@ function finiteMs(value: unknown, field: string, id: string): number {
 export function applySegmentPatches(
   segments: readonly TranscriptSegment[],
   patches: readonly SegmentPatch[],
-  opts: { durationMs?: number } = {},
+  opts: {
+    durationMs?: number;
+    /**
+     * The voice that speaks a line (voiceForLine with the project's settings).
+     * A speaker change re-voices the line only when this changes with it.
+     */
+    voiceOf?: (line: TranscriptSegment) => string | undefined;
+  } = {},
 ): PatchOutcome {
   const outcome: PatchOutcome = {
     segments: [],
@@ -75,6 +84,7 @@ export function applySegmentPatches(
     voiceChanged: new Set(),
     rateChanged: new Set(),
     lockChanged: new Set(),
+    speakerChanged: new Set(),
   };
   const indexById = new Map(segments.map((s, i) => [s.id, i]));
   const next = segments.map((s) => ({ ...s }));
@@ -164,13 +174,27 @@ export function applySegmentPatches(
       }
     }
 
+    if (patch.speakerId !== undefined) {
+      if (patch.speakerId !== null && !isSpeakerId(patch.speakerId)) {
+        invalid(`Line ${patch.id}: a speaker is "SPEAKER_00", "SPEAKER_01"…`);
+      }
+      const speakerId = patch.speakerId ?? undefined;
+      if (speakerId !== before.speakerId) {
+        if (speakerId === undefined) delete seg.speakerId;
+        else seg.speakerId = speakerId;
+        outcome.speakerChanged.add(patch.id);
+      }
+    }
+
     // Lock semantics: an explicit flag wins; otherwise a real text change locks.
     const wantLocked = patch.locked ?? (outcome.textChanged.has(patch.id) ? true : before.locked === true);
     if (wantLocked !== (before.locked === true)) outcome.lockChanged.add(patch.id);
     if (wantLocked) seg.locked = true;
     else delete seg.locked;
 
-    if (outcome.textChanged.has(patch.id) || outcome.voiceChanged.has(patch.id) || outcome.rateChanged.has(patch.id)) {
+    // A new speaker is a new voice only when that speaker has one of its own.
+    const voiceMoved = outcome.speakerChanged.has(patch.id) && opts.voiceOf !== undefined && opts.voiceOf(seg) !== opts.voiceOf(before);
+    if (outcome.textChanged.has(patch.id) || outcome.voiceChanged.has(patch.id) || outcome.rateChanged.has(patch.id) || voiceMoved) {
       seg.ttsStale = true;
     }
   }

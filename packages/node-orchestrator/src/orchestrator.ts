@@ -18,6 +18,8 @@ import {
   pausePipelineState,
   projectOutputFiles,
   projectOutputVideoPath,
+  sanitizeSpeakerVoices,
+  voiceForLine,
   type AlignedSegment,
   type CreateProjectInput,
   type JobOrchestrator,
@@ -477,6 +479,16 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       if (style) next.burnSubtitleStyle = style;
       else delete next.burnSubtitleStyle;
     }
+    // Speaker voices replace the table whole (an empty list clears it). The
+    // lines whose voice that moves are marked for re-voicing, as a voice picked
+    // for one line is, so the editor re-voices exactly those instead of asking
+    // for the whole dub again.
+    if (patch.speakerVoices !== undefined) {
+      const voices = sanitizeSpeakerVoices(patch.speakerVoices);
+      if (voices) next.speakerVoices = voices;
+      else delete next.speakerVoices;
+      await this.markLinesWhoseVoiceMoved(projectId, project.settings, next);
+    }
     const saved = await this.deps.store.saveProject({
       ...project,
       settings: next,
@@ -484,6 +496,30 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     });
     const pipeline = await this.deps.store.getPipeline(projectId);
     return { project: saved, pipeline };
+  }
+
+  /**
+   * Mark the lines a settings change gives another voice as needing
+   * re-voicing. Only once the dub has voices: before that every line is
+   * spoken fresh anyway. Marked BEFORE the settings are saved: a failed save
+   * then leaves extra lines to re-voice (in the same voice, harmless), never a
+   * changed voice with nothing marked.
+   */
+  private async markLinesWhoseVoiceMoved(projectId: string, before: ProjectSettings, after: ProjectSettings): Promise<void> {
+    const pipeline = await this.deps.store.getPipeline(projectId);
+    if (pipeline.steps.find((s) => s.id === 'tts')?.status !== 'completed') return;
+    await this.artifactLock.run(projectId, async () => {
+      const paths = this.deps.store.paths(projectId);
+      const translated = await this.tryReadSegments(paths.translatedJson);
+      if (!translated) return;
+      let moved = 0;
+      const segments = translated.map((s) => {
+        if (s.ttsStale || voiceForLine(s, before) === voiceForLine(s, after)) return s;
+        moved++;
+        return { ...s, ttsStale: true };
+      });
+      if (moved > 0) await writeJsonAtomic(paths.translatedJson, { segments });
+    });
   }
 
   // ----- Extra API methods -------------------------------------------------
@@ -777,14 +813,17 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       const base = translated ?? source;
       if (!base) throw new AppErrorException('INVALID_EDIT', 'This project has no transcript to edit yet.');
 
-      const outcome = applySegmentPatches(base, patches, { durationMs: project.mediaInfo?.durationMs });
+      const outcome = applySegmentPatches(base, patches, {
+        durationMs: project.mediaInfo?.durationMs,
+        voiceOf: (line) => voiceForLine(line, project.settings),
+      });
       if (
         !translated &&
         (outcome.textChanged.size > 0 || outcome.voiceChanged.size > 0 || outcome.rateChanged.size > 0)
       ) {
         throw new AppErrorException(
           'INVALID_EDIT',
-          'Translate the transcript before editing translations or voices — only timing can be changed now.',
+          'Translate the transcript before editing translations or voices — only timing and speakers can be changed now.',
         );
       }
       const changed =
@@ -792,27 +831,37 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         outcome.timingChanged.size +
         outcome.voiceChanged.size +
         outcome.rateChanged.size +
-        outcome.lockChanged.size;
+        outcome.lockChanged.size +
+        outcome.speakerChanged.size;
       if (changed === 0) return;
 
       if (translated) await writeJsonAtomic(paths.translatedJson, { segments: outcome.segments });
 
-      if (outcome.timingChanged.size > 0) {
-        // Timing also lands in source.json: re-translating rebuilds translated.json
-        // FROM source.json, and must not snap every line back to the recogniser's
-        // timing the user just corrected.
-        if (source) {
-          const byId = new Map(outcome.segments.map((s) => [s.id, s]));
-          await writeJsonAtomic(paths.sourceJson, {
-            segments: source.map((s) => {
-              const n = byId.get(s.id);
-              if (!n || !outcome.timingChanged.has(s.id)) return n ? { ...s, startMs: n.startMs, endMs: n.endMs } : s;
+      if ((outcome.timingChanged.size > 0 || outcome.speakerChanged.size > 0) && source) {
+        // Timing and speakers also land in source.json: re-translating rebuilds
+        // translated.json FROM source.json, and must not snap the lines back to
+        // the recogniser's timing, or to the speakers, the user just corrected.
+        const byId = new Map(outcome.segments.map((s) => [s.id, s]));
+        await writeJsonAtomic(paths.sourceJson, {
+          segments: source.map((s) => {
+            const n = byId.get(s.id);
+            if (!n) return s;
+            let next: TranscriptSegment = { ...s, startMs: n.startMs, endMs: n.endMs };
+            if (outcome.timingChanged.has(s.id)) {
               // Same rule as applySegmentPatches: words move with the line, or go.
-              const { words: _stale, ...rest } = s;
-              return { ...rest, startMs: n.startMs, endMs: n.endMs, ...(n.words ? { words: n.words } : {}) };
-            }),
-          });
-        }
+              const { words: _stale, ...rest } = next;
+              next = { ...rest, ...(n.words ? { words: n.words } : {}) };
+            }
+            if (outcome.speakerChanged.has(s.id)) {
+              const { speakerId: _old, ...rest } = next;
+              next = { ...rest, ...(n.speakerId ? { speakerId: n.speakerId } : {}) };
+            }
+            return next;
+          }),
+        });
+      }
+
+      if (outcome.timingChanged.size > 0) {
         await this.realign(project, paths, outcome.segments, new Map());
         // A cue the user placed by hand is shown where they put it, not where the
         // voice-sync pass would put it.

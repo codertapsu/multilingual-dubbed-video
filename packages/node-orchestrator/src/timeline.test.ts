@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type { AlignedSegment, TranscriptSegment } from '@videodubber/shared';
+import { setStepStatus, type AlignedSegment, type TranscriptSegment } from '@videodubber/shared';
 import { loadConfig } from './config.js';
 import { EventBusRegistry } from './events.js';
 import { LocalJobOrchestrator } from './orchestrator.js';
@@ -214,6 +214,73 @@ describe('PATCH /timeline (patchSegments)', () => {
       orchestrator.patchSegments(id, [{ id: 'seg_0003', startMs: 500, endMs: 900 }]),
     ).rejects.toMatchObject({ code: 'INVALID_EDIT' });
     expect(await fsp.readFile(paths.translatedJson, 'utf8')).toBe(before);
+  });
+
+  it('gives lines to speakers in both files, re-voicing only the lines whose voice moves', async () => {
+    const { id, paths } = await dubbedProject();
+    const project = await store.getProject(id);
+    await store.saveProject({
+      ...project,
+      settings: { ...project.settings, speakerVoices: [{ speakerId: 'SPEAKER_01', voiceId: 'anna' }] },
+    });
+    const doc = await orchestrator.patchSegments(id, [
+      { id: 'seg_0001', speakerId: 'SPEAKER_00' },
+      { id: 'seg_0003', speakerId: 'SPEAKER_01' },
+    ]);
+    expect(doc.segments[0]).toMatchObject({ speakerId: 'SPEAKER_00' });
+    expect(doc.segments[0]!.ttsStale).toBeUndefined();
+    expect(doc.segments[2]).toMatchObject({ speakerId: 'SPEAKER_01', ttsStale: true });
+    // A re-translate rebuilds from source.json: the speakers are there too.
+    const source = await readJson<{ segments: TranscriptSegment[] }>(paths.sourceJson);
+    expect(source.segments.map((s) => s.speakerId)).toEqual(['SPEAKER_00', undefined, 'SPEAKER_01']);
+    expect(source.segments[2]!.ttsStale).toBeUndefined();
+    expect(tts.calls).toBe(0);
+  });
+
+  it('lets speakers be corrected before translation (the translator reads them)', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await orchestrator.createProject(createProjectInput(video));
+    const paths = store.paths(project.id);
+    await fsp.writeFile(paths.sourceJson, JSON.stringify({ segments: makeSegments([[0, 1000, 'a'], [1500, 2000, 'b']]) }), 'utf8');
+    const doc = await orchestrator.patchSegments(project.id, [{ id: 'seg_0002', speakerId: 'SPEAKER_03' }]);
+    expect(doc.segments[1]!.speakerId).toBe('SPEAKER_03');
+    const source = await readJson<{ segments: TranscriptSegment[] }>(paths.sourceJson);
+    expect(source.segments[1]!.speakerId).toBe('SPEAKER_03');
+    await expect(fsp.stat(paths.translatedJson)).rejects.toThrow();
+  });
+
+  it('marks the lines a new speaker voice moves, once the dub has voices', async () => {
+    const { id, paths, segments } = await dubbedProject();
+    const withSpeakers = segments.map((s, i) => ({
+      ...s,
+      speakerId: i === 2 ? 'SPEAKER_01' : 'SPEAKER_00',
+      ...(i === 1 ? { voiceId: 'own' } : {}),
+    }));
+    await fsp.writeFile(paths.translatedJson, JSON.stringify({ segments: withSpeakers }), 'utf8');
+
+    // Not voiced yet: nothing to mark, the settings simply change.
+    let { project } = await orchestrator.updateProjectSettings(id, {
+      speakerVoices: [{ speakerId: 'SPEAKER_01', voiceId: 'anna' }, { speakerId: 'bogus', voiceId: 'x' }] as never,
+    });
+    expect(project.settings.speakerVoices).toEqual([{ speakerId: 'SPEAKER_01', voiceId: 'anna' }]);
+    expect((await readJson<{ segments: TranscriptSegment[] }>(paths.translatedJson)).segments.some((s) => s.ttsStale)).toBe(false);
+
+    await store.savePipeline(setStepStatus(await store.getPipeline(id), 'tts', 'completed'));
+    await orchestrator.updateProjectSettings(id, {
+      speakerVoices: [
+        { speakerId: 'SPEAKER_00', voiceId: 'bao' },
+        { speakerId: 'SPEAKER_01', voiceId: 'anna' },
+      ],
+    });
+    const after = (await readJson<{ segments: TranscriptSegment[] }>(paths.translatedJson)).segments;
+    // Line 1 moves from the project voice to Bao; line 2 keeps its own voice;
+    // line 3 was Anna's already.
+    expect(after.map((s) => s.ttsStale === true)).toEqual([true, false, false]);
+
+    // An empty table clears the assignments (and moves line 3 back).
+    ({ project } = await orchestrator.updateProjectSettings(id, { speakerVoices: [] }));
+    expect(project.settings.speakerVoices).toBeUndefined();
+    expect((await readJson<{ segments: TranscriptSegment[] }>(paths.translatedJson)).segments[2]!.ttsStale).toBe(true);
   });
 
   it('allows only timing edits before the transcript is translated', async () => {

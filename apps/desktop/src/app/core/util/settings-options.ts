@@ -103,6 +103,7 @@ export const SETTING_AFFECTS_STEP: Partial<Record<keyof ProjectSettings, Pipelin
   ttsProviderId: 'tts',
   ttsVoiceId: 'tts',
   synthesisGrouping: 'tts',
+  speakerVoices: 'tts',
   maxSpeedRatio: 'alignment',
   allowedOverflowMs: 'alignment',
   timeStretchEngine: 'alignment',

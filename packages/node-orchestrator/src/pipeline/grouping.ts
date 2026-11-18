@@ -20,6 +20,7 @@
  *
  * This module is PURE (no I/O) so it is trivially unit-testable.
  */
+import { voiceForLine } from '@videodubber/shared';
 
 /** Minimal per-segment input the planner needs. */
 export interface GroupableSegmentInput {
@@ -293,13 +294,8 @@ export interface VoiceSettings {
  * the project-wide voice. Pure.
  */
 export function voiceForGroup(group: SynthesisGroup, settings: VoiceSettings): string | undefined {
-  // A per-line override from the editor beats everything else.
-  if (group.voiceId) return group.voiceId;
-  if (group.speakerId) {
-    const assigned = settings.speakerVoices?.find((v) => v.speakerId === group.speakerId)?.voiceId;
-    if (assigned) return assigned;
-  }
-  return settings.ttsVoiceId;
+  // The rule lives in shared (voiceForLine): the editor shows the same answer.
+  return voiceForLine(group, settings);
 }
 
 /** Default worst tolerated voice-vs-subtitle drift inside a group (ms). */

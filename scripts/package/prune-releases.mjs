@@ -16,6 +16,12 @@
  *     explicit --apply.
  *   - DRAFTS ARE NEVER TOUCHED. A draft is usually the release being assembled
  *     right now; deleting it would destroy in-flight work.
+ *   - ONLY APP RELEASES (vX.Y.Z tags) ARE COUNTED OR PRUNED. The voice-previews-*
+ *     pre-release hosts the voice samples the voice catalogs point at; it is
+ *     never pruned, and it does not take one of the --keep places: counted, it
+ *     was "the second newest release" right after 0.13.0, so a dry run proposed
+ *     deleting v0.12.0, the one rollback build, and the next release would have
+ *     deleted the samples themselves.
  *   - THE `latest` RELEASE IS NEVER TOUCHED, even if the ordering says
  *     otherwise — deleting it would break auto-update for every user.
  *   - GIT TAGS ARE KEPT. They cost nothing and are how you check out or diff
@@ -68,9 +74,12 @@ async function gh(url, init = {}) {
 const releases = await (await gh(`${API}/releases?per_page=100`)).json();
 const latestTag = await (await gh(`${API}/releases/latest`)).json().then((r) => r.tag_name).catch(() => null);
 
+/** An app release's tag ("v0.13.0"); anything else is an asset release that is never pruned. */
+const APP_TAG = /^v\d+\.\d+\.\d+$/;
 const published = releases
-  .filter((r) => !r.draft)
+  .filter((r) => !r.draft && APP_TAG.test(r.tag_name))
   .sort((a, b) => new Date(b.published_at ?? 0) - new Date(a.published_at ?? 0));
+const assetReleases = releases.filter((r) => !r.draft && !APP_TAG.test(r.tag_name));
 
 const keep = new Set(published.slice(0, KEEP).map((r) => r.id));
 if (latestTag) {
@@ -88,6 +97,7 @@ for (const r of published) {
   console.log(`  ${mark} ${r.tag_name.padEnd(9)} ${(size / 1e6).toFixed(0).padStart(5)} MB  ${String(dl).padStart(5)} downloads  ${String(r.published_at).slice(0, 10)}`);
 }
 for (const r of drafts) console.log(`  SKIP   ${r.tag_name.padEnd(9)} (draft — never pruned)`);
+for (const r of assetReleases) console.log(`  SKIP   ${r.tag_name.padEnd(9)} (not an app release — never pruned)`);
 
 if (doomed.length === 0) {
   console.log('\nnothing to prune.');

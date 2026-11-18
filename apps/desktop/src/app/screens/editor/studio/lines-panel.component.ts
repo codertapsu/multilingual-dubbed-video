@@ -10,6 +10,8 @@ import {
   viewChild,
 } from '@angular/core';
 
+import { speakerNumber } from '@videodubber/shared';
+
 import { TranslatePipe } from '../../../core/i18n';
 import { formatTimecode } from '../../../core/util/format';
 import { StudioStore, type LineVm } from './studio.store';
@@ -103,6 +105,14 @@ function fold(text: string): string {
             <div class="meta">
               <span class="n mono">{{ r.line.n }}</span>
               <span class="t mono">{{ fmt(r.line.seg.startMs) }}</span>
+              @if (r.line.seg.speakerId; as spk) {
+                <span
+                  class="spk"
+                  [style.--spk-hue]="speakerHue(spk)"
+                  [title]="'studio.speaker-n' | translate: { n: speakerN(spk) }"
+                  >{{ 'studio.speaker-short' | translate: { n: speakerN(spk) } }}</span
+                >
+              }
               <span class="icons">
                 @if (r.line.status === 'timing-conflict') {
                   <i class="dot bad" [title]="'editor.timing-conflict' | translate"></i>
@@ -234,6 +244,14 @@ function fold(text: string): string {
         font-size: 0.6rem;
         color: var(--vd-text-subtle);
       }
+      .spk {
+        padding: 0 5px;
+        border-radius: 999px;
+        font-size: 0.62rem;
+        font-weight: 600;
+        color: hsl(var(--spk-hue, 210) 70% 72%);
+        background: hsl(var(--spk-hue, 210) 60% 45% / 0.22);
+      }
       .tr,
       .src {
         white-space: nowrap;
@@ -261,6 +279,11 @@ export class LinesPanelComponent {
   readonly pick = output<{ id: string; mode: 'replace' | 'toggle' | 'range' }>();
 
   protected readonly rowH = ROW_H;
+  protected readonly speakerN = speakerNumber;
+  /** A stable colour per speaker (golden-angle hues stay apart). */
+  protected speakerHue(id: string): number {
+    return Math.round((speakerNumber(id) * 137.5) % 360);
+  }
   protected readonly filters: readonly Filter[] = ['all', 'problems', 'changed', 'locked'];
   protected readonly filterKeys: Record<Filter, string> = {
     all: 'studio.filter-all',

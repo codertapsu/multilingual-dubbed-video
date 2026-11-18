@@ -364,6 +364,49 @@
     </section>
   }
 
+  <!-- Speakers: who says the lines, and each speaker's voice. Applied at once
+       (lines whose voice moves are marked for re-voicing), not via the draft. -->
+  @if (store.project()) {
+    <section class="panel-block stack speakers">
+      <div class="row row-between">
+        <h2>{{ 'editor.speakers' | translate }}</h2>
+        @if (store.speakers().length > 0) {
+          <button type="button" class="btn btn-sm" (click)="speakersDialogOpen.set(true)">{{ 'editor.speakers-make-all' | translate }}</button>
+        }
+      </div>
+      <p class="hint">{{ 'editor.speakers-hint' | translate }}</p>
+      @if (store.speakers().length === 0) {
+        <p class="muted small">{{ 'editor.speakers-none' | translate }}</p>
+      } @else {
+        <ul class="speaker-list">
+          @for (s of store.speakers(); track s.speakerId) {
+            <li>
+              <div class="speaker-head">
+                <strong>{{ 'studio.speaker-n' | translate: { n: speakerN(s.speakerId) } }}</strong>
+                <span class="muted small">{{ 'editor.speaker-stats' | translate: { lines: s.lines, s: (s.speechMs / 1000).toFixed(0) } }}</span>
+              </div>
+              <select
+                [attr.aria-label]="'editor.speaker-voice' | translate: { n: speakerN(s.speakerId) }"
+                (change)="onSpeakerVoiceChange(s.speakerId, $any($event.target).value)"
+              >
+                <option value="" [selected]="!speakerVoice(s.speakerId)">
+                  {{ 'studio.voice-default' | translate: { label: store.voiceLabel(store.settings()?.ttsVoiceId) || ('editor.provider-default' | translate) } }}
+                </option>
+                @for (v of store.voices(); track v.id) {
+                  <option [value]="v.id" [selected]="v.id === speakerVoice(s.speakerId)">{{ v.label }}</option>
+                }
+              </select>
+              <div class="row">
+                <button type="button" class="btn btn-ghost btn-sm" (click)="showSpeakerLines(s.speakerId)">{{ 'editor.speaker-show-lines' | translate }}</button>
+                <button type="button" class="btn btn-ghost btn-sm" (click)="speakerCloneId.set(s.speakerId)">{{ 'editor.speaker-make-voice' | translate }}</button>
+              </div>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+  }
+
   <!-- Cast & translation context: the project's character sheet. Context-aware
        translation providers follow it, so fixing a pronoun/term HERE fixes it
        across the whole video on the next re-translate. -->
@@ -468,6 +511,27 @@
       [projectId]="store.projectId()"
       (created)="onVoiceMade($event)"
       (closed)="voiceDialogOpen.set(false)"
+    />
+  }
+
+  @if (speakerCloneId(); as spk) {
+    <vd-voice-clone-dialog
+      mode="project"
+      [projectId]="store.projectId()"
+      [speakerId]="spk"
+      (created)="onSpeakerCloneMade(spk, $event)"
+      (closed)="speakerCloneId.set(null)"
+    />
+  }
+
+  @if (speakersDialogOpen()) {
+    <vd-speaker-voices-dialog
+      [projectId]="store.projectId()"
+      [speakers]="store.speakers()"
+      [hasVoice]="speakersWithVoice()"
+      [voiced]="store.aligned()"
+      (done)="onSpeakerVoicesMade()"
+      (closed)="speakersDialogOpen.set(false)"
     />
   }
 

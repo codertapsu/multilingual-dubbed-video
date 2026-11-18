@@ -10,6 +10,7 @@ import {
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { speakerNumber } from '@videodubber/shared';
 
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
@@ -72,6 +73,12 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
   readonly mode = input<'clone' | 'import' | 'project'>('clone');
   /** Mode 'project': the lines to take the voice from (none: the whole track). */
   readonly segmentIds = input<readonly string[] | undefined>(undefined);
+  /** Mode 'project': a detected speaker; the server picks their best lines. */
+  readonly speakerId = input<string | undefined>(undefined);
+  protected readonly speakerN = computed(() => {
+    const id = this.speakerId();
+    return id ? speakerNumber(id) : 0;
+  });
   readonly created = output<VoiceProfile>();
   readonly closed = output<void>();
 
@@ -224,7 +231,9 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
     this.error.set(null);
     this.busy.set('analyze');
     try {
-      const analysis = await this.ipc.analyzeProjectVoice(projectId, this.segmentIds());
+      const speakerId = this.speakerId();
+      const segmentIds = this.segmentIds();
+      const analysis = await this.ipc.analyzeProjectVoice(projectId, speakerId ? { speakerId } : segmentIds ? { segmentIds } : {});
       this.showAnalysis(analysis);
     } catch (err) {
       this.error.set(err as AppError);
@@ -342,6 +351,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
 
   private defaultName(sourceName?: string): string {
     if (this.mode() === 'project') {
+      if (this.speakerId()) return this.i18n.instant('studio.speaker-n', { n: this.speakerN() });
       const n = this.segmentIds()?.length ?? 0;
       return n > 0 ? this.i18n.instant('voice-clone.default-name-lines', { n }) : this.i18n.instant('voice-clone.default-name-video');
     }

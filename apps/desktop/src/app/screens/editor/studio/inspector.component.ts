@@ -10,7 +10,7 @@ import {
 } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 
-import { splitSubtitleLines, VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
+import { speakerNumber, splitSubtitleLines, VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
 
 import { TranslatePipe } from '../../../core/i18n';
 import type { VoiceProfile } from '../../../core/models';
@@ -87,6 +87,21 @@ export class InspectorComponent {
 
   /** Rate shown on the slider (the line's own, or 1). */
   protected readonly rate = computed(() => this.line()?.seg.speakingRate ?? 1);
+
+  /** The line's speaker (none with several lines selected: they may differ). */
+  protected readonly lineSpeakerId = computed(() => (this.multi() ? null : (this.line()?.seg.speakerId ?? null)));
+  protected readonly speakerN = speakerNumber;
+
+  /** '' keeps (several lines), '__none' clears, '__new' takes the next free id. */
+  protected onSpeakerChange(select: HTMLSelectElement): void {
+    const value = select.value;
+    // With several lines the picker is an action, not a state: back to "Choose…".
+    if (this.multi()) select.value = '';
+    if (value === '') return;
+    const ids = this.selectedIds().length ? this.selectedIds() : this.line() ? [this.line()!.seg.id] : [];
+    const speakerId = value === '__none' ? null : value === '__new' ? this.store.newSpeakerId() : value;
+    this.store.setSpeaker(ids, speakerId);
+  }
 
   /** The line's own voice (none with several lines selected: they may differ). */
   protected readonly lineVoiceId = computed(() => (this.multi() ? null : (this.line()?.seg.voiceId ?? null)));
@@ -226,10 +241,18 @@ export class InspectorComponent {
    * can use it (a VieNeu clone needs VieNeu-TTS 3.8: the run would refuse it
    * under another engine). Otherwise say how to use it. Undo takes it back.
    */
-  protected onVoiceMade(profile: VoiceProfile, ids: readonly string[]): void {
+  protected async onVoiceMade(profile: VoiceProfile, ids: readonly string[]): Promise<void> {
     this.store.voicesVersion.update((n) => n + 1);
     const usable = this.store.settings()?.ttsProviderId === VOICE_ENGINE_PROVIDER[profile.engine];
-    if (usable) this.store.setVoice(ids, profile.id);
+    if (usable) {
+      // Lines of one known speaker: the voice becomes that speaker's, so their
+      // other lines speak with it too. Otherwise it is these lines' own.
+      const segs = this.store.segments();
+      const speakers = new Set(ids.map((id) => segs.find((s) => s.id === id)?.speakerId));
+      const [only] = [...speakers];
+      if (speakers.size === 1 && only) await this.store.setSpeakerVoice(only, profile.id);
+      else this.store.setVoice(ids, profile.id);
+    }
     this.madeVoice.set({ name: profile.name, applied: usable });
   }
 

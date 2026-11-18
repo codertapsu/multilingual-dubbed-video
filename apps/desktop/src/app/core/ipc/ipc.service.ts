@@ -559,11 +559,31 @@ export class IpcService {
    * POST /projects/:id/voices/analyze — the project's own speech as a reference:
    * the whole track, or the chosen lines joined (one speaker of several).
    */
-  analyzeProjectVoice(projectId: string, segmentIds?: readonly string[]): Promise<VoiceReferenceAnalysis> {
+  analyzeProjectVoice(projectId: string, selection: { segmentIds?: readonly string[]; speakerId?: string } = {}): Promise<VoiceReferenceAnalysis> {
     return this.http('POST', `/projects/${encodeURIComponent(projectId)}/voices/analyze`, {
       engine: 'vieneu',
-      ...(segmentIds?.length ? { segmentIds: [...segmentIds] } : {}),
+      ...(selection.segmentIds?.length ? { segmentIds: [...selection.segmentIds] } : {}),
+      ...(selection.speakerId ? { speakerId: selection.speakerId } : {}),
     });
+  }
+
+  /**
+   * POST /projects/:id/voices/speakers — a cloned voice for every speaker (or
+   * the ones named), under one source-video declaration, each assigned to its
+   * speaker. Takes about ten seconds per speaker.
+   */
+  makeSpeakerVoices(
+    projectId: string,
+    body: {
+      consent: { relation: 'source-video'; statementVersion: string; locale: string; accepted: boolean };
+      speakerIds?: string[];
+      names?: Record<string, string>;
+    },
+  ): Promise<{
+    made: { speakerId: string; profile: VoiceProfile }[];
+    skipped: { speakerId: string; reason: 'too-short' | 'failed'; speechMs?: number; message?: string }[];
+  }> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/voices/speakers`, { engine: 'vieneu', ...body });
   }
 
   checkVoiceWindow(analysisId: string, window: TimeRange): Promise<{ window: TimeRange; checks: VoiceReferenceChecks }> {

@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 
-import { splitSubtitleLines } from '@videodubber/shared';
+import { nextSpeakerId, splitSubtitleLines, summarizeSpeakers, voiceForLine, type LineVoiceSettings } from '@videodubber/shared';
 
 import { IpcService } from '../../../core/ipc/ipc.service';
 import { toAppError } from '../../../core/state/project.store';
@@ -15,6 +15,7 @@ import type {
 } from '../../../core/models';
 import type { PiperVoiceInfo } from '../../../core/models/setup';
 import { EditHistory, isEffective, type HistoryEntry, type LineChange, type LineFields } from './history';
+import { applyFields, fieldsToPatch, patchToFields } from './line-fields';
 import { charsPerSecond, constrainGroupMove, type Span } from './timeline-math';
 
 /** Reading-speed ceiling (chars/s) — Netflix-style guidance for most languages. */
@@ -139,6 +140,8 @@ export class StudioStore {
    * offers the new voice.
    */
   readonly voicesVersion = signal(0);
+  /** The side panel's tab (the shell shows it; the Project tab can switch to Line). */
+  readonly sideTab = signal<'line' | 'project'>('line');
 
   readonly selection = signal<ReadonlySet<string>>(new Set());
   /** The line the inspector shows (the last one clicked). */
@@ -278,7 +281,10 @@ export class StudioStore {
     this.doc.set(doc);
     // Re-apply anything still queued (an edit made while a request was in flight).
     let segs = doc.segments;
-    if (this.pending.size > 0) segs = applyFields(segs, [...this.pending.values()].map(patchToFields));
+    if (this.pending.size > 0) {
+      const settings = this.settings() ?? {};
+      segs = applyFields(segs, [...this.pending.values()].map(patchToFields), (line) => voiceForLine(line, settings));
+    }
     this.segments.set(segs);
     // Keep the selection to lines that still exist.
     const ids = new Set(segs.map((s) => s.id));
@@ -439,6 +445,58 @@ export class StudioStore {
     );
   }
 
+  /** Say who says these lines (null: nobody), as one undoable edit. */
+  setSpeaker(ids: readonly string[], speakerId: string | null): void {
+    this.edit(
+      ids.flatMap((id) => {
+        const seg = this.byId(id);
+        return seg ? [{ id, before: { speakerId: seg.speakerId ?? null }, after: { speakerId } }] : [];
+      }),
+      'studio.undo-speaker',
+    );
+  }
+
+  /** The speakers in the transcript, most speech first. */
+  readonly speakers = computed(() => summarizeSpeakers(this.segments()));
+
+  /** The id a new speaker would get. */
+  newSpeakerId(): string {
+    return nextSpeakerId(this.speakers().map((s) => s.speakerId));
+  }
+
+  /**
+   * Give a speaker a voice (null: back to the project voice), applied at once
+   * like a line's voice: the server marks the lines whose voice moves, and the
+   * reload shows them as needing re-voicing. A project setting, so not undone
+   * with the line edits.
+   */
+  async setSpeakerVoice(speakerId: string, voiceId: string | null): Promise<boolean> {
+    const settings = this.settings();
+    if (!settings) return false;
+    const rest = (settings.speakerVoices ?? []).filter((v) => v.speakerId !== speakerId);
+    try {
+      if (!(await this.flushNow())) return false;
+      const updated = await this.ipc.updateProjectSettings(this.projectId(), {
+        speakerVoices: voiceId ? [...rest, { speakerId, voiceId }] : rest,
+      });
+      this.project.set(updated.project);
+      await this.reload();
+      return true;
+    } catch (err) {
+      this.error.set(toAppError(err));
+      return false;
+    }
+  }
+
+  /** Select every line of one speaker. */
+  selectSpeaker(speakerId: string): void {
+    const ids = this.segments()
+      .filter((s) => s.speakerId === speakerId)
+      .map((s) => s.id);
+    this.selection.set(new Set(ids));
+    this.primaryId.set(ids[0] ?? null);
+  }
+
   setLocked(ids: readonly string[], locked: boolean): void {
     this.edit(
       ids.flatMap((id) => {
@@ -483,7 +541,8 @@ export class StudioStore {
   }
 
   private applyAndQueue(items: { id: string; fields: LineFields }[]): void {
-    this.segments.update((segs) => applyFields(segs, items));
+    const settings = this.settings() ?? {};
+    this.segments.update((segs) => applyFields(segs, items, (line) => voiceForLine(line, settings)));
     for (const { id, fields } of items) {
       const prev = this.pending.get(id) ?? { id };
       this.pending.set(id, { ...prev, ...fieldsToPatch(fields) });
@@ -619,13 +678,11 @@ export class StudioStore {
     return this.voices().find((v) => v.id === id)?.label ?? id;
   }
 
-  /** The voice a line would be spoken with: its own, its speaker's, or the project's. */
+  /** The voice a line would be spoken with: its own, its speaker's, or the project's (shared voiceForLine). */
   effectiveVoice(seg: TimelineSegment): { id: string | undefined; source: 'line' | 'speaker' | 'project' } {
-    if (seg.voiceId) return { id: seg.voiceId, source: 'line' };
-    const s = this.settings();
-    const speaker = seg.speakerId ? s?.speakerVoices?.find((v) => v.speakerId === seg.speakerId)?.voiceId : undefined;
-    if (speaker) return { id: speaker, source: 'speaker' };
-    return { id: s?.ttsVoiceId, source: 'project' };
+    const s: LineVoiceSettings = this.settings() ?? {};
+    const assigned = !!seg.speakerId && (s.speakerVoices ?? []).some((v) => v.speakerId === seg.speakerId);
+    return { id: voiceForLine(seg, s), source: seg.voiceId ? 'line' : assigned ? 'speaker' : 'project' };
   }
 
   dismissError(): void {
@@ -657,55 +714,4 @@ export class StudioStore {
   private bumpAudio(unitId: string): void {
     this.audioVersion.update((v) => ({ ...v, [unitId]: (v[unitId] ?? 0) + 1 }));
   }
-}
-
-/** Apply line fields to a copy of the segments (null clears an override). */
-export function applyFields(
-  segs: readonly TimelineSegment[],
-  items: readonly { id: string; fields: LineFields }[],
-): TimelineSegment[] {
-  if (items.length === 0) return segs as TimelineSegment[];
-  const byId = new Map(items.map((i) => [i.id, i.fields]));
-  return segs.map((s) => {
-    const f = byId.get(s.id);
-    if (!f) return s;
-    const next: TimelineSegment = { ...s };
-    if (f.translatedText !== undefined && f.translatedText !== s.translatedText) {
-      next.translatedText = f.translatedText;
-      next.ttsStale = true;
-    }
-    if (f.startMs !== undefined) next.startMs = f.startMs;
-    if (f.endMs !== undefined) next.endMs = f.endMs;
-    if (f.voiceId !== undefined) {
-      if (f.voiceId === null) delete next.voiceId;
-      else next.voiceId = f.voiceId;
-      if ((f.voiceId ?? undefined) !== s.voiceId) next.ttsStale = true;
-    }
-    if (f.speakingRate !== undefined) {
-      if (f.speakingRate === null || Math.abs(f.speakingRate - 1) < 1e-3) delete next.speakingRate;
-      else next.speakingRate = f.speakingRate;
-      if ((next.speakingRate ?? undefined) !== s.speakingRate) next.ttsStale = true;
-    }
-    if (f.locked !== undefined) {
-      if (f.locked) next.locked = true;
-      else delete next.locked;
-    }
-    return next;
-  });
-}
-
-function fieldsToPatch(f: LineFields): Omit<SegmentPatch, 'id'> {
-  const p: Omit<SegmentPatch, 'id'> = {};
-  if (f.translatedText !== undefined) p.translatedText = f.translatedText;
-  if (f.startMs !== undefined) p.startMs = f.startMs;
-  if (f.endMs !== undefined) p.endMs = f.endMs;
-  if (f.voiceId !== undefined) p.voiceId = f.voiceId;
-  if (f.speakingRate !== undefined) p.speakingRate = f.speakingRate;
-  if (f.locked !== undefined) p.locked = f.locked;
-  return p;
-}
-
-function patchToFields(p: SegmentPatch): { id: string; fields: LineFields } {
-  const { id, ...rest } = p;
-  return { id, fields: rest };
 }

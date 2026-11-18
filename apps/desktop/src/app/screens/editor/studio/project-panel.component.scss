@@ -89,6 +89,36 @@
   }
 }
 
+.speaker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-2);
+
+  li {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: var(--vd-sp-2);
+    border: 1px solid var(--vd-border);
+    border-radius: var(--vd-radius-sm);
+    background: var(--vd-surface-2);
+  }
+  .speaker-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--vd-sp-2);
+  }
+  select {
+    width: 100%;
+    padding: 5px 8px;
+    font-size: 0.85rem;
+  }
+}
+
 .project-voices {
   list-style: none;
   margin: 0;

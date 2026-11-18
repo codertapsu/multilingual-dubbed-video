@@ -18,6 +18,8 @@ export interface LineFields {
   voiceId?: string | null;
   speakingRate?: number | null;
   locked?: boolean;
+  /** Who says the line ("SPEAKER_00"...); null = nobody. */
+  speakerId?: string | null;
 }
 
 export interface LineChange {

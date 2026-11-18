@@ -31,10 +31,14 @@
   <!-- ===================== 1. Rights: the project's own video ===================== -->
   @if (step() === 'rights' && mode() === 'project') {
     <p>
-      {{
-        (segmentIds()?.length ? 'voice-clone.video-intro-lines' : 'voice-clone.video-intro-track')
-          | translate: { n: segmentIds()?.length ?? 0 }
-      }}
+      @if (speakerId()) {
+        {{ 'voice-clone.video-intro-speaker' | translate: { n: speakerN() } }}
+      } @else {
+        {{
+          (segmentIds()?.length ? 'voice-clone.video-intro-lines' : 'voice-clone.video-intro-track')
+            | translate: { n: segmentIds()?.length ?? 0 }
+        }}
+      }
     </p>
     <p class="hint">{{ 'voice-clone.video-stays' | translate }}</p>
     <blockquote class="statement">{{ statement() }}</blockquote>

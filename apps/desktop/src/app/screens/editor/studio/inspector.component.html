@@ -186,6 +186,21 @@
 
 <ng-template #voiceBlock>
   <section class="block">
+    <label class="h4" for="vd-speaker">{{ 'studio.speaker' | translate }}</label>
+    <select id="vd-speaker" (change)="onSpeakerChange($any($event.target))">
+      @if (multi()) {
+        <option value="" selected>{{ 'studio.speaker-choose' | translate }}</option>
+      }
+      <option value="__none" [selected]="!multi() && !lineSpeakerId()">{{ 'studio.speaker-none' | translate }}</option>
+      @for (s of store.speakers(); track s.speakerId) {
+        <option [value]="s.speakerId" [selected]="s.speakerId === lineSpeakerId()">{{ 'studio.speaker-n' | translate: { n: speakerN(s.speakerId) } }}</option>
+      }
+      <option value="__new">{{ 'studio.speaker-new' | translate: { n: speakerN(store.newSpeakerId()) } }}</option>
+    </select>
+    <p class="hint">{{ 'studio.speaker-hint' | translate }}</p>
+  </section>
+
+  <section class="block">
     <h4>{{ 'editor.voice' | translate }}</h4>
     @if (store.voices().length > 0) {
       <!-- Selected per option, not by the select's value: a voice set before

@@ -27,8 +27,6 @@ import { ProjectPanelComponent } from './studio/project-panel.component';
 import { StudioStore, type SaveState } from './studio/studio.store';
 import { TimelineComponent } from './studio/timeline.component';
 
-type SideTab = 'line' | 'project';
-
 const TIMELINE_H_KEY = 'vd.studio.timelineHeight';
 const LINES_OPEN_KEY = 'vd.studio.linesOpen';
 
@@ -77,7 +75,8 @@ export class EditorComponent implements OnInit, OnDestroy, HasUnsavedChanges {
   private readonly inspector = viewChild(InspectorComponent);
   private readonly projectPanel = viewChild(ProjectPanelComponent);
 
-  protected readonly sideTab = signal<SideTab>('line');
+  /** In the store: the Project tab's speakers can show their lines in the Line tab. */
+  protected readonly sideTab = this.store.sideTab;
   protected readonly linesOpen = signal(localStorage.getItem(LINES_OPEN_KEY) !== '0');
   protected readonly timelineHeight = signal(Number(localStorage.getItem(TIMELINE_H_KEY)) || 300);
   protected readonly rendering = signal(false);

@@ -1,12 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
-import { VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
+import { speakerNumber, VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
 
 import { IpcService } from '../../../core/ipc/ipc.service';
 import { toAppError } from '../../../core/state/project.store';
 import { TranslatePipe, TranslateService } from '../../../core/i18n';
 import { ConfirmService } from '../../../shared/confirm-dialog/confirm.service';
+import { SpeakerVoicesDialogComponent } from '../../../shared/voice-library/speaker-voices-dialog.component';
 import { VoiceCloneDialogComponent } from '../../../shared/voice-library/voice-clone-dialog.component';
 import { describeVoice } from '../../../shared/voice-library/voice-filter';
 import { libraryEngineFor, voiceOptions } from '../../../shared/voice-library/voice-options';
@@ -74,7 +75,7 @@ const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libret
   selector: 'vd-project-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, OutputFolderComponent, TranslatePipe, VoiceCloneDialogComponent],
+  imports: [FormsModule, RouterLink, OutputFolderComponent, TranslatePipe, VoiceCloneDialogComponent, SpeakerVoicesDialogComponent],
   templateUrl: './project-panel.component.html',
   styleUrl: './project-panel.component.scss',
 })
@@ -87,6 +88,15 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
 
   /** "Voice from this video" dialog (the whole track). */
   protected readonly voiceDialogOpen = signal(false);
+  /** A speaker whose voice is being made from their lines. */
+  protected readonly speakerCloneId = signal<string | null>(null);
+  /** "Make a voice for every speaker" dialog. */
+  protected readonly speakersDialogOpen = signal(false);
+  protected readonly speakerN = speakerNumber;
+  /** Speakers that have a voice of their own. */
+  protected readonly speakersWithVoice = computed(
+    () => new Set((this.store.settings()?.speakerVoices ?? []).map((v) => v.speakerId)),
+  );
   /** Voices made from this project's video (they live and die with it). */
   protected readonly projectVoices = signal<VoiceProfile[]>([]);
   protected readonly playingVoice = signal<string | null>(null);
@@ -98,6 +108,44 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
       if (this.store.voicesVersion() === 0) return;
       untracked(() => void this.refreshVoiceLists());
     });
+    // Speaker voices apply at once (store.setSpeakerVoice), not through this
+    // draft: keep the draft in step, or every speaker voice would show here as
+    // an unsaved change asking for a re-dub.
+    effect(() => {
+      const voices = this.store.settings()?.speakerVoices;
+      untracked(() => this.draft.update((d) => (d ? { ...d, speakerVoices: voices } : d)));
+    });
+  }
+
+  /** A speaker's own voice id, or '' for the project voice. */
+  protected speakerVoice(speakerId: string): string {
+    return this.store.settings()?.speakerVoices?.find((v) => v.speakerId === speakerId)?.voiceId ?? '';
+  }
+
+  protected async onSpeakerVoiceChange(speakerId: string, voiceId: string): Promise<void> {
+    await this.store.setSpeakerVoice(speakerId, voiceId || null);
+  }
+
+  /** Show a speaker's lines: selected, in the Line tab. */
+  protected showSpeakerLines(speakerId: string): void {
+    this.store.selectSpeaker(speakerId);
+    this.store.sideTab.set('line');
+  }
+
+  /** A speaker's voice was made from their lines: it becomes theirs. */
+  protected async onSpeakerCloneMade(speakerId: string, profile: VoiceProfile): Promise<void> {
+    await this.refreshVoiceLists();
+    if (this.store.settings()?.ttsProviderId === VOICE_ENGINE_PROVIDER[profile.engine]) {
+      await this.store.setSpeakerVoice(speakerId, profile.id);
+    }
+  }
+
+  /** Voices were made for several speakers (the server assigned them). */
+  protected async onSpeakerVoicesMade(): Promise<void> {
+    await this.refreshVoiceLists();
+    await this.store.reload();
+    const { project } = await this.ipc.getProject(this.store.projectId());
+    this.store.project.set(project);
   }
 
   ngOnDestroy(): void {

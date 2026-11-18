@@ -24,7 +24,7 @@
   ],
 
   "ffmpeg": {
-    "comment": "martin-riedl.de macOS builds are static + notarized and link only against system frameworks (fetch-ffmpeg's assert_portable re-checks that). BtbN win64-gpl/linux64-gpl are static with libass + libx264/x265; dated autobuild-* tags are immutable once published, unlike the rolling `latest` release whose assets are deleted and re-uploaded hourly. Since the 2026-11 refresh Windows/Linux pin the RELEASE-BRANCH build each autobuild also carries (`ffmpeg-n9.0.2-…-gpl-9.0`: the 9.0 stable branch plus its backports) instead of the `ffmpeg-N-…` master snapshot, so all four targets ship the same 9.0.2 stable line. fetch-ffmpeg locates any `ffmpeg-*/bin/` folder, so the different archive name needs no script change.",
+    "comment": "martin-riedl.de macOS builds are static + notarized and link only against system frameworks (fetch-ffmpeg's assert_portable re-checks that). BtbN win64-gpl/linux64-gpl are static with libass + libx264/x265; a dated autobuild-* tag never changes, unlike the rolling `latest` release whose assets are deleted and re-uploaded hourly, BUT BtbN keeps the daily ones only about two weeks (the month-end build of each month stays): the 2026-11-04 pin was gone by the 0.13.0 build, so refresh the pin before building when it is more than ~10 days old, or pin a month-end build that carries the wanted backports. Since the 2026-11 refresh Windows/Linux pin the RELEASE-BRANCH build each autobuild also carries (`ffmpeg-n9.0.2-…-gpl-9.0`: the 9.0 stable branch plus its backports) instead of the `ffmpeg-N-…` master snapshot, so all four targets ship the same 9.0.2 stable line. fetch-ffmpeg locates any `ffmpeg-*/bin/` folder, so the different archive name needs no script change.",
     "aarch64-apple-darwin": {
       "version": "9.0.2",
       "ffmpeg": {
@@ -48,17 +48,17 @@
       }
     },
     "x86_64-pc-windows-msvc": {
-      "version": "9.0.2 (n9.0.2-47-gb204e94e90, autobuild-2026-11-04-12-51)",
+      "version": "9.0.2 (n9.0.2-57-gd838f9f9ae, autobuild-2026-11-18-12-39)",
       "archive": {
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-04-12-51/ffmpeg-n9.0.2-47-gb204e94e90-win64-gpl-9.0.zip",
-        "sha256": "db2867364898bf8b68f5404b998165dfd8d31c9bfabc2a35d6e0c941bf33c1ea"
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-18-12-39/ffmpeg-n9.0.2-57-gd838f9f9ae-win64-gpl-9.0.zip",
+        "sha256": "a258f0d8114d244619339ae0023e85025db81488c735989dae04db93c8c57960"
       }
     },
     "x86_64-unknown-linux-gnu": {
-      "version": "9.0.2 (n9.0.2-47-gb204e94e90, autobuild-2026-11-04-12-51)",
+      "version": "9.0.2 (n9.0.2-57-gd838f9f9ae, autobuild-2026-11-18-12-39)",
       "archive": {
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-04-12-51/ffmpeg-n9.0.2-47-gb204e94e90-linux64-gpl-9.0.tar.xz",
-        "sha256": "7e4d04689554492f579c34de8ef3c849c8d9023f65805341826590f52d413304"
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-18-12-39/ffmpeg-n9.0.2-57-gd838f9f9ae-linux64-gpl-9.0.tar.xz",
+        "sha256": "8c408fd01c775bcddea564a03a4de2ac12724b568f3308d391f0a65675c7527a"
       }
     }
   },

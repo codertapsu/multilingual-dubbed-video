@@ -45,6 +45,11 @@ const MAX_MS = 8000;
  * 4. Save: a name, whether to keep the recording (needed to remake the voice
  *    for another engine later), whether the engine cleans the recording.
  * Then the new voice speaks a sentence.
+ *
+ * Mode 'project' takes the speech from the project's own video instead (the
+ * whole track, or `segmentIds`: one speaker's lines chosen in the editor).
+ * There is no source step, the only declaration is the source-video one, and
+ * the voice stays in that project; the server enforces all three.
  */
 @Component({
   selector: 'vd-voice-clone-dialog',
@@ -60,12 +65,23 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
 
   /** Make the voice private to this project (its speakers' voices). */
   readonly projectId = input<string | undefined>(undefined);
-  /** 'import': bring in a .vdvoice file instead of recording (same declaration first). */
-  readonly mode = input<'clone' | 'import'>('clone');
+  /**
+   * 'import': bring in a .vdvoice file instead of recording (same declaration first).
+   * 'project': the voice in `projectId`'s video (needs `projectId`).
+   */
+  readonly mode = input<'clone' | 'import' | 'project'>('clone');
+  /** Mode 'project': the lines to take the voice from (none: the whole track). */
+  readonly segmentIds = input<readonly string[] | undefined>(undefined);
   readonly created = output<VoiceProfile>();
   readonly closed = output<void>();
 
   protected readonly step = signal<Step>('rights');
+  protected readonly titleKey = computed(() =>
+    this.mode() === 'import' ? 'voice-clone.import-title' : this.mode() === 'project' ? 'voice-clone.video-title' : 'voice-clone.title',
+  );
+  protected readonly steps = computed<readonly Step[]>(() =>
+    this.mode() === 'import' ? ['rights', 'source'] : this.mode() === 'project' ? ['rights', 'check', 'save'] : ['rights', 'source', 'check', 'save'],
+  );
   protected readonly error = signal<AppError | null>(null);
   protected readonly busy = signal<'' | 'upload' | 'analyze' | 'check' | 'create' | 'install'>('');
 
@@ -78,7 +94,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
 
   // rights
   protected readonly consent = signal<VoiceConsentStatements | null>(null);
-  protected readonly relation = signal<'self' | 'authorized'>('self');
+  protected readonly relation = signal<'self' | 'authorized' | 'source-video'>('self');
   protected readonly accepted = signal(false);
 
   // source
@@ -130,6 +146,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
   });
 
   async ngOnInit(): Promise<void> {
+    if (this.mode() === 'project') this.relation.set('source-video');
     try {
       const [engines, consent] = await Promise.all([
         this.ipc.voiceEngines(),
@@ -138,7 +155,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
       this.engine.set(engines.find((e) => e.id === 'vieneu') ?? null);
       this.consent.set(consent);
       // Importing needs no engine yet (the voice data comes made); cloning does.
-      if (!this.engine()?.installed && this.mode() === 'clone') this.step.set('engine');
+      if (!this.engine()?.installed && this.mode() !== 'import') this.step.set('engine');
     } catch (err) {
       this.error.set(err as AppError);
     }
@@ -192,8 +209,33 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
 
   protected toSource(): void {
     if (!this.accepted()) return;
+    if (this.mode() === 'project') {
+      void this.analyzeProject();
+      return;
+    }
     this.step.set('source');
     if (this.mode() === 'clone') void this.loadMics();
+  }
+
+  /** Mode 'project': the video's speech goes straight to the check. */
+  private async analyzeProject(): Promise<void> {
+    const projectId = this.projectId();
+    if (!projectId) return;
+    this.error.set(null);
+    this.busy.set('analyze');
+    try {
+      const analysis = await this.ipc.analyzeProjectVoice(projectId, this.segmentIds());
+      this.showAnalysis(analysis);
+    } catch (err) {
+      this.error.set(err as AppError);
+    } finally {
+      this.busy.set('');
+    }
+  }
+
+  /** Back from the check: to the source, or (project mode) to the declaration. */
+  protected back(): void {
+    this.step.set(this.mode() === 'project' ? 'rights' : 'source');
   }
 
   /** Import mode: read a .vdvoice file and make a new voice from it. */
@@ -282,11 +324,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
       const { uploadId } = await this.ipc.uploadVoiceRecording(blob);
       this.busy.set('analyze');
       const analysis = await this.ipc.analyzeVoiceReference({ uploadId, ...(sourceName ? { sourceName } : {}) });
-      this.analysis.set(analysis);
-      this.window.set(analysis.window);
-      this.checks.set(analysis.checks);
-      if (!this.name()) this.name.set(this.defaultName(sourceName));
-      this.step.set('check');
+      this.showAnalysis(analysis, sourceName);
     } catch (err) {
       this.error.set(err as AppError);
     } finally {
@@ -294,7 +332,19 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
     }
   }
 
+  private showAnalysis(analysis: VoiceReferenceAnalysis, sourceName?: string): void {
+    this.analysis.set(analysis);
+    this.window.set(analysis.window);
+    this.checks.set(analysis.checks);
+    if (!this.name()) this.name.set(this.defaultName(sourceName));
+    this.step.set('check');
+  }
+
   private defaultName(sourceName?: string): string {
+    if (this.mode() === 'project') {
+      const n = this.segmentIds()?.length ?? 0;
+      return n > 0 ? this.i18n.instant('voice-clone.default-name-lines', { n }) : this.i18n.instant('voice-clone.default-name-video');
+    }
     if (sourceName) return sourceName.replace(/\.[^.]+$/, '').slice(0, 60);
     return this.i18n.instant(this.relation() === 'self' ? 'voice-clone.default-name-self' : 'voice-clone.default-name-other');
   }
@@ -383,7 +433,15 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
         keepRecording: this.keepRecording(),
         denoise: this.denoise(),
         ...(this.projectId() ? { projectId: this.projectId() } : {}),
-        source: this.sourceKind === 'file' ? { kind: 'file', ...(this.fileName() ? { fileName: this.fileName()! } : {}) } : { kind: 'recording' },
+        // A project-video voice: the server takes the source from the analysis.
+        ...(this.mode() === 'project'
+          ? {}
+          : {
+              source:
+                this.sourceKind === 'file'
+                  ? { kind: 'file' as const, ...(this.fileName() ? { fileName: this.fileName()! } : {}) }
+                  : { kind: 'recording' as const },
+            }),
       });
       this.profile.set(profile);
       this.step.set('done');

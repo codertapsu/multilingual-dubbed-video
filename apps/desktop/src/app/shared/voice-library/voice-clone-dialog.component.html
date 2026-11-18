@@ -1,12 +1,12 @@
 <div class="backdrop" (click)="close()"></div>
-<div class="dialog card stack" role="dialog" aria-modal="true" [attr.aria-label]="'voice-clone.title' | translate">
+<div class="dialog card stack" role="dialog" aria-modal="true" [attr.aria-label]="titleKey() | translate">
   <div class="row-between">
-    <h2>{{ (mode() === 'import' ? 'voice-clone.import-title' : 'voice-clone.title') | translate }}</h2>
+    <h2>{{ titleKey() | translate }}</h2>
     <button type="button" class="btn btn-ghost btn-sm" (click)="close()" [attr.aria-label]="'voice-clone.close' | translate">✕</button>
   </div>
 
   <ol class="steps" aria-hidden="true">
-    @for (s of mode() === 'import' ? ['rights', 'source'] : ['rights', 'source', 'check', 'save']; track s) {
+    @for (s of steps(); track s) {
       <li [class.on]="step() === s">{{ 'voice-clone.step.' + s | translate }}</li>
     }
   </ol>
@@ -28,8 +28,33 @@
     }
   }
 
+  <!-- ===================== 1. Rights: the project's own video ===================== -->
+  @if (step() === 'rights' && mode() === 'project') {
+    <p>
+      {{
+        (segmentIds()?.length ? 'voice-clone.video-intro-lines' : 'voice-clone.video-intro-track')
+          | translate: { n: segmentIds()?.length ?? 0 }
+      }}
+    </p>
+    <p class="hint">{{ 'voice-clone.video-stays' | translate }}</p>
+    <blockquote class="statement">{{ statement() }}</blockquote>
+    <label class="choice">
+      <input type="checkbox" [checked]="accepted()" (change)="accepted.set(!accepted())" />
+      {{ 'voice-clone.agree' | translate }}
+    </label>
+    <p class="hint">{{ 'voice-clone.rights-honest' | translate }}</p>
+    <div class="row">
+      <button type="button" class="btn btn-primary" [disabled]="!accepted() || !!busy()" (click)="toSource()">
+        {{ (busy() === 'analyze' ? 'voice-clone.analyzing' : 'voice-clone.next') | translate }}
+      </button>
+    </div>
+    @if (busy() === 'analyze') {
+      <p class="muted" role="status">{{ 'voice-clone.video-analyzing-help' | translate }}</p>
+    }
+  }
+
   <!-- ===================== 1. Rights ===================== -->
-  @if (step() === 'rights') {
+  @if (step() === 'rights' && mode() !== 'project') {
     <p>{{ 'voice-clone.rights-intro' | translate }}</p>
     <fieldset class="stack-sm">
       <legend>{{ 'voice-clone.whose' | translate }}</legend>
@@ -187,7 +212,7 @@
     </label>
     <p class="hint">{{ 'voice-clone.denoise-help' | translate }}</p>
     <div class="row">
-      <button type="button" class="btn" (click)="step.set('source')">{{ 'voice-clone.back' | translate }}</button>
+      <button type="button" class="btn" (click)="back()">{{ 'voice-clone.back' | translate }}</button>
       <button type="button" class="btn btn-primary" [disabled]="refused() || busy() === 'check'" (click)="step.set('save')">
         {{ 'voice-clone.next' | translate }}
       </button>
@@ -230,6 +255,6 @@
       </button>
       <button type="button" class="btn btn-primary" (click)="close()">{{ 'voice-clone.finish' | translate }}</button>
     </div>
-    <p class="hint">{{ 'voice-clone.done-help' | translate }}</p>
+    <p class="hint">{{ (mode() === 'project' ? 'voice-clone.video-done-help' : 'voice-clone.done-help') | translate }}</p>
   }
 </div>

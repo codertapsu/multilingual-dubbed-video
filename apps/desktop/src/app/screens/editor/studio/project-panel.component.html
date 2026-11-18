@@ -205,6 +205,31 @@
               <span class="value">{{ s.ttsVoiceId ?? ('editor.provider-default' | translate) }}</span>
             }
           </label>
+          <div class="setting-row">
+            <span class="label">{{ 'editor.voice-from-video' | translate }}</span>
+            <button type="button" class="btn btn-sm" (click)="voiceDialogOpen.set(true)" [disabled]="redubbing()">
+              {{ 'editor.voice-from-video-button' | translate }}
+            </button>
+          </div>
+          <p class="hint">{{ 'editor.voice-from-video-hint' | translate }}</p>
+          @if (projectVoices().length > 0) {
+            <ul class="project-voices" [attr.aria-label]="'editor.project-voices' | translate">
+              @for (v of projectVoices(); track v.id) {
+                <li>
+                  <span class="name">{{ v.name }}</span>
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                    (click)="toggleProjectVoice(v)"
+                    [attr.aria-label]="'editor.project-voice-play' | translate: { name: v.name }"
+                  >
+                    {{ playingVoice() === v.id ? '■' : '▶' }}
+                  </button>
+                  <button type="button" class="btn btn-ghost btn-sm" (click)="deleteProjectVoice(v)">{{ 'voices.my-delete' | translate }}</button>
+                </li>
+              }
+            </ul>
+          }
         </div>
 
         <!-- Audio mix -->
@@ -435,5 +460,14 @@
       </span>
       <button type="button" class="btn btn-ghost btn-sm" (click)="createCtxSheet()">{{ 'editor.create-sheet' | translate }}</button>
     </section>
+  }
+
+  @if (voiceDialogOpen()) {
+    <vd-voice-clone-dialog
+      mode="project"
+      [projectId]="store.projectId()"
+      (created)="onVoiceMade($event)"
+      (closed)="voiceDialogOpen.set(false)"
+    />
   }
 

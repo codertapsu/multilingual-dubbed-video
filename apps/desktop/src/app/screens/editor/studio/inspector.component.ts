@@ -10,10 +10,12 @@ import {
 } from '@angular/core';
 import { NgTemplateOutlet } from '@angular/common';
 
-import { splitSubtitleLines } from '@videodubber/shared';
+import { splitSubtitleLines, VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
 
 import { TranslatePipe } from '../../../core/i18n';
+import type { VoiceProfile } from '../../../core/models';
 import { formatTimecode } from '../../../core/util/format';
+import { VoiceCloneDialogComponent } from '../../../shared/voice-library/voice-clone-dialog.component';
 import { PlaybackService } from './playback.service';
 import { MAX_CPS, StudioStore, type LineVm } from './studio.store';
 import { VOICE_DRAG_TYPE } from './timeline.component';
@@ -28,7 +30,7 @@ import { constrainDrag, MIN_SEGMENT_MS, parseTimecode, type DragEdge } from './t
   selector: 'vd-inspector',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [TranslatePipe, NgTemplateOutlet],
+  imports: [TranslatePipe, NgTemplateOutlet, VoiceCloneDialogComponent],
   templateUrl: './inspector.component.html',
   styleUrl: './inspector.component.scss',
 })
@@ -85,6 +87,22 @@ export class InspectorComponent {
 
   /** Rate shown on the slider (the line's own, or 1). */
   protected readonly rate = computed(() => this.line()?.seg.speakingRate ?? 1);
+
+  /** The line's own voice (none with several lines selected: they may differ). */
+  protected readonly lineVoiceId = computed(() => (this.multi() ? null : (this.line()?.seg.voiceId ?? null)));
+  /**
+   * The line's own voice when the list does not offer it (a voice of another
+   * engine, or not loaded yet): shown as itself, never as the project voice.
+   */
+  protected readonly lineVoiceUnlisted = computed(() => {
+    const id = this.lineVoiceId();
+    return id && !this.store.voices().some((v) => v.id === id) ? id : null;
+  });
+
+  /** The lines a voice is being made from (the dialog is open), or null. */
+  protected readonly voiceDialogLines = signal<readonly string[] | null>(null);
+  /** The voice just made, and whether the lines now use it. */
+  protected readonly madeVoice = signal<{ name: string; applied: boolean } | null>(null);
 
   constructor() {
     // A timecode field appears in place of its button: focus + select it.
@@ -191,6 +209,28 @@ export class InspectorComponent {
     const ids = new Set<string>();
     for (const id of this.selectedIds()) ids.add(units.get(id)?.id ?? id);
     void this.store.regenerate([...ids].slice(0, 200));
+  }
+
+  /** "Make a voice from these lines": one speaker's lines, taken from the video. */
+  protected openVoiceFromLines(): void {
+    const ids = this.selectedIds().length ? this.selectedIds() : this.line() ? [this.line()!.seg.id] : [];
+    if (ids.length === 0) return;
+    this.madeVoice.set(null);
+    // In timeline order: the server joins them in that order anyway.
+    const order = this.store.indexById();
+    this.voiceDialogLines.set([...ids].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0)));
+  }
+
+  /**
+   * The new voice speaks the lines it was made from, when the project's engine
+   * can use it (a VieNeu clone needs VieNeu-TTS 3.8: the run would refuse it
+   * under another engine). Otherwise say how to use it. Undo takes it back.
+   */
+  protected onVoiceMade(profile: VoiceProfile, ids: readonly string[]): void {
+    this.store.voicesVersion.update((n) => n + 1);
+    const usable = this.store.settings()?.ttsProviderId === VOICE_ENGINE_PROVIDER[profile.engine];
+    if (usable) this.store.setVoice(ids, profile.id);
+    this.madeVoice.set({ name: profile.name, applied: usable });
   }
 
   protected onVoiceDragStart(e: DragEvent, voiceId: string): void {

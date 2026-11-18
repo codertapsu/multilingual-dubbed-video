@@ -130,10 +130,14 @@ export function licenseTone(category: VoiceLicenseCategory): 'completed' | 'info
 
 /**
  * A picker label: the name, then what tells voices apart ("Thục Đoan — Nữ ·
- * Miền Nam · Kể chuyện"). `t` translates `voices.*` keys.
+ * Miền Nam · Kể chuyện"). A cloned voice says so, and one made from the
+ * project's video says that ("Người nói 1 — Từ video này"): next to fifty
+ * preset names, a user's own voice is otherwise easy to miss. `t` translates
+ * `voices.*` keys.
  */
 export function describeVoice(item: VoiceLibraryItem, t: (key: string) => string): string {
   const parts = [
+    item.kind === 'profile' ? t(item.scope?.kind === 'project' ? 'voices.label-from-video' : 'voices.label-cloned') : '',
     item.gender ? t(`voices.${item.gender}`) : '',
     item.accent ? t(`voices.accent-${item.accent}`) : '',
     ...(item.tags ?? [])

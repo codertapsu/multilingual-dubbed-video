@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { VoiceLibraryItem } from '../../core/models';
 import {
+  describeVoice,
   EMPTY_FILTER,
   filterVoices,
   foldText,
@@ -87,5 +88,14 @@ describe('voice filter', () => {
     expect(licenseTone('non-commercial')).toBe('failed');
     expect(licenseTone('use-restricted')).toBe('warning');
     expect(licenseTone('unknown')).toBe('skipped');
+  });
+
+  it("labels a cloned voice, and one from the project's video, as such", () => {
+    const t = (k: string) => ({ 'voices.label-cloned': 'cloned', 'voices.label-from-video': 'from this video', 'voices.female': 'Female' })[k] ?? k;
+    expect(describeVoice(LIB[2]!, t)).toBe('Thục Đoan — Female · voices.accent-south');
+    const mine = voice({ id: 'vp_1', kind: 'profile', engine: 'vieneu', name: 'Me', scope: { kind: 'library' } });
+    expect(describeVoice(mine, t)).toBe('Me — cloned');
+    const speaker = voice({ id: 'vp_2', kind: 'profile', engine: 'vieneu', name: 'Speaker 1', scope: { kind: 'project', projectId: 'p' } });
+    expect(describeVoice(speaker, t)).toBe('Speaker 1 — from this video');
   });
 });

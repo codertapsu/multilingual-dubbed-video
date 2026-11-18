@@ -133,6 +133,12 @@ export class StudioStore {
   readonly settings = computed(() => this.project()?.settings ?? null);
   /** Voices the project's TTS engine offers here (installed ones). */
   readonly voices = signal<PiperVoiceInfo[]>([]);
+  /**
+   * Bumped when a voice was made in the editor from the project's video: the
+   * project panel, which loads the voice lists, reloads them so every picker
+   * offers the new voice.
+   */
+  readonly voicesVersion = signal(0);
 
   readonly selection = signal<ReadonlySet<string>>(new Set());
   /** The line the inspector shows (the last one clicked). */

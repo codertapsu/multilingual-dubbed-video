@@ -188,12 +188,18 @@
   <section class="block">
     <h4>{{ 'editor.voice' | translate }}</h4>
     @if (store.voices().length > 0) {
-      <select [value]="multi() ? '' : (line()?.seg?.voiceId ?? '')" (change)="setVoice($any($event.target).value)">
-        <option value="">
+      <!-- Selected per option, not by the select's value: a voice set before
+           its option exists (one just made from the video, while the list
+           reloads) would otherwise show as the project voice. -->
+      <select (change)="setVoice($any($event.target).value)">
+        <option value="" [selected]="!lineVoiceId()">
           {{ 'studio.voice-default' | translate: { label: store.voiceLabel(store.settings()?.ttsVoiceId) || ('editor.provider-default' | translate) } }}
         </option>
         @for (v of store.voices(); track v.id) {
-          <option [value]="v.id">{{ v.label }}</option>
+          <option [value]="v.id" [selected]="v.id === lineVoiceId()">{{ v.label }}</option>
+        }
+        @if (lineVoiceUnlisted(); as id) {
+          <option [value]="id" selected>{{ id }}</option>
         }
       </select>
       @if (!multi() && voice(); as vv) {
@@ -218,5 +224,27 @@
       </div>
       <p class="hint">{{ 'studio.rate-hint' | translate }}</p>
     </div>
+
+    <div class="voice-from-video">
+      <button type="button" class="btn btn-sm" (click)="openVoiceFromLines()">
+        {{ (multi() ? 'studio.voice-from-lines' : 'studio.voice-from-this-line') | translate: { n: store.selection().size } }}
+      </button>
+      <p class="hint">{{ 'studio.voice-from-lines-hint' | translate }}</p>
+      @if (madeVoice(); as m) {
+        <p class="hint made" role="status">
+          {{ (m.applied ? 'studio.voice-made-applied' : 'studio.voice-made-engine') | translate: { name: m.name } }}
+        </p>
+      }
+    </div>
   </section>
 </ng-template>
+
+@if (voiceDialogLines(); as ids) {
+  <vd-voice-clone-dialog
+    mode="project"
+    [projectId]="store.projectId()"
+    [segmentIds]="ids"
+    (created)="onVoiceMade($event, ids)"
+    (closed)="voiceDialogLines.set(null)"
+  />
+}

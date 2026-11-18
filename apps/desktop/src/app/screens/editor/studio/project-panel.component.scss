@@ -84,6 +84,32 @@
     padding: 5px 8px;
     font-size: 0.85rem;
   }
+  > .btn {
+    align-self: flex-start;
+  }
+}
+
+.project-voices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: var(--vd-sp-1, 4px);
+    font-size: 0.85rem;
+  }
+  .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 .redub-bar {

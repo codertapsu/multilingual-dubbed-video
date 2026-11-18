@@ -150,6 +150,20 @@
   }
 }
 
+.voice-from-video {
+  margin-top: var(--vd-sp-3);
+  padding-top: var(--vd-sp-2);
+  border-top: 1px solid var(--vd-border);
+
+  .hint {
+    margin: 4px 0 0;
+    font-size: 0.74rem;
+  }
+  .made {
+    color: var(--vd-text);
+  }
+}
+
 .fit {
   display: grid;
   grid-template-columns: auto 1fr;

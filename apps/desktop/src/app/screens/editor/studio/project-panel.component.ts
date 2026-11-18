@@ -1,10 +1,13 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal, type OnInit } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+import { VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
 
 import { IpcService } from '../../../core/ipc/ipc.service';
 import { toAppError } from '../../../core/state/project.store';
 import { TranslatePipe, TranslateService } from '../../../core/i18n';
+import { ConfirmService } from '../../../shared/confirm-dialog/confirm.service';
+import { VoiceCloneDialogComponent } from '../../../shared/voice-library/voice-clone-dialog.component';
 import { describeVoice } from '../../../shared/voice-library/voice-filter';
 import { libraryEngineFor, voiceOptions } from '../../../shared/voice-library/voice-options';
 import { PIPELINE_STEP_LABELS, PROCESSING_MODE_LABELS, SUBTITLE_EXPORT_MODE_LABELS, ALL_SUBTITLE_EXPORT_MODES } from '../../../core/util/format';
@@ -29,6 +32,7 @@ import type {
   SubtitleExportMode,
   SubtitleStyle,
   TranslationDocContext,
+  VoiceProfile,
 } from '../../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, WhisperModelInfo } from '../../../core/models/setup';
 import { OutputFolderComponent } from '../../../shared/output-folder/output-folder.component';
@@ -70,15 +74,35 @@ const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libret
   selector: 'vd-project-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, OutputFolderComponent, TranslatePipe],
+  imports: [FormsModule, RouterLink, OutputFolderComponent, TranslatePipe, VoiceCloneDialogComponent],
   templateUrl: './project-panel.component.html',
   styleUrl: './project-panel.component.scss',
 })
-export class ProjectPanelComponent implements OnInit {
+export class ProjectPanelComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
   private readonly translate = inject(TranslateService);
   private readonly router = inject(Router);
+  private readonly confirm = inject(ConfirmService);
   protected readonly store = inject(StudioStore);
+
+  /** "Voice from this video" dialog (the whole track). */
+  protected readonly voiceDialogOpen = signal(false);
+  /** Voices made from this project's video (they live and die with it). */
+  protected readonly projectVoices = signal<VoiceProfile[]>([]);
+  protected readonly playingVoice = signal<string | null>(null);
+  private audio: HTMLAudioElement | null = null;
+
+  constructor() {
+    // A voice was made from the selected lines (inspector): offer it everywhere.
+    effect(() => {
+      if (this.store.voicesVersion() === 0) return;
+      untracked(() => void this.refreshVoiceLists());
+    });
+  }
+
+  ngOnDestroy(): void {
+    this.audio?.pause();
+  }
 
   protected readonly stepLabels = PIPELINE_STEP_LABELS;
   protected readonly redubStages = REDUB_STAGES;
@@ -167,6 +191,7 @@ export class ProjectPanelComponent implements OnInit {
         this.languageLabels.set(new Map((catalog.languages ?? []).map((l) => [l.code, l.label])));
       }
       await this.reloadVoices(project.settings.ttsProviderId, project.settings.targetLanguage, true);
+      await this.loadProjectVoices();
     } catch {
       /* non-fatal: the timeline still works without the settings panel */
     }
@@ -199,25 +224,29 @@ export class ProjectPanelComponent implements OnInit {
    * studio's per-line voice picker (only voices on disk: a missing one would
    * fail at synthesis); the full list feeds the default-voice picker here.
    */
-  private async reloadVoices(ttsProviderId: string | undefined, language: string, forStudio: boolean): Promise<void> {
+  private async reloadVoices(ttsProviderId: string | undefined, language: string, forStudio: boolean, forDraft = true): Promise<void> {
+    const setDraft = (voices: PiperVoiceInfo[]) => {
+      if (forDraft) this.draftVoices.set(voices);
+    };
     // Engines of the voice library (VieNeu 3.8, ZeroTTS, Kokoro, Supertonic):
-    // every voice ships with the engine pack, so all of them are usable.
+    // every voice ships with the engine pack, so all of them are usable. The
+    // project id adds the voices made from this project's video.
     const libraryEngine = libraryEngineFor(ttsProviderId);
     if (libraryEngine) {
       try {
-        const lib = await this.ipc.voiceLibrary();
+        const lib = await this.ipc.voiceLibrary({ projectId: this.store.projectId() });
         const voices = voiceOptions(lib.voices, libraryEngine, language, (v) => describeVoice(v, (k) => this.translate.instant(k)));
-        this.draftVoices.set(voices);
+        setDraft(voices);
         if (forStudio) this.store.voices.set(voices);
       } catch {
-        this.draftVoices.set([]);
+        setDraft([]);
         if (forStudio) this.store.voices.set([]);
       }
       return;
     }
     const engine = ttsEngineParam(ttsProviderId);
     if (!engine) {
-      this.draftVoices.set([]);
+      setDraft([]);
       if (forStudio) this.store.voices.set([]);
       return;
     }
@@ -226,7 +255,7 @@ export class ProjectPanelComponent implements OnInit {
         this.ipc.setupListVoices(language, engine),
         this.ipc.setupGetStatus().catch(() => null),
       ]);
-      this.draftVoices.set(voices);
+      setDraft(voices);
       if (forStudio) {
         const usable =
           status && engine === 'piper'
@@ -235,8 +264,73 @@ export class ProjectPanelComponent implements OnInit {
         this.store.voices.set(usable);
       }
     } catch {
-      this.draftVoices.set([]);
+      setDraft([]);
       if (forStudio) this.store.voices.set([]);
+    }
+  }
+
+  // ---------------- voices from this project's video ----------------
+
+  private async loadProjectVoices(): Promise<void> {
+    const id = this.store.projectId();
+    try {
+      const all = await this.ipc.voiceProfiles(id);
+      this.projectVoices.set(all.filter((p) => p.scope.kind === 'project' && p.scope.projectId === id));
+    } catch {
+      this.projectVoices.set([]);
+    }
+  }
+
+  /** Reload every voice list (a voice was made or deleted). */
+  private async refreshVoiceLists(): Promise<void> {
+    const applied = this.store.settings();
+    const draft = this.draft();
+    if (!applied) return;
+    const sameEngine = !draft || (draft.ttsProviderId === applied.ttsProviderId && draft.targetLanguage === applied.targetLanguage);
+    await this.reloadVoices(applied.ttsProviderId, applied.targetLanguage, true, sameEngine);
+    if (!sameEngine && draft) await this.reloadVoices(draft.ttsProviderId, draft.targetLanguage, false);
+    await this.loadProjectVoices();
+  }
+
+  /**
+   * A voice was made from the whole video: propose it as the project's voice.
+   * Only proposed: like any setting here it applies when the user re-dubs,
+   * from text-to-speech (nothing before that changes).
+   */
+  protected async onVoiceMade(profile: VoiceProfile): Promise<void> {
+    const provider = VOICE_ENGINE_PROVIDER[profile.engine] ?? VOICE_ENGINE_PROVIDER.vieneu;
+    this.draft.update((d) => (d ? { ...d, ttsProviderId: provider, ttsVoiceId: profile.id } : d));
+    await this.refreshVoiceLists();
+  }
+
+  protected toggleProjectVoice(p: VoiceProfile): void {
+    this.audio?.pause();
+    if (this.playingVoice() === p.id) {
+      this.playingVoice.set(null);
+      return;
+    }
+    const audio = new Audio(this.ipc.voiceProfileAudioUrl(p.id, 'preview', p.updatedAt));
+    this.audio = audio;
+    this.playingVoice.set(p.id);
+    audio.onended = () => this.playingVoice.set(null);
+    audio.onerror = () => this.playingVoice.set(null);
+    void audio.play().catch(() => this.playingVoice.set(null));
+  }
+
+  protected async deleteProjectVoice(p: VoiceProfile): Promise<void> {
+    const ok = await this.confirm.confirm({
+      title: this.translate.instant('voices.my-delete-title', { name: p.name }),
+      message: this.translate.instant('voices.my-delete-body'),
+      confirmLabel: this.translate.instant('voices.my-delete-confirm'),
+    });
+    if (!ok) return;
+    try {
+      await this.ipc.deleteVoiceProfile(p.id);
+      // A deleted voice must not stay proposed as the project's voice.
+      if (this.draft()?.ttsVoiceId === p.id) this.draft.update((d) => (d ? { ...d, ttsVoiceId: undefined } : d));
+      await this.refreshVoiceLists();
+    } catch (err) {
+      this.store.error.set(toAppError(err));
     }
   }
 

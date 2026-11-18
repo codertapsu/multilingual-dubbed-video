@@ -555,6 +555,17 @@ export class IpcService {
     return this.http('POST', '/voice-profiles/analyze', { engine: 'vieneu', ...body });
   }
 
+  /**
+   * POST /projects/:id/voices/analyze — the project's own speech as a reference:
+   * the whole track, or the chosen lines joined (one speaker of several).
+   */
+  analyzeProjectVoice(projectId: string, segmentIds?: readonly string[]): Promise<VoiceReferenceAnalysis> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/voices/analyze`, {
+      engine: 'vieneu',
+      ...(segmentIds?.length ? { segmentIds: [...segmentIds] } : {}),
+    });
+  }
+
   checkVoiceWindow(analysisId: string, window: TimeRange): Promise<{ window: TimeRange; checks: VoiceReferenceChecks }> {
     return this.http('POST', `/voice-profiles/analysis/${encodeURIComponent(analysisId)}/check`, { window, engine: 'vieneu' });
   }

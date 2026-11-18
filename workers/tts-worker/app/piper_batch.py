@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -36,7 +37,18 @@ from typing import Callable, Optional
 logger = logging.getLogger("tts.piper_batch")
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
-PROTOCOL = 1
+# The protocol scripts/package/entry_piper.py speaks. 2 added "speaker_id";
+# a protocol-1 vd-piper (an older sidecar re-bundled by a skipped build step)
+# still serves single-speaker voices, and speaker requests then spawn per line.
+PROTOCOL = 2
+SPEAKER_PROTOCOL = 2
+_PROBE_RE = re.compile(r"vd-batch/(\d+)")
+
+
+def probe_protocol(output: str) -> int:
+    """The batch protocol a `--vd-batch-probe` answer names (0 = none). Pure."""
+    m = _PROBE_RE.search(output or "")
+    return int(m.group(1)) if m else 0
 _READY_TIMEOUT_S = 60.0
 _REQUEST_TIMEOUT_S = 120.0
 _IDLE_REAP_S = 300.0
@@ -52,8 +64,10 @@ def _repo_entry_script() -> Optional[Path]:
     return None
 
 
-def resolve_batch_command(binary: str, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Optional[list[str]]:
-    """The argv prefix that starts a batch-mode Piper, or None (see module doc)."""
+def resolve_batch(
+    binary: str, run: Callable[..., subprocess.CompletedProcess] = subprocess.run
+) -> Optional[tuple[list[str], int]]:
+    """(argv prefix that starts a batch-mode Piper, its protocol), or None."""
     if os.environ.get("PIPER_BATCH", "").strip() == "0" or not binary:
         return None
     try:
@@ -64,8 +78,9 @@ def resolve_batch_command(binary: str, run: Callable[..., subprocess.CompletedPr
             check=False,
             creationflags=_NO_WINDOW,
         )
-        if probe.returncode == 0 and f"vd-batch/{PROTOCOL}" in probe.stdout.decode("utf-8", "replace"):
-            return [binary, "--vd-batch"]
+        protocol = probe_protocol(probe.stdout.decode("utf-8", "replace"))
+        if probe.returncode == 0 and protocol >= 1:
+            return [binary, "--vd-batch"], protocol
     except (OSError, subprocess.SubprocessError):
         pass
     # Dev: `.../.venv/bin/piper` (a console script) with `.../.venv/bin/python`.
@@ -73,8 +88,14 @@ def resolve_batch_command(binary: str, run: Callable[..., subprocess.CompletedPr
     py = bin_dir / ("python.exe" if sys.platform == "win32" else "python")
     entry = _repo_entry_script()
     if py.is_file() and entry is not None:
-        return [str(py), str(entry), "--vd-batch"]
+        return [str(py), str(entry), "--vd-batch"], PROTOCOL
     return None
+
+
+def resolve_batch_command(binary: str, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Optional[list[str]]:
+    """The argv prefix that starts a batch-mode Piper, or None (see module doc)."""
+    found = resolve_batch(binary, run)
+    return found[0] if found else None
 
 
 class BatchUnavailable(RuntimeError):
@@ -131,13 +152,18 @@ class PiperBatchProcess:
     def alive(self) -> bool:
         return self._proc.poll() is None
 
-    def synth(self, text: str, out_path: str, length_scale: Optional[float]) -> None:
+    def synth(self, text: str, out_path: str, length_scale: Optional[float], speaker_id: Optional[int] = None) -> None:
         """Synthesize one line. Raises BatchUnavailable when the process is gone."""
         with self._lock:
             self.last_used = time.monotonic()
             if not self.alive or self._proc.stdin is None:
                 raise BatchUnavailable("batch Piper is not running")
-            req = {"text": text, "output_file": out_path, **({"length_scale": length_scale} if length_scale else {})}
+            req = {
+                "text": text,
+                "output_file": out_path,
+                **({"length_scale": length_scale} if length_scale else {}),
+                **({"speaker_id": speaker_id} if speaker_id is not None else {}),
+            }
             try:
                 self._proc.stdin.write(json.dumps(req, ensure_ascii=False) + "\n")
                 self._proc.stdin.flush()
@@ -173,11 +199,13 @@ class PiperBatchPool:
         self._lock = threading.Lock()
         threading.Thread(target=self._reaper, name="piper-batch-reaper", daemon=True).start()
 
-    def synth(self, model: Path, text: str, out_path: str, length_scale: Optional[float]) -> None:
+    def synth(
+        self, model: Path, text: str, out_path: str, length_scale: Optional[float], speaker_id: Optional[int] = None
+    ) -> None:
         for attempt in (1, 2):
             proc = self._get(model)
             try:
-                proc.synth(text, out_path, length_scale)
+                proc.synth(text, out_path, length_scale, speaker_id)
                 return
             except BatchUnavailable:
                 with self._lock:

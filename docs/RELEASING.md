@@ -213,7 +213,9 @@ an artifact that cannot work.
 > **`vd-piper` is verified by asking it, not grepping it.** A stale `vd-piper`
 > fails silently: the TTS worker finds no batch mode, falls back to one process
 > per line, and every dub still works, just 2.3× slower. So:
-> `"$APP/Contents/MacOS/vd-piper" --vd-batch-probe` must print `vd-batch/1`
+> `"$APP/Contents/MacOS/vd-piper" --vd-batch-probe` must print the protocol
+> `scripts/package/entry_piper.py` declares (`BATCH_PROTOCOL`: `vd-batch/2` since
+> 0.13.0, when requests gained a speaker; the build scripts read it from there)
 > (on Windows, the `vd-piper.exe` next to the installed `VideoDubber.exe`).
 
 ### Why the deep-sign + notarize dance

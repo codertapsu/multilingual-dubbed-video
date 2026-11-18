@@ -334,10 +334,19 @@ build_one() {
     fi
     # vd-piper is checked by asking it, as the TTS worker does: a broken one
     # never fails a dub, it silently runs one process per line (2.3x slower).
-    local probe
-    probe="$("${produced}" --vd-batch-probe 2>/dev/null || true)"
-    if [[ "${probe}" != *"vd-batch/1"* ]]; then
-      echo "ERROR: [${key}] ${base} did not answer its batch probe (got: ${probe:-nothing}). Refusing to ship it." >&2
+    # The protocol it must answer is the one entry_piper.py declares
+    # (BATCH_PROTOCOL), read from there: a hard-coded "vd-batch/1" refused the
+    # 0.13.0 build the day speaker support made it 2, and an older sidecar
+    # answering 1 would ignore the speaker of a multi-speaker voice.
+    local probe want
+    want="vd-batch/$(sed -n 's/^BATCH_PROTOCOL *= *\([0-9][0-9]*\).*/\1/p' "${SCRIPT_DIR}/entry_piper.py" | head -n 1)"
+    if [[ "${want}" == "vd-batch/" ]]; then
+      echo "ERROR: entry_piper.py declares no BATCH_PROTOCOL; cannot check ${base}." >&2
+      exit 1
+    fi
+    probe="$("${produced}" --vd-batch-probe 2>/dev/null | tail -n 1 | tr -d '\r' || true)"
+    if [[ "${probe}" != "${want}" ]]; then
+      echo "ERROR: [${key}] ${base} did not answer its batch probe with ${want} (got: ${probe:-nothing}). Refusing to ship it." >&2
       exit 1
     fi
     echo "    - batch probe: ${probe}"

@@ -220,10 +220,17 @@ function Assert-ImportCheck([string]$Exe, [string]$Key) {
 
 # vd-piper is checked by asking it, as the TTS worker does: a broken one never
 # fails a dub, it silently runs one process per line instead (2.3x slower).
+# The protocol it must answer is the one entry_piper.py declares (BATCH_PROTOCOL),
+# read from there: a hard-coded "vd-batch/1" refused the 0.13.0 build the day
+# speaker support made it 2, and an older sidecar answering 1 would ignore the
+# speaker of a multi-speaker voice.
 function Assert-PiperProbe([string]$Exe) {
+  $declared = Select-String -Path (Join-Path $ScriptDir 'entry_piper.py') -Pattern '^BATCH_PROTOCOL\s*=\s*(\d+)' | Select-Object -First 1
+  if (-not $declared) { throw "entry_piper.py declares no BATCH_PROTOCOL; cannot check vd-piper." }
+  $want = "vd-batch/$($declared.Matches[0].Groups[1].Value)"
   $r = Invoke-Frozen $Exe '--vd-batch-probe' 'piper-probe'
-  if ($r.code -ne 0 -or $r.text -notmatch 'vd-batch/1') {
-    throw "vd-piper did not answer its batch probe (exit $($r.code): $($r.text)). Refusing to ship it."
+  if ($r.code -ne 0 -or ("$($r.text)".Trim() -split "`r?`n")[-1].Trim() -ne $want) {
+    throw "vd-piper did not answer its batch probe with $want (exit $($r.code): $($r.text)). Refusing to ship it."
   }
   Write-Host "    - batch probe: $($r.text)"
 }

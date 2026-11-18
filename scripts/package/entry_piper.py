@@ -17,9 +17,9 @@ already uses every core inside one process.) So the worker keeps one of these
 alive per voice and streams requests to it:
 
     stdin  (one JSON object per line):
-        {"text": "...", "output_file": "/abs/out.wav", "length_scale": 1.0}
+        {"text": "...", "output_file": "/abs/out.wav", "length_scale": 1.0, "speaker_id": 3}
     stdout (one JSON object per line):
-        {"ready": true, "protocol": 1}            -- once, after the model loads
+        {"ready": true, "protocol": 2}            -- once, after the model loads
         {"ok": true}                               -- per request
         {"ok": false, "error": "..."}
 
@@ -36,7 +36,10 @@ import json
 import os
 import sys
 
-BATCH_PROTOCOL = 1
+# 2: requests may carry "speaker_id" (a speaker of a multi-speaker voice).
+# A protocol-1 build would ignore it and speak speaker 0, so the worker sends
+# speaker requests only to protocol >= 2 and spawns `--speaker` otherwise.
+BATCH_PROTOCOL = 2
 
 # Built windowed (console=False) to avoid a console window on Windows. If launched
 # without inherited stdio handles, sys.stdout/stderr can be None and piper's logging
@@ -92,7 +95,12 @@ def run_batch() -> int:
             out = str(req["output_file"])
             text = str(req.get("text") or "")
             scale = req.get("length_scale")
-            config = SynthesisConfig(length_scale=float(scale)) if scale else None
+            speaker = req.get("speaker_id")
+            options = {
+                **({"length_scale": float(scale)} if scale else {}),
+                **({"speaker_id": int(speaker)} if speaker is not None else {}),
+            }
+            config = SynthesisConfig(**options) if options else None
             os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
             partial = out + ".partial"
             with wave.open(partial, "wb") as wav:

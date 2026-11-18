@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from app.config import Settings
-from app.piper_batch import BatchUnavailable, PiperBatchPool, resolve_batch_command
+from app.piper_batch import SPEAKER_PROTOCOL, BatchUnavailable, PiperBatchPool, resolve_batch
 from app.wavutil import write_silent_wav
 
 logger = logging.getLogger("tts.engines")
@@ -147,15 +147,27 @@ class PiperEngine:
         # on the first synthesis: probing the binary at import would put a
         # subprocess on the /health path.
         self._batch_pool: PiperBatchPool | None = None
+        self._batch_protocol = 0
         self._batch_resolved = False
         self._batch_lock = threading.Lock()
+
+    @staticmethod
+    def split_voice(voice: str | None) -> tuple[str | None, int | None]:
+        """"en_GB-vctk-medium#12" -> ("en_GB-vctk-medium", 12): a speaker of a
+        multi-speaker model (the voice library's id for one). Pure."""
+        if voice and "#" in voice:
+            model, _, index = voice.rpartition("#")
+            if model and index.isdigit():
+                return model, int(index)
+        return voice, None
 
     def _pool(self) -> PiperBatchPool | None:
         if self._batch_resolved:
             return self._batch_pool
         with self._batch_lock:
             if not self._batch_resolved:
-                command = resolve_batch_command(self._binary or "")
+                found = resolve_batch(self._binary or "")
+                command, self._batch_protocol = found if found else (None, 0)
                 self._batch_pool = PiperBatchPool(command) if command else None
                 self._batch_resolved = True
                 logger.info(
@@ -190,7 +202,9 @@ class PiperEngine:
         looked up in the voices dir. It used to be ignored unless it was a full
         .onnx path, so with two voices installed for one language every line
         was spoken by whichever sorted first, whatever the user chose.
+        A "#<speaker>" suffix picks a speaker inside the model (see synth).
         """
+        voice, _speaker = self.split_voice(voice)
         if voice and voice.endswith(".onnx") and Path(voice).is_file():
             return Path(voice)
         if voice and "/" not in voice and "\\" not in voice:
@@ -215,7 +229,8 @@ class PiperEngine:
     def voice_key(self, language: str, voice: str | None) -> str:
         """Stable identity of the audio this engine would produce (for caching)."""
         model = self.model_for(language, voice)
-        return f"piper:{model.name if model else 'none'}"
+        _, speaker = self.split_voice(voice)
+        return f"piper:{model.name if model else 'none'}" + (f"#{speaker}" if speaker is not None else "")
 
     def synth(
         self,
@@ -238,11 +253,14 @@ class PiperEngine:
         # speed multiplier to 1/speed.
         length_scale = 1.0 / speed if speed and speed > 0 and abs(speed - 1.0) > 1e-3 else None
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        _, speaker = self.split_voice(voice)
 
         pool = self._pool()
-        if pool is not None:
+        # A protocol-1 batch Piper would ignore the speaker and read every line
+        # as speaker 0, so a speaker request goes per line there (--speaker).
+        if pool is not None and (speaker is None or self._batch_protocol >= SPEAKER_PROTOCOL):
             try:
-                pool.synth(model, text, str(out_path), length_scale)
+                pool.synth(model, text, str(out_path), length_scale, speaker)
                 logger.info("piper (persistent) synthesized %d chars -> %s", len(text), out_path)
                 return
             except BatchUnavailable as exc:
@@ -261,6 +279,8 @@ class PiperEngine:
         ]
         if length_scale is not None:
             argv += ["--length_scale", f"{length_scale:.4f}"]
+        if speaker is not None:
+            argv += ["--speaker", str(speaker)]
         _run_subprocess(argv, input_bytes=text.encode("utf-8"))
         logger.info("piper synthesized %d chars -> %s", len(text), out_path)
 

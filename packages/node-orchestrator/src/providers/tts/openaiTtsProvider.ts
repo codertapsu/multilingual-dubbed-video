@@ -98,7 +98,9 @@ export class OpenAiTtsProvider implements CancellableTtsProvider {
     const cred = await requireCredential(this.credentials, this.credentialService);
     const baseUrl = (cred.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, '');
     const model = cred.model ?? DEFAULT_MODEL;
-    const voice = input.voiceId?.trim() || DEFAULT_VOICE;
+    // The voice library names OpenAI's voices "openai-<name>" (one id space
+    // across engines); projects saved before it hold the bare name.
+    const voice = (input.voiceId?.trim() || DEFAULT_VOICE).replace(/^openai-/, '');
 
     await mkdir(input.outputDir, { recursive: true });
 

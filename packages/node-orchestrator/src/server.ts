@@ -93,6 +93,9 @@ import { buildCatalog, findPiperVoice, translatableLanguages } from './setup/cat
 import { listVoicesForLanguage } from './setup/voicesCatalog.js';
 import { listNeuralVoicesForLanguage } from './setup/neuralVoicesCatalog.js';
 import { listOmnivoiceForLanguage } from './setup/omnivoicesCatalog.js';
+import { VoicePreviewCache } from './voices/previewCache.js';
+import { VoiceFavorites } from './voices/voicePreferences.js';
+import { registerVoiceRoutes } from './voices/voiceRoutes.js';
 import { runPreflight } from './setup/preflight.js';
 import { SetupEventBus } from './setup/setupBus.js';
 import { SetupInstaller } from './setup/installer.js';
@@ -576,6 +579,67 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     } catch (err) {
       return sendError(reply, err);
     }
+  });
+
+  // ---- Voice library (voices/voiceRoutes.ts, docs/VOICES.md) -----------------
+  const usablePackIds = async (): Promise<Set<string>> => {
+    const recorded = await enginePackStore.list();
+    const usable = await Promise.all(recorded.map((r) => isPackUsable(enginePackStore, r.id)));
+    return new Set(recorded.filter((_, i) => usable[i]).map((r) => r.id));
+  };
+  /** Start a pack and, for a model pack, the runtime it needs (as /engines/install does). */
+  const startPackInstall = async (packId: string): Promise<string[]> => {
+    if (!engineInstaller.isInstalling(packId)) void engineInstaller.install(packId);
+    const profile = (await buildSystemResponse().catch(() => undefined))?.profile;
+    const companion = profile ? await companionRuntimeFor(enginePackStore, packId, profile) : undefined;
+    if (companion && !engineInstaller.isInstalling(companion)) void engineInstaller.install(companion);
+    return companion ? [packId, companion] : [packId];
+  };
+  registerVoiceRoutes(app, {
+    libraryState: async () => {
+      const [status, installedPacks, openai] = await Promise.all([
+        setupStore.getStatus(),
+        usablePackIds(),
+        credentials.get('openai').catch(() => undefined),
+      ]);
+      return {
+        installedPiper: new Set(status.installed.piperVoices),
+        installedPacks,
+        availablePacks: new Set(availablePacks().map((p) => p.id)),
+        cloudServices: new Set(openai?.apiKey ? ['openai'] : []),
+      };
+    },
+    favorites: new VoiceFavorites(config.configDir),
+    previews: new VoicePreviewCache(config.configDir),
+    packStates: async (packIds) => {
+      const [installed, profile] = await Promise.all([
+        usablePackIds(),
+        buildSystemResponse()
+          .then((r) => r.profile)
+          .catch(() => undefined),
+      ]);
+      const offered = new Set(availablePacks().map((p) => p.id));
+      return packIds.flatMap((id) => {
+        const pack = findPack(id);
+        if (!pack) return [];
+        return [
+          {
+            id,
+            displayName: pack.displayName,
+            ...(pack.accel ? { accel: pack.accel } : {}),
+            approxSizeMb: pack.approxSizeMb,
+            installed: installed.has(id),
+            available: offered.has(id),
+            // A recommendation only: an unfit pack is still offered.
+            fits: profile ? packHardwareSupported(pack, profile) && packFitsMachine(pack, profile) : offered.has(id),
+            installing: engineInstaller.isInstalling(id),
+          },
+        ];
+      });
+    },
+    installPiperVoice: (modelId) => void installer.run({ piperVoices: [modelId] }),
+    installPack: startPackInstall,
+    sendError,
   });
 
   app.post('/setup/complete', async (_req, reply) => {

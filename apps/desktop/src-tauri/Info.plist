@@ -29,6 +29,15 @@
   <string>VideoDubber needs access to read the video you chose so it can transcribe, translate and re-voice it on this Mac.</string>
 
   <!--
+    Voice cloning (Voices → My voices → Record). The app is signed with the
+    hardened runtime, and without this string a capture is reported to return
+    silence; with it, macOS asks once. Paired with the audio-input entitlement
+    in entitlements.plist; neither alone is enough.
+  -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>VideoDubber uses the microphone only when you record your own voice to make a cloned dubbing voice. The recording stays on this Mac.</string>
+
+  <!--
     VideoDubber is local/offline-first: everything runs on the user's machine.
     It never sends a video, a transcript or a model anywhere, so declare that
     rather than letting the default (which permits arbitrary outbound HTTP)

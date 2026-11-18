@@ -153,6 +153,17 @@ export class FakeMediaService implements PipelineMediaService {
     return { audioPath: outputPath, sampleRate: 16000, channels: 1, durationMs: Math.max(0, endMs - startMs) };
   }
 
+  async referenceClip(
+    _inputPath: string,
+    outputPath: string,
+    opts: { startMs?: number; endMs?: number; maxMs?: number; sampleRate?: number },
+  ): Promise<AudioExtractResult> {
+    const durationMs = Math.max(0, (opts.endMs ?? opts.maxMs ?? 0) - (opts.startMs ?? 0));
+    this.calls.push(`referenceClip:${outputPath}:${opts.startMs ?? 0}-${opts.endMs ?? ''}`);
+    await this.touch(outputPath);
+    return { audioPath: outputPath, sampleRate: opts.sampleRate ?? 48_000, channels: 1, durationMs };
+  }
+
   /** Every timeline build's input, so tests can see what the mix was asked to play. */
   public timelineInputs: BuildTtsTimelineInput[] = [];
 

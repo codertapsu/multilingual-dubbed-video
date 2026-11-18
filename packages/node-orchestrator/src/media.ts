@@ -218,6 +218,18 @@ export interface PipelineMediaService extends MediaService {
     noiseDb: number;
     minSilenceMs: number;
   }>;
+  /**
+   * A voice-cloning reference: cut `[startMs, endMs)` (at most `maxMs`) of any
+   * audio or video, mixed down to mono at `sampleRate`, levelled to
+   * `loudnessLufs` when given, written atomically. Optional: an older media
+   * worker does not have it, and cloning then says so.
+   */
+  referenceClip?(
+    inputPath: string,
+    outputPath: string,
+    opts: { startMs?: number; endMs?: number; maxMs?: number; sampleRate?: number; loudnessLufs?: number },
+    signal?: AbortSignal,
+  ): Promise<AudioExtractResult>;
 }
 
 /**
@@ -249,6 +261,7 @@ const MEDIA_SERVICE_METHOD_TABLE: Record<keyof PipelineMediaService, true> = {
   renderFilmstrip: true,
   renderFittedClip: true,
   measureSpeech: true,
+  referenceClip: true,
 };
 
 /** A method name of {@link PipelineMediaService}. */

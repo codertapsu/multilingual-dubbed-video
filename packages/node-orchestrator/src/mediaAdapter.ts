@@ -98,6 +98,12 @@ interface MediaWorkerModule {
     input: string,
     opts?: { noiseDb?: number; minSilenceMs?: number; signal?: AbortSignal },
   ): ReturnType<NonNullable<PipelineMediaService['measureSpeech']>>;
+  referenceClip?(
+    input: string,
+    output: string,
+    opts?: Parameters<NonNullable<PipelineMediaService['referenceClip']>>[2],
+    run?: MediaWorkerRunOptions,
+  ): Promise<AudioExtractResult>;
 }
 
 /**
@@ -210,6 +216,17 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
       ? {
           measureSpeech: (p: string, o?: { noiseDb?: number; minSilenceMs?: number }, signal?: AbortSignal) =>
             mod.measureSpeech!(p, { ...(o ?? {}), ...(signal ? { signal } : {}) }),
+        }
+      : {}),
+    // Voice-cloning references (voices/referencePrep.ts).
+    ...(typeof mod.referenceClip === 'function'
+      ? {
+          referenceClip: (
+            i: string,
+            o: string,
+            opts: Parameters<NonNullable<PipelineMediaService['referenceClip']>>[2],
+            signal?: AbortSignal,
+          ) => mod.referenceClip!(i, o, opts, runOpts(signal)),
         }
       : {}),
     // clip16kMono is optional on the interface: only expose it when the loaded

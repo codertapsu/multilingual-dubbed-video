@@ -171,6 +171,8 @@ export {
   buildClip16kMonoArgs,
 } from './extract.js';
 
+export { referenceClip, buildReferenceClipArgs, REFERENCE_MAX_MS, type ReferenceClipOptions } from './reference.js';
+
 export {
   buildTtsTimeline,
   type TimelineStretchSummary,

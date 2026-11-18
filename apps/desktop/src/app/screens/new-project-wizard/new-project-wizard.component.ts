@@ -49,6 +49,8 @@ import { libraryEngineFor, voiceOptions } from '../../shared/voice-library/voice
 
 /** The speaker-detection engine pack (enginePackCatalog.ts). */
 const SPEAKER_PACK = 'diarization-sherpa';
+/** Music & voice separation: the HTDemucs model pack, which brings its audio.cpp runtime. */
+const SEPARATION_PACK = 'separation-htdemucs';
 
 /** Wizard step index. */
 type WizardStep = 1 | 2;
@@ -171,61 +173,96 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
    * platform/hardware-runnable). A feature whose pack isn't offered is HIDDEN
    * entirely, not shown as a dead "Install" hint. */
   protected readonly offeredPacks = signal<ReadonlySet<string>>(new Set<string>());
-  /** Vocal-separation pack ("replace original vocals" mix mode) is installed. */
-  protected readonly vocalSeparationReady = computed(() => this.installedPacks().has('separation-audio'));
-  /** WhisperX pack (forced alignment + diarization) is installed. */
+  /** Music & voice separation ("replace the voices, keep the music") is installed. */
+  protected readonly vocalSeparationReady = computed(() => this.installedPacks().has(SEPARATION_PACK));
+  /** WhisperX pack (forced alignment) is installed. */
   protected readonly whisperxReady = computed(() => this.installedPacks().has('alignment-whisperx'));
-  /** Whether the vocal-separation feature is offered at all (else hide the control). */
-  protected readonly vocalSeparationOffered = computed(() => this.offeredPacks().has('separation-audio'));
+  /** Whether music & voice separation is offered here at all (else the option is hidden). */
+  protected readonly vocalSeparationOffered = computed(() => this.offeredPacks().has(SEPARATION_PACK));
   /** Whether the WhisperX (forced alignment) feature is offered at all. */
   protected readonly whisperxOffered = computed(() => this.offeredPacks().has('alignment-whisperx'));
   /** Speaker detection (the diarization-sherpa pack): offered here / installed. */
   protected readonly speakersOffered = computed(() => this.offeredPacks().has(SPEAKER_PACK));
   protected readonly speakersReady = computed(() => this.installedPacks().has(SPEAKER_PACK));
-  protected readonly speakersInstalling = signal(false);
-  protected readonly speakersProgress = signal<number | null>(null);
-  protected readonly speakersError = signal<AppError | null>(null);
+
+  /** An engine being installed from the wizard (one at a time), and how far it is. */
+  private readonly packInstall = signal<{ packId: string; percent: number | null } | null>(null);
+  private readonly packInstallError = signal<{ packId: string; error: AppError } | null>(null);
+  private readonly installState = (packId: string) => ({
+    installing: computed(() => this.packInstall()?.packId === packId),
+    progress: computed(() => (this.packInstall()?.packId === packId ? this.packInstall()!.percent : null)),
+    error: computed(() => (this.packInstallError()?.packId === packId ? this.packInstallError()!.error : null)),
+  });
+  private readonly speakerInstall = this.installState(SPEAKER_PACK);
+  protected readonly speakersInstalling = this.speakerInstall.installing;
+  protected readonly speakersProgress = this.speakerInstall.progress;
+  protected readonly speakersError = this.speakerInstall.error;
+  private readonly separationInstall = this.installState(SEPARATION_PACK);
+  protected readonly separationInstalling = this.separationInstall.installing;
+  protected readonly separationProgress = this.separationInstall.progress;
+  protected readonly separationError = this.separationInstall.error;
+
+  /** Install speaker detection from the wizard (a small download), then tick it. */
+  protected installSpeakers(): void {
+    void this.installPack(SPEAKER_PACK, () => {
+      if (this.speakersReady()) this.patchSettings('diarize', true);
+    });
+  }
+
+  /** Install music & voice separation (the model and the runtime it needs), then choose it. */
+  protected installSeparation(): void {
+    void this.installPack(SEPARATION_PACK, () => {
+      if (this.vocalSeparationReady()) this.setOriginalAudioMode('replace-vocals');
+    });
+  }
 
   /**
-   * Install speaker detection from the wizard (a small download), following
-   * /engines/events for progress and the outcome, then tick it.
+   * Install an engine pack from the wizard, following /engines/events for its
+   * progress and outcome, and for every pack the install started with it (a
+   * model brings its runtime); then refresh what is installed.
    */
-  protected async installSpeakers(): Promise<void> {
-    if (this.speakersInstalling()) return;
-    this.speakersInstalling.set(true);
-    this.speakersError.set(null);
+  private async installPack(packId: string, then: () => void): Promise<void> {
+    if (this.packInstall()) return;
+    this.packInstall.set({ packId, percent: null });
+    this.packInstallError.set(null);
     // Listen before asking: the install's events must not be missed.
     const es = environment.orchestratorUrl ? new EventSource(`${environment.orchestratorUrl}/engines/events`) : null;
-    const outcome = new Promise<boolean>((resolve) => {
-      if (!es) return resolve(false);
+    const waiting = new Set([packId]);
+    let resolveAll: (ok: boolean) => void = () => undefined;
+    const outcome = new Promise<boolean>((resolve) => (resolveAll = resolve));
+    if (es) {
       es.onmessage = (ev) => {
         try {
           const e = JSON.parse(ev.data as string) as { type: string; packId?: string; percent?: number | null; error?: AppError };
-          if (e.packId !== SPEAKER_PACK) return;
-          if (e.type === 'progress') this.speakersProgress.set(e.percent ?? null);
-          else if (e.type === 'done') resolve(true);
-          else if (e.type === 'error') {
-            this.speakersError.set(e.error ?? null);
-            resolve(false);
+          if (!e.packId || !waiting.has(e.packId)) return;
+          if (e.type === 'progress' && e.packId === packId) this.packInstall.set({ packId, percent: e.percent ?? null });
+          else if (e.type === 'done') {
+            waiting.delete(e.packId);
+            if (waiting.size === 0) resolveAll(true);
+          } else if (e.type === 'error') {
+            this.packInstallError.set({ packId, error: e.error ?? { code: 'ENGINE_PACK_FAILED', message: 'Install failed.' } });
+            resolveAll(false);
           }
         } catch {
           /* not an install event */
         }
       };
-    });
+    } else {
+      resolveAll(false);
+    }
     try {
-      await this.ipc.installEngine(SPEAKER_PACK);
+      const res = await this.ipc.installEngine(packId);
+      for (const other of res.alsoInstalling ?? []) waiting.add(other);
       if (await outcome) {
         const engines = await this.ipc.getEngines().catch(() => null);
         if (engines) this.installedPacks.set(new Set(engines.installed.map((p) => p.id)));
-        if (this.speakersReady()) this.patchSettings('diarize', true);
+        then();
       }
     } catch (err) {
-      this.speakersError.set(err as AppError);
+      this.packInstallError.set({ packId, error: err as AppError });
     } finally {
       es?.close();
-      this.speakersInstalling.set(false);
-      this.speakersProgress.set(null);
+      this.packInstall.set(null);
     }
   }
 

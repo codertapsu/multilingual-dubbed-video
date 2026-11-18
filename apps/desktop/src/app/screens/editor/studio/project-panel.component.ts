@@ -195,7 +195,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   protected readonly resultPreviewFailed = signal(false);
 
   protected readonly originalAudioModes = computed<readonly OriginalAudioMode[]>(() =>
-    this.offeredPacks().has('separation-audio') ? (['keep', 'replace-vocals', 'remove'] as const) : (['keep', 'remove'] as const),
+    this.offeredPacks().has('separation-htdemucs') ? (['keep', 'replace-vocals', 'remove'] as const) : (['keep', 'remove'] as const),
   );
 
   protected readonly contextIgnoredByEngine = computed(() =>

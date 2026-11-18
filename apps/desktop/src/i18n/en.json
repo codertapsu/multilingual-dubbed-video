@@ -753,8 +753,7 @@
     "keep": "Keep it in the background (recommended)",
     "keep-hint": "Music and effects stay; the original audio is automatically turned down whenever the dubbed voice speaks.",
     "replace-vocals": "Replace voices, keep music & effects",
-    "replace-vocals-hint": "Studio-style: the original voices are separated out and replaced by the dub, while the music & effects play at full volume.",
-    "replace-vocals-needs": "Install the “Vocal separation” engine in Settings → Engines to enable this.",
+    "replace-vocals-hint": "Studio-style: the original voices are separated out and replaced by the dub, while the music & effects play at full volume. Separation takes about a tenth of the video's length on a graphics card or Apple Silicon, about the video's length on a processor alone.",
     "remove": "Remove it completely",
     "remove-hint": "Only the dubbed voice is heard. Original speech, music and effects are all muted.",
     "duck-level": "Background volume while the dub speaks",
@@ -858,7 +857,9 @@
     "browse-title-browser": "The file picker is only in the desktop app. Paste the video's full path instead.",
     "output-folder-remember-reset": "“Use the default folder” here makes them start in the default folder again.",
     "diarize-install": "Install speaker detection (~135 MB)",
-    "diarize-installing": "Installing speaker detection… {{ percent }}%"
+    "diarize-installing": "Installing speaker detection… {{ percent }}%",
+    "separation-install": "Install music & voice separation (~150 MB)",
+    "separation-installing": "Installing music & voice separation… {{ percent }}%"
   },
   "status": {
     "created": "Created",

@@ -878,8 +878,8 @@ export class IpcService {
   }
 
   /** POST /engines/install — start a pack download (progress via SSE). */
-  installEngine(packId: string): Promise<{ started: boolean }> {
-    return this.http<{ started: boolean }>('POST', '/engines/install', { packId });
+  installEngine(packId: string): Promise<{ started: boolean; alsoInstalling?: string[] }> {
+    return this.http<{ started: boolean; alsoInstalling?: string[] }>('POST', '/engines/install', { packId });
   }
 
   /** POST /engines/uninstall — remove an installed pack. */

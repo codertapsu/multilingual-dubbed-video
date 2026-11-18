@@ -155,12 +155,21 @@
               />
               <span class="radio-body">
                 <span class="radio-title">{{ 'wizard.replace-vocals' | translate }}</span>
-                <span class="hint"
-                  >{{ 'wizard.replace-vocals-hint' | translate }}
-                  @if (!vocalSeparationReady()) {
-                    <strong>{{ 'wizard.replace-vocals-needs' | translate }}</strong>
-                  }</span
-                >
+                <span class="hint">{{ 'wizard.replace-vocals-hint' | translate }}</span>
+                @if (!vocalSeparationReady()) {
+                  <span class="hint">
+                    @if (separationInstalling()) {
+                      {{ 'wizard.separation-installing' | translate: { percent: separationProgress() ?? 0 } }}
+                    } @else {
+                      <button type="button" class="btn btn-sm" (click)="installSeparation(); $event.preventDefault()">
+                        {{ 'wizard.separation-install' | translate }}
+                      </button>
+                    }
+                  </span>
+                }
+                @if (separationError(); as e) {
+                  <span class="hint warn">{{ e.message }}</span>
+                }
               </span>
             </label>
           }

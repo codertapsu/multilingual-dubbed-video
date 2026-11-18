@@ -753,8 +753,7 @@
     "keep": "Giữ ở nền (khuyến nghị)",
     "keep-hint": "Nhạc và hiệu ứng được giữ lại; âm thanh gốc tự động giảm xuống mỗi khi giọng lồng tiếng cất lên.",
     "replace-vocals": "Thay giọng nói, giữ nhạc & hiệu ứng",
-    "replace-vocals-hint": "Kiểu phòng thu: giọng nói gốc được tách ra và thay bằng bản lồng tiếng, trong khi nhạc & hiệu ứng vẫn phát ở âm lượng đầy đủ.",
-    "replace-vocals-needs": "Hãy cài engine “Tách giọng” trong Cài đặt → Engine để bật tuỳ chọn này.",
+    "replace-vocals-hint": "Kiểu phòng thu: giọng nói gốc được tách ra và thay bằng bản lồng tiếng, trong khi nhạc & hiệu ứng vẫn phát ở âm lượng đầy đủ. Việc tách mất khoảng một phần mười thời lượng video trên card đồ hoạ hoặc Apple Silicon, và khoảng bằng thời lượng video nếu chỉ dùng bộ xử lý.",
     "remove": "Xoá hoàn toàn",
     "remove-hint": "Chỉ nghe thấy giọng lồng tiếng. Lời thoại, nhạc và hiệu ứng gốc đều bị tắt.",
     "duck-level": "Âm lượng nền khi giọng lồng tiếng nói",
@@ -858,7 +857,9 @@
     "browse-title-browser": "Hộp chọn tệp chỉ có trong ứng dụng máy tính. Hãy dán đường dẫn đầy đủ của video vào ô bên cạnh.",
     "output-folder-remember-reset": "Bấm “Dùng thư mục mặc định” ở đây để dự án mới quay về lưu vào thư mục mặc định.",
     "diarize-install": "Cài nhận diện người nói (~135 MB)",
-    "diarize-installing": "Đang cài nhận diện người nói… {{ percent }}%"
+    "diarize-installing": "Đang cài nhận diện người nói… {{ percent }}%",
+    "separation-install": "Cài tách nhạc & giọng nói (~150 MB)",
+    "separation-installing": "Đang cài tách nhạc & giọng nói… {{ percent }}%"
   },
   "status": {
     "created": "Đã tạo",

@@ -501,7 +501,8 @@ An index with the same grouping lives at [`docs/README.md`](docs/README.md).
 - Argos language coverage and quality vary by pair; some pairs are not available.
 - Alignment uses time-stretching within limits; very dense speech may overflow and get
   flagged for review.
-- Voice cloning is intentionally **excluded** (see disclaimer + roadmap).
+- Voice cloning works with one engine (VieNeu-TTS 3.8, Vietnamese) and needs a
+  consent declaration per voice (see disclaimer and [`docs/VOICE_CLONING.md`](docs/VOICE_CLONING.md)).
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what's planned.
 
@@ -515,10 +516,12 @@ VideoDubber is a tool. **You are responsible for how you use it.**
   licensing, and platform terms of service.
 - **Translations and synthetic voices can be inaccurate.** Review output before
   publishing, especially for sensitive or factual content.
-- **Voice cloning is not included.** VideoDubber uses generic TTS voices. Any future
-  voice-cloning capability would require **explicit, documented consent** from the
-  person whose voice is involved and a legal review (see
-  [`docs/ROADMAP.md`](docs/ROADMAP.md)). Do not use this software to impersonate anyone.
+- **Only clone a voice you have the right to use.** Voice cloning asks you to
+  declare whose voice it is and to agree to a statement (stored with the voice);
+  that declaration is your commitment, not verification. Every rendered video is
+  labelled as AI-generated speech; say so when you publish. Do not use this
+  software to impersonate, defraud or mislead anyone (see
+  [`docs/VOICE_CLONING.md`](docs/VOICE_CLONING.md)).
 - **No warranty.** Provided "as is" under the MIT License (see [`LICENSE`](LICENSE)).
 
 ### Reference attribution

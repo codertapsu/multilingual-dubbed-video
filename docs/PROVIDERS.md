@@ -232,11 +232,12 @@ first Claude request), in `providers/cloud/claudeMessages.ts`:
 - Thinking is adaptive and shares the token budget with the answer, so requests leave
   room for both and are streamed.
 
-### Voice cloning is excluded
+### Voice cloning: local, with consent
 
-The cloud TTS adapter uses stock voices only. Cloning a real person's voice requires
-that person's explicit, documented consent and a legal review, and is deliberately not
-part of VideoDubber. See [`ROADMAP.md`](ROADMAP.md).
+The cloud TTS adapter uses stock voices only. Cloning runs locally with VieNeu-TTS 3.8
+(`vieneu-tts`), from a recording the user makes or imports and a consent declaration
+stored with the voice; nothing is sent to a cloud service. See
+[`VOICE_CLONING.md`](VOICE_CLONING.md).
 
 ---
 

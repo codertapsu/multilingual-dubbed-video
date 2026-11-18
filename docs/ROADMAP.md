@@ -194,18 +194,24 @@ drop it explicitly or to commit to it and note the August 2027 runner cutoff.
 
 ## Sensitive / gated
 
-### Voice cloning — with consent & legal review
+### Voice cloning — shipped with a consent declaration (2026-11)
 
-Cloning a real person's voice is **deliberately excluded today**. Any future support
-would require, at minimum:
+Cloning used to be deliberately excluded until consent and safeguards existed. It
+ships now ([`VOICE_CLONING.md`](VOICE_CLONING.md)) with these gates, decided by the
+project owner on 2026-11-18:
 
-- **Explicit, documented consent** from the person whose voice is involved.
-- A **legal review** of jurisdiction-specific rights (publicity, likeness, biometric
-  voiceprint laws).
-- Safeguards against impersonation/misuse.
+- **A declaration per voice**: whose voice it is, and a statement the user agrees
+  to, stored word for word with the voice (version, time, relation) and deleted
+  with it. The app says it is a commitment, not identity verification.
+- **Local only**: recordings, voice data and declarations never leave the machine.
+- **People make voices, agents do not**: the MCP server can use a voice but cannot
+  create one or agree to a statement.
+- **Every render is labelled** as AI-generated speech (container metadata), and
+  users are asked to disclose it when publishing.
 
-Until those gates exist, VideoDubber uses only generic TTS voices. See the disclaimer in
-the [README](../README.md#legal--usage-disclaimer).
+Still open: a **legal review** per market the app is distributed in (publicity,
+likeness and voiceprint laws differ), a **spoken-prompt verification** for higher-risk
+uses, and an audio **watermark** that survives mixing and AAC encoding.
 
 ---
 

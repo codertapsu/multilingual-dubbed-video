@@ -2457,6 +2457,8 @@ export class PipelineRunner {
       // when no separation engine pack is installed.
       const separated = this.deps.separation
         ? await this.deps.separation.separate(paths.originalWav, paths.audioDir, signal).catch((err: unknown) => {
+            // A pause is a stop, not a failure: never mix on with ducking.
+            throwIfCancelled(signal);
             this.deps.logger.warn(`Separation failed (${String(err)}); falling back to ducking the original.`);
             return null;
           })
@@ -2468,7 +2470,7 @@ export class PipelineRunner {
         duckingLevelDb = 0;
       } else {
         this.deps.logger.warn(
-          'No vocal-separation engine installed — install the "Vocal separation" engine pack to keep the original music & effects. Falling back to ducking.',
+          'Music & voice separation is not installed (Settings → Engines → "Music & voice separation"): the original is turned down under the dub instead of keeping its music at full volume.',
         );
         duck = true;
       }

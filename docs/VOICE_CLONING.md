@@ -38,14 +38,22 @@ need the project's audio, so the dub must have reached speech-to-text once.
   own audio and proposes its clearest 8 seconds; the Check step is the same as
   above. When the voice is made, it is proposed as the project's voice; it takes
   effect when you re-dub from text-to-speech (nothing before that changes).
-- **Several speakers:** select one person's lines (in the line list or on the
-  timeline: Ctrl/⌘-click adds a line, Shift-click a range), then in the **Line
-  tab** choose **Make a voice from these lines…**. Pick lines of that person
-  only (lines of two people make a mixed voice), about 10 seconds of clear
-  speech in total; the app joins them with a short pause, at most 60 seconds.
-  The new voice is given to those lines when the project speaks with VieNeu-TTS
-  3.8; then **re-voice** them to hear it. Do this once per speaker, and drag a
-  voice onto that person's other lines.
+- **Several speakers, automatically:** when the lines have speakers (speaker
+  detection, or set by hand in the Line tab), **Project tab → Speakers → Copy
+  every speaker's voice…** asks for the statement once and makes one voice per
+  speaker from that speaker's longest lines that nobody talks over (up to 60
+  seconds), then gives each voice to its speaker, so all of their lines speak
+  with it. A speaker with less than 3 seconds of clear speech is skipped and
+  named; they keep the project voice. **Copy their voice…** on one speaker does
+  the same with the Check step, to choose the part yourself.
+- **Several speakers, by hand:** select one person's lines (in the line list or
+  on the timeline: Ctrl/⌘-click adds a line, Shift-click a range), then in the
+  **Line tab** choose **Make a voice from these lines…**. Pick lines of that
+  person only (lines of two people make a mixed voice), about 10 seconds of
+  clear speech in total; the app joins them with a short pause, at most 60
+  seconds. When those lines all belong to one speaker the voice becomes that
+  speaker's, otherwise it is given to those lines; either way it needs the
+  project to speak with VieNeu-TTS 3.8. Then **re-voice** them to hear it.
 
 The statement for these voices is: *I have the right to use the voices in this
 video for its dub* (and the same commitments as below). Such a voice **stays in

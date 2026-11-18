@@ -217,11 +217,19 @@ What you can do, and how:
   any line or clip** on the timeline. Select several lines first to re-voice them
   all at once. **Speaking rate** reads a line faster or slower (a faster reading
   fits a long line more naturally than stretching the audio).
-- **Make the dub sound like the person in the video.** In the Project tab,
+- **Who says what.** Each line can belong to a speaker (Line tab →
+  **Speaker**). **Detect speakers** in the Project tab's Speakers section works
+  it out from the audio in seconds (it needs the small *Speaker detection*
+  engine; tick **Detect who speaks** in the new-project wizard to do it during
+  the dub). Give the number of speakers when you know it. Each speaker can have
+  their own voice; **Merge into…** joins two speakers who are one person.
+- **Make the dub sound like the people in the video.** In the Project tab,
   **Voice from this video** copies the voice of a video with one speaker. With
-  several speakers, select one person's lines (Ctrl/⌘-click adds a line) and
-  choose **Make a voice from these lines…** in the Line tab; do it once per
-  speaker. These voices need VieNeu-TTS 3.8 and stay in the project
+  several speakers, **Copy every speaker's voice…** in the Speakers section
+  makes one voice per speaker from their clearest lines and gives it to them;
+  or select one person's lines (Ctrl/⌘-click adds a line) and choose **Make a
+  voice from these lines…** in the Line tab. These voices need VieNeu-TTS 3.8
+  and stay in the project
   ([VOICE_CLONING.md](VOICE_CLONING.md#the-voice-of-the-person-in-the-video)).
 - **Hear it immediately.** Press **Space**. The preview plays your edited dub
   over the video — moved lines play from their new place, without re-rendering.
@@ -463,11 +471,11 @@ How it works, including how to go back to an older version:
 
 Stated plainly, so you are not hunting for a feature that is not there:
 
-- **No speaker detection.** Every line is dubbed in one voice. You can assign a
-  different voice per line by hand in the Editor (drag a voice onto the lines a
-  speaker says, or make a voice from that speaker's own lines), but the app will
-  not work out who is speaking. (The diarization engine pack is not built — it is hidden from
-  Settings → Engines rather than shipped broken.)
+- **Speaker detection is a first pass, not perfect.** It tells voices apart,
+  not characters: the same person shouting and whispering can come out as two
+  speakers, and two similar voices as one. Give the number of speakers when you
+  know it (much more reliable), merge speakers in the Speakers section, and set
+  any line's speaker in the Line tab.
 - **No music/voice separation.** "Keep the music, replace the speech" is not
   available; the background is turned *down* under the new voice, not separated
   out. (Same story: the pack is not built.)

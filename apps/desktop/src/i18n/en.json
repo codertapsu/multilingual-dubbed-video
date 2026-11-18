@@ -498,7 +498,7 @@
     "project-voice-play": "Play {{ name }}",
     "speakers": "Speakers",
     "speakers-hint": "Give each person in the video their own voice. Every line of a speaker is spoken in that speaker's voice, unless the line has a voice of its own. Changing a voice marks the lines it affects for re-voicing.",
-    "speakers-none": "No speakers yet. Turn on “Detect who speaks” under Speech recognition above and re-dub from speech-to-text, or set who says a line in the Line tab (select several lines to set them at once).",
+    "speakers-none": "No speakers yet. Use “Detect speakers” above (it needs the Speaker detection engine, Settings → Engines), or set who says a line in the Line tab (select several lines to set them at once).",
     "speakers-make-all": "Copy every speaker's voice…",
     "speaker-stats": "{{ lines }} lines · {{ s }} s",
     "speaker-voice": "Voice of Speaker {{ n }}",
@@ -572,7 +572,14 @@
     "synthesizing": "Synthesizing…",
     "tighten": "Tighten to fit",
     "tighten-title": "Shorten this line's translation so it fits its time window, keeping its meaning, then re-voice it",
-    "diarize-hint": "Works out who says each line when the dub is made again from speech-to-text. Needs the Speaker detection engine (Settings → Engines, ~135 MB)."
+    "diarize-hint": "Works out who says each line when the dub is made again from speech-to-text. Needs the Speaker detection engine (Settings → Engines, ~135 MB).",
+    "speaker-count": "Number of speakers",
+    "speaker-count-auto": "Automatic",
+    "speakers-detect": "Detect speakers",
+    "speakers-detecting": "Detecting…",
+    "speakers-detect-hint": "Works out who says each line from the video's audio, in seconds, without transcribing again: your translations and timing stay. If you know how many people speak, choose the number — it is much more reliable. Lines whose voice changes are marked for re-voicing.",
+    "speaker-merge": "Merge into…",
+    "speaker-merge-label": "Merge Speaker {{ n }} into another speaker"
   },
   "studio": {
     "back": "Back to projects",

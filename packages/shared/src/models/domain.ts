@@ -236,6 +236,12 @@ export interface ProjectSettings {
   forcedAlignment?: boolean;
   /** Run speaker diarization to split the transcript per speaker. */
   diarize?: boolean;
+  /**
+   * How many people speak, when the user knows (2-20); absent = let speaker
+   * detection decide. Known, it is far more reliable: in Phase 0 no automatic
+   * setting kept one character in one speaker on a real drama clip.
+   */
+  diarizeSpeakers?: number;
   /** Per-speaker TTS voice assignments (used when diarization is on). */
   speakerVoices?: SpeakerVoiceAssignment[];
   /**

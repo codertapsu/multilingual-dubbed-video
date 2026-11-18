@@ -45,6 +45,7 @@ import {
   type TtsSegment,
 } from '@videodubber/shared';
 import { alignSegments, type AlignSettings } from './alignment/align.js';
+import { assignSpeakers, cachedSpeakerTurns } from './pipeline/diarization.js';
 import { measureClip, type ClipTiming } from './alignment/clipSpeech.js';
 import {
   rateForGroup,
@@ -483,6 +484,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       if (style) next.burnSubtitleStyle = style;
       else delete next.burnSubtitleStyle;
     }
+    // A known speaker count: a whole number of people, or nothing (automatic).
+    if (patch.diarizeSpeakers !== undefined) {
+      const n = Number(patch.diarizeSpeakers);
+      if (Number.isInteger(n) && n >= 2 && n <= 20) next.diarizeSpeakers = n;
+      else delete next.diarizeSpeakers;
+    }
     // Speaker voices replace the table whole (an empty list clears it). The
     // lines whose voice that moves are marked for re-voicing, as a voice picked
     // for one line is, so the editor re-voices exactly those instead of asking
@@ -500,6 +507,53 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     });
     const pipeline = await this.deps.store.getPipeline(projectId);
     return { project: saved, pipeline };
+  }
+
+  /**
+   * Detect who says each line again, on the lines as they are: no new
+   * transcript, no timing change (lines are only labelled), translations kept.
+   * The speaker count is remembered (and detection switched on) for later
+   * re-dubs. Lines whose voice moves with their new speaker are marked for
+   * re-voicing. Throws ENGINE_PACK_MISSING without the engine.
+   */
+  async redetectSpeakers(projectId: string, opts: { numSpeakers?: number } = {}): Promise<TimelineDocument> {
+    this.assertNotRunning(projectId, 'detect speakers');
+    const service = this.deps.diarization;
+    if (!service || !(await service.available().catch(() => false))) {
+      throw new AppErrorException('ENGINE_PACK_MISSING', 'Speaker detection is not installed.', {
+        remediation: 'Install "Speaker detection" in Settings → Engines (about 135 MB), then try again.',
+      });
+    }
+    const n = Number(opts.numSpeakers);
+    const numSpeakers = Number.isInteger(n) && n >= 2 && n <= 20 ? n : undefined;
+    const project = await this.deps.store.getProject(projectId);
+    const paths = this.deps.store.paths(projectId);
+    const turns = await cachedSpeakerTurns(service, paths.original16kMonoWav, paths.diarizationJson, numSpeakers ? { numSpeakers } : {});
+    if (!turns) throw new AppErrorException('ENGINE_PACK_MISSING', 'Speaker detection is not installed.');
+    await this.artifactLock.run(projectId, async () => {
+      const source = await this.tryReadSegments(paths.sourceJson);
+      if (!source) throw new AppErrorException('INVALID_EDIT', 'This project has no transcript yet.');
+      const labelled = assignSpeakers(source, turns);
+      await writeJsonAtomic(paths.sourceJson, { segments: labelled });
+      const translated = await this.tryReadSegments(paths.translatedJson);
+      if (translated) {
+        const byId = new Map(labelled.map((s) => [s.id, s.speakerId]));
+        const voiced = (await this.deps.store.getPipeline(projectId)).steps.find((s) => s.id === 'tts')?.status === 'completed';
+        await writeJsonAtomic(paths.translatedJson, {
+          segments: translated.map((s) => {
+            const { speakerId: _old, ...rest } = s;
+            const speakerId = byId.get(s.id);
+            const next: TranscriptSegment = { ...rest, ...(speakerId ? { speakerId } : {}) };
+            return voiced && voiceForLine(next, project.settings) !== voiceForLine(s, project.settings) ? { ...next, ttsStale: true } : next;
+          }),
+        });
+      }
+    });
+    const settings: ProjectSettings = { ...project.settings, diarize: true };
+    if (numSpeakers) settings.diarizeSpeakers = numSpeakers;
+    else delete settings.diarizeSpeakers;
+    await this.deps.store.saveProject({ ...project, settings, updatedAt: new Date().toISOString() });
+    return this.getTimeline(projectId);
   }
 
   /**

@@ -250,6 +250,22 @@
               @if (speakersError(); as e) {
                 <span class="hint warn">{{ e.message }}</span>
               }
+              @if (speakersReady() && settings().diarize) {
+                <span class="hint">
+                  {{ 'editor.speaker-count' | translate }}
+                  <select
+                    name="diarizeSpeakers"
+                    [ngModel]="settings().diarizeSpeakers ?? 0"
+                    (ngModelChange)="setSpeakerCount(+$event)"
+                    (click)="$event.preventDefault()"
+                  >
+                    <option [ngValue]="0">{{ 'editor.speaker-count-auto' | translate }}</option>
+                    @for (n of speakerCounts; track n) {
+                      <option [ngValue]="n">{{ n }}</option>
+                    }
+                  </select>
+                </span>
+              }
             </span>
           </label>
         }

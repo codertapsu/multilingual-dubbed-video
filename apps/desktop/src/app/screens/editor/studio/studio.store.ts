@@ -488,6 +488,39 @@ export class StudioStore {
     }
   }
 
+  /** Speaker detection is running (the Speakers section shows it). */
+  readonly detectingSpeakers = signal(false);
+
+  /**
+   * Detect who says each line again (no new transcript, timing untouched):
+   * the lines are relabelled, those whose voice moves are marked for re-voicing.
+   */
+  async detectSpeakers(numSpeakers?: number): Promise<boolean> {
+    if (this.detectingSpeakers()) return false;
+    this.detectingSpeakers.set(true);
+    try {
+      if (!(await this.flushNow())) return false;
+      this.adopt(await this.ipc.detectSpeakers(this.projectId(), numSpeakers));
+      const { project } = await this.ipc.getProject(this.projectId());
+      this.project.set(project);
+      return true;
+    } catch (err) {
+      this.error.set(toAppError(err));
+      return false;
+    } finally {
+      this.detectingSpeakers.set(false);
+    }
+  }
+
+  /** One person detected as two: give every line of `from` to `into` (one undo step). */
+  mergeSpeaker(from: string, into: string): void {
+    if (from === into) return;
+    const ids = this.segments()
+      .filter((s) => s.speakerId === from)
+      .map((s) => s.id);
+    this.setSpeaker(ids, into);
+  }
+
   /** Select every line of one speaker. */
   selectSpeaker(speakerId: string): void {
     const ids = this.segments()

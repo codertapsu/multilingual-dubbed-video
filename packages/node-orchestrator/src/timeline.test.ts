@@ -14,7 +14,7 @@
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { setStepStatus, type AlignedSegment, type TranscriptSegment } from '@videodubber/shared';
 import { loadConfig } from './config.js';
@@ -281,6 +281,46 @@ describe('PATCH /timeline (patchSegments)', () => {
     ({ project } = await orchestrator.updateProjectSettings(id, { speakerVoices: [] }));
     expect(project.settings.speakerVoices).toBeUndefined();
     expect((await readJson<{ segments: TranscriptSegment[] }>(paths.translatedJson)).segments[2]!.ttsStale).toBe(true);
+  });
+
+  it('detects speakers again on the lines as they are, keeping translations and timing', async () => {
+    const { id, paths } = await dubbedProject();
+    const turns = [
+      { startMs: 0, endMs: 2100, speaker: 0 },
+      { startMs: 4900, endMs: 6100, speaker: 1 },
+    ];
+    const diarize = vi.fn(async () => turns);
+    const project = await store.getProject(id);
+    await store.saveProject({ ...project, settings: { ...project.settings, speakerVoices: [{ speakerId: 'SPEAKER_01', voiceId: 'anna' }] } });
+    await store.savePipeline(setStepStatus(await store.getPipeline(id), 'tts', 'completed'));
+    const orch = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media: new FakeMediaService(),
+      registry: fakeRegistry(new FakeSttProvider([]), new FakeTranslationProvider(), tts),
+      bus: new EventBusRegistry(),
+      diarization: { diarize, available: async () => true, modelKey: 'm' },
+    });
+    // The audio the detection reads.
+    await fsp.mkdir(path.dirname(paths.original16kMonoWav), { recursive: true });
+    await fsp.writeFile(paths.original16kMonoWav, 'RIFF');
+
+    const doc = await orch.redetectSpeakers(id, { numSpeakers: 2 });
+    expect(doc.segments.map((s) => s.speakerId)).toEqual(['SPEAKER_00', 'SPEAKER_00', 'SPEAKER_01']);
+    // Line 3 now speaks with Anna: re-voice it; the others keep their voice.
+    expect(doc.segments.map((s) => s.ttsStale === true)).toEqual([false, false, true]);
+    expect(doc.segments.map((s) => [s.startMs, s.translatedText])).toEqual([
+      [0, 'vi one'],
+      [1200, 'vi two'],
+      [5000, 'vi three'],
+    ]);
+    expect(diarize).toHaveBeenCalledWith(paths.original16kMonoWav, { numSpeakers: 2 }, undefined);
+    const saved = await store.getProject(id);
+    expect(saved.settings).toMatchObject({ diarize: true, diarizeSpeakers: 2 });
+    const source = await readJson<{ segments: TranscriptSegment[] }>(paths.sourceJson);
+    expect(source.segments.map((s) => s.speakerId)).toEqual(['SPEAKER_00', 'SPEAKER_00', 'SPEAKER_01']);
+
+    await expect(orchestrator.redetectSpeakers(id)).rejects.toMatchObject({ appError: { code: 'ENGINE_PACK_MISSING' } });
   });
 
   it('allows only timing edits before the transcript is translated', async () => {

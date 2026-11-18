@@ -67,6 +67,7 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   sttModel: 'stt',
   forcedAlignment: 'stt',
   diarize: 'stt',
+  diarizeSpeakers: 'stt',
   targetLanguage: 'translation',
   translationProviderId: 'translation',
   refineProviderId: 'refine',
@@ -130,7 +131,13 @@ const editableSettings = z
       })
       .partial()
       .describe('Only for subtitleExportMode burned-in. Many Chinese videos have their own subtitles burned in at the bottom.'),
-    diarize: z.boolean().describe('Detect speakers (needs the alignment engine).'),
+    diarize: z.boolean().describe('Detect who says each line (needs the "Speaker detection" engine, list_engines).'),
+    diarizeSpeakers: z
+      .number()
+      .int()
+      .min(0)
+      .max(20)
+      .describe('How many people speak, when known (2-20; 0 = let speaker detection decide). Far more reliable than detecting the count.'),
     speakerVoices: z
       .array(z.object({ speakerId: z.string().regex(/^SPEAKER_\d{2,3}$/), voiceId: z.string() }))
       .max(100)

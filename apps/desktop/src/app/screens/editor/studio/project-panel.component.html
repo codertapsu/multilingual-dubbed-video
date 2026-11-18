@@ -387,6 +387,23 @@
         }
       </div>
       <p class="hint">{{ 'editor.speakers-hint' | translate }}</p>
+      @if (offeredPacks().has('diarization-sherpa')) {
+        <div class="detect-row">
+          <label>
+            <span class="label">{{ 'editor.speaker-count' | translate }}</span>
+            <select [ngModel]="detectCount()" (ngModelChange)="detectCount.set(+$event)" [disabled]="store.detectingSpeakers()">
+              <option [ngValue]="0">{{ 'editor.speaker-count-auto' | translate }}</option>
+              @for (n of speakerCounts; track n) {
+                <option [ngValue]="n">{{ n }}</option>
+              }
+            </select>
+          </label>
+          <button type="button" class="btn btn-sm" (click)="detectSpeakers()" [disabled]="store.detectingSpeakers() || redubbing()">
+            {{ (store.detectingSpeakers() ? 'editor.speakers-detecting' : 'editor.speakers-detect') | translate }}
+          </button>
+        </div>
+        <p class="hint">{{ 'editor.speakers-detect-hint' | translate }}</p>
+      }
       @if (store.speakers().length === 0) {
         <p class="muted small">{{ 'editor.speakers-none' | translate }}</p>
       } @else {
@@ -411,6 +428,20 @@
               <div class="row">
                 <button type="button" class="btn btn-ghost btn-sm" (click)="showSpeakerLines(s.speakerId)">{{ 'editor.speaker-show-lines' | translate }}</button>
                 <button type="button" class="btn btn-ghost btn-sm" (click)="speakerCloneId.set(s.speakerId)">{{ 'editor.speaker-make-voice' | translate }}</button>
+                @if (store.speakers().length > 1) {
+                  <select
+                    class="merge"
+                    [attr.aria-label]="'editor.speaker-merge-label' | translate: { n: speakerN(s.speakerId) }"
+                    (change)="onMerge(s.speakerId, $any($event.target))"
+                  >
+                    <option value="" selected>{{ 'editor.speaker-merge' | translate }}</option>
+                    @for (o of store.speakers(); track o.speakerId) {
+                      @if (o.speakerId !== s.speakerId) {
+                        <option [value]="o.speakerId">{{ 'studio.speaker-n' | translate: { n: speakerN(o.speakerId) } }}</option>
+                      }
+                    }
+                  </select>
+                }
               </div>
             </li>
           }

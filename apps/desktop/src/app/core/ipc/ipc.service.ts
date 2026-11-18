@@ -568,6 +568,14 @@ export class IpcService {
   }
 
   /**
+   * POST /projects/:id/speakers/detect — detect who says each line again, on
+   * the lines as they are (no new transcript). `numSpeakers` when known.
+   */
+  detectSpeakers(projectId: string, numSpeakers?: number): Promise<TimelineDocument> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/speakers/detect`, numSpeakers ? { numSpeakers } : {});
+  }
+
+  /**
    * POST /projects/:id/voices/speakers — a cloned voice for every speaker (or
    * the ones named), under one source-video declaration, each assigned to its
    * speaker. Takes about ten seconds per speaker.

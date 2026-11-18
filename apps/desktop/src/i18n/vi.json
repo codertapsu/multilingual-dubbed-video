@@ -498,7 +498,7 @@
     "project-voice-play": "Nghe thử {{ name }}",
     "speakers": "Người nói",
     "speakers-hint": "Gán cho mỗi người trong video một giọng riêng. Mọi dòng của một người sẽ được đọc bằng giọng của người đó, trừ khi dòng có giọng riêng. Khi đổi giọng, các dòng bị ảnh hưởng sẽ được đánh dấu để lồng tiếng lại.",
-    "speakers-none": "Chưa có người nói nào. Hãy bật “Nhận diện người nói” trong mục Nhận dạng giọng nói ở trên rồi lồng tiếng lại từ bước nhận dạng giọng nói, hoặc chọn người nói cho từng dòng ở thẻ Dòng (chọn nhiều dòng để đặt một lần).",
+    "speakers-none": "Chưa có người nói nào. Hãy bấm “Phát hiện người nói” ở trên (cần bộ máy Nhận diện người nói trong Cài đặt → Engine), hoặc chọn người nói cho từng dòng ở thẻ Dòng (chọn nhiều dòng để đặt một lần).",
     "speakers-make-all": "Sao chép giọng của mọi người nói…",
     "speaker-stats": "{{ lines }} dòng · {{ s }} giây",
     "speaker-voice": "Giọng của Người nói {{ n }}",
@@ -572,7 +572,14 @@
     "synthesizing": "Đang tổng hợp…",
     "tighten": "Rút gọn cho vừa",
     "tighten-title": "Rút gọn bản dịch của câu này cho vừa khung thời gian mà vẫn giữ ý, rồi tạo lại giọng",
-    "diarize-hint": "Xác định ai nói từng dòng khi lồng tiếng lại từ bước nhận dạng giọng nói. Cần bộ máy Nhận diện người nói (Cài đặt → Engine, ~135 MB)."
+    "diarize-hint": "Xác định ai nói từng dòng khi lồng tiếng lại từ bước nhận dạng giọng nói. Cần bộ máy Nhận diện người nói (Cài đặt → Engine, ~135 MB).",
+    "speaker-count": "Số người nói",
+    "speaker-count-auto": "Tự động",
+    "speakers-detect": "Phát hiện người nói",
+    "speakers-detecting": "Đang phát hiện…",
+    "speakers-detect-hint": "Xác định ai nói từng dòng từ âm thanh của video chỉ trong vài giây, không cần nhận dạng lại: bản dịch và thời gian vẫn giữ nguyên. Nếu bạn biết có bao nhiêu người nói, hãy chọn số người — kết quả sẽ chính xác hơn nhiều. Các dòng bị đổi giọng sẽ được đánh dấu để lồng tiếng lại.",
+    "speaker-merge": "Gộp vào…",
+    "speaker-merge-label": "Gộp Người nói {{ n }} vào người khác"
   },
   "studio": {
     "back": "Quay lại danh sách dự án",

@@ -96,6 +96,34 @@
   font-size: 0.85rem;
 }
 
+.detect-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--vd-sp-2);
+
+  label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--vd-text-muted);
+  }
+  select {
+    padding: 4px 8px;
+    font-size: 0.85rem;
+  }
+}
+
+.speaker-list .merge {
+  margin-left: auto;
+  width: auto;
+  padding: 2px 6px;
+  font-size: 0.8rem;
+}
+
 .speaker-list {
   list-style: none;
   margin: 0;

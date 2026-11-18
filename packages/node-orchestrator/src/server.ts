@@ -1634,6 +1634,19 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
   );
 
+  // Detect who says each line again, on the lines as they are (no new
+  // transcript): the editor's Speakers section. Returns the timeline.
+  app.post(
+    '/projects/:id/speakers/detect',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { numSpeakers?: number } }>, reply) => {
+      try {
+        return await orchestrator.redetectSpeakers(req.params.id, { numSpeakers: req.body?.numSpeakers });
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
   // Editor media: the original audio's waveform peaks and the filmstrip sprite.
   // Both are built on first request with ffmpeg, then served from the project's
   // cache/ dir (the sprite itself is fetched through /file).

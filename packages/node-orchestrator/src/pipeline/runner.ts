@@ -906,7 +906,7 @@ export class PipelineRunner {
 
     // Speaker detection: who says each line, before anchoring so a line it
     // splits keeps its speaker (pipeline/diarization.ts).
-    if (project.settings.diarize) segments = await this.detectSpeakers(paths, segments, signal);
+    if (project.settings.diarize) segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal);
 
     segments = await this.anchorToSpeech(
       paths,
@@ -987,7 +987,12 @@ export class PipelineRunner {
    * effort, and said: without the engine, or when it fails, the lines keep no
    * speaker and the dub goes on in the project voice. A pause still stops.
    */
-  private async detectSpeakers(paths: WorkspacePaths, segments: TranscriptSegment[], signal: AbortSignal): Promise<TranscriptSegment[]> {
+  private async detectSpeakers(
+    paths: WorkspacePaths,
+    segments: TranscriptSegment[],
+    knownCount: number | undefined,
+    signal: AbortSignal,
+  ): Promise<TranscriptSegment[]> {
     const service = this.deps.diarization;
     if (!service || !(await service.available().catch(() => false))) {
       this.deps.logger.warn(
@@ -998,7 +1003,14 @@ export class PipelineRunner {
     throwIfCancelled(signal);
     this.deps.logger.info('Detecting who says each line...');
     try {
-      const turns = await cachedSpeakerTurns(service, paths.original16kMonoWav, paths.diarizationJson, {}, signal);
+      const numSpeakers = knownCount && knownCount >= 2 ? knownCount : undefined;
+      const turns = await cachedSpeakerTurns(
+        service,
+        paths.original16kMonoWav,
+        paths.diarizationJson,
+        numSpeakers ? { numSpeakers } : {},
+        signal,
+      );
       if (!turns) return segments;
       const out = assignSpeakers(segments, turns);
       const speakers = new Set(out.map((s) => s.speakerId).filter(Boolean)).size;

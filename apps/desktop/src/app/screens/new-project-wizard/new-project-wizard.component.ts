@@ -529,6 +529,12 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     this.patchSettings('diarize', on);
   }
 
+  /** "Number of speakers": 0 = let detection decide. */
+  protected readonly speakerCounts = [2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+  protected setSpeakerCount(n: number): void {
+    this.patchSettings('diarizeSpeakers', n >= 2 ? n : undefined);
+  }
+
   /** Background attenuation choices while the dubbed voice speaks. */
   protected readonly duckingOptions: ReadonlyArray<{ value: number; label: string }> = [
     { value: -6, label: 'ducking-hint.subtle' },

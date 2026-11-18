@@ -126,6 +126,22 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     await this.store.setSpeakerVoice(speakerId, voiceId || null);
   }
 
+  /** Speaker detection's count: 0 = automatic, else exactly that many people. */
+  protected readonly detectCount = signal(0);
+  protected readonly speakerCounts = [2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+
+  protected async detectSpeakers(): Promise<void> {
+    const n = this.detectCount();
+    await this.store.detectSpeakers(n >= 2 ? n : undefined);
+  }
+
+  /** "Merge into…": every line of `from` goes to the chosen speaker (undoable). */
+  protected onMerge(from: string, select: HTMLSelectElement): void {
+    const into = select.value;
+    select.value = '';
+    if (into) this.store.mergeSpeaker(from, into);
+  }
+
   /** Show a speaker's lines: selected, in the Line tab. */
   protected showSpeakerLines(speakerId: string): void {
     this.store.selectSpeaker(speakerId);
@@ -224,6 +240,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
       const { project, pipeline } = await this.ipc.getProject(projectId);
       this.store.project.set(project);
       this.draft.set({ ...project.settings });
+      this.detectCount.set(project.settings.diarizeSpeakers ?? 0);
       const renderDone = pipeline?.steps.some((s) => s.id === 'render' && s.status === 'completed');
       this.rendered.set(renderDone === true || project.status === 'completed');
       this.awaitingReview.set(pipeline?.awaitingReview === true);

@@ -11,7 +11,8 @@
  * resources/engine-src/<package> (gitignored; tauri.conf bundles the dir). The
  * orchestrator puts this dir on PYTHONPATH (VIDEODUBBER_ENGINE_SRC_DIR), so every
  * package staged here is importable as `python -m <package>`:
- *   - workers/tts-engine-neural/vd_tts_engine   (VieNeu)
+ *   - workers/tts-engine-neural/vd_tts_engine   (VieNeu and the preset-voice engines)
+ *   - workers/diarization-engine/vd_diarize     (speaker detection)
  *
  * (workers/tts-engine-omnivoice/vd_omnivoice is deliberately NOT staged: the
  * OmniVoice pack is disabled for releases pending output-quality work — see
@@ -31,6 +32,8 @@ const destDir = path.join(repoRoot, 'apps', 'desktop', 'src-tauri', 'resources',
 // vd_omnivoice intentionally absent while the pack is release-disabled (docs/OMNIVOICE.md).
 const SOURCES = [
   path.join(repoRoot, 'workers', 'tts-engine-neural', 'vd_tts_engine'),
+  // Speaker detection (the diarization-sherpa pack).
+  path.join(repoRoot, 'workers', 'diarization-engine', 'vd_diarize'),
 ];
 
 rmSync(destDir, { recursive: true, force: true });

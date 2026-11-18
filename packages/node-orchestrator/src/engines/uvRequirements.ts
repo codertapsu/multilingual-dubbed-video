@@ -298,6 +298,12 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
       'uvicorn==0.34.0',
     ],
   },
+  // Speaker detection (workers/diarization-engine): sherpa-onnx brings its own
+  // ONNX Runtime (sherpa-onnx-core), so nothing else is needed but the server.
+  // The set Phase 0 ran on Windows and macOS (2026-11-18).
+  'diarization-sherpa': {
+    base: ['sherpa-onnx==2.0.1', 'sherpa-onnx-core==2.0.1', 'numpy==2.5.4', 'fastapi==0.162.0', 'uvicorn==0.54.0'],
+  },
   // Other uv packs — kept at their existing (loose) sets.
   'separation-audio': {
     base: ['audio-separator>=0.18', 'onnxruntime>=1.20', 'fastapi>=0.110', 'uvicorn>=0.29'],

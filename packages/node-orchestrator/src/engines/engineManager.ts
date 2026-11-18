@@ -97,6 +97,33 @@ function omnivoiceSrcDir(): string {
   return path.resolve(here, '../../../../workers/tts-engine-omnivoice');
 }
 
+/**
+ * Source dir for the bundled `vd_diarize` worker (speaker detection). A source
+ * build falls back to `<repo>/workers/diarization-engine`; a packaged build uses
+ * the bundled engine-src dir, which stage-engine-src.mjs fills with every
+ * first-party engine package.
+ */
+function diarizeSrcDir(): string {
+  const fromEnv = process.env.VIDEODUBBER_ENGINE_SRC_DIR;
+  if (fromEnv) return fromEnv;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, '../../../../workers/diarization-engine');
+}
+
+/**
+ * Env for the `vd_diarize` sidecar: its module on PYTHONPATH, the pack dir
+ * (where the pinned models were installed), and the performance cores as its
+ * thread count: ONNX Runtime's own default is not to be trusted (it ran VieNeu
+ * 5.4x slower than 2 threads), and Phase 0 measured diarization at 4 threads.
+ */
+function diarizeEnv(packDir: string, threads?: number): Record<string, string> {
+  return {
+    PYTHONPATH: prependPath(diarizeSrcDir(), process.env.PYTHONPATH),
+    VD_PACK_DIR: packDir,
+    ...(threads ? { VD_DIARIZE_THREADS: String(threads) } : {}),
+  };
+}
+
 /** Env for the OmniVoice `vd_omnivoice` sidecar: bundled module on PYTHONPATH,
  * the model cache pinned to the pack dir. */
 function omnivoiceEnv(packDir: string): Record<string, string> {
@@ -354,6 +381,15 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     args: ({ port }) => ['--host', '127.0.0.1', '--port', String(port), '--disable-web-ui'],
     healthPath: '/languages',
     heavy: true,
+  },
+  // Speaker detection (diarization-sherpa): CPU only, ~150 MB of RAM for its
+  // models, so light: it never takes the heavy lane from a voice or a model.
+  'speaker-diarization': {
+    pythonModule: 'vd_diarize',
+    args: ({ port }) => ['--port', String(port)],
+    env: ({ packDir, threads }) => diarizeEnv(packDir, threads),
+    healthPath: '/health',
+    heavy: false,
   },
   'audio-separator': {
     pythonModule: 'vd_separator',

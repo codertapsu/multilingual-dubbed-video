@@ -17,7 +17,7 @@ import type { AppError } from '../errors.js';
 import type { LocalizedText } from './setup.js';
 
 /** The pipeline capability an engine pack provides. */
-export type EngineKind = 'stt' | 'translation' | 'tts' | 'separation' | 'alignment';
+export type EngineKind = 'stt' | 'translation' | 'tts' | 'separation' | 'alignment' | 'diarization';
 
 /**
  * How a pack is delivered/run:
@@ -44,7 +44,7 @@ export interface EnginePackArtifact {
   approxSizeMb: number;
   /** Path within the pack dir to extract/write to (relative). */
   destPath: string;
-  /** If true, the artifact is a .tar.gz/.zip to extract; else written as-is. */
+  /** If true, the artifact is a .tar.gz/.tar.bz2/.zip to extract; else written as-is. */
   archive?: boolean;
 }
 

@@ -30,6 +30,7 @@ SUITES=(
   "workers/tts-worker"
   "workers/tts-engine-neural"
   "workers/tts-engine-omnivoice"
+  "workers/diarization-engine"
 )
 
 ONLY="${ONLY:-}"

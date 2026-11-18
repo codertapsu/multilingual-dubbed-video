@@ -44,7 +44,8 @@ $Suites = @(
   "workers\translation-worker",
   "workers\tts-worker",
   "workers\tts-engine-neural",
-  "workers\tts-engine-omnivoice"
+  "workers\tts-engine-omnivoice",
+  "workers\diarization-engine"
 )
 
 $wanted = if ($Only) { $Only.Split(",") | ForEach-Object { $_.Trim() } } else { $null }

@@ -283,8 +283,10 @@ export class EngineInstaller {
       }
       return;
     }
-    // tar handles .tar.gz on all three platforms (bsdtar ships on Win10+).
-    await this.run('tar', ['-xzf', archivePath, '-C', destDir]);
+    // tar handles .tar.gz on all three platforms (bsdtar ships on Win10+), and
+    // .tar.bz2 too: Windows' bsdtar 3.8 and macOS's are built with bzip2
+    // (sherpa-onnx ships its speaker models only as .tar.bz2).
+    await this.run('tar', [lower.endsWith('.tar.bz2') ? '-xjf' : '-xzf', archivePath, '-C', destDir]);
   }
 
   /**

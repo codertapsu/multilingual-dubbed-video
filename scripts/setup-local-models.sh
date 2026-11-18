@@ -85,7 +85,10 @@ ok "Using python: $(command -v "${PYTHON_BIN}") ($("${PYTHON_BIN}" --version 2>&
 # suites only ever ran where someone had created a venv by hand. Their dev venvs
 # are light — fastapi + uvicorn + pytest, since the neural/torch stacks live in
 # optional extras that only the uv venvs install.
-WORKERS=("stt-worker" "translation-worker" "tts-worker" "tts-engine-neural" "tts-engine-omnivoice")
+# Every suite test-workers runs: one missing here is a release gate that fails on
+# a freshly set-up machine (the diarization engine was, until the Mac's 0.13.0
+# preflight refused to build without its venv).
+WORKERS=("stt-worker" "translation-worker" "tts-worker" "tts-engine-neural" "tts-engine-omnivoice" "diarization-engine")
 
 # ----------------------------------------------------------------------------
 # 1. Create venvs and install requirements per worker.

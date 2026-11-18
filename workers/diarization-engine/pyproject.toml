@@ -1,0 +1,27 @@
+[project]
+name = "vd-diarize"
+version = "0.1.0"
+description = "VideoDubber speaker diarization (sherpa-onnx) for the optional diarization-sherpa engine pack"
+requires-python = ">=3.10"
+# Runtime deps come from the engine pack's uv venv (the orchestrator's
+# uvRequirements.ts 'diarization-sherpa'); this package is loaded from bundled
+# source via PYTHONPATH, not pip-installed. Listed for standalone dev only.
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+engine = ["sherpa-onnx==2.0.1"]
+dev = [
+  "pytest>=8.0",
+  "httpx2>=2.16,<3",  # Starlette TestClient
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["vd_diarize"]

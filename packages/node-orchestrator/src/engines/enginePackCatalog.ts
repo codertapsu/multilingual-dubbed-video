@@ -206,6 +206,38 @@ const GEMMA4_IT_LICENSE_NOTE =
   'ggml-org’s official GGUF mirror of google/gemma-4-*-it.';
 
 /**
+ * The speaker-embedding model speaker detection uses (diarization-sherpa), with
+ * the clustering threshold measured for it: the embedding decides how voice
+ * prints are spread, so a threshold belongs to its model; changing the model
+ * means changing the threshold and bumping the pack version.
+ *
+ * ERes2Net (3D-Speaker, 200k Chinese speakers), at 0.7. The first pack
+ * shipped WeSpeaker ResNet34 at 0.5; Phase 0 (2026-11-18) then found it cannot
+ * tell people apart in a dubbed drama: it scored DIFFERENT speakers of one mix
+ * 0.72-0.92 (it keys on the shared soundtrack), where ERes2Net puts different
+ * people at 0.1-0.3 and the same person at 0.58-0.84; and WeSpeaker had merged
+ * two plainly different test voices into one speaker.
+ *
+ * The threshold is a cosine DISTANCE: clusters closer than it merge. Phase 0
+ * suggested 0.9 for its few speakers (7 and 20 in the first ten minutes of two
+ * dramas), but at 0.9 anything more than 10 % alike merges, and the same two
+ * test voices (a man and a woman) came out as one speaker again; from 0.3 to
+ * 0.8 they were told apart line by line. 0.7 keeps people 0.3 alike or less
+ * apart, the different-speaker range above, at the cost of more speakers on
+ * noisy dramas (22 and 40 there), which is the mistake that is easy to fix:
+ * merging two speakers is one click in the Speakers section, splitting one is
+ * relabelling every line. A known speaker count is better still: the project
+ * settings and "detect again" take one.
+ */
+export const DIARIZATION_EMBEDDING = {
+  url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_200k_sv_zh-cn_16k-common.onnx',
+  sha256: 'e2d2048292e055f7b61cdec3db010503f35369b245bf0b3bbad021c9a91e4053',
+  approxSizeMb: 40,
+  threshold: 0.7,
+  licence: '3D-Speaker ERes2Net speaker embedding (Apache-2.0).',
+} as const;
+
+/**
  * The full curated set. `availablePacks()` filters by platform/arch. Every pack
  * here has a reachable artifact (binary URL or uv-env), so its Install works.
  *
@@ -846,6 +878,47 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     licenseCategory: 'commercial-restricted',
     licenseNote:
       'OmniVoice code is Apache-2.0 (k2-fsa), but its model weights are CC BY-NC 4.0 since 2026-07-03 (non-commercial use only; the model card changed from Apache-2.0), and the bundled HiggsAudio tokenizer carries the Boson Higgs Audio 2 Community License (non-OSI; 100k annual-active-users commercial gate). Apple Silicon only (PyTorch/MPS). Reference-audio voice cloning is supported by the model but not wired here (designed voices only).',
+  },
+
+  // --- speaker diarization (uv-managed Python env + pinned models) ----------
+  // Who speaks when (workers/diarization-engine, sherpa-onnx): pyannote
+  // segmentation 3.0 finds speech and speaker changes, a speaker-embedding
+  // model tells the voices apart, clustering groups them. CPU only and light:
+  // Phase 0 (2026-11-18) measured 0.06-0.09 of real time on 4 threads over
+  // 10-minute clips of real projects. k2-fsa publishes no digests for these
+  // release assets, so each is pinned to the bytes Phase 0 downloaded and ran.
+  {
+    id: 'diarization-sherpa',
+    kind: 'diarization',
+    packKind: 'python-uv',
+    displayName: 'Speaker detection (sherpa-onnx)',
+    description:
+      "Works out who says each line, so every person in the video can get their own voice and the translator knows who is talking to whom. Runs on the processor in about a tenth of the video's length; the models are small (~50 MB).",
+    providerId: 'speaker-diarization',
+    // sherpa-onnx 2.0.1 with the ERes2Net embedding (DIARIZATION_EMBEDDING).
+    version: '2.0.1+eres2net',
+    accel: 'cpu',
+    tier: 'balanced',
+    minRamMb: 2048,
+    approxSizeMb: 150,
+    artifacts: [
+      { url: 'uv-env://diarization-sherpa', approxSizeMb: 100, destPath: 'venv' },
+      {
+        url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2',
+        sha256: '24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488',
+        approxSizeMb: 7,
+        destPath: 'sherpa-onnx-pyannote-segmentation-3-0.tar.bz2',
+        archive: true,
+      },
+      {
+        url: DIARIZATION_EMBEDDING.url,
+        sha256: DIARIZATION_EMBEDDING.sha256,
+        approxSizeMb: DIARIZATION_EMBEDDING.approxSizeMb,
+        // vd_diarize/core.py reads it under this name, whichever model it is.
+        destPath: 'models/embedding.onnx',
+      },
+    ],
+    licenseNote: `sherpa-onnx Apache-2.0 (k2-fsa); pyannote segmentation 3.0 MIT; ${DIARIZATION_EMBEDDING.licence}`,
   },
 
   // --- vocal separation (uv-managed Python env) ----------------------------

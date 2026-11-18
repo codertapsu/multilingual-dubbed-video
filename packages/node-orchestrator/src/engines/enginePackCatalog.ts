@@ -781,7 +781,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     packKind: 'python-uv',
     displayName: 'VieNeu-TTS 3.8 (25 Vietnamese voices + voice cloning)',
     description:
-      'The newest VieNeu voices: 25 natural Vietnamese presets across Northern, Central and Southern accents, and voice cloning from a 3–8 second recording, all on the CPU without PyTorch. The model (~640 MB) downloads on first use at a pinned revision. Installs beside the VieNeu v3 pack, whose ten voices stay available.',
+      'The newest VieNeu voices: 25 natural Vietnamese presets across Northern, Central and Southern accents, and voice cloning from a 3–8 second recording, all on the CPU without PyTorch. About three times faster than real time on a recent Windows desktop processor (one with VNNI, which gets the faster int8 model) and eight times on Apple Silicon. The model (~320 MB with int8, ~640 MB otherwise) downloads on first use at a pinned revision. Installs beside the VieNeu v3 pack, whose ten voices stay available.',
     providerId: 'vieneu-tts',
     version: '3.8.4',
     accel: 'cpu',

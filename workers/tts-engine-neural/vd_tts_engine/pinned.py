@@ -97,8 +97,9 @@ def _v38_onnx(subfolder: str, folder: str) -> PinnedRepo:
     )
 
 
-# fp32 (~546 MB) is the quality default; int8 (~236 MB) is ~3x faster per frame
-# but "can produce garbled audio" on CPUs without VNNI (the SDK's own warning).
+# int8 (~236 MB) is ~3x faster per frame but "can produce garbled audio" on CPUs
+# without VNNI (the SDK's own warning), so it is used only on x86-64 CPUs with
+# VNNI; fp32 (~546 MB) everywhere else, the Mac included (engine38.vieneu_precision).
 V38_ONNX = {
     "fp32": _v38_onnx("onnx_update", "vieneu38-onnx-fp32"),
     "int8": _v38_onnx("onnx_int8", "vieneu38-onnx-int8"),

@@ -153,10 +153,36 @@ def _sdk_version() -> str:
         return "unknown"
 
 
-def vieneu_precision(environ: "os._Environ[str] | dict[str, str]" = os.environ) -> str:
-    """CPU graph precision: fp32 (default, best quality) or int8 (VIENEU_PRECISION)."""
+#: ONNX threads on the CPU. 3.8 stops ONNX Runtime's thread spinning itself, so
+#: more threads no longer hurt the way they did on 3.0.5 (whose default stays 2,
+#: engine.py): i5-13400F fp32 RTF 0.65 / 0.60 / 0.48 / 0.48 at 1 / 2 / 4 / 6
+#: threads, int8 0.45 / 0.34 / 0.31 / 0.30; an M4 Pro is flat from 2 to 8
+#: (Phase 0, 2026-11-18). The audio is bit-identical at any thread count, so
+#: this changes no one's dub. VIENEU_ONNX_THREADS still overrides it.
+V38_ONNX_THREADS = 4
+
+
+def vieneu_precision(
+    environ: "os._Environ[str] | dict[str, str]" = os.environ,
+    vnni: Any = None,
+) -> str:
+    """CPU graph precision: VIENEU_PRECISION (``int8`` / ``fp32``) when set, else
+    int8 on an x86-64 CPU with VNNI and fp32 everywhere else.
+
+    int8 was 1.4-1.6x faster than fp32 on a Windows desktop CPU at the same
+    accuracy, but the SDK's author warns it distorts without VNNI (cpufeatures.py
+    says why), so a CPU without VNNI, or one that cannot be asked, keeps fp32. On
+    Apple Silicon int8 gained only 10 % and its sample had the most garbled lines
+    (6 of 90): fp32 there (Phase 0, 2026-11-18).
+    """
     raw = str(environ.get("VIENEU_PRECISION", "")).strip().lower()
-    return "int8" if raw == "int8" else "fp32"
+    if raw in ("int8", "fp32"):
+        return raw
+    if vnni is None:
+        from .cpufeatures import has_vnni  # noqa: PLC0415
+
+        vnni = has_vnni
+    return "int8" if vnni() else "fp32"
 
 
 class UnknownVoice(ValueError):
@@ -390,7 +416,7 @@ class VieNeu38Engine:
         repo = pinned.ensure(pinned.V38_ONNX[precision], root)
         codec = pinned.ensure(pinned.CODEC_ONNX, root)
         _with_codec_dir(str(codec))
-        threads = onnx_threads()
+        threads = onnx_threads(default=V38_ONNX_THREADS)
         logger.info("Loading VieNeu 3.8 (ONNX %s, %d threads)…", precision, threads)
         backend = factory(
             mode="v3turbo",

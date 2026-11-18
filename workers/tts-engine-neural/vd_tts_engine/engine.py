@@ -82,8 +82,13 @@ _V3_MAX_CHARS = 256  # infer() splits longer text into chunks of this size...
 _V3_JOIN_SILENCE = 0.15  # ...and joins them with this many seconds of pause
 
 
-def onnx_threads(environ: "os._Environ[str] | dict[str, str]" = os.environ, cpu_count: int | None = None) -> int:
-    """Thread count for the v3 ONNX sessions: the env override, else 2. Pure."""
+def onnx_threads(
+    environ: "os._Environ[str] | dict[str, str]" = os.environ,
+    cpu_count: int | None = None,
+    default: int = _DEFAULT_ONNX_THREADS,
+) -> int:
+    """Thread count for the v3 ONNX sessions: the env override, else ``default``
+    (3.0.5's measured 2; SDK 3.8 passes its own). Pure."""
     raw = str(environ.get("VIENEU_ONNX_THREADS", "")).strip()
     if raw:
         try:
@@ -94,7 +99,7 @@ def onnx_threads(environ: "os._Environ[str] | dict[str, str]" = os.environ, cpu_
             return n
         logger.warning("Ignoring VIENEU_ONNX_THREADS=%r (want a positive integer).", raw)
     cores = cpu_count if cpu_count is not None else (os.cpu_count() or 1)
-    return max(1, min(_DEFAULT_ONNX_THREADS, cores))
+    return max(1, min(default, cores))
 
 
 def _limit_onnx_threads(threads: int) -> bool:

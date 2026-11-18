@@ -256,10 +256,22 @@ def test_v38_snapshots_are_pinned_commits_in_separate_folders():
     assert "onnx_int8/vieneu_backbone_shared.data" in pinned.V38_ONNX["int8"].required
 
 
-def test_precision_defaults_to_fp32():
-    assert engine38.vieneu_precision({}) == "fp32"
-    assert engine38.vieneu_precision({"VIENEU_PRECISION": "INT8"}) == "int8"
-    assert engine38.vieneu_precision({"VIENEU_PRECISION": "fp16"}) == "fp32"
+def test_precision_is_int8_only_on_a_cpu_with_vnni():
+    assert engine38.vieneu_precision({}, vnni=lambda: True) == "int8"
+    assert engine38.vieneu_precision({}, vnni=lambda: False) == "fp32"
+    # The override wins either way; an unknown value is ignored.
+    assert engine38.vieneu_precision({"VIENEU_PRECISION": "FP32"}, vnni=lambda: True) == "fp32"
+    assert engine38.vieneu_precision({"VIENEU_PRECISION": "INT8"}, vnni=lambda: False) == "int8"
+    assert engine38.vieneu_precision({"VIENEU_PRECISION": "fp16"}, vnni=lambda: False) == "fp32"
+
+
+def test_v38_uses_four_threads_and_3_0_5_keeps_two():
+    from vd_tts_engine.engine import onnx_threads
+
+    assert onnx_threads({}, cpu_count=16, default=engine38.V38_ONNX_THREADS) == 4
+    assert onnx_threads({}, cpu_count=2, default=engine38.V38_ONNX_THREADS) == 2
+    assert onnx_threads({"VIENEU_ONNX_THREADS": "6"}, cpu_count=16, default=engine38.V38_ONNX_THREADS) == 6
+    assert onnx_threads({}, cpu_count=16) == 2
 
 
 def test_the_codec_folder_is_injected_only_when_the_sdk_takes_it(monkeypatch):

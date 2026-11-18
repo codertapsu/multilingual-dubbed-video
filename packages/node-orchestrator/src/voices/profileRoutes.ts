@@ -15,7 +15,8 @@
  *   GET    /voice-profiles/:id/export           a .vdvoice file (?recording=1 includes it)
  *   POST   /voice-profiles/:id/export           { dir, includeRecording? } -> { path }
  *   POST   /voice-profiles/import               { bundle, consent } -> a new library voice
- *   POST   /projects/:id/voices/analyze         { segmentIds? } the project's own speech (sourceVoices.ts)
+ *   POST   /projects/:id/voices/analyze         { segmentIds? | speakerId? } the project's own speech (sourceVoices.ts)
+ *   POST   /projects/:id/voices/speakers        { consent, speakerIds?, names? } a voice per speaker (speakerVoices.ts)
  *
  * No MCP tool reaches these: a voice is made by a person, in the app.
  */
@@ -29,6 +30,7 @@ import type { CreateProfileInput, VoiceProfileService } from './profileService.j
 import { PROFILE_FILES, type VoiceProfileStore } from './profileStore.js';
 import { MAX_UPLOAD_BYTES, type ReferencePrep } from './referencePrep.js';
 import { analyzeProjectSource, type SourceVoiceDeps } from './sourceVoices.js';
+import { makeSpeakerVoices, type SpeakerVoicesInput } from './speakerVoices.js';
 import type { TimeRange } from './referenceAnalysis.js';
 import { voiceEngineInfo } from './voiceCatalog.js';
 
@@ -38,6 +40,8 @@ export interface ProfileRoutesDeps {
   prep: ReferencePrep;
   /** Voices from a project's own video (absent: the route answers 404). */
   source?: SourceVoiceDeps;
+  /** Give speakers their new voices (the project's speakerVoices setting). */
+  assignSpeakerVoices?: (projectId: string, assignments: { speakerId: string; voiceId: string }[]) => Promise<void>;
   sendError: (reply: FastifyReply, err: unknown) => unknown;
 }
 
@@ -137,14 +141,52 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileRoutesD
     },
   );
 
-  // A project's own speech: the whole track, or the lines chosen in the editor.
+  // A project's own speech: the whole track, the lines chosen in the editor,
+  // or one speaker's best lines.
   app.post(
     '/projects/:id/voices/analyze',
-    async (req: FastifyRequest<{ Params: { id: string }; Body: { segmentIds?: string[]; engine?: string } }>, reply) => {
+    async (
+      req: FastifyRequest<{ Params: { id: string }; Body: { segmentIds?: string[]; speakerId?: string; engine?: string } }>,
+      reply,
+    ) => {
       try {
         if (!deps.source) return reply.status(404).send({ error: { code: 'UNKNOWN', message: 'Not available.' } });
         const ids = Array.isArray(req.body?.segmentIds) ? req.body!.segmentIds.filter((x) => typeof x === 'string').slice(0, 500) : undefined;
-        return await analyzeProjectSource(deps.source, req.params.id, policyFor(req.body?.engine), ids);
+        const speakerId = typeof req.body?.speakerId === 'string' ? req.body.speakerId : undefined;
+        return await analyzeProjectSource(deps.source, req.params.id, policyFor(req.body?.engine), {
+          ...(ids ? { segmentIds: ids } : {}),
+          ...(speakerId ? { speakerId } : {}),
+        });
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // A voice for every speaker of the video, under one declaration (speakerVoices.ts).
+  app.post(
+    '/projects/:id/voices/speakers',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: SpeakerVoicesInput }>, reply) => {
+      try {
+        if (!deps.source || !deps.assignSpeakerVoices) {
+          return reply.status(404).send({ error: { code: 'UNKNOWN', message: 'Not available.' } });
+        }
+        const body = req.body ?? ({} as SpeakerVoicesInput);
+        const names =
+          body.names && typeof body.names === 'object'
+            ? Object.fromEntries(Object.entries(body.names).filter(([k, v]) => typeof v === 'string' && k.length < 20))
+            : undefined;
+        return await makeSpeakerVoices(
+          { source: deps.source, service, assign: deps.assignSpeakerVoices },
+          req.params.id,
+          policyFor(body.engine),
+          {
+            consent: body.consent ?? {},
+            ...(body.engine ? { engine: String(body.engine) } : {}),
+            ...(Array.isArray(body.speakerIds) ? { speakerIds: body.speakerIds.filter((x) => typeof x === 'string').slice(0, 100) } : {}),
+            ...(names ? { names } : {}),
+          },
+        );
       } catch (err) {
         return sendError(reply, err);
       }

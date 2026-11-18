@@ -11,7 +11,8 @@ import { VoiceProfileService } from './profileService.js';
 import { VoiceProfileStore } from './profileStore.js';
 import { parseWavPcm16 } from './referenceAnalysis.js';
 import { ReferencePrep } from './referencePrep.js';
-import { analyzeProjectSource, encodePcmWav, joinPcm, pickLineRanges } from './sourceVoices.js';
+import { analyzeProjectSource, encodePcmWav, joinPcm, pickLineRanges, speakerLineRanges } from './sourceVoices.js';
+import { makeSpeakerVoices } from './speakerVoices.js';
 
 const PROJECT = `proj_${'d'.repeat(32)}`;
 const POLICY = { minSpeechMs: 3000, idealMs: 8000, maxMs: 8000, transcript: 'unused' as const };
@@ -37,6 +38,29 @@ describe('voices from a project video', () => {
     ]);
     expect(pickLineRanges(segs, ['d'], 60_000)).toEqual([{ startMs: 20_000, endMs: 80_000 }]);
     expect(pickLineRanges(segs, [])).toEqual([]);
+  });
+
+  it("takes a speaker's longest clean lines, never their crosstalk, and lists only what it used", () => {
+    const segs = [
+      { id: 's1', startMs: 0, endMs: 2000, speakerId: 'SPEAKER_00' },
+      { id: 's2', startMs: 3000, endMs: 9000, speakerId: 'SPEAKER_00' },
+      { id: 'o1', startMs: 9500, endMs: 12_000, speakerId: 'SPEAKER_01' },
+      { id: 's3', startMs: 11_000, endMs: 15_000, speakerId: 'SPEAKER_00' }, // over SPEAKER_01
+      { id: 's4', startMs: 20_000, endMs: 24_000, speakerId: 'SPEAKER_00' },
+    ];
+    // 6 s + 4 s, longest first, never s3; in time order.
+    expect(speakerLineRanges(segs, 'SPEAKER_00', 10_000)).toEqual({
+      ranges: [
+        { startMs: 3000, endMs: 9000 },
+        { startMs: 20_000, endMs: 24_000 },
+      ],
+      segmentIds: ['s2', 's4'],
+    });
+    // Only crosstalk: better than nothing.
+    expect(speakerLineRanges(segs, 'SPEAKER_01').segmentIds).toEqual(['o1']);
+    expect(speakerLineRanges(segs, 'SPEAKER_07')).toEqual({ ranges: [], segmentIds: [] });
+    // A cap that trims a line away does not list it.
+    expect(speakerLineRanges(segs, 'SPEAKER_00', 6000).segmentIds).toEqual(['s2']);
   });
 
   it('joins clips with a short pause, and refuses mixed rates', () => {
@@ -86,7 +110,7 @@ describe('voices from a project video', () => {
     });
 
     it('analyses the chosen lines joined, remembering where they came from', async () => {
-      const a = await analyzeProjectSource(deps(), PROJECT, POLICY, ['seg_0002', 'seg_0001']);
+      const a = await analyzeProjectSource(deps(), PROJECT, POLICY, { segmentIds: ['seg_0002', 'seg_0001'] });
       expect(a.origin).toEqual({ projectId: PROJECT, segmentIds: ['seg_0002', 'seg_0001'] });
       // 4 s + 0.15 s pause + 3 s.
       expect(Math.abs(a.durationMs - 7150)).toBeLessThan(5);
@@ -104,7 +128,7 @@ describe('voices from a project video', () => {
       await expect(analyzeProjectSource(deps(), `proj_${'e'.repeat(32)}`, POLICY)).rejects.toMatchObject({
         appError: { code: 'VOICE_REFERENCE_REJECTED' },
       });
-      await expect(analyzeProjectSource(deps(), PROJECT, POLICY, ['nope'])).rejects.toThrow(/None of the chosen lines/);
+      await expect(analyzeProjectSource(deps(), PROJECT, POLICY, { segmentIds: ['nope'] })).rejects.toThrow(/None of the chosen lines/);
     });
 
     it('never turns a project id that is not one into a path', async () => {
@@ -131,7 +155,7 @@ describe('voices from a project video', () => {
         },
         synthesizeSegments: async () => ({ segments: [] }),
       } as never);
-      const a = await analyzeProjectSource(deps(), PROJECT, POLICY, ['seg_0001']);
+      const a = await analyzeProjectSource(deps(), PROJECT, POLICY, { segmentIds: ['seg_0001'] });
       const consent = { accepted: true, statementVersion: CONSENT_VERSION, locale: 'vi' };
       await expect(
         service.create({ analysisId: a.analysisId, window: a.window, name: 'x', consent: { ...consent, relation: 'self' } }),
@@ -154,6 +178,82 @@ describe('voices from a project video', () => {
       expect(p.scope).toEqual({ kind: 'project', projectId: PROJECT });
       expect(p.source).toEqual({ kind: 'project-lines', segmentIds: ['seg_0001'] });
       expect(p.consent.relation).toBe('source-video');
+    });
+
+    describe('speakers', () => {
+      const consent = { accepted: true, statementVersion: CONSENT_VERSION, locale: 'vi', relation: 'source-video' };
+
+      function cloning() {
+        const store = new VoiceProfileStore(path.join(tmp, 'config'), path.join(tmp, 'projects'));
+        const registry = new ProviderRegistry();
+        registry.registerTts({
+          id: 'vieneu-tts',
+          displayName: 'VieNeu',
+          isLocal: true,
+          enroll: async (_r: string, out: string) => {
+            await fsp.writeFile(out, 'npz');
+            return { fingerprint: 'c'.repeat(64), engineVersion: '3.8.4' };
+          },
+          synthesizeSegments: async () => ({ segments: [] }),
+        } as never);
+        return new VoiceProfileService({ store, prep, registry: () => registry, projectExists: async () => true });
+      }
+
+      beforeEach(async () => {
+        // SPEAKER_00 says 8 s in two lines; SPEAKER_01 only 1.5 s.
+        await fsp.writeFile(
+          path.join(tmp, 'p', 'source.json'),
+          JSON.stringify({
+            segments: [
+              { id: 'seg_0001', startMs: 2000, endMs: 6000, speakerId: 'SPEAKER_00' },
+              { id: 'seg_0002', startMs: 10_000, endMs: 11_500, speakerId: 'SPEAKER_01' },
+              { id: 'seg_0003', startMs: 14_000, endMs: 18_000, speakerId: 'SPEAKER_00' },
+            ],
+          }),
+        );
+      });
+
+      it("makes a speaker's voice from their lines, and the voice remembers whose it is", async () => {
+        const a = await analyzeProjectSource(deps(), PROJECT, POLICY, { speakerId: 'SPEAKER_00' });
+        expect(a.origin).toEqual({ projectId: PROJECT, segmentIds: ['seg_0001', 'seg_0003'], speakerId: 'SPEAKER_00' });
+        const p = await cloning().create({ analysisId: a.analysisId, window: a.window, name: 'Người nói 1', consent });
+        expect(p.scope).toEqual({ kind: 'project', projectId: PROJECT, speakerId: 'SPEAKER_00' });
+        expect(p.source).toEqual({ kind: 'project-speaker', segmentIds: ['seg_0001', 'seg_0003'] });
+        await expect(analyzeProjectSource(deps(), PROJECT, POLICY, { speakerId: 'SPEAKER_09' })).rejects.toThrow(/no lines/);
+        await expect(analyzeProjectSource(deps(), PROJECT, POLICY, { speakerId: '../x' })).rejects.toThrow(/Unknown speaker/);
+      });
+
+      it('makes a voice for every speaker who says enough, under one declaration, and assigns them', async () => {
+        const assign = vi.fn(async () => undefined);
+        const service = cloning();
+        const result = await makeSpeakerVoices({ source: deps(), service, assign }, PROJECT, POLICY, {
+          consent,
+          names: { SPEAKER_00: 'Người nói 1' },
+        });
+        expect(result.made.map((m) => [m.speakerId, m.profile.name, m.profile.scope])).toEqual([
+          ['SPEAKER_00', 'Người nói 1', { kind: 'project', projectId: PROJECT, speakerId: 'SPEAKER_00' }],
+        ]);
+        expect(result.skipped).toEqual([expect.objectContaining({ speakerId: 'SPEAKER_01', reason: 'too-short' })]);
+        expect(assign).toHaveBeenCalledWith(PROJECT, [{ speakerId: 'SPEAKER_00', voiceId: result.made[0]!.profile.id }]);
+
+        // No declaration, or the wrong one: nothing is analysed.
+        for (const bad of [{}, { ...consent, relation: 'self' }, { ...consent, accepted: false }]) {
+          await expect(makeSpeakerVoices({ source: deps(), service, assign }, PROJECT, POLICY, { consent: bad })).rejects.toMatchObject({
+            appError: { code: 'VOICE_CONSENT_REQUIRED' },
+          });
+        }
+        // Only the speakers asked for.
+        const one = await makeSpeakerVoices({ source: deps(), service, assign }, PROJECT, POLICY, { consent, speakerIds: ['SPEAKER_01'] });
+        expect(one.made).toEqual([]);
+        expect(one.skipped.map((s) => s.speakerId)).toEqual(['SPEAKER_01']);
+      });
+
+      it('says so when the transcript has no speakers yet', async () => {
+        await fsp.writeFile(path.join(tmp, 'p', 'source.json'), JSON.stringify({ segments: [{ id: 'seg_0001', startMs: 0, endMs: 5000 }] }));
+        await expect(
+          makeSpeakerVoices({ source: deps(), service: cloning(), assign: vi.fn() }, PROJECT, POLICY, { consent }),
+        ).rejects.toThrow(/no speakers yet/);
+      });
     });
 
     it('over HTTP: the analysis decides the source, whatever the client claims', async () => {

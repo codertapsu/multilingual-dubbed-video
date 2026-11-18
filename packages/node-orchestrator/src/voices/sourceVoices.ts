@@ -14,7 +14,7 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { AppErrorException, type TranscriptSegment, type VoiceReferencePolicy } from '@videodubber/shared';
+import { AppErrorException, isSpeakerId, type TranscriptSegment, type VoiceReferencePolicy } from '@videodubber/shared';
 import type { PipelineMediaService } from '../media.js';
 import { isProjectId } from './profileStore.js';
 import { parseWavPcm16, type PcmMono, type TimeRange } from './referenceAnalysis.js';
@@ -55,6 +55,41 @@ export function pickLineRanges(
     total += take;
   }
   return out;
+}
+
+/** Lines that overlap another speaker's by more than this are crosstalk. */
+const CROSSTALK_MS = 100;
+
+/**
+ * The best material for one speaker's voice: their longest lines first (long
+ * lines are continuous speech, short ones are often interjections), never a
+ * line spoken over someone else's, up to `maxMs`, returned in time order with
+ * the line ids used. Lines overlapping another speaker are used only when the
+ * speaker has nothing else. Pure.
+ */
+export function speakerLineRanges(
+  segments: readonly Pick<TranscriptSegment, 'id' | 'startMs' | 'endMs' | 'speakerId'>[],
+  speakerId: string,
+  maxMs = SOURCE_LINES_MAX_MS,
+): { ranges: TimeRange[]; segmentIds: string[] } {
+  const own = segments.filter((s) => s.speakerId === speakerId && s.endMs > s.startMs);
+  const others = segments.filter((s) => s.speakerId !== speakerId && s.endMs > s.startMs);
+  const clean = own.filter(
+    (s) => !others.some((o) => Math.min(s.endMs, o.endMs) - Math.max(s.startMs, o.startMs) > CROSSTALK_MS),
+  );
+  const pool = (clean.length > 0 ? clean : own).slice().sort((a, b) => b.endMs - b.startMs - (a.endMs - a.startMs));
+  const chosen: typeof pool = [];
+  let total = 0;
+  for (const s of pool) {
+    if (total >= maxMs) break;
+    chosen.push(s);
+    total += s.endMs - s.startMs;
+  }
+  chosen.sort((a, b) => a.startMs - b.startMs);
+  const ranges = pickLineRanges(chosen, chosen.map((s) => s.id), maxMs);
+  // The cap trims in time order: list only the lines that are still in.
+  const used = chosen.filter((s) => ranges.some((r) => r.startMs < s.endMs && s.startMs < r.endMs));
+  return { ranges, segmentIds: used.map((s) => s.id) };
 }
 
 /** Join mono clips of one rate with `gapMs` of silence between them. Pure. */
@@ -102,15 +137,34 @@ export interface SourceVoiceDeps {
   workRoot: string;
 }
 
-/** Analyse a project's own speech: the whole track, or the chosen lines joined. */
+/** What to take a voice from: chosen lines, one speaker's lines, or (neither) the whole track. */
+export interface SourceSelection {
+  segmentIds?: readonly string[];
+  speakerId?: string;
+}
+
+/** A project's transcript lines (source.json), or none. */
+export async function readProjectLines(transcriptPath: string): Promise<TranscriptSegment[]> {
+  try {
+    const raw = JSON.parse(await fsp.readFile(transcriptPath, 'utf8')) as { segments?: TranscriptSegment[] } | TranscriptSegment[];
+    return Array.isArray(raw) ? raw : (raw.segments ?? []);
+  } catch {
+    return [];
+  }
+}
+
+/** Analyse a project's own speech: the whole track, the chosen lines, or one speaker's. */
 export async function analyzeProjectSource(
   deps: SourceVoiceDeps,
   projectId: string,
   policy: VoiceReferencePolicy,
-  segmentIds?: readonly string[],
+  selection: SourceSelection = {},
   signal?: AbortSignal,
 ): Promise<ReferenceAnalysis> {
   if (!isProjectId(projectId)) throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'That project does not exist.');
+  if (selection.speakerId !== undefined && !isSpeakerId(selection.speakerId)) {
+    throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'Unknown speaker.');
+  }
   const audio = await deps.projectAudio(projectId);
   if (!audio || !(await fsp.stat(audio.audioPath).then((s) => s.size > 44, () => false))) {
     throw new AppErrorException(
@@ -118,19 +172,20 @@ export async function analyzeProjectSource(
       "This project's audio is not ready yet. Start the dub and let it reach speech-to-text first.",
     );
   }
-  if (!segmentIds || segmentIds.length === 0) {
+  const segmentIds = selection.segmentIds ?? [];
+  if (!selection.speakerId && segmentIds.length === 0) {
     return deps.prep.analyze(audio.audioPath, policy, { sourceName: 'video', origin: { projectId }, ...(signal ? { signal } : {}) });
   }
-  let segments: TranscriptSegment[] = [];
-  try {
-    const raw = JSON.parse(await fsp.readFile(audio.transcriptPath, 'utf8')) as { segments?: TranscriptSegment[] } | TranscriptSegment[];
-    segments = Array.isArray(raw) ? raw : (raw.segments ?? []);
-  } catch {
-    /* no transcript: no lines to pick */
-  }
-  const ranges = pickLineRanges(segments, segmentIds);
-  if (ranges.length === 0) {
-    throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'None of the chosen lines is in the transcript.');
+  const segments = await readProjectLines(audio.transcriptPath);
+  let ranges: TimeRange[];
+  let usedIds: string[];
+  if (selection.speakerId) {
+    ({ ranges, segmentIds: usedIds } = speakerLineRanges(segments, selection.speakerId));
+    if (ranges.length === 0) throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'This speaker has no lines in the transcript.');
+  } else {
+    ranges = pickLineRanges(segments, segmentIds);
+    usedIds = [...segmentIds];
+    if (ranges.length === 0) throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'None of the chosen lines is in the transcript.');
   }
   const referenceClip = deps.media.referenceClip;
   if (!referenceClip) throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'This build cannot prepare voice recordings.');
@@ -146,8 +201,8 @@ export async function analyzeProjectSource(
     const joined = path.join(scratch, 'lines.wav');
     await fsp.writeFile(joined, encodePcmWav(joinPcm(parts)));
     return await deps.prep.analyze(joined, policy, {
-      sourceName: `${segmentIds.length} line(s)`,
-      origin: { projectId, segmentIds: [...segmentIds] },
+      sourceName: selection.speakerId ?? `${usedIds.length} line(s)`,
+      origin: { projectId, segmentIds: usedIds, ...(selection.speakerId ? { speakerId: selection.speakerId } : {}) },
       ...(signal ? { signal } : {}),
     });
   } finally {

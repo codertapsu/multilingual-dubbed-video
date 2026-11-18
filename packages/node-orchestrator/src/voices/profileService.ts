@@ -118,7 +118,9 @@ export class VoiceProfileService implements VoiceRefResolver {
         "Confirm that you may use the voices in this project's video.",
       );
     }
-    const scope: VoiceProfile['scope'] = projectId ? { kind: 'project', projectId } : { kind: 'library' };
+    const scope: VoiceProfile['scope'] = projectId
+      ? { kind: 'project', projectId, ...(origin?.speakerId ? { speakerId: origin.speakerId } : {}) }
+      : { kind: 'library' };
     if (
       scope.kind === 'project' &&
       (!isProjectId(scope.projectId) || (this.deps.projectExists && !(await this.deps.projectExists(scope.projectId))))
@@ -127,10 +129,15 @@ export class VoiceProfileService implements VoiceRefResolver {
     }
     // The declaration comes before anything is cut, enrolled or kept.
     const consent = acceptConsent(input.consent, scope.kind, this.now());
+    // project-speaker: a speaker of the video (its only one when no lines were
+    // chosen, or a detected speaker's best lines); project-lines: lines the
+    // user picked.
     const source: VoiceProfile['source'] | undefined = origin
-      ? origin.segmentIds?.length
-        ? { kind: 'project-lines', segmentIds: origin.segmentIds.slice(0, 500) }
-        : { kind: 'project-speaker' }
+      ? origin.speakerId
+        ? { kind: 'project-speaker', segmentIds: (origin.segmentIds ?? []).slice(0, 500) }
+        : origin.segmentIds?.length
+          ? { kind: 'project-lines', segmentIds: origin.segmentIds.slice(0, 500) }
+          : { kind: 'project-speaker' }
       : input.source;
     const window = clampWindow(input.window, analysis.durationMs, policy);
     const { checks } = await this.deps.prep.check(input.analysisId, window, policy);

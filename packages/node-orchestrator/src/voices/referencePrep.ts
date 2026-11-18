@@ -62,6 +62,8 @@ export interface ReferenceAnalysis {
 export interface AnalysisOrigin {
   projectId: string;
   segmentIds?: string[];
+  /** The lines are one speaker's ("SPEAKER_01"): the voice will be theirs. */
+  speakerId?: string;
 }
 
 export interface StoredAnalysis {

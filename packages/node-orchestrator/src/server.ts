@@ -713,6 +713,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       prep: referencePrep,
       workRoot: join(config.configDir, 'voices', 'work'),
     },
+    // New speaker voices join the table (replacing those speakers' old ones);
+    // the orchestrator marks the lines whose voice that changes.
+    assignSpeakerVoices: async (projectId, assignments) => {
+      const { project } = await orchestrator.getProjectWithPipeline(projectId);
+      const keep = (project.settings.speakerVoices ?? []).filter((v) => !assignments.some((a) => a.speakerId === v.speakerId));
+      await orchestrator.updateProjectSettings(projectId, { speakerVoices: [...keep, ...assignments] });
+    },
     sendError,
   });
 

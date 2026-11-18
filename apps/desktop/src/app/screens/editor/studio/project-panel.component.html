@@ -128,6 +128,18 @@
               <span class="value">{{ modelLabel(s.sttModel) }}</span>
             }
           </label>
+          @if (offeredPacks().has('diarization-sherpa')) {
+            <label class="setting-row check-row">
+              <input
+                type="checkbox"
+                [ngModel]="s.diarize ?? false"
+                (ngModelChange)="onSettingChange('diarize', $event)"
+                [disabled]="redubbing()"
+              />
+              <span>{{ 'wizard.diarize' | translate }}</span>
+            </label>
+            <p class="hint">{{ 'editor.diarize-hint' | translate }}</p>
+          }
         </div>
 
         <!-- Translation -->

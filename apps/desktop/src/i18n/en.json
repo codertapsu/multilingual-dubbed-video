@@ -498,7 +498,7 @@
     "project-voice-play": "Play {{ name }}",
     "speakers": "Speakers",
     "speakers-hint": "Give each person in the video their own voice. Every line of a speaker is spoken in that speaker's voice, unless the line has a voice of its own. Changing a voice marks the lines it affects for re-voicing.",
-    "speakers-none": "No speakers yet. Set who says a line in the Line tab (select several lines to set them at once).",
+    "speakers-none": "No speakers yet. Turn on “Detect who speaks” under Speech recognition above and re-dub from speech-to-text, or set who says a line in the Line tab (select several lines to set them at once).",
     "speakers-make-all": "Copy every speaker's voice…",
     "speaker-stats": "{{ lines }} lines · {{ s }} s",
     "speaker-voice": "Voice of Speaker {{ n }}",
@@ -571,7 +571,8 @@
     "regenerate": "Regenerate TTS",
     "synthesizing": "Synthesizing…",
     "tighten": "Tighten to fit",
-    "tighten-title": "Shorten this line's translation so it fits its time window, keeping its meaning, then re-voice it"
+    "tighten-title": "Shorten this line's translation so it fits its time window, keeping its meaning, then re-voice it",
+    "diarize-hint": "Works out who says each line when the dub is made again from speech-to-text. Needs the Speaker detection engine (Settings → Engines, ~135 MB)."
   },
   "studio": {
     "back": "Back to projects",
@@ -755,9 +756,8 @@
     "forced-alignment-hint": "Tightens subtitle/dub sync to ~50 ms using the “Forced alignment + diarization” engine.",
     "active": "Active.",
     "fa-not-installed": "Not installed — falls back to the default timestamps (install the engine in Settings → Engines for word-accurate timing).",
-    "diarize": "Detect speakers (diarization)",
-    "diarize-hint": "Splits the transcript per speaker so multi-speaker videos can use a distinct voice per person. Uses the same engine pack.",
-    "diarize-needs": "Install the “Forced alignment + diarization” engine in Settings → Engines to enable this.",
+    "diarize": "Detect who speaks (speaker detection)",
+    "diarize-hint": "Works out who says each line, so every person can get their own voice (Editor → Project → Speakers) and the translator knows who is talking to whom. Adds about a tenth of the video's length to the dub.",
     "auto-fit": "Auto-fit lines that overflow their timing",
     "auto-fit-hint": "When a translated line is too long to fit even at max speed, re-translate it shorter and re-synthesize so it fits — fewer timing conflicts. Works with LLM translators (Ollama / llama.cpp / cloud); ignored for Argos.",
     "render-quality": "Render quality",
@@ -849,7 +849,9 @@
     "browse": "Browse…",
     "browse-title": "Choose a video file on this computer",
     "browse-title-browser": "The file picker is only in the desktop app. Paste the video's full path instead.",
-    "output-folder-remember-reset": "“Use the default folder” here makes them start in the default folder again."
+    "output-folder-remember-reset": "“Use the default folder” here makes them start in the default folder again.",
+    "diarize-install": "Install speaker detection (~135 MB)",
+    "diarize-installing": "Installing speaker detection… {{ percent }}%"
   },
   "status": {
     "created": "Created",

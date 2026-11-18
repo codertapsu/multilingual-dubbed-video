@@ -43,8 +43,12 @@ import type {
 } from '../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { environment } from '../../core/environment';
 import { describeVoice } from '../../shared/voice-library/voice-filter';
 import { libraryEngineFor, voiceOptions } from '../../shared/voice-library/voice-options';
+
+/** The speaker-detection engine pack (enginePackCatalog.ts). */
+const SPEAKER_PACK = 'diarization-sherpa';
 
 /** Wizard step index. */
 type WizardStep = 1 | 2;
@@ -173,8 +177,57 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   protected readonly whisperxReady = computed(() => this.installedPacks().has('alignment-whisperx'));
   /** Whether the vocal-separation feature is offered at all (else hide the control). */
   protected readonly vocalSeparationOffered = computed(() => this.offeredPacks().has('separation-audio'));
-  /** Whether the WhisperX (alignment + diarization) feature is offered at all. */
+  /** Whether the WhisperX (forced alignment) feature is offered at all. */
   protected readonly whisperxOffered = computed(() => this.offeredPacks().has('alignment-whisperx'));
+  /** Speaker detection (the diarization-sherpa pack): offered here / installed. */
+  protected readonly speakersOffered = computed(() => this.offeredPacks().has(SPEAKER_PACK));
+  protected readonly speakersReady = computed(() => this.installedPacks().has(SPEAKER_PACK));
+  protected readonly speakersInstalling = signal(false);
+  protected readonly speakersProgress = signal<number | null>(null);
+  protected readonly speakersError = signal<AppError | null>(null);
+
+  /**
+   * Install speaker detection from the wizard (a small download), following
+   * /engines/events for progress and the outcome, then tick it.
+   */
+  protected async installSpeakers(): Promise<void> {
+    if (this.speakersInstalling()) return;
+    this.speakersInstalling.set(true);
+    this.speakersError.set(null);
+    // Listen before asking: the install's events must not be missed.
+    const es = environment.orchestratorUrl ? new EventSource(`${environment.orchestratorUrl}/engines/events`) : null;
+    const outcome = new Promise<boolean>((resolve) => {
+      if (!es) return resolve(false);
+      es.onmessage = (ev) => {
+        try {
+          const e = JSON.parse(ev.data as string) as { type: string; packId?: string; percent?: number | null; error?: AppError };
+          if (e.packId !== SPEAKER_PACK) return;
+          if (e.type === 'progress') this.speakersProgress.set(e.percent ?? null);
+          else if (e.type === 'done') resolve(true);
+          else if (e.type === 'error') {
+            this.speakersError.set(e.error ?? null);
+            resolve(false);
+          }
+        } catch {
+          /* not an install event */
+        }
+      };
+    });
+    try {
+      await this.ipc.installEngine(SPEAKER_PACK);
+      if (await outcome) {
+        const engines = await this.ipc.getEngines().catch(() => null);
+        if (engines) this.installedPacks.set(new Set(engines.installed.map((p) => p.id)));
+        if (this.speakersReady()) this.patchSettings('diarize', true);
+      }
+    } catch (err) {
+      this.speakersError.set(err as AppError);
+    } finally {
+      es?.close();
+      this.speakersInstalling.set(false);
+      this.speakersProgress.set(null);
+    }
+  }
 
   /**
    * Phases currently routed to a cloud provider (drives the privacy note).
@@ -407,9 +460,9 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
         next.includeOriginalBackgroundAudio = true;
       }
       // Forced alignment degrades gracefully to the default timestamps without the
-      // WhisperX pack, so it stays enabled. Diarization has no fallback (it'd be a
-      // silent no-op), so it's forced off until the pack is installed.
-      if (!this.whisperxReady()) {
+      // WhisperX pack, so it stays enabled. Speaker detection would be a no-op
+      // (the run only warns), so it is off until its pack is installed.
+      if (!this.speakersReady()) {
         next.diarize = false;
       }
       return next;

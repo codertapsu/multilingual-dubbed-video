@@ -498,7 +498,7 @@
     "project-voice-play": "Nghe thử {{ name }}",
     "speakers": "Người nói",
     "speakers-hint": "Gán cho mỗi người trong video một giọng riêng. Mọi dòng của một người sẽ được đọc bằng giọng của người đó, trừ khi dòng có giọng riêng. Khi đổi giọng, các dòng bị ảnh hưởng sẽ được đánh dấu để lồng tiếng lại.",
-    "speakers-none": "Chưa có người nói nào. Hãy chọn người nói cho từng dòng ở thẻ Dòng (chọn nhiều dòng để đặt một lần).",
+    "speakers-none": "Chưa có người nói nào. Hãy bật “Nhận diện người nói” trong mục Nhận dạng giọng nói ở trên rồi lồng tiếng lại từ bước nhận dạng giọng nói, hoặc chọn người nói cho từng dòng ở thẻ Dòng (chọn nhiều dòng để đặt một lần).",
     "speakers-make-all": "Sao chép giọng của mọi người nói…",
     "speaker-stats": "{{ lines }} dòng · {{ s }} giây",
     "speaker-voice": "Giọng của Người nói {{ n }}",
@@ -571,7 +571,8 @@
     "regenerate": "Tạo lại giọng",
     "synthesizing": "Đang tổng hợp…",
     "tighten": "Rút gọn cho vừa",
-    "tighten-title": "Rút gọn bản dịch của câu này cho vừa khung thời gian mà vẫn giữ ý, rồi tạo lại giọng"
+    "tighten-title": "Rút gọn bản dịch của câu này cho vừa khung thời gian mà vẫn giữ ý, rồi tạo lại giọng",
+    "diarize-hint": "Xác định ai nói từng dòng khi lồng tiếng lại từ bước nhận dạng giọng nói. Cần bộ máy Nhận diện người nói (Cài đặt → Engine, ~135 MB)."
   },
   "studio": {
     "back": "Quay lại danh sách dự án",
@@ -755,9 +756,8 @@
     "forced-alignment-hint": "Siết đồng bộ phụ đề/lồng tiếng xuống khoảng 50 ms bằng engine “Forced alignment + diarization”.",
     "active": "Đang bật.",
     "fa-not-installed": "Chưa cài — sẽ dùng dấu thời gian mặc định (hãy cài engine trong Cài đặt → Engine để có độ chính xác theo từ).",
-    "diarize": "Nhận diện người nói (diarization)",
-    "diarize-hint": "Tách bản ghi theo từng người nói để video nhiều người có thể dùng giọng riêng cho mỗi người. Dùng chung gói engine.",
-    "diarize-needs": "Hãy cài engine “Forced alignment + diarization” trong Cài đặt → Engine để bật tuỳ chọn này.",
+    "diarize": "Nhận diện người nói",
+    "diarize-hint": "Xác định ai nói từng dòng, để mỗi người có thể có giọng riêng (Trình chỉnh sửa → Dự án → Người nói) và bản dịch biết ai đang nói với ai. Tốn thêm khoảng một phần mười thời lượng video.",
     "auto-fit": "Tự động rút gọn dòng vượt khung thời gian",
     "auto-fit-hint": "Khi một dòng đã dịch quá dài để vừa khung dù đã ở tốc độ tối đa, hệ thống sẽ dịch lại ngắn hơn và tổng hợp lại cho vừa — giảm xung đột thời gian. Hoạt động với các trình dịch LLM (Ollama / llama.cpp / đám mây); bỏ qua với Argos.",
     "render-quality": "Chất lượng render",
@@ -849,7 +849,9 @@
     "browse": "Chọn tệp…",
     "browse-title": "Chọn một tệp video trên máy này",
     "browse-title-browser": "Hộp chọn tệp chỉ có trong ứng dụng máy tính. Hãy dán đường dẫn đầy đủ của video vào ô bên cạnh.",
-    "output-folder-remember-reset": "Bấm “Dùng thư mục mặc định” ở đây để dự án mới quay về lưu vào thư mục mặc định."
+    "output-folder-remember-reset": "Bấm “Dùng thư mục mặc định” ở đây để dự án mới quay về lưu vào thư mục mặc định.",
+    "diarize-install": "Cài nhận diện người nói (~135 MB)",
+    "diarize-installing": "Đang cài nhận diện người nói… {{ percent }}%"
   },
   "status": {
     "created": "Đã tạo",

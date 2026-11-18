@@ -199,8 +199,8 @@
 
       <fieldset>
         <legend>{{ 'wizard.timing' | translate }}</legend>
-        <!-- Forced alignment + diarization both need the WhisperX engine; shown
-             only where that engine is offered on this machine. -->
+        <!-- Forced alignment needs the WhisperX engine; shown only where that
+             engine is offered on this machine. -->
         @if (whisperxOffered()) {
           <label class="radio-row">
             <input
@@ -221,22 +221,35 @@
               >
             </span>
           </label>
+        }
+        <!-- Speaker detection (the diarization-sherpa pack): a small download,
+             installed right here when the user wants it. -->
+        @if (speakersOffered()) {
           <label class="radio-row">
             <input
               type="checkbox"
               name="diarize"
               [ngModel]="settings().diarize ?? false"
               (ngModelChange)="toggleDiarize($event)"
-              [disabled]="!whisperxReady()"
+              [disabled]="!speakersReady()"
             />
             <span class="radio-body">
               <span class="radio-title">{{ 'wizard.diarize' | translate }}</span>
-              <span class="hint"
-                >{{ 'wizard.diarize-hint' | translate }}
-                @if (!whisperxReady()) {
-                  <strong>{{ 'wizard.diarize-needs' | translate }}</strong>
-                }</span
-              >
+              <span class="hint">{{ 'wizard.diarize-hint' | translate }}</span>
+              @if (!speakersReady()) {
+                <span class="hint">
+                  @if (speakersInstalling()) {
+                    {{ 'wizard.diarize-installing' | translate: { percent: speakersProgress() ?? 0 } }}
+                  } @else {
+                    <button type="button" class="btn btn-sm" (click)="installSpeakers(); $event.preventDefault()">
+                      {{ 'wizard.diarize-install' | translate }}
+                    </button>
+                  }
+                </span>
+              }
+              @if (speakersError(); as e) {
+                <span class="hint warn">{{ e.message }}</span>
+              }
             </span>
           </label>
         }

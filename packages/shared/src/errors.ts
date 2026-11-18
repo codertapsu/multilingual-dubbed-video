@@ -38,6 +38,9 @@ export type ErrorCode =
   | 'CANCELLED'
   | 'RUN_IN_PROGRESS'
   | 'INVALID_EDIT'
+  | 'VOICE_CONSENT_REQUIRED'
+  | 'VOICE_REFERENCE_REJECTED'
+  | 'VOICE_ENGINE_CANNOT_CLONE'
   | 'UNKNOWN';
 
 /**
@@ -184,6 +187,21 @@ export const REMEDIATIONS: Record<ErrorCode, { remediation: string; docsRef: str
     remediation:
       'That edit cannot be applied: a line must start before it ends, stay inside the video, and keep its place between its neighbours. Undo the last change or adjust it and try again.',
     docsRef: 'docs/USER_GUIDE.md#editing-a-dub',
+  },
+  VOICE_CONSENT_REQUIRED: {
+    remediation:
+      'A cloned voice is saved only with your statement that it is your voice or that its owner allowed it. Confirm the statement in the cloning dialog, then save again.',
+    docsRef: 'docs/VOICE_CLONING.md#consent',
+  },
+  VOICE_REFERENCE_REJECTED: {
+    remediation:
+      'The recording cannot make a voice: it needs at least 3 seconds of one person speaking clearly. Record again closer to the microphone, or pick another part of the file.',
+    docsRef: 'docs/VOICE_CLONING.md#a-good-recording',
+  },
+  VOICE_ENGINE_CANNOT_CLONE: {
+    remediation:
+      'This voice engine only speaks its own preset voices. Use VieNeu-TTS 3.8, which speaks cloned voices, or pick a preset voice for these lines.',
+    docsRef: 'docs/VOICE_CLONING.md#engines',
   },
   UNKNOWN: {
     remediation:

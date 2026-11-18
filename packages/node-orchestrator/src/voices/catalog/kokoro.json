@@ -1,0 +1,1147 @@
+{
+ "engine": "kokoro",
+ "generatedAt": "2026-11-18T13:42:54.379Z",
+ "sources": [
+  {
+   "repo": "onnx-community/Kokoro-82M-v1.0-ONNX",
+   "revision": "1939ad2a8e416c0acfeecc08a694d14ef25f2231"
+  },
+  {
+   "repo": "hexgrad/Kokoro-82M",
+   "revision": "f3ff3571791e39611d31c381e3a41a3af07b4987"
+  }
+ ],
+ "voices": [
+  {
+   "id": "kokoro-af_alloy",
+   "engine": "kokoro",
+   "name": "Alloy",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-af_aoede",
+   "engine": "kokoro",
+   "name": "Aoede",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C+"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-af_bella",
+   "engine": "kokoro",
+   "name": "Bella",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:A-"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-af_heart",
+   "engine": "kokoro",
+   "name": "Heart",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:A"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "kokoro-af_jessica",
+   "engine": "kokoro",
+   "name": "Jessica",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-af_kore",
+   "engine": "kokoro",
+   "name": "Kore",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C+"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-af_nicole",
+   "engine": "kokoro",
+   "name": "Nicole",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:B-"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-af_nova",
+   "engine": "kokoro",
+   "name": "Nova",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-af_river",
+   "engine": "kokoro",
+   "name": "River",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-af_sarah",
+   "engine": "kokoro",
+   "name": "Sarah",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C+"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-af_sky",
+   "engine": "kokoro",
+   "name": "Sky",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C-"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-am_adam",
+   "engine": "kokoro",
+   "name": "Adam",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:F+"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-am_echo",
+   "engine": "kokoro",
+   "name": "Echo",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-am_eric",
+   "engine": "kokoro",
+   "name": "Eric",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-am_fenrir",
+   "engine": "kokoro",
+   "name": "Fenrir",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:C+"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-am_liam",
+   "engine": "kokoro",
+   "name": "Liam",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-am_michael",
+   "engine": "kokoro",
+   "name": "Michael",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:C+"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-am_onyx",
+   "engine": "kokoro",
+   "name": "Onyx",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-am_puck",
+   "engine": "kokoro",
+   "name": "Puck",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:C+"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-am_santa",
+   "engine": "kokoro",
+   "name": "Santa",
+   "languages": [
+    "en-US"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D-"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-bf_alice",
+   "engine": "kokoro",
+   "name": "Alice",
+   "languages": [
+    "en-GB"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-bf_emma",
+   "engine": "kokoro",
+   "name": "Emma",
+   "languages": [
+    "en-GB"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:B-"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "kokoro-bf_isabella",
+   "engine": "kokoro",
+   "name": "Isabella",
+   "languages": [
+    "en-GB"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-bf_lily",
+   "engine": "kokoro",
+   "name": "Lily",
+   "languages": [
+    "en-GB"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-bm_daniel",
+   "engine": "kokoro",
+   "name": "Daniel",
+   "languages": [
+    "en-GB"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-bm_fable",
+   "engine": "kokoro",
+   "name": "Fable",
+   "languages": [
+    "en-GB"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-bm_george",
+   "engine": "kokoro",
+   "name": "George",
+   "languages": [
+    "en-GB"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-bm_lewis",
+   "engine": "kokoro",
+   "name": "Lewis",
+   "languages": [
+    "en-GB"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D+"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-ef_dora",
+   "engine": "kokoro",
+   "name": "Dora",
+   "languages": [
+    "es-ES"
+   ],
+   "gender": "female",
+   "tags": [],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "kokoro-em_alex",
+   "engine": "kokoro",
+   "name": "Alex",
+   "languages": [
+    "es-ES"
+   ],
+   "gender": "male",
+   "tags": [],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-em_santa",
+   "engine": "kokoro",
+   "name": "Santa",
+   "languages": [
+    "es-ES"
+   ],
+   "gender": "male",
+   "tags": [],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-ff_siwis",
+   "engine": "kokoro",
+   "name": "Siwis",
+   "languages": [
+    "fr-FR"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:B-"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "attribution",
+    "label": "Apache-2.0 + CC BY data",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M/blob/f3ff3571791e39611d31c381e3a41a3af07b4987/VOICES.md",
+    "attribution": "Kokoro-82M by hexgrad; trained on SIWIS — https://datashare.ed.ac.uk/handle/10283/2353"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "kokoro-hf_alpha",
+   "engine": "kokoro",
+   "name": "Alpha",
+   "languages": [
+    "hi-IN"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "kokoro-hf_beta",
+   "engine": "kokoro",
+   "name": "Beta",
+   "languages": [
+    "hi-IN"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-hm_omega",
+   "engine": "kokoro",
+   "name": "Omega",
+   "languages": [
+    "hi-IN"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-hm_psi",
+   "engine": "kokoro",
+   "name": "Psi",
+   "languages": [
+    "hi-IN"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-if_sara",
+   "engine": "kokoro",
+   "name": "Sara",
+   "languages": [
+    "it-IT"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "kokoro-im_nicola",
+   "engine": "kokoro",
+   "name": "Nicola",
+   "languages": [
+    "it-IT"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-jf_alpha",
+   "engine": "kokoro",
+   "name": "Alpha",
+   "languages": [
+    "ja-JP"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C+"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "kokoro-jf_gongitsune",
+   "engine": "kokoro",
+   "name": "Gongitsune",
+   "languages": [
+    "ja-JP"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "attribution",
+    "label": "Apache-2.0 + CC BY data",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M/blob/f3ff3571791e39611d31c381e3a41a3af07b4987/VOICES.md",
+    "attribution": "Kokoro-82M by hexgrad; trained on gongitsune — https://github.com/koniwa/koniwa/blob/master/source/tnc/tnc__gongitsune.txt"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-jf_nezumi",
+   "engine": "kokoro",
+   "name": "Nezumi",
+   "languages": [
+    "ja-JP"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C-"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "attribution",
+    "label": "Apache-2.0 + CC BY data",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M/blob/f3ff3571791e39611d31c381e3a41a3af07b4987/VOICES.md",
+    "attribution": "Kokoro-82M by hexgrad; trained on nezuminoyomeiri — https://github.com/koniwa/koniwa/blob/master/source/tnc/tnc__nezuminoyomeiri.txt"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-jf_tebukuro",
+   "engine": "kokoro",
+   "name": "Tebukuro",
+   "languages": [
+    "ja-JP"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:C"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "attribution",
+    "label": "Apache-2.0 + CC BY data",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M/blob/f3ff3571791e39611d31c381e3a41a3af07b4987/VOICES.md",
+    "attribution": "Kokoro-82M by hexgrad; trained on tebukurowokaini — https://github.com/koniwa/koniwa/blob/master/source/tnc/tnc__tebukurowokaini.txt"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-jm_kumo",
+   "engine": "kokoro",
+   "name": "Kumo",
+   "languages": [
+    "ja-JP"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:C-"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "attribution",
+    "label": "Apache-2.0 + CC BY data",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M/blob/f3ff3571791e39611d31c381e3a41a3af07b4987/VOICES.md",
+    "attribution": "Kokoro-82M by hexgrad; trained on kumonoito — https://github.com/koniwa/koniwa/blob/master/source/tnc/tnc__kumonoito.txt"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-pf_dora",
+   "engine": "kokoro",
+   "name": "Dora",
+   "languages": [
+    "pt-BR"
+   ],
+   "gender": "female",
+   "tags": [],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "kokoro-pm_alex",
+   "engine": "kokoro",
+   "name": "Alex",
+   "languages": [
+    "pt-BR"
+   ],
+   "gender": "male",
+   "tags": [],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-pm_santa",
+   "engine": "kokoro",
+   "name": "Santa",
+   "languages": [
+    "pt-BR"
+   ],
+   "gender": "male",
+   "tags": [],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-zf_xiaobei",
+   "engine": "kokoro",
+   "name": "Xiaobei",
+   "languages": [
+    "zh-CN"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "kokoro-zf_xiaoni",
+   "engine": "kokoro",
+   "name": "Xiaoni",
+   "languages": [
+    "zh-CN"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-zf_xiaoxiao",
+   "engine": "kokoro",
+   "name": "Xiaoxiao",
+   "languages": [
+    "zh-CN"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-zf_xiaoyi",
+   "engine": "kokoro",
+   "name": "Xiaoyi",
+   "languages": [
+    "zh-CN"
+   ],
+   "gender": "female",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-zm_yunjian",
+   "engine": "kokoro",
+   "name": "Yunjian",
+   "languages": [
+    "zh-CN"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-zm_yunxi",
+   "engine": "kokoro",
+   "name": "Yunxi",
+   "languages": [
+    "zh-CN"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-zm_yunxia",
+   "engine": "kokoro",
+   "name": "Yunxia",
+   "languages": [
+    "zh-CN"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "kokoro-zm_yunyang",
+   "engine": "kokoro",
+   "name": "Yunyang",
+   "languages": [
+    "zh-CN"
+   ],
+   "gender": "male",
+   "tags": [
+    "grade:D"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/hexgrad/Kokoro-82M",
+    "attribution": "Kokoro-82M by hexgrad"
+   },
+   "files": [],
+   "sizeMb": 0
+  }
+ ]
+}

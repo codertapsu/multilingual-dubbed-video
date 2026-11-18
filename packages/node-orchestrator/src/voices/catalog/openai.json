@@ -1,0 +1,184 @@
+{
+ "engine": "openai",
+ "generatedAt": "2026-11-18T13:42:04.547Z",
+ "sources": [],
+ "voices": [
+  {
+   "id": "openai-alloy",
+   "engine": "openai",
+   "name": "Alloy",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "openai-ash",
+   "engine": "openai",
+   "name": "Ash",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "openai-ballad",
+   "engine": "openai",
+   "name": "Ballad",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "openai-coral",
+   "engine": "openai",
+   "name": "Coral",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "openai-echo",
+   "engine": "openai",
+   "name": "Echo",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "openai-fable",
+   "engine": "openai",
+   "name": "Fable",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "openai-nova",
+   "engine": "openai",
+   "name": "Nova",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "openai-onyx",
+   "engine": "openai",
+   "name": "Onyx",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "openai-sage",
+   "engine": "openai",
+   "name": "Sage",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "openai-shimmer",
+   "engine": "openai",
+   "name": "Shimmer",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "openai-verse",
+   "engine": "openai",
+   "name": "Verse",
+   "languages": [
+    "*"
+   ],
+   "sampleRate": 24000,
+   "license": {
+    "category": "service-terms",
+    "label": "OpenAI terms",
+    "sourceUrl": "https://openai.com/policies/usage-policies"
+   },
+   "files": [],
+   "sizeMb": 0
+  }
+ ]
+}

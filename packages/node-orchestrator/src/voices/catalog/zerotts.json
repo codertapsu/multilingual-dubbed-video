@@ -1,0 +1,245 @@
+{
+ "engine": "zerotts",
+ "generatedAt": "2026-11-18T13:42:17.289Z",
+ "sources": [
+  {
+   "repo": "zeroweight-ai/ZeroTTS",
+   "revision": "18d6681518a4becaed3c125ceb3c7db59905fe86"
+  }
+ ],
+ "voices": [
+  {
+   "id": "zerotts-maichi",
+   "engine": "zerotts",
+   "name": "Mai Chi",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "tags": [
+    "trẻ",
+    "kể chuyện",
+    "nhẹ nhàng",
+    "thân thiện"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "MIT",
+    "sourceUrl": "https://huggingface.co/zeroweight-ai/ZeroTTS",
+    "attribution": "ZeroTTS by zeroweight.ai — \"the shipped voices are for evaluation and demos\""
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true,
+   "preview": {
+    "url": "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/18d6681518a4becaed3c125ceb3c7db59905fe86/voices/maichi/preview.wav",
+    "sha256": "978a62c9d93cd2a955005c5c9ffac6f3b8a37cc60fb85656e950c119d97c1dff",
+    "bytes": 646210
+   }
+  },
+  {
+   "id": "zerotts-baotrang",
+   "engine": "zerotts",
+   "name": "Bảo Trang",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "tags": [
+    "trưởng thành",
+    "tin tức",
+    "rõ ràng",
+    "trung tính"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "MIT",
+    "sourceUrl": "https://huggingface.co/zeroweight-ai/ZeroTTS",
+    "attribution": "ZeroTTS by zeroweight.ai — \"the shipped voices are for evaluation and demos\""
+   },
+   "files": [],
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/18d6681518a4becaed3c125ceb3c7db59905fe86/voices/baotrang/preview.wav",
+    "sha256": "cfe47bfeabb0177c9f346bae41a42c655ee4531184938d536317470be6ab5cfd",
+    "bytes": 437804
+   }
+  },
+  {
+   "id": "zerotts-kimoanh",
+   "engine": "zerotts",
+   "name": "Kim Oanh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "tags": [
+    "trung niên",
+    "kể chuyện",
+    "ấm áp",
+    "truyền cảm"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "MIT",
+    "sourceUrl": "https://huggingface.co/zeroweight-ai/ZeroTTS",
+    "attribution": "ZeroTTS by zeroweight.ai — \"the shipped voices are for evaluation and demos\""
+   },
+   "files": [],
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/18d6681518a4becaed3c125ceb3c7db59905fe86/voices/kimoanh/preview.wav",
+    "sha256": "235bbe6aac7abbac191b2302ff52e51422076bf8117cd4142de1da7fe837a806",
+    "bytes": 721964
+   }
+  },
+  {
+   "id": "zerotts-giahuy",
+   "engine": "zerotts",
+   "name": "Gia Huy",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "trẻ",
+    "kể chuyện",
+    "trầm ấm",
+    "tâm tình"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "MIT",
+    "sourceUrl": "https://huggingface.co/zeroweight-ai/ZeroTTS",
+    "attribution": "ZeroTTS by zeroweight.ai — \"the shipped voices are for evaluation and demos\""
+   },
+   "files": [],
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/18d6681518a4becaed3c125ceb3c7db59905fe86/voices/giahuy/preview.wav",
+    "sha256": "16feeedc4bc930bbe5aad4e657d1df78e60abc11fcac179a42f75c0d268b25d1",
+    "bytes": 629804
+   }
+  },
+  {
+   "id": "zerotts-huuduc",
+   "engine": "zerotts",
+   "name": "Hữu Đức",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "lớn tuổi",
+    "kể chuyện",
+    "trầm",
+    "điềm đạm"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "MIT",
+    "sourceUrl": "https://huggingface.co/zeroweight-ai/ZeroTTS",
+    "attribution": "ZeroTTS by zeroweight.ai — \"the shipped voices are for evaluation and demos\""
+   },
+   "files": [],
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/18d6681518a4becaed3c125ceb3c7db59905fe86/voices/huuduc/preview.wav",
+    "sha256": "8241e4cefd7bc526e101f0d0db7a793b9e2159ffae9f2f2e3c1cc94edebec184",
+    "bytes": 491564
+   }
+  },
+  {
+   "id": "zerotts-quangminh",
+   "engine": "zerotts",
+   "name": "Quang Minh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "trẻ",
+    "tin tức",
+    "rõ ràng",
+    "dứt khoát"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "MIT",
+    "sourceUrl": "https://huggingface.co/zeroweight-ai/ZeroTTS",
+    "attribution": "ZeroTTS by zeroweight.ai — \"the shipped voices are for evaluation and demos\""
+   },
+   "files": [],
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/18d6681518a4becaed3c125ceb3c7db59905fe86/voices/quangminh/preview.wav",
+    "sha256": "0257b6868a5ee37b2ef0f54d35d06c9d193c0358b2e66edc2ea7e1248608cb39",
+    "bytes": 391724
+   }
+  },
+  {
+   "id": "zerotts-tiendat",
+   "engine": "zerotts",
+   "name": "Tiến Đạt",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "trẻ",
+    "bình luận",
+    "sôi nổi",
+    "năng lượng cao"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "MIT",
+    "sourceUrl": "https://huggingface.co/zeroweight-ai/ZeroTTS",
+    "attribution": "ZeroTTS by zeroweight.ai — \"the shipped voices are for evaluation and demos\""
+   },
+   "files": [],
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/18d6681518a4becaed3c125ceb3c7db59905fe86/voices/tiendat/preview.wav",
+    "sha256": "833a33be52c083c56a11783e67d8cd953b794b8a4334e15e1c14bf11adaf966c",
+    "bytes": 483884
+   }
+  },
+  {
+   "id": "zerotts-hamy",
+   "engine": "zerotts",
+   "name": "Hà My",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "tags": [
+    "trẻ",
+    "hoạt hình",
+    "cao",
+    "biểu cảm"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "MIT",
+    "sourceUrl": "https://huggingface.co/zeroweight-ai/ZeroTTS",
+    "attribution": "ZeroTTS by zeroweight.ai — \"the shipped voices are for evaluation and demos\""
+   },
+   "files": [],
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://huggingface.co/zeroweight-ai/ZeroTTS/resolve/18d6681518a4becaed3c125ceb3c7db59905fe86/voices/hamy/preview.wav",
+    "sha256": "4bc33835023d7786bc75cb6c5c2681b1aec1ca3fb01300044b30d2161b29a171",
+    "bytes": 460844
+   }
+  }
+ ]
+}

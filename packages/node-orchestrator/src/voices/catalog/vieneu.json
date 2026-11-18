@@ -1,0 +1,578 @@
+{
+ "engine": "vieneu",
+ "generatedAt": "2026-11-18T13:42:04.546Z",
+ "sources": [
+  {
+   "repo": "pnnbao97/VieNeu-TTS",
+   "revision": "22dd2ef2a89bba24a77da6dbc84c75f7f4fda05b",
+   "tag": "v3.8.4"
+  },
+  {
+   "repo": "pnnbao-ump/VieNeu-TTS-v3-Turbo",
+   "revision": "61b85e3d937fbbacb387714180e8182823512523"
+  }
+ ],
+ "voices": [
+  {
+   "id": "vieneu38-adam-bua",
+   "engine": "vieneu",
+   "name": "Adam bựa",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "north",
+   "tags": [
+    "natural",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-truc-ly",
+   "engine": "vieneu",
+   "name": "Trúc Ly",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "north",
+   "tags": [
+    "natural",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-thien-minh",
+   "engine": "vieneu",
+   "name": "Thiện Minh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "north",
+   "tags": [
+    "storytelling",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-mai-anh",
+   "engine": "vieneu",
+   "name": "Mai Anh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "north",
+   "tags": [
+    "news",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-hai-dang",
+   "engine": "vieneu",
+   "name": "Hải Đăng",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "north",
+   "tags": [
+    "natural",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "vieneu38-thuy-dung",
+   "engine": "vieneu",
+   "name": "Thùy Dung",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "south",
+   "tags": [
+    "news",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-thien-tam-duc",
+   "engine": "vieneu",
+   "name": "Thiền Tâm Đức",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "north",
+   "tags": [
+    "storytelling",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-ngoc-huyen",
+   "engine": "vieneu",
+   "name": "Ngọc Huyền",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "north",
+   "tags": [
+    "natural",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-quang-son",
+   "engine": "vieneu",
+   "name": "Quang Sơn",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "central",
+   "tags": [
+    "natural",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-ngoc-tran",
+   "engine": "vieneu",
+   "name": "Ngọc Trân",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "central",
+   "tags": [
+    "natural",
+    "featured"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-adam",
+   "engine": "vieneu",
+   "name": "Adam",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "south",
+   "tags": [
+    "natural"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-doan-trang",
+   "engine": "vieneu",
+   "name": "Đoan Trang",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "north",
+   "tags": [
+    "natural"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-duc-tri",
+   "engine": "vieneu",
+   "name": "Đức Trí",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "south",
+   "tags": [
+    "storytelling"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-kim-thanh",
+   "engine": "vieneu",
+   "name": "Kim Thanh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "south",
+   "tags": [
+    "storytelling"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-minh-duc",
+   "engine": "vieneu",
+   "name": "Minh Đức",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "north",
+   "tags": [
+    "news"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-minh-triet",
+   "engine": "vieneu",
+   "name": "Minh Triết",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "south",
+   "tags": [
+    "news"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-my-duyen",
+   "engine": "vieneu",
+   "name": "Mỹ Duyên",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "south",
+   "tags": [
+    "storytelling"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-ngoc-linh",
+   "engine": "vieneu",
+   "name": "Ngọc Linh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "north",
+   "tags": [
+    "storytelling"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-pham-tuyen",
+   "engine": "vieneu",
+   "name": "Phạm Tuyên",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "north",
+   "tags": [
+    "natural"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-quoc-tuan",
+   "engine": "vieneu",
+   "name": "Quốc Tuấn",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "north",
+   "tags": [
+    "natural"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-quynh-anh",
+   "engine": "vieneu",
+   "name": "Quỳnh Anh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "north",
+   "tags": [
+    "storytelling"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-thai-son",
+   "engine": "vieneu",
+   "name": "Thái Sơn",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "south",
+   "tags": [
+    "storytelling"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-thanh-binh",
+   "engine": "vieneu",
+   "name": "Thanh Bình",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "north",
+   "tags": [
+    "storytelling"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-thuc-doan",
+   "engine": "vieneu",
+   "name": "Thục Đoan",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "accent": "south",
+   "tags": [
+    "storytelling"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu38-xuan-vinh",
+   "engine": "vieneu",
+   "name": "Xuân Vĩnh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "accent": "north",
+   "tags": [
+    "natural"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  }
+ ]
+}

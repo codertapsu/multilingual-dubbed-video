@@ -162,6 +162,32 @@ export type {
   JobOrchestrator,
   RunScheduleResult,
 } from './models/providers.js';
+export type {
+  VoiceAccent,
+  VoiceConsent,
+  VoiceEngineId,
+  VoiceEngineInfo,
+  VoiceEnrollment,
+  VoiceEntry,
+  VoiceFile,
+  VoiceInstallResult,
+  VoiceLibraryItem,
+  VoiceLibraryResponse,
+  VoiceLicense,
+  VoiceLicenseCategory,
+  VoicePreview,
+  VoiceProfile,
+  VoiceReferenceChecks,
+  VoiceReferencePolicy,
+  VoiceSpeaker,
+} from './models/voices.js';
+export {
+  VOICE_ENGINE_PROVIDER,
+  isVoiceProfileId,
+  splitSpeakerVoiceId,
+  voiceEngineOfId,
+  voiceEngineOfProvider,
+} from './models/voices.js';
 
 // ---- Subtitle utilities ----------------------------------------------------
 export { toSrtTimestamp, toVttTimestamp } from './subtitles/timestamps.js';

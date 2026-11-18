@@ -1,0 +1,224 @@
+{
+ "engine": "vieneu-classic",
+ "generatedAt": "2026-11-18T14:11:00.209Z",
+ "sources": [
+  {
+   "repo": "pnnbao97/VieNeu-TTS",
+   "revision": "cfb28b25735ccb7d2fa49a3ea144914302495b40",
+   "tag": "v3.0.5"
+  }
+ ],
+ "voices": [
+  {
+   "id": "vieneu-v3-ngoc-lan",
+   "engine": "vieneu-classic",
+   "name": "Ngọc Lan",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "tags": [
+    "giọng dịu dàng"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0,
+   "recommended": true
+  },
+  {
+   "id": "vieneu-v3-ngoc-linh",
+   "engine": "vieneu-classic",
+   "name": "Ngọc Linh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "tags": [
+    "giọng tươi sáng"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu-v3-truc-ly",
+   "engine": "vieneu-classic",
+   "name": "Trúc Ly",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "tags": [
+    "giọng trẻ trung"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu-v3-my-duyen",
+   "engine": "vieneu-classic",
+   "name": "Mỹ Duyên",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "female",
+   "tags": [
+    "giọng mượt mà"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu-v3-xuan-vinh",
+   "engine": "vieneu-classic",
+   "name": "Xuân Vĩnh",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "giọng vui tươi"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu-v3-thai-son",
+   "engine": "vieneu-classic",
+   "name": "Thái Sơn",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "giọng chắc khỏe"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu-v3-gia-bao",
+   "engine": "vieneu-classic",
+   "name": "Gia Bảo",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "giọng mượt mà"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu-v3-duc-tri",
+   "engine": "vieneu-classic",
+   "name": "Đức Trí",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "giọng rõ ràng"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu-v3-trong-huu",
+   "engine": "vieneu-classic",
+   "name": "Trọng Hữu",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "giọng uyên bác"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  },
+  {
+   "id": "vieneu-v3-binh-an",
+   "engine": "vieneu-classic",
+   "name": "Bình An",
+   "languages": [
+    "vi-VN"
+   ],
+   "gender": "male",
+   "tags": [
+    "giọng điềm đạm"
+   ],
+   "sampleRate": 48000,
+   "license": {
+    "category": "permissive",
+    "label": "Apache-2.0",
+    "sourceUrl": "https://huggingface.co/pnnbao-ump/VieNeu-TTS-v3-Turbo",
+    "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
+   },
+   "files": [],
+   "sizeMb": 0
+  }
+ ]
+}

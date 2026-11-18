@@ -78,6 +78,14 @@ export interface PiperVoiceInfo {
   languageCode?: string;
   /** True for the curated default voice for its language (shown first). */
   recommended?: boolean;
+  /**
+   * Pinned hashes from the voice catalog: the installer refuses a download
+   * that does not match (a moved branch, a truncated proxy response).
+   */
+  sha256?: string;
+  bytes?: number;
+  configSha256?: string;
+  configBytes?: number;
 }
 
 /** A directed Argos Translate language pair (from -> to). */

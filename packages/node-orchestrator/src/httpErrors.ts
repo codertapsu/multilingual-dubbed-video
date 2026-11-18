@@ -30,6 +30,9 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   CANCELLED: 409, // Conflict
   RUN_IN_PROGRESS: 409, // Conflict — a run is already active for this project
   INVALID_EDIT: 400, // an editor patch broke a timeline invariant (order, bounds, rate)
+  VOICE_CONSENT_REQUIRED: 400, // a cloned voice is saved only with the rights statement
+  VOICE_REFERENCE_REJECTED: 422, // the recording cannot make a voice (too little speech)
+  VOICE_ENGINE_CANNOT_CLONE: 422, // a profile asked of an engine with presets only
   UNKNOWN: 500,
 };
 

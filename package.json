@@ -27,7 +27,7 @@
     "test": "pnpm -r test",
     "test:workers": "node scripts/run.mjs test-workers",
     "test:all": "pnpm test && pnpm test:workers",
-    "check": "pnpm lint && pnpm typecheck && pnpm test:all && node scripts/check-versions.mjs && node scripts/check-tasks.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm test:all && node scripts/check-versions.mjs && node scripts/check-tasks.mjs && node scripts/check-voice-catalog.mjs",
     "package:sidecars": "node scripts/run.mjs package/build-sidecars",
     "dmg:instructions": "node scripts/run.mjs package/dmg-add-instructions",
     "release": "node scripts/run.mjs release",

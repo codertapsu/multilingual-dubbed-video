@@ -172,6 +172,7 @@ export {
 } from './extract.js';
 
 export { referenceClip, buildReferenceClipArgs, REFERENCE_MAX_MS, type ReferenceClipOptions } from './reference.js';
+export { prepareStemInput, mixStems, buildStemInputArgs, buildStemMixArgs } from './stems.js';
 
 export {
   buildTtsTimeline,

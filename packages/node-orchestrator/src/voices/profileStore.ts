@@ -36,6 +36,15 @@ export function isValidProfileId(id: string): boolean {
   return LIBRARY_ID.test(id) || PROJECT_ID.test(id);
 }
 
+/**
+ * A project id as the store makes them. Checked before a client's project id
+ * becomes a path: on Windows a URL-encoded backslash ("..%5C..%5Cx") is one
+ * path segment to the router and two directories up to path.join.
+ */
+export function isProjectId(id: string | undefined): id is string {
+  return typeof id === 'string' && /^proj_[0-9a-f]{32}$/.test(id);
+}
+
 export class VoiceProfileStore {
   constructor(
     private readonly configDir: string,

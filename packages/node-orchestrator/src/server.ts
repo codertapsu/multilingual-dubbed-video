@@ -699,7 +699,22 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
     sendError,
   });
-  registerProfileRoutes(app, { store: voiceProfileStore, service: voiceProfiles, prep: referencePrep, sendError });
+  registerProfileRoutes(app, {
+    store: voiceProfileStore,
+    service: voiceProfiles,
+    prep: referencePrep,
+    source: {
+      projectAudio: async (projectId) => {
+        if (!(await store.exists(projectId).catch(() => false))) return undefined;
+        const paths = store.paths(projectId);
+        return { audioPath: paths.originalWav, transcriptPath: paths.sourceJson };
+      },
+      media,
+      prep: referencePrep,
+      workRoot: join(config.configDir, 'voices', 'work'),
+    },
+    sendError,
+  });
 
   app.post('/setup/complete', async (_req, reply) => {
     try {

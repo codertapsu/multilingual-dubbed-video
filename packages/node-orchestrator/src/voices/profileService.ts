@@ -28,7 +28,7 @@ import { renameReplacing } from '../fsRename.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { isVoiceCloner, type VoiceEnrollmentResult, type VoiceRefResolver } from '../providers/types.js';
 import { acceptConsent, type ConsentInput } from './consent.js';
-import { PROFILE_FILES, projectOfProfileId, type VoiceProfileStore } from './profileStore.js';
+import { isProjectId, PROFILE_FILES, projectOfProfileId, type VoiceProfileStore } from './profileStore.js';
 import { clampWindow, type ReferencePrep } from './referencePrep.js';
 import type { TimeRange } from './referenceAnalysis.js';
 import { voiceEngineInfo } from './voiceCatalog.js';
@@ -101,16 +101,37 @@ export class VoiceProfileService implements VoiceRefResolver {
     if (!name) throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'Give the voice a name.');
     const engine = cloningEngine(input.engine);
     const policy = voiceEngineInfo(engine)!.reference!;
-    const scope: VoiceProfile['scope'] = input.projectId ? { kind: 'project', projectId: input.projectId } : { kind: 'library' };
-    if (scope.kind === 'project' && this.deps.projectExists && !(await this.deps.projectExists(scope.projectId))) {
-      throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'That project does not exist.');
-    }
-    // The declaration comes first: nothing is cut, enrolled or kept without it.
-    const consent = acceptConsent(input.consent, scope.kind, this.now());
     if (!input.analysisId || !input.window) {
       throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'Choose the part of the recording to use.');
     }
     const analysis = await this.deps.prep.load(input.analysisId);
+    // A voice from a project's own video belongs to that project, under the
+    // source-video declaration; the analysis, not the client, says so.
+    const origin = analysis.origin;
+    const projectId = origin?.projectId ?? input.projectId;
+    if (origin && input.projectId && input.projectId !== origin.projectId) {
+      throw new AppErrorException('VOICE_REFERENCE_REJECTED', "A voice from a project's video stays in that project.");
+    }
+    if (origin && input.consent?.relation !== 'source-video') {
+      throw new AppErrorException(
+        'VOICE_CONSENT_REQUIRED',
+        "Confirm that you may use the voices in this project's video.",
+      );
+    }
+    const scope: VoiceProfile['scope'] = projectId ? { kind: 'project', projectId } : { kind: 'library' };
+    if (
+      scope.kind === 'project' &&
+      (!isProjectId(scope.projectId) || (this.deps.projectExists && !(await this.deps.projectExists(scope.projectId))))
+    ) {
+      throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'That project does not exist.');
+    }
+    // The declaration comes before anything is cut, enrolled or kept.
+    const consent = acceptConsent(input.consent, scope.kind, this.now());
+    const source: VoiceProfile['source'] | undefined = origin
+      ? origin.segmentIds?.length
+        ? { kind: 'project-lines', segmentIds: origin.segmentIds.slice(0, 500) }
+        : { kind: 'project-speaker' }
+      : input.source;
     const window = clampWindow(input.window, analysis.durationMs, policy);
     const { checks } = await this.deps.prep.check(input.analysisId, window, policy);
     if (checks.warnings.includes('too-short')) {
@@ -143,7 +164,7 @@ export class VoiceProfileService implements VoiceRefResolver {
         updatedAt: createdAt,
         scope,
         engine,
-        source: input.source ?? { kind: 'recording' },
+        source: source ?? { kind: 'recording' },
         ...(input.referenceLanguage ? { referenceLanguage: input.referenceLanguage } : {}),
         ...(keep
           ? {

@@ -15,6 +15,7 @@
  *   GET    /voice-profiles/:id/export           a .vdvoice file (?recording=1 includes it)
  *   POST   /voice-profiles/:id/export           { dir, includeRecording? } -> { path }
  *   POST   /voice-profiles/import               { bundle, consent } -> a new library voice
+ *   POST   /projects/:id/voices/analyze         { segmentIds? } the project's own speech (sourceVoices.ts)
  *
  * No MCP tool reaches these: a voice is made by a person, in the app.
  */
@@ -27,6 +28,7 @@ import { exportBundle, importBundle, parseBundle } from './profileBundle.js';
 import type { CreateProfileInput, VoiceProfileService } from './profileService.js';
 import { PROFILE_FILES, type VoiceProfileStore } from './profileStore.js';
 import { MAX_UPLOAD_BYTES, type ReferencePrep } from './referencePrep.js';
+import { analyzeProjectSource, type SourceVoiceDeps } from './sourceVoices.js';
 import type { TimeRange } from './referenceAnalysis.js';
 import { voiceEngineInfo } from './voiceCatalog.js';
 
@@ -34,6 +36,8 @@ export interface ProfileRoutesDeps {
   store: VoiceProfileStore;
   service: VoiceProfileService;
   prep: ReferencePrep;
+  /** Voices from a project's own video (absent: the route answers 404). */
+  source?: SourceVoiceDeps;
   sendError: (reply: FastifyReply, err: unknown) => unknown;
 }
 
@@ -127,6 +131,20 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileRoutesD
         else throw new AppErrorException('VOICE_REFERENCE_REJECTED', 'Choose a recording or a file.');
         const sourceName = body.sourceName ?? (body.path ? path.basename(body.path) : undefined);
         return await prep.analyze(input, policy, sourceName ? { sourceName } : {});
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // A project's own speech: the whole track, or the lines chosen in the editor.
+  app.post(
+    '/projects/:id/voices/analyze',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { segmentIds?: string[]; engine?: string } }>, reply) => {
+      try {
+        if (!deps.source) return reply.status(404).send({ error: { code: 'UNKNOWN', message: 'Not available.' } });
+        const ids = Array.isArray(req.body?.segmentIds) ? req.body!.segmentIds.filter((x) => typeof x === 'string').slice(0, 500) : undefined;
+        return await analyzeProjectSource(deps.source, req.params.id, policyFor(req.body?.engine), ids);
       } catch (err) {
         return sendError(reply, err);
       }

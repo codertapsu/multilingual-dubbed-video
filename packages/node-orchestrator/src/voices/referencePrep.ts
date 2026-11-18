@@ -55,14 +55,22 @@ export interface ReferenceAnalysis {
   /** Waveform, 0..1 per bucket, for the window picker. */
   peaks: number[];
   sourceName?: string;
+  /** Made from a project's own audio (sourceVoices.ts): which project, which lines. */
+  origin?: AnalysisOrigin;
 }
 
-interface StoredAnalysis {
+export interface AnalysisOrigin {
+  projectId: string;
+  segmentIds?: string[];
+}
+
+export interface StoredAnalysis {
   analysisId: string;
   durationMs: number;
   regions: TimeRange[];
   detector: 'vad' | 'energy';
   sourceName?: string;
+  origin?: AnalysisOrigin;
   createdAt: string;
 }
 
@@ -117,7 +125,7 @@ export class ReferencePrep {
   async analyze(
     inputPath: string,
     policy: VoiceReferencePolicy,
-    opts: { sourceName?: string; signal?: AbortSignal } = {},
+    opts: { sourceName?: string; signal?: AbortSignal; origin?: AnalysisOrigin } = {},
   ): Promise<ReferenceAnalysis> {
     await this.sweep();
     const referenceClip = this.deps.media.referenceClip;
@@ -162,6 +170,7 @@ export class ReferencePrep {
       regions,
       detector,
       ...(opts.sourceName ? { sourceName: opts.sourceName.slice(0, 200) } : {}),
+      ...(opts.origin ? { origin: opts.origin } : {}),
       createdAt: new Date(this.now()).toISOString(),
     };
     await fsp.writeFile(path.join(dir, 'analysis.json'), JSON.stringify(stored));

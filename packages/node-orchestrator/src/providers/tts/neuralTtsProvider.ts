@@ -72,13 +72,30 @@ export const NEURAL_TTS_UNITS_PER_REQUEST = 6;
  */
 export const NEURAL_TTS_GPU_UNITS_PER_REQUEST = 24;
 
+/** Per-engine tuning for {@link NeuralTtsProvider}. */
+export interface NeuralTtsOptions {
+  /**
+   * Utterances per request on the CPU. VieNeu's six keep a request around half
+   * a minute; the preset ONNX engines (RTF 0.16-0.25) are fast enough for 16.
+   */
+  unitsPerRequest?: number;
+  /**
+   * The engine honours a speaking rate (Kokoro, Supertonic): the runner then
+   * re-synthesizes over-long lines at a faster rate instead of stretching them.
+   */
+  supportsSpeedControl?: boolean;
+}
+
 export class NeuralTtsProvider implements TtsProvider {
   readonly isLocal = true;
+  readonly supportsSpeedControl: boolean;
   /** Where the running engine synthesizes ("cuda" | "cpu"), from its /health. */
   private device: string | undefined;
 
   get maxSegmentsPerRequest(): number {
-    return this.device === 'cuda' ? NEURAL_TTS_GPU_UNITS_PER_REQUEST : NEURAL_TTS_UNITS_PER_REQUEST;
+    return this.device === 'cuda'
+      ? NEURAL_TTS_GPU_UNITS_PER_REQUEST
+      : (this.options.unitsPerRequest ?? NEURAL_TTS_UNITS_PER_REQUEST);
   }
 
   /** The device the engine reported at its last warm-up, for the run log. */
@@ -107,7 +124,10 @@ export class NeuralTtsProvider implements TtsProvider {
      * "vp_…" voice id into the engine's voice file. Absent = presets only.
      */
     private readonly voiceRefs?: VoiceRefResolver,
-  ) {}
+    private readonly options: NeuralTtsOptions = {},
+  ) {
+    this.supportsSpeedControl = options.supportsSpeedControl === true;
+  }
 
   /**
    * Make a voice from a reference recording (engine POST /enroll). Engines

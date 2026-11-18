@@ -71,6 +71,18 @@ function neuralTtsEnv(packDir: string, variant: 'v2' | 'v3' | 'v38', packId?: st
   };
 }
 
+/** Env for a preset-voice ONNX engine served by `vd_tts_engine` (presets.py). */
+function presetTtsEnv(packDir: string, adapter: 'zerotts' | 'kokoro' | 'supertonic'): Record<string, string> {
+  return {
+    PYTHONPATH: prependPath(engineSrcDir(), process.env.PYTHONPATH),
+    VD_PACK_DIR: packDir,
+    HF_HOME: path.join(packDir, 'hf'),
+    VD_TTS_ADAPTER: adapter,
+    // See neuralTtsEnv: the shared blob store splits .onnx files from their data.
+    HF_HUB_DISABLE_SHARED_BLOBS: '1',
+  };
+}
+
 /**
  * Source dir for the bundled `vd_omnivoice` engine worker (the OmniVoice pack's
  * counterpart to {@link engineSrcDir}). A source build (`npm run dev`) falls back
@@ -295,6 +307,29 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     pythonModule: 'vd_tts_engine',
     args: ({ port }) => ['--port', String(port)],
     env: ({ packDir, packId }) => neuralTtsEnv(packDir, 'v38', packId),
+    healthPath: '/health',
+    heavy: false,
+  },
+  // The preset-voice ONNX engines: the same server, the adapter named by
+  // VD_TTS_ADAPTER. Light CPU engines (0.7-3 GB of RAM while speaking).
+  zerotts: {
+    pythonModule: 'vd_tts_engine',
+    args: ({ port }) => ['--port', String(port)],
+    env: ({ packDir }) => presetTtsEnv(packDir, 'zerotts'),
+    healthPath: '/health',
+    heavy: false,
+  },
+  kokoro: {
+    pythonModule: 'vd_tts_engine',
+    args: ({ port }) => ['--port', String(port)],
+    env: ({ packDir }) => presetTtsEnv(packDir, 'kokoro'),
+    healthPath: '/health',
+    heavy: false,
+  },
+  supertonic: {
+    pythonModule: 'vd_tts_engine',
+    args: ({ port }) => ['--port', String(port)],
+    env: ({ packDir }) => presetTtsEnv(packDir, 'supertonic'),
     healthPath: '/health',
     heavy: false,
   },

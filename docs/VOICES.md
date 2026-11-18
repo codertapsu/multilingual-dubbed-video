@@ -37,10 +37,10 @@ opens this screen.
 |---|---|---|---|---|
 | **VieNeu-TTS 3.8** | 25 presets + voice cloning | Vietnamese | CPU, or an NVIDIA GPU | ~0.9 GB (CPU), ~4.6 GB (GPU, PyTorch) |
 | **VieNeu v3** (the ten earlier voices) | 10 presets | Vietnamese | CPU, or an NVIDIA GPU | ~1.5 GB / ~4.5 GB |
-| **ZeroTTS** | 8 presets | Vietnamese | CPU | see the Engines card |
+| **ZeroTTS** | 8 presets | Vietnamese | CPU (4× faster than real time on Apple Silicon; about real time on a Windows desktop CPU) | ~1.1 GB |
 | **Piper** (built in) | 183 voices, 2,719 speakers | 53 languages | any computer | each voice 20–120 MB |
-| **Kokoro** | 54 presets | English, Japanese, Chinese, Spanish, French, Hindi, Italian, Portuguese | CPU | see the Engines card |
-| **Supertonic 3** | 10 presets, each in 31 languages | incl. Vietnamese, Korean, Japanese | CPU | see the Engines card |
+| **Kokoro** | 54 presets | English, Japanese, Chinese, Spanish, French, Hindi, Italian, Portuguese | CPU (3× faster than real time on a Windows desktop, 5–7× on Apple Silicon) | ~0.5 GB |
+| **Supertonic 3** | 10 presets, each in 31 languages | incl. Vietnamese (slow: lines about twice as long, so prefer VieNeu or ZeroTTS for Vietnamese), Korean, Japanese | CPU (3–4× faster than real time on a Windows desktop, 6× on Apple Silicon) | ~0.5 GB |
 | **OpenAI** (cloud, opt-in) | 11 | many | OpenAI's servers; needs an API key | none |
 
 Why two VieNeu engines: VieNeu's SDK 3.8 dropped four of the ten voices the app

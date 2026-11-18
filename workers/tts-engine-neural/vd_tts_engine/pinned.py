@@ -128,6 +128,61 @@ CODEC_ONNX = PinnedRepo(
 )
 
 
+# --- The preset-voice ONNX engines (presets.py) --------------------------------
+# File patterns as Phase 0 ran them (2026-11-18). ZeroTTS's repo also holds
+# onnx/voice_encoder.onnx, an unannounced voice encoder its vendor says was left
+# out of the public release on purpose; it is deliberately not fetched.
+ZEROTTS = PinnedRepo(
+    repo_id="zeroweight-ai/ZeroTTS",
+    revision="18d6681518a4becaed3c125ceb3c7db59905fe86",
+    files=(
+        "config.json",
+        "tokenizer.json",
+        "null_voice_emb.npy",
+        "silence_frame.npy",
+        "onnx/text_encoder.onnx",
+        "onnx/prefix_step.onnx",
+        "onnx/local_frame_decode.onnx",
+        "onnx/codec/*",
+        "voices/index.json",
+        "voices/*/voice.npz",
+        "voices/*/meta.json",
+    ),
+    required=(
+        "config.json",
+        "tokenizer.json",
+        "null_voice_emb.npy",
+        "onnx/text_encoder.onnx",
+        "onnx/prefix_step.onnx",
+        "onnx/local_frame_decode.onnx",
+        "onnx/codec/moss_audio_tokenizer_decode_full.onnx",
+        "voices/index.json",
+        "voices/maichi/voice.npz",
+    ),
+)
+KOKORO = PinnedRepo(
+    repo_id="onnx-community/Kokoro-82M-v1.0-ONNX",
+    revision="1939ad2a8e416c0acfeecc08a694d14ef25f2231",
+    files=("onnx/model.onnx", "voices/*", "config.json", "tokenizer.json", "tokenizer_config.json"),
+    required=("onnx/model.onnx", "voices/af_heart.bin", "voices/zm_yunxi.bin"),
+)
+SUPERTONIC = PinnedRepo(
+    repo_id="supertone-oss-archive/supertonic-3",
+    revision="aafc6e32416a594460b32413efc49d7fe4ce6d46",
+    files=("onnx/*", "voice_styles/*", "config.json", "LICENSE"),
+    required=(
+        "onnx/duration_predictor.onnx",
+        "onnx/text_encoder.onnx",
+        "onnx/vector_estimator.onnx",
+        "onnx/vocoder.onnx",
+        "onnx/tts.json",
+        "onnx/unicode_indexer.json",
+        "voice_styles/F1.json",
+        "voice_styles/M5.json",
+    ),
+)
+
+
 def models_root(environ: "os._Environ[str] | dict[str, str]" = os.environ) -> Path:
     """``<pack>/models`` (VD_PACK_DIR is set by the orchestrator), else beside HF_HOME."""
     pack = environ.get("VD_PACK_DIR")

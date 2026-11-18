@@ -196,6 +196,72 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
     overrides: ["gradio ; sys_platform == 'never'", "librosa ; sys_platform == 'never'"],
     torchCuda: true,
   },
+  // The preset-voice ONNX engines (vd_tts_engine/presets.py), each the exact
+  // set Phase 0 installed and ran on Windows and macOS (2026-11-18). None needs
+  // PyTorch. ZeroTTS declares sounddevice (playback for its CLI) but never
+  // imports it from the library, so it is overridden away like gradio above.
+  'tts-zerotts': {
+    base: [
+      'zerotts==0.1.5',
+      'numpy==2.5.4',
+      'onnxruntime==1.31.1',
+      'tokenizers==0.23.3',
+      'huggingface_hub==2.4.0',
+      'soundfile==0.14.0',
+      'scipy==1.18.1',
+      'pyyaml==6.0.3',
+      'fastapi==0.162.0',
+      'uvicorn==0.54.0',
+    ],
+    overrides: ["sounddevice ; sys_platform == 'never'"],
+  },
+  // kokoro-onnx phonemizes with espeak-ng (espeakng-loader ships the library
+  // and its data as wheels for both platforms) through phonemizer. Japanese and
+  // Chinese come from misaki instead (vd_tts_engine/presets.py MISAKI_CODES:
+  // espeak-ng read every kanji as its name): misaki without extras, plus the
+  // modules its cutlet and ZHG2P paths import. Not misaki[ja], which pulls in
+  // pyopenjtalk (no wheels: a C++ build on every machine) and full unidic (a
+  // separate 770 MB download); UniDic-lite is the dictionary fugashi falls back
+  // to. Resolved for Windows x64 and macOS 14 arm64 (uv 0.13.7, 2026-11-18):
+  // jieba and unidic-lite are pure-Python sdists, every compiled module has a
+  // cp312 wheel on both.
+  'tts-kokoro': {
+    base: [
+      'kokoro-onnx==0.6.1',
+      'espeakng-loader==0.2.4',
+      'phonemizer==3.6.0',
+      'numpy==2.5.4',
+      'onnxruntime==1.31.1',
+      'soundfile==0.14.0',
+      'huggingface_hub==2.4.0',
+      'fastapi==0.162.0',
+      'uvicorn==0.54.0',
+      'misaki==0.9.4',
+      'addict==2.4.0',
+      'regex==2026.11.7',
+      'fugashi==1.5.2',
+      'unidic-lite==1.0.8',
+      'jaconv==0.5.0',
+      'mojimoji==0.0.13',
+      'jieba==0.42.1',
+      'pypinyin==0.55.0',
+      'cn2an==0.5.24',
+      'proces==0.1.7',
+      'ordered-set==4.1.0',
+    ],
+  },
+  // Supertonic's inference loop is vendored (supertonic_helper.py, MIT):
+  // onnxruntime and numpy are all it needs.
+  'tts-supertonic': {
+    base: [
+      'numpy==2.5.4',
+      'onnxruntime==1.31.1',
+      'soundfile==0.14.0',
+      'huggingface_hub==2.4.0',
+      'fastapi==0.162.0',
+      'uvicorn==0.54.0',
+    ],
+  },
   // VieNeu-TTS v2 (24 kHz): pin vieneu 2.7.0, the last release where v2 is the
   // native default and llama-cpp-python + the ONNX NeuCodec decoder are CORE deps
   // (so preset-voice synthesis is CPU + torch-free). The extra index serves CPU

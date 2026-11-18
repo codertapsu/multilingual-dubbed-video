@@ -113,6 +113,12 @@ export const ENGINE_DEFAULT_RATES: Readonly<Record<string, Readonly<Record<strin
   // learned per voice from the first dub (speechFit's per-voice key).
   'vieneu-tts': { vi: 3.5 },
   'piper-local': { vi: PIPER_VI_RATE },
+  // Phase 0 (2026-11-18), syllables ÷ clip length over the same Vietnamese
+  // test lines, p25 as for Piper: ZeroTTS median 3.91 / p25 3.58 (200 clips,
+  // all 8 voices); Supertonic median 2.10 / p25 1.93 (75 clips, 4 voices) —
+  // it reads Vietnamese slowly, so its lines get fewer syllables.
+  zerotts: { vi: 3.6 },
+  supertonic: { vi: 1.9 },
 };
 
 /** The engine's default rate for a language, when known. */

@@ -336,6 +336,27 @@ export function createDefaultRegistry(
         voiceRefs,
       ),
     );
+    // The preset-voice ONNX engines (vd_tts_engine/presets.py), each its own
+    // pack. Fast on the CPU, so 16 lines per request; Kokoro and Supertonic
+    // honour a speaking rate, so over-long lines are re-voiced faster rather
+    // than stretched.
+    registry.registerTts(
+      new NeuralTtsProvider('zerotts', 'ZeroTTS (8 Vietnamese voices)', 'zerotts', engines, store, timeout, false, undefined, {
+        unitsPerRequest: 16,
+      }),
+    );
+    registry.registerTts(
+      new NeuralTtsProvider('kokoro', 'Kokoro (54 voices, 9 languages)', 'kokoro', engines, store, timeout, false, undefined, {
+        unitsPerRequest: 16,
+        supportsSpeedControl: true,
+      }),
+    );
+    registry.registerTts(
+      new NeuralTtsProvider('supertonic', 'Supertonic 3 (10 voices, 31 languages)', 'supertonic', engines, store, timeout, false, undefined, {
+        unitsPerRequest: 16,
+        supportsSpeedControl: true,
+      }),
+    );
     // OmniVoice — massively-multilingual neural TTS, Apple Silicon ONLY (MLX).
     // Registered only where its pack can actually run, so it isn't offered as a
     // permanently-uninstallable option on Windows/Intel. (Its pack `tts-omnivoice`

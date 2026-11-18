@@ -40,7 +40,16 @@ logger = logging.getLogger("vd_tts_engine")
 
 
 def _make_engine() -> Any:
-    """The adapter for this pack: VieNeu SDK 3.8 (``VIENEU_VARIANT=v38``), else 3.0.5 / v2."""
+    """The adapter for this pack: a preset ONNX engine (``VD_TTS_ADAPTER``: zerotts,
+    kokoro, supertonic), VieNeu SDK 3.8 (``VIENEU_VARIANT=v38``), else 3.0.5 / v2."""
+    adapter = (os.environ.get("VD_TTS_ADAPTER") or "").strip().lower()
+    if adapter:
+        from .presets import make_adapter  # noqa: PLC0415
+
+        engine = make_adapter(adapter)
+        if engine is None:
+            raise SystemExit(f"Unknown VD_TTS_ADAPTER '{adapter}'")
+        return engine
     if (os.environ.get("VIENEU_VARIANT") or "").strip().lower() == "v38":
         from .engine38 import VieNeu38Engine  # noqa: PLC0415
 
@@ -218,7 +227,7 @@ def _voice_ref(req: SynthesizeRequest) -> Any:
 def health() -> HealthResponse:
     sdk_version = getattr(_engine, "sdk_version", None)
     return HealthResponse(
-        engines={voices.ENGINE_NAME: _engine.available(), "fallback": True},
+        engines={getattr(_engine, "name", voices.ENGINE_NAME): _engine.available(), "fallback": True},
         loaded=_engine.loaded(),
         loadError=_engine.load_error,
         device=_engine.device,
@@ -239,19 +248,22 @@ def warmup() -> HealthResponse:
 
 @app.get("/voices", response_model=VoicesResponse)
 def list_voices(language: str | None = None) -> VoicesResponse:
-    if hasattr(_engine, "voices"):  # VieNeu 3.8: the SDK's own table is authoritative
-        items = [
-            Voice(
-                id=v.id,
-                language=voices.ENGINE_LANGUAGE,
-                displayName=v.display_name,
-                engine=voices.ENGINE_NAME,
-                gender=v.gender,
-                accent=v.accent,
-                recommended=v.recommended or None,
+    if hasattr(_engine, "voices"):  # VieNeu 3.8 and the preset engines list their own voices
+        name = getattr(_engine, "name", voices.ENGINE_NAME)
+        items = []
+        for v in _engine.voices(language):
+            langs = [l for l in getattr(v, "languages", ()) if l != "*"]
+            items.append(
+                Voice(
+                    id=v.id,
+                    language=(language if language and not langs else (langs[0] if langs else voices.ENGINE_LANGUAGE)),
+                    displayName=v.display_name,
+                    engine=name,
+                    gender=v.gender,
+                    accent=v.accent,
+                    recommended=v.recommended or None,
+                )
             )
-            for v in _engine.voices(language)
-        ]
         return VoicesResponse(voices=items)
     items = [
         Voice(id=v.id, language=voices.ENGINE_LANGUAGE, displayName=v.display_name, engine=voices.ENGINE_NAME)
@@ -292,7 +304,13 @@ def synthesize_segments(req: SynthesizeRequest) -> Any:
             validate(req.voiceId, ref)
         except ValueError as exc:
             return _error(422, "TTS_VOICE_MISSING", str(exc))
-    extra = {"voice_ref": ref} if ref is not None else {}
+    extra: dict[str, Any] = {"voice_ref": ref} if ref is not None else {}
+    key_extra = dict(extra)
+    # Multilingual preset engines read the request's language, and those with a
+    # native rate speak at the requested speed: both are part of a clip's key.
+    if getattr(_engine, "takes_language", False):
+        extra["language"] = req.language
+        key_extra.update(language=req.language, speed=req.speed)
 
     fallback_count = 0
     reused_count = 0
@@ -305,7 +323,7 @@ def synthesize_segments(req: SynthesizeRequest) -> Any:
     #    instead of redoing every finished clip (clipcache.py).
     for i, seg in enumerate(req.segments):
         try:
-            key = _engine.clip_key(seg.text, req.voiceId, **extra)
+            key = _engine.clip_key(seg.text, req.voiceId, **key_extra)
             cached = clipcache.lookup(out_dir, key)
             if cached is not None:
                 clipcache.materialize(cached, outs[i])

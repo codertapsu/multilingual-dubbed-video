@@ -748,6 +748,66 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
       'Apache-2.0: VieNeu-TTS v3 code, weights and all 25 preset voices (the speakers consented; generated audio may be used commercially), the MOSS-Audio-Tokenizer-Nano codec and sea-g2p. Cloning: you must have the right to use the voice you clone. Output is not watermarked.',
   },
 
+  // --- preset-voice ONNX engines (vd_tts_engine/presets.py) ----------------
+  // Light CPU engines, measured in Phase 0 (2026-11-18) with 4 threads at
+  // real-time factors of 0.14-0.25 on an M-series Mac and 0.26-0.32 on an
+  // i5-13400F (ZeroTTS fp32: 1.2 there); models fetched once at pinned commits. Sizes
+  // are what an install took on Windows, venv plus models (ZeroTTS 226 + 862
+  // MB, Kokoro 134 + 365, Supertonic 115 + 383), rounded up.
+  {
+    id: 'tts-zerotts',
+    kind: 'tts',
+    packKind: 'python-uv',
+    displayName: 'ZeroTTS (8 Vietnamese voices)',
+    description:
+      'Eight more natural Vietnamese voices (young, middle-aged and older; storytelling, news and commentary styles), on the CPU without PyTorch. About four times faster than real time on Apple Silicon, about real time on a Windows desktop processor. The model (~900 MB) downloads on first use.',
+    providerId: 'zerotts',
+    version: '0.1.5',
+    accel: 'cpu',
+    tier: 'balanced',
+    // Measured peak ~2.4-3 GB while speaking.
+    minRamMb: 6144,
+    approxSizeMb: 1100,
+    artifacts: [{ url: 'uv-env://tts-zerotts', approxSizeMb: 1100, destPath: 'venv' }],
+    licenseNote:
+      'MIT: ZeroTTS code and weights (zeroweight.ai); its MOSS codec decoder is Apache-2.0. Its model card says the shipped voices are "for evaluation and demos", asks that synthetic speech be disclosed as synthetic, and forbids impersonating real people. Its unannounced voice-encoder file is not downloaded.',
+  },
+  {
+    id: 'tts-kokoro',
+    kind: 'tts',
+    packKind: 'python-uv',
+    displayName: 'Kokoro (54 voices: English, Japanese, Chinese, Spanish, French, Hindi, Italian, Portuguese)',
+    description:
+      'A small, fast neural voice model with 54 voices in nine languages (no Vietnamese), on the CPU, with a native speaking rate. Three (Windows desktop) to seven (Apple Silicon) times faster than real time. The model (~350 MB) downloads on first use.',
+    providerId: 'kokoro',
+    // kokoro-onnx 0.6.1, with misaki 0.9.4 phonemizing Japanese and Chinese.
+    version: '0.6.1+misaki-0.9.4',
+    accel: 'cpu',
+    tier: 'balanced',
+    minRamMb: 2048,
+    approxSizeMb: 520,
+    artifacts: [{ url: 'uv-env://tts-kokoro', approxSizeMb: 520, destPath: 'venv' }],
+    licenseNote:
+      'Apache-2.0: Kokoro-82M weights (hexgrad); a few voices were trained on CC BY data and are credited in the voice library. kokoro-onnx is MIT. Text is turned into phonemes by phonemizer and espeak-ng (GPL-3.0), installed into this pack and run in its own process; Japanese and Chinese by misaki (Apache-2.0) with fugashi and UniDic-lite (MIT, BSD) and jieba and pypinyin (MIT).',
+  },
+  {
+    id: 'tts-supertonic',
+    kind: 'tts',
+    packKind: 'python-uv',
+    displayName: 'Supertonic 3 (10 voices, 31 languages)',
+    description:
+      'Ten voices that each speak 31 languages, including Vietnamese, Korean, Japanese, Arabic and most European languages (no Chinese), on the CPU, with a native speaking rate. Clear in English and Korean; it reads Vietnamese slowly (lines come out about twice as long), so for Vietnamese VieNeu or ZeroTTS fit the timing better. Its maker has archived it: it works as it is, without updates. The model (~400 MB) downloads on first use.',
+    providerId: 'supertonic',
+    version: '3',
+    accel: 'cpu',
+    tier: 'balanced',
+    minRamMb: 2048,
+    approxSizeMb: 520,
+    artifacts: [{ url: 'uv-env://tts-supertonic', approxSizeMb: 520, destPath: 'venv' }],
+    licenseNote:
+      'OpenRAIL-M (Supertonic 3 weights, Supertone; archived): commercial use is allowed, but its use restrictions apply to you, including disclosing that the speech is machine-generated. The inference code is Supertone\'s MIT sample. No updates or fixes will come upstream.',
+  },
+
   // --- neural TTS: OmniVoice multilingual (uv-managed Python env, MLX) ------
   // Apple-Silicon-ONLY: mlx-audio runs OmniVoice (k2-fsa) via Apple's MLX (Metal),
   // so the pack is gated to darwin/arm64 — offered ONLY where it can actually run.

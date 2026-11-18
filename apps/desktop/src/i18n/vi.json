@@ -1154,7 +1154,7 @@
       "zerotts": "8 giọng tiếng Việt (trẻ, trung niên, lớn tuổi; kể chuyện, tin tức, bình luận). Chạy trên CPU.",
       "piper": "Có sẵn trong ứng dụng: 183 giọng cho hơn 50 ngôn ngữ, mỗi giọng tải riêng (20–120 MB). Nhanh, chạy trên mọi máy.",
       "kokoro": "54 giọng tiếng Anh, Nhật, Trung, Tây Ban Nha, Pháp, Hindi, Ý và Bồ Đào Nha. Không có tiếng Việt. Chạy trên CPU.",
-      "supertonic": "10 giọng, mỗi giọng đọc được 31 ngôn ngữ (có tiếng Việt, Hàn, Nhật; không có tiếng Trung). Chạy trên CPU.",
+      "supertonic": "10 giọng, mỗi giọng đọc được 31 ngôn ngữ (có tiếng Việt, Hàn, Nhật; không có tiếng Trung). Chạy trên CPU. Đọc tiếng Anh và tiếng Hàn rõ; tiếng Việt thì đọc chậm (câu dài gấp khoảng hai lần), nên với tiếng Việt, VieNeu hoặc ZeroTTS khớp thời lượng hơn.",
       "voxcpm": "Nhân bản giọng xuyên ngôn ngữ: giữ giọng người nói gốc khi lồng tiếng sang tiếng Việt. Cần GPU NVIDIA hoặc chip Apple.",
       "openai": "Giọng đám mây của OpenAI, nói được nhiều ngôn ngữ. Cần khóa API trong Cài đặt → Dịch vụ đám mây; văn bản sẽ được gửi đến OpenAI."
     },

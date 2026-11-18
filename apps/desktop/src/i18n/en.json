@@ -1154,7 +1154,7 @@
       "zerotts": "8 Vietnamese voices (young, middle-aged and older; storytelling, news, commentary). Runs on the CPU.",
       "piper": "Built in: 183 voices for over 50 languages, each downloaded on its own (20–120 MB). Fast, runs on any computer.",
       "kokoro": "54 voices in English, Japanese, Chinese, Spanish, French, Hindi, Italian and Portuguese. No Vietnamese. Runs on the CPU.",
-      "supertonic": "10 voices, each speaking 31 languages (including Vietnamese, Korean and Japanese; no Chinese). Runs on the CPU.",
+      "supertonic": "10 voices, each speaking 31 languages (including Vietnamese, Korean and Japanese; no Chinese). Runs on the CPU. Clear in English and Korean; it reads Vietnamese slowly (lines come out about twice as long), so for Vietnamese VieNeu or ZeroTTS fit the timing better.",
       "voxcpm": "Cross-lingual voice cloning: keeps the original speaker's voice in a Vietnamese dub. Needs an NVIDIA GPU or an Apple chip.",
       "openai": "OpenAI's cloud voices, multilingual. Needs an API key in Settings → Cloud services; the text is sent to OpenAI."
     },

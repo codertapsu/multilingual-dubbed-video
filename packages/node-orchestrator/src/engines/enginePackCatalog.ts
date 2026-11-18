@@ -740,7 +740,7 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     ],
     licenseCategory: 'commercial-restricted',
     licenseNote:
-      'OmniVoice code + weights are Apache-2.0 (k2-fsa), but the bundled HiggsAudio tokenizer carries the Boson Higgs Audio 2 Community License (non-OSI; 100k annual-active-users commercial gate). Fine for this open-source, non-commercial app — review before any commercial redistribution. Apple Silicon only (PyTorch/MPS). Reference-audio voice cloning is supported by the model but not wired here (designed voices only).',
+      'OmniVoice code is Apache-2.0 (k2-fsa), but its model weights are CC BY-NC 4.0 since 2026-07-03 (non-commercial use only; the model card changed from Apache-2.0), and the bundled HiggsAudio tokenizer carries the Boson Higgs Audio 2 Community License (non-OSI; 100k annual-active-users commercial gate). Apple Silicon only (PyTorch/MPS). Reference-audio voice cloning is supported by the model but not wired here (designed voices only).',
   },
 
   // --- vocal separation (uv-managed Python env) ----------------------------

@@ -73,7 +73,7 @@ there when you move to a new toolkit
 
 ## 2. The catalog, pack by pack
 
-All 31 ids in `ENGINE_PACKS` (25 written out, six whisper.cpp model packs
+All 35 ids in `ENGINE_PACKS` (29 written out, six whisper.cpp model packs
 generated), so a reader can tell at a glance what needs maintenance. Keep this
 table in step with `enginePackCatalog.ts`.
 
@@ -82,6 +82,8 @@ table in step with `enginePackCatalog.ts`.
 | Pack | Platform | Source | Action needed |
 |---|---|---|---|
 | `whisper-cpp-cuda` | Windows x64 | **upstream** ggml-org/whisper.cpp (cuBLAS) | none |
+| `audiocpp-vulkan` / `audiocpp-cpu` | Windows x64 | **upstream** 0xShug0/audio.cpp `v0.9.5` (Apache-2.0); sha256 = the digests GitHub publishes for the assets | none; to move the tag, copy the new digests from the release's API (`gh api repos/0xShug0/audio.cpp/releases/tags/<tag>`) |
+| `audiocpp-metal` | macOS arm64 | **upstream**, same release | as above |
 | `llama-cpp-metal` | macOS arm64 | **upstream** ggml-org/llama.cpp | none |
 | `llama-cpp-cuda` | Windows x64 | **upstream** (binary + cudart) | none |
 | `llama-cpp-vulkan` | Windows x64 | **upstream** | none |
@@ -108,6 +110,15 @@ a missing one by itself.
 |---|---|---|
 | `whisper-model-tiny` / `-base` / `-small` / `-medium` / `-large-v3` / `-large-v3-turbo` | official ggml f16 conversions, `ggerganov/whisper.cpp` on HuggingFace | pinned to a **commit** (`WHISPER_GGML_REV`), never `main`; MIT |
 
+**audio.cpp model packs** — GGUF audio models the `audio-cpp` runtime runs, from
+`audio-cpp/audio.cpp-gguf` on HuggingFace pinned to a commit
+(`AUDIOCPP_GGUF`). Installing one installs the best runtime for the machine with
+it (`companionRuntimeFor`).
+
+| Pack | Weights | Notes |
+|---|---|---|
+| `separation-htdemucs` | HTDemucs q8_0 (Meta, MIT), 62 MB | music & voice separation through `audiocpp_cli --task sep` (`providers/separation/audioCppSeparationProvider.ts`); the stems are cached in `audio/stems/`. On Windows `audiocpp-cpu` is installed beside `audiocpp-vulkan` (`companionRuntimesFor`): the Vulkan build's own processor backend dies at once with 0xC000001D (illegal instruction, no per-CPU variants), so the processor build is the fallback |
+
 PhoWhisper and distil-large-v3.5 have no official ggml build, so they get no pack
 and the gate tells the user to pick another model or use faster-whisper. To
 re-pin: read each file's `lfs.oid` (its sha256) and size from
@@ -125,7 +136,7 @@ re-pin: read each file's `lfs.oid` (its sha256) and size from
 | `tts-zerotts` / `tts-kokoro` / `tts-supertonic` | all | ship — the preset-voice ONNX engines (`vd_tts_engine/presets.py`), CPU only, no PyTorch; model files pinned in `vd_tts_engine/pinned.py`. ZeroTTS's `sounddevice` (CLI playback) is removed with a uv override. Kokoro phonemizes Japanese and Chinese with misaki (cutlet over fugashi + UniDic-lite; jieba + pypinyin), not espeak-ng, which read every kanji by its name |
 | `tts-omnivoice` | macOS arm64 | **ON HOLD** (`DISABLED_PACK_IDS`) pending output-quality work; see [OMNIVOICE.md](OMNIVOICE.md) |
 | `diarization-sherpa` | all | ships — speaker detection (`workers/diarization-engine`, sherpa-onnx 2.0.1), CPU only, light. Besides the uv env it downloads two **GitHub release assets** of k2-fsa/sherpa-onnx (the pyannote segmentation 3.0 `.tar.bz2`, which the installer extracts, and the speaker-embedding `.onnx`), each pinned by sha256 to the bytes Phase 0 ran, since k2-fsa publishes no digests. The embedding model and its clustering threshold are one constant, `DIARIZATION_EMBEDDING` (3D-Speaker ERes2Net at a cosine distance of 0.7: WeSpeaker ResNet34, shipped first, scored different people in one drama mix as near-identical, and at 0.9 ERes2Net merges people more than 10 % alike): change them together and bump the pack version |
-| `separation-audio` | all | **disabled** — its `vd_separator` worker is an unimplemented stub |
+| `separation-audio` | all | **disabled**, superseded by `separation-htdemucs` (below): its `vd_separator` worker was never built |
 | `alignment-whisperx` | all | **disabled** — its `vd_whisperx` worker is an unimplemented stub |
 | `translation-libretranslate` | all | ships — offline LibreTranslate as an alternative MT tier |
 

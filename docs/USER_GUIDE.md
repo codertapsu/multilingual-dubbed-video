@@ -476,9 +476,12 @@ Stated plainly, so you are not hunting for a feature that is not there:
   speakers, and two similar voices as one. Give the number of speakers when you
   know it (much more reliable), merge speakers in the Speakers section, and set
   any line's speaker in the Line tab.
-- **No music/voice separation.** "Keep the music, replace the speech" is not
-  available; the background is turned *down* under the new voice, not separated
-  out. (Same story: the pack is not built.)
+- **Music & voice separation is a separate download, and slow without a
+  graphics card.** "Replace voices, keep music & effects" needs the *Music &
+  voice separation* engine (~150 MB; the wizard installs it). It takes about a
+  tenth of the video's length on a graphics card or Apple Silicon, about the
+  video's length on a processor alone. Without it, the original is turned down
+  under the dub instead.
 - **Voice cloning needs VieNeu-TTS 3.8** and speaks Vietnamese: make a voice in
   Voices → My voices from a recording or a file, after agreeing to a statement
   about whose voice it is ([VOICE_CLONING.md](VOICE_CLONING.md)).

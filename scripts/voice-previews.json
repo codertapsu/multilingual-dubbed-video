@@ -1,0 +1,447 @@
+{
+ "kokoro-af_alloy": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_alloy.mp3",
+  "sha256": "21541c1a8d0073efd8996a30673fc4d9d2512ee9cd404d906e727eab0aa3cf51",
+  "bytes": 38253
+ },
+ "kokoro-af_aoede": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_aoede.mp3",
+  "sha256": "eece0a65729217cc7f04c4c1313046605e8ad23671eaab52f9821e9696bd12e4",
+  "bytes": 32109
+ },
+ "kokoro-af_bella": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_bella.mp3",
+  "sha256": "59576099f19bf9afca62056a079419257899f04289310fa428d0fb54ab87fecb",
+  "bytes": 36525
+ },
+ "kokoro-af_heart": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_heart.mp3",
+  "sha256": "131ecf3dcb2b72668c8f64f149005cc65275a6d027ae99b9674eeccc633f1f2a",
+  "bytes": 33453
+ },
+ "kokoro-af_jessica": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_jessica.mp3",
+  "sha256": "318b543782da45a9f05619abe450523009ae8fead563402d4ade0a8f42a65b3d",
+  "bytes": 31149
+ },
+ "kokoro-af_kore": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_kore.mp3",
+  "sha256": "88c669127d4afee8048f110caa7469b5d3539962424335ca4ac08a2cdf918c37",
+  "bytes": 35949
+ },
+ "kokoro-af_nicole": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_nicole.mp3",
+  "sha256": "dadd33498a00a223cf9763d2e957a073ebe0fa67355927fa3b736f59175de765",
+  "bytes": 47853
+ },
+ "kokoro-af_nova": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_nova.mp3",
+  "sha256": "a2d29b5e94cc7e1b5e3bad22c9aa9be8a33db7d25db0380b42f7e3bd06add9ea",
+  "bytes": 36525
+ },
+ "kokoro-af_river": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_river.mp3",
+  "sha256": "22084b1ce2480117d2c735bc4c4125f536be314181e79e56034fbe49d7d9c4e5",
+  "bytes": 32877
+ },
+ "kokoro-af_sarah": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_sarah.mp3",
+  "sha256": "7ad83702aeef457468d0dbcb3e481b4a1e054d1f6eae5ac50f6b60399e5115b1",
+  "bytes": 33453
+ },
+ "kokoro-af_sky": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_sky.mp3",
+  "sha256": "95b214fd02b5b48d12beb5787b026021e57f0c846b21cd6d1ab6097123f5f3a4",
+  "bytes": 33837
+ },
+ "kokoro-am_adam": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_adam.mp3",
+  "sha256": "5969455734b556f17016733846dd81ae294bf9528d6eaae757ac88c8cbbe3c14",
+  "bytes": 32877
+ },
+ "kokoro-am_echo": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_echo.mp3",
+  "sha256": "a5033724207b0e7cdb94e6a0716bf907d91736b5874643f66104a8326188cf4a",
+  "bytes": 35373
+ },
+ "kokoro-am_eric": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_eric.mp3",
+  "sha256": "39148996baf82e91c34ac67afb5b1a55fa50c8e18961a4507e1611902260820b",
+  "bytes": 31341
+ },
+ "kokoro-am_fenrir": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_fenrir.mp3",
+  "sha256": "dfde4443e09b8fa04ca940f8f1fde7c00321d5e793d9189991794d040ad45299",
+  "bytes": 33453
+ },
+ "kokoro-am_liam": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_liam.mp3",
+  "sha256": "85fdd72046ec16315361bdee48b19d1370eeda47e38099da8225f7b51ea522c2",
+  "bytes": 32493
+ },
+ "kokoro-am_michael": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_michael.mp3",
+  "sha256": "70facf4b374fe0a45640f4a39dec122cee422403b95ef42d1171d79dca5b2bdf",
+  "bytes": 37677
+ },
+ "kokoro-am_onyx": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_onyx.mp3",
+  "sha256": "75b4ce7fa012e24a1e232f3f1f3373d7748df5dbd8241f378f7a2491e8befafa",
+  "bytes": 36333
+ },
+ "kokoro-am_puck": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_puck.mp3",
+  "sha256": "6372dd622960b55781efe344aa1b63446b7d3649e2355ed0e33ed22b035d81dd",
+  "bytes": 33837
+ },
+ "kokoro-am_santa": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_santa.mp3",
+  "sha256": "113b1f65ef28c66f771602c38a33dc0cad5509f03aadc2665412850fbf695cd2",
+  "bytes": 40749
+ },
+ "kokoro-bf_alice": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bf_alice.mp3",
+  "sha256": "f9225aadbcd786dc994896e56d92e7e6a1ef6aeb2fdebb7ebc8c073e67c3754e",
+  "bytes": 34989
+ },
+ "kokoro-bf_emma": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bf_emma.mp3",
+  "sha256": "7dba7c1d072f8649b363eac6f187f72672a5a28c34311e9db64a08d83b4378fc",
+  "bytes": 33261
+ },
+ "kokoro-bf_isabella": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bf_isabella.mp3",
+  "sha256": "a4be1461f3026852ece2ded301ad41b170e7fccbb037e6cbcc7975a4a2b0e30c",
+  "bytes": 32877
+ },
+ "kokoro-bf_lily": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bf_lily.mp3",
+  "sha256": "b9299a19d6086a50ef177b582665f393da0cf1b4090d08037c87707ee35061ae",
+  "bytes": 33837
+ },
+ "kokoro-bm_daniel": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bm_daniel.mp3",
+  "sha256": "839236c61aaed32cb44dde74a8d92097a5ce50711a38457f2c436e0b43653734",
+  "bytes": 32877
+ },
+ "kokoro-bm_fable": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bm_fable.mp3",
+  "sha256": "a15d8a6c465499c467afbdeee7fe4c7a30d174624755019b684de40f9f9e49a2",
+  "bytes": 36909
+ },
+ "kokoro-bm_george": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bm_george.mp3",
+  "sha256": "79014d90df9d9bb3b4b7f3b781bfc0dc1283c301dfc4f0f89b16e5c5aaf88642",
+  "bytes": 36717
+ },
+ "kokoro-bm_lewis": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bm_lewis.mp3",
+  "sha256": "001837f2f302ad17289c137afdcb6ef0d8bb79324f4f4f6d41a603e7b36e45bb",
+  "bytes": 36717
+ },
+ "kokoro-ef_dora": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-ef_dora.mp3",
+  "sha256": "6ddde1e8c928da9aa60857662109f4bb3961a662b340919964af9f3fdfcbc1d7",
+  "bytes": 30573
+ },
+ "kokoro-em_alex": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-em_alex.mp3",
+  "sha256": "72ddeb088c3d7ae816c494da492bd2b7d19857f2057c31323224a81b25e5c996",
+  "bytes": 31341
+ },
+ "kokoro-em_santa": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-em_santa.mp3",
+  "sha256": "2c0c5fcd776602f7014e0c70cef452fc8733a4b14e9cf6fa61654b9b2b694533",
+  "bytes": 31341
+ },
+ "kokoro-ff_siwis": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-ff_siwis.mp3",
+  "sha256": "d08c9946064fc13df57304f6e391c1729fba1f4e02e8374bbbfcf55afbc0992c",
+  "bytes": 41133
+ },
+ "kokoro-hf_alpha": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-hf_alpha.mp3",
+  "sha256": "7c61af997504a7a51724d883449ea0a3fdcbced0a42536645e162412b7b58b09",
+  "bytes": 58029
+ },
+ "kokoro-hf_beta": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-hf_beta.mp3",
+  "sha256": "20c0fef3e97226ca22f4ffcdac301e6cf5dc5ddeb572405791cc56f37a68612d",
+  "bytes": 50541
+ },
+ "kokoro-hm_omega": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-hm_omega.mp3",
+  "sha256": "f4a25c0bfb158d7b37c5201c89c87064425178b68fabacbc5a35773573d49a78",
+  "bytes": 60333
+ },
+ "kokoro-hm_psi": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-hm_psi.mp3",
+  "sha256": "cb4ba8862efe868b9c4d4184f3846d8673e79437b135e2d9b73ffe0b34ed8948",
+  "bytes": 59757
+ },
+ "kokoro-if_sara": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-if_sara.mp3",
+  "sha256": "c6e05f027efd96f0abd8f9d33272caa2a916217af132b604cd41d1ff163debaa",
+  "bytes": 37869
+ },
+ "kokoro-im_nicola": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-im_nicola.mp3",
+  "sha256": "2dd4cddbe1945d9ed438fc439c0fb4f56e091be2cc5f2651dd25a01596608ef4",
+  "bytes": 42477
+ },
+ "kokoro-jf_alpha": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jf_alpha.mp3",
+  "sha256": "b1dd434bcf6315e7e14b0522cbd18716d4d0897e9eea44e1a98461877f087bf5",
+  "bytes": 48429
+ },
+ "kokoro-jf_gongitsune": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jf_gongitsune.mp3",
+  "sha256": "192d182c2aca069dc0a95b4eb54d88689e59636019cc569f476a652f09ab9c40",
+  "bytes": 67821
+ },
+ "kokoro-jf_nezumi": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jf_nezumi.mp3",
+  "sha256": "a719eb32b06d17b362e9222c3381cd40a649b7b40678c831361cdd4623b38bd4",
+  "bytes": 67629
+ },
+ "kokoro-jf_tebukuro": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jf_tebukuro.mp3",
+  "sha256": "916ee181b464c306f660325127b3975f35d9c7bbe18b485f58d9f080cf00bb9f",
+  "bytes": 63597
+ },
+ "kokoro-jm_kumo": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jm_kumo.mp3",
+  "sha256": "93bb98b3cbb8e6b8d0afd29b1ac9139f4be5432eeeb6c6390e36d372ca675427",
+  "bytes": 56877
+ },
+ "kokoro-pf_dora": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-pf_dora.mp3",
+  "sha256": "1f1d3a0ff1460661728ecd95c57368e787df42a3fcf8ccb9bab0a765a2ed3759",
+  "bytes": 34413
+ },
+ "kokoro-pm_alex": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-pm_alex.mp3",
+  "sha256": "d30838fd02f4d22cde2bd702d6e7474b9f36d1b821a2f57e87f163efeac1efba",
+  "bytes": 34413
+ },
+ "kokoro-pm_santa": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-pm_santa.mp3",
+  "sha256": "537da37ba8e5a734dc0494490e70bf94fcffa9e4dd2819f6f4fb5a3d83cd711f",
+  "bytes": 34605
+ },
+ "kokoro-zf_xiaobei": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zf_xiaobei.mp3",
+  "sha256": "b8fecfef2a8e5cf50858ad4f6e881a12f5318f55f1e8ee647d3afcfff0bf8d67",
+  "bytes": 41133
+ },
+ "kokoro-zf_xiaoni": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zf_xiaoni.mp3",
+  "sha256": "3482380208dfcf55b3f15b2c382ac135fbea5cb51bb2e917d56e8f58713a50a0",
+  "bytes": 34989
+ },
+ "kokoro-zf_xiaoxiao": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zf_xiaoxiao.mp3",
+  "sha256": "ac33101cc4442c6a51725e454fef8daa6ef1f495f3ce4497b829deddc7abc555",
+  "bytes": 34605
+ },
+ "kokoro-zf_xiaoyi": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zf_xiaoyi.mp3",
+  "sha256": "8fc7a3598414f47bd49836e3955d789230e8b07e3de86a31c99e12dc12696de7",
+  "bytes": 33837
+ },
+ "kokoro-zm_yunjian": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zm_yunjian.mp3",
+  "sha256": "bd8fb66ea6ec3c643c41368d9421a046842d428ddd67a9015bb0da4a2f0a0681",
+  "bytes": 34029
+ },
+ "kokoro-zm_yunxi": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zm_yunxi.mp3",
+  "sha256": "acdcc0d2cecb6c2ee60d6d5515cffc33021db154ad7a64eba7a9232f3d7965a3",
+  "bytes": 30765
+ },
+ "kokoro-zm_yunxia": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zm_yunxia.mp3",
+  "sha256": "a21d6dc64d93b7dc6ed5b0f44add1286f75da85a867d688371c541607fdf4742",
+  "bytes": 35949
+ },
+ "kokoro-zm_yunyang": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zm_yunyang.mp3",
+  "sha256": "592d81503b7504483e4ecd85289dcc539a60b98c08d661e697295d882c58e4e2",
+  "bytes": 32877
+ },
+ "supertonic-f1": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-f1.mp3",
+  "sha256": "6df428630733d959cf75955afad1ce03afa126fcd6d8195c8ea8777572bdeb25",
+  "bytes": 63981
+ },
+ "supertonic-f2": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-f2.mp3",
+  "sha256": "9a9c83a3a9bd1044e354798796c7559a4257d1e815970aa9d457f81180842e31",
+  "bytes": 60525
+ },
+ "supertonic-f3": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-f3.mp3",
+  "sha256": "2b5f8c5c43fc03fa49affeecf030fb4d3067d8ef3b62d871d6fd7d33b3beb59c",
+  "bytes": 65901
+ },
+ "supertonic-f4": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-f4.mp3",
+  "sha256": "90eac1eb5f2aa97f73b250eed48a5b3494d916cb3c56b77fb96f8ab9721b19a2",
+  "bytes": 55533
+ },
+ "supertonic-f5": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-f5.mp3",
+  "sha256": "c5eeb6b0e3020d1cd5fc3331d44af69f02bf9fb6c97d898d165681cc14215425",
+  "bytes": 62253
+ },
+ "supertonic-m1": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-m1.mp3",
+  "sha256": "0f62f18560dd9c81c9b9d8ea8e0df8b777b46687bbbf3ef21bfee7035668e4c4",
+  "bytes": 64173
+ },
+ "supertonic-m2": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-m2.mp3",
+  "sha256": "4bad5cb95bcd2f6c3db86b23ba888e6ac8e7c3dc53449c0d96bc1e87a8d5f7f8",
+  "bytes": 62829
+ },
+ "supertonic-m3": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-m3.mp3",
+  "sha256": "1be0a15ef3c94540005fbfd9a4420d69562e7d12f16cec50a6a005093c8b62b0",
+  "bytes": 53997
+ },
+ "supertonic-m4": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-m4.mp3",
+  "sha256": "b2c9d14cbac1341850e0f360cefeac97329b368ed40f74282253fd5ffddf75d4",
+  "bytes": 60525
+ },
+ "supertonic-m5": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/supertonic-m5.mp3",
+  "sha256": "6b0f711cb6b3546cb06e480e28b404dcf7fc038cc4ff33871dc2240ae4e61936",
+  "bytes": 63981
+ },
+ "vieneu38-adam": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-adam.mp3",
+  "sha256": "772a0202e640062e72ffd3a6327e343ec3daa24f330291bf0d1c7331973a9c18",
+  "bytes": 36525
+ },
+ "vieneu38-adam-bua": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-adam-bua.mp3",
+  "sha256": "367cc88d0b6ad66ca053a39ad53d3959e9fd2649f94270ca8571aca66a5ca1ad",
+  "bytes": 43629
+ },
+ "vieneu38-doan-trang": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-doan-trang.mp3",
+  "sha256": "5cd486fad5dd53a461ac640a737417c585b1348f6001edaa8e8ea94578d61153",
+  "bytes": 40941
+ },
+ "vieneu38-duc-tri": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-duc-tri.mp3",
+  "sha256": "1e17ce5e50fa0549db80299300de7a9992649d3387e0a15af16990eb6f6b477b",
+  "bytes": 49965
+ },
+ "vieneu38-hai-dang": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-hai-dang.mp3",
+  "sha256": "47daa5f112ec269a168108c905e7a09b166efb8b9059b3ec3ff299630ad1d791",
+  "bytes": 35949
+ },
+ "vieneu38-kim-thanh": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-kim-thanh.mp3",
+  "sha256": "a38d0f6c097334be386f53d0ea992cf46d095f34c863d9229fd7b28eafdbd0dd",
+  "bytes": 51885
+ },
+ "vieneu38-mai-anh": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-mai-anh.mp3",
+  "sha256": "08765f47c0d23169c65714e4ccc9d87733868b302c010488a3f5ec5c27b3b15d",
+  "bytes": 39789
+ },
+ "vieneu38-minh-duc": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-minh-duc.mp3",
+  "sha256": "c0aff26875a045e789b003bd1be437dc1a9d7eb965e2aedad4dfa272155ac5f5",
+  "bytes": 48621
+ },
+ "vieneu38-minh-triet": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-minh-triet.mp3",
+  "sha256": "c1cf991af46b928607022efe992fda5643684d27215b50bf18f42ce8a59bb006",
+  "bytes": 35949
+ },
+ "vieneu38-my-duyen": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-my-duyen.mp3",
+  "sha256": "b5a4d37c7739e1e5f37dced0a90d8c6c8a4caffaff61db2bf5f3691e5f76c6f9",
+  "bytes": 49965
+ },
+ "vieneu38-ngoc-huyen": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-ngoc-huyen.mp3",
+  "sha256": "985ab9772f1213786164a0cba2cda3a16ed930509ffa2323d9deb3bc34bd7408",
+  "bytes": 35949
+ },
+ "vieneu38-ngoc-linh": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-ngoc-linh.mp3",
+  "sha256": "c34747a0dca23a1f0836c869aba39914dd03b1e3ff423517f16715ed7343dde0",
+  "bytes": 36525
+ },
+ "vieneu38-ngoc-tran": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-ngoc-tran.mp3",
+  "sha256": "a0403205962090bd0e1f77ab892d84db9392434afc178b60946036653aa05241",
+  "bytes": 41709
+ },
+ "vieneu38-pham-tuyen": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-pham-tuyen.mp3",
+  "sha256": "ce2635fe6f427787fc8249bfa89491593e0dcc9cc1913c7efbb77af1d66e044e",
+  "bytes": 37869
+ },
+ "vieneu38-quang-son": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-quang-son.mp3",
+  "sha256": "232411bbebace971ede9464e426927d14d2995210cde214c571273e804e06378",
+  "bytes": 40941
+ },
+ "vieneu38-quoc-tuan": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-quoc-tuan.mp3",
+  "sha256": "c8cacae12ad6072cf0f57cc8a6fea597fe05e3bb4798310c966d4b034bd7f915",
+  "bytes": 35949
+ },
+ "vieneu38-quynh-anh": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-quynh-anh.mp3",
+  "sha256": "f312830cd2d3c023ba0b97380b0386c097d2ec7f0cff6f69ae443f61ed644503",
+  "bytes": 40365
+ },
+ "vieneu38-thai-son": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thai-son.mp3",
+  "sha256": "c6ef11e81c98029a94b68ce3f7dc55620b4826655da019f86c532bab0eca9e26",
+  "bytes": 39021
+ },
+ "vieneu38-thanh-binh": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thanh-binh.mp3",
+  "sha256": "3f662243d1418cc7ee19d89d6ed00edc01409bde0e6d6d87f7ab9759a00e39d0",
+  "bytes": 35949
+ },
+ "vieneu38-thien-minh": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thien-minh.mp3",
+  "sha256": "2bb2bb31bd7c627df374759482e949a24ff3125f7958d2f07084980bdc2ed301",
+  "bytes": 34605
+ },
+ "vieneu38-thien-tam-duc": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thien-tam-duc.mp3",
+  "sha256": "bb3f86b054f55952594106f7227e9ccc681f8ac952ee57027bd7973b482de7f8",
+  "bytes": 46701
+ },
+ "vieneu38-thuc-doan": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thuc-doan.mp3",
+  "sha256": "3c9df032927b3f32558646deade47a512a60cc2ac47082d0973b31f1de754fbe",
+  "bytes": 40941
+ },
+ "vieneu38-thuy-dung": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thuy-dung.mp3",
+  "sha256": "bd83a35ff25a9f2dc3911590496fe12d8951b5c806f525aa40aaf704bcc00c38",
+  "bytes": 32685
+ },
+ "vieneu38-truc-ly": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-truc-ly.mp3",
+  "sha256": "15b446931efbd3a3022a0a2f008833279b8d9eb66619dc155a8d17b9781ac62b",
+  "bytes": 34029
+ },
+ "vieneu38-xuan-vinh": {
+  "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-xuan-vinh.mp3",
+  "sha256": "235a2437f89a9fa4328e00dc68d55a42e16c23e12f61aed240d6e43549f25290",
+  "bytes": 38445
+ }
+}

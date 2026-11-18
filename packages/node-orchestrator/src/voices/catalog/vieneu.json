@@ -1,6 +1,6 @@
 {
  "engine": "vieneu",
- "generatedAt": "2026-11-18T13:42:04.546Z",
+ "generatedAt": "2026-11-18T16:52:18.560Z",
  "sources": [
   {
    "repo": "pnnbao97/VieNeu-TTS",
@@ -34,7 +34,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-adam-bua.mp3",
+    "sha256": "367cc88d0b6ad66ca053a39ad53d3959e9fd2649f94270ca8571aca66a5ca1ad",
+    "bytes": 43629
+   }
   },
   {
    "id": "vieneu38-truc-ly",
@@ -57,7 +62,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-truc-ly.mp3",
+    "sha256": "15b446931efbd3a3022a0a2f008833279b8d9eb66619dc155a8d17b9781ac62b",
+    "bytes": 34029
+   }
   },
   {
    "id": "vieneu38-thien-minh",
@@ -80,7 +90,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thien-minh.mp3",
+    "sha256": "2bb2bb31bd7c627df374759482e949a24ff3125f7958d2f07084980bdc2ed301",
+    "bytes": 34605
+   }
   },
   {
    "id": "vieneu38-mai-anh",
@@ -103,7 +118,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-mai-anh.mp3",
+    "sha256": "08765f47c0d23169c65714e4ccc9d87733868b302c010488a3f5ec5c27b3b15d",
+    "bytes": 39789
+   }
   },
   {
    "id": "vieneu38-hai-dang",
@@ -127,7 +147,12 @@
    },
    "files": [],
    "sizeMb": 0,
-   "recommended": true
+   "recommended": true,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-hai-dang.mp3",
+    "sha256": "47daa5f112ec269a168108c905e7a09b166efb8b9059b3ec3ff299630ad1d791",
+    "bytes": 35949
+   }
   },
   {
    "id": "vieneu38-thuy-dung",
@@ -150,7 +175,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thuy-dung.mp3",
+    "sha256": "bd83a35ff25a9f2dc3911590496fe12d8951b5c806f525aa40aaf704bcc00c38",
+    "bytes": 32685
+   }
   },
   {
    "id": "vieneu38-thien-tam-duc",
@@ -173,7 +203,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thien-tam-duc.mp3",
+    "sha256": "bb3f86b054f55952594106f7227e9ccc681f8ac952ee57027bd7973b482de7f8",
+    "bytes": 46701
+   }
   },
   {
    "id": "vieneu38-ngoc-huyen",
@@ -196,7 +231,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-ngoc-huyen.mp3",
+    "sha256": "985ab9772f1213786164a0cba2cda3a16ed930509ffa2323d9deb3bc34bd7408",
+    "bytes": 35949
+   }
   },
   {
    "id": "vieneu38-quang-son",
@@ -219,7 +259,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-quang-son.mp3",
+    "sha256": "232411bbebace971ede9464e426927d14d2995210cde214c571273e804e06378",
+    "bytes": 40941
+   }
   },
   {
    "id": "vieneu38-ngoc-tran",
@@ -242,7 +287,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-ngoc-tran.mp3",
+    "sha256": "a0403205962090bd0e1f77ab892d84db9392434afc178b60946036653aa05241",
+    "bytes": 41709
+   }
   },
   {
    "id": "vieneu38-adam",
@@ -264,7 +314,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-adam.mp3",
+    "sha256": "772a0202e640062e72ffd3a6327e343ec3daa24f330291bf0d1c7331973a9c18",
+    "bytes": 36525
+   }
   },
   {
    "id": "vieneu38-doan-trang",
@@ -286,7 +341,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-doan-trang.mp3",
+    "sha256": "5cd486fad5dd53a461ac640a737417c585b1348f6001edaa8e8ea94578d61153",
+    "bytes": 40941
+   }
   },
   {
    "id": "vieneu38-duc-tri",
@@ -308,7 +368,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-duc-tri.mp3",
+    "sha256": "1e17ce5e50fa0549db80299300de7a9992649d3387e0a15af16990eb6f6b477b",
+    "bytes": 49965
+   }
   },
   {
    "id": "vieneu38-kim-thanh",
@@ -330,7 +395,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-kim-thanh.mp3",
+    "sha256": "a38d0f6c097334be386f53d0ea992cf46d095f34c863d9229fd7b28eafdbd0dd",
+    "bytes": 51885
+   }
   },
   {
    "id": "vieneu38-minh-duc",
@@ -352,7 +422,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-minh-duc.mp3",
+    "sha256": "c0aff26875a045e789b003bd1be437dc1a9d7eb965e2aedad4dfa272155ac5f5",
+    "bytes": 48621
+   }
   },
   {
    "id": "vieneu38-minh-triet",
@@ -374,7 +449,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-minh-triet.mp3",
+    "sha256": "c1cf991af46b928607022efe992fda5643684d27215b50bf18f42ce8a59bb006",
+    "bytes": 35949
+   }
   },
   {
    "id": "vieneu38-my-duyen",
@@ -396,7 +476,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-my-duyen.mp3",
+    "sha256": "b5a4d37c7739e1e5f37dced0a90d8c6c8a4caffaff61db2bf5f3691e5f76c6f9",
+    "bytes": 49965
+   }
   },
   {
    "id": "vieneu38-ngoc-linh",
@@ -418,7 +503,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-ngoc-linh.mp3",
+    "sha256": "c34747a0dca23a1f0836c869aba39914dd03b1e3ff423517f16715ed7343dde0",
+    "bytes": 36525
+   }
   },
   {
    "id": "vieneu38-pham-tuyen",
@@ -440,7 +530,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-pham-tuyen.mp3",
+    "sha256": "ce2635fe6f427787fc8249bfa89491593e0dcc9cc1913c7efbb77af1d66e044e",
+    "bytes": 37869
+   }
   },
   {
    "id": "vieneu38-quoc-tuan",
@@ -462,7 +557,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-quoc-tuan.mp3",
+    "sha256": "c8cacae12ad6072cf0f57cc8a6fea597fe05e3bb4798310c966d4b034bd7f915",
+    "bytes": 35949
+   }
   },
   {
    "id": "vieneu38-quynh-anh",
@@ -484,7 +584,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-quynh-anh.mp3",
+    "sha256": "f312830cd2d3c023ba0b97380b0386c097d2ec7f0cff6f69ae443f61ed644503",
+    "bytes": 40365
+   }
   },
   {
    "id": "vieneu38-thai-son",
@@ -506,7 +611,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thai-son.mp3",
+    "sha256": "c6ef11e81c98029a94b68ce3f7dc55620b4826655da019f86c532bab0eca9e26",
+    "bytes": 39021
+   }
   },
   {
    "id": "vieneu38-thanh-binh",
@@ -528,7 +638,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thanh-binh.mp3",
+    "sha256": "3f662243d1418cc7ee19d89d6ed00edc01409bde0e6d6d87f7ab9759a00e39d0",
+    "bytes": 35949
+   }
   },
   {
    "id": "vieneu38-thuc-doan",
@@ -550,7 +665,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-thuc-doan.mp3",
+    "sha256": "3c9df032927b3f32558646deade47a512a60cc2ac47082d0973b31f1de754fbe",
+    "bytes": 40941
+   }
   },
   {
    "id": "vieneu38-xuan-vinh",
@@ -572,7 +692,12 @@
     "attribution": "VieNeu-TTS by pnnbao-ump; speakers consented (model card)"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/vieneu38-xuan-vinh.mp3",
+    "sha256": "235a2437f89a9fa4328e00dc68d55a42e16c23e12f61aed240d6e43549f25290",
+    "bytes": 38445
+   }
   }
  ]
 }

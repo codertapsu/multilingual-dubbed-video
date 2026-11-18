@@ -1,6 +1,6 @@
 {
  "engine": "kokoro",
- "generatedAt": "2026-11-18T13:42:54.379Z",
+ "generatedAt": "2026-11-18T16:52:19.022Z",
  "sources": [
   {
    "repo": "onnx-community/Kokoro-82M-v1.0-ONNX",
@@ -31,7 +31,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_alloy.mp3",
+    "sha256": "21541c1a8d0073efd8996a30673fc4d9d2512ee9cd404d906e727eab0aa3cf51",
+    "bytes": 38253
+   }
   },
   {
    "id": "kokoro-af_aoede",
@@ -52,7 +57,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_aoede.mp3",
+    "sha256": "eece0a65729217cc7f04c4c1313046605e8ad23671eaab52f9821e9696bd12e4",
+    "bytes": 32109
+   }
   },
   {
    "id": "kokoro-af_bella",
@@ -73,7 +83,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_bella.mp3",
+    "sha256": "59576099f19bf9afca62056a079419257899f04289310fa428d0fb54ab87fecb",
+    "bytes": 36525
+   }
   },
   {
    "id": "kokoro-af_heart",
@@ -95,6 +110,11 @@
    },
    "files": [],
    "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_heart.mp3",
+    "sha256": "131ecf3dcb2b72668c8f64f149005cc65275a6d027ae99b9674eeccc633f1f2a",
+    "bytes": 33453
+   },
    "recommended": true
   },
   {
@@ -116,7 +136,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_jessica.mp3",
+    "sha256": "318b543782da45a9f05619abe450523009ae8fead563402d4ade0a8f42a65b3d",
+    "bytes": 31149
+   }
   },
   {
    "id": "kokoro-af_kore",
@@ -137,7 +162,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_kore.mp3",
+    "sha256": "88c669127d4afee8048f110caa7469b5d3539962424335ca4ac08a2cdf918c37",
+    "bytes": 35949
+   }
   },
   {
    "id": "kokoro-af_nicole",
@@ -158,7 +188,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_nicole.mp3",
+    "sha256": "dadd33498a00a223cf9763d2e957a073ebe0fa67355927fa3b736f59175de765",
+    "bytes": 47853
+   }
   },
   {
    "id": "kokoro-af_nova",
@@ -179,7 +214,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_nova.mp3",
+    "sha256": "a2d29b5e94cc7e1b5e3bad22c9aa9be8a33db7d25db0380b42f7e3bd06add9ea",
+    "bytes": 36525
+   }
   },
   {
    "id": "kokoro-af_river",
@@ -200,7 +240,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_river.mp3",
+    "sha256": "22084b1ce2480117d2c735bc4c4125f536be314181e79e56034fbe49d7d9c4e5",
+    "bytes": 32877
+   }
   },
   {
    "id": "kokoro-af_sarah",
@@ -221,7 +266,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_sarah.mp3",
+    "sha256": "7ad83702aeef457468d0dbcb3e481b4a1e054d1f6eae5ac50f6b60399e5115b1",
+    "bytes": 33453
+   }
   },
   {
    "id": "kokoro-af_sky",
@@ -242,7 +292,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-af_sky.mp3",
+    "sha256": "95b214fd02b5b48d12beb5787b026021e57f0c846b21cd6d1ab6097123f5f3a4",
+    "bytes": 33837
+   }
   },
   {
    "id": "kokoro-am_adam",
@@ -263,7 +318,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_adam.mp3",
+    "sha256": "5969455734b556f17016733846dd81ae294bf9528d6eaae757ac88c8cbbe3c14",
+    "bytes": 32877
+   }
   },
   {
    "id": "kokoro-am_echo",
@@ -284,7 +344,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_echo.mp3",
+    "sha256": "a5033724207b0e7cdb94e6a0716bf907d91736b5874643f66104a8326188cf4a",
+    "bytes": 35373
+   }
   },
   {
    "id": "kokoro-am_eric",
@@ -305,7 +370,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_eric.mp3",
+    "sha256": "39148996baf82e91c34ac67afb5b1a55fa50c8e18961a4507e1611902260820b",
+    "bytes": 31341
+   }
   },
   {
    "id": "kokoro-am_fenrir",
@@ -326,7 +396,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_fenrir.mp3",
+    "sha256": "dfde4443e09b8fa04ca940f8f1fde7c00321d5e793d9189991794d040ad45299",
+    "bytes": 33453
+   }
   },
   {
    "id": "kokoro-am_liam",
@@ -347,7 +422,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_liam.mp3",
+    "sha256": "85fdd72046ec16315361bdee48b19d1370eeda47e38099da8225f7b51ea522c2",
+    "bytes": 32493
+   }
   },
   {
    "id": "kokoro-am_michael",
@@ -368,7 +448,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_michael.mp3",
+    "sha256": "70facf4b374fe0a45640f4a39dec122cee422403b95ef42d1171d79dca5b2bdf",
+    "bytes": 37677
+   }
   },
   {
    "id": "kokoro-am_onyx",
@@ -389,7 +474,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_onyx.mp3",
+    "sha256": "75b4ce7fa012e24a1e232f3f1f3373d7748df5dbd8241f378f7a2491e8befafa",
+    "bytes": 36333
+   }
   },
   {
    "id": "kokoro-am_puck",
@@ -410,7 +500,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_puck.mp3",
+    "sha256": "6372dd622960b55781efe344aa1b63446b7d3649e2355ed0e33ed22b035d81dd",
+    "bytes": 33837
+   }
   },
   {
    "id": "kokoro-am_santa",
@@ -431,7 +526,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-am_santa.mp3",
+    "sha256": "113b1f65ef28c66f771602c38a33dc0cad5509f03aadc2665412850fbf695cd2",
+    "bytes": 40749
+   }
   },
   {
    "id": "kokoro-bf_alice",
@@ -452,7 +552,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bf_alice.mp3",
+    "sha256": "f9225aadbcd786dc994896e56d92e7e6a1ef6aeb2fdebb7ebc8c073e67c3754e",
+    "bytes": 34989
+   }
   },
   {
    "id": "kokoro-bf_emma",
@@ -474,6 +579,11 @@
    },
    "files": [],
    "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bf_emma.mp3",
+    "sha256": "7dba7c1d072f8649b363eac6f187f72672a5a28c34311e9db64a08d83b4378fc",
+    "bytes": 33261
+   },
    "recommended": true
   },
   {
@@ -495,7 +605,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bf_isabella.mp3",
+    "sha256": "a4be1461f3026852ece2ded301ad41b170e7fccbb037e6cbcc7975a4a2b0e30c",
+    "bytes": 32877
+   }
   },
   {
    "id": "kokoro-bf_lily",
@@ -516,7 +631,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bf_lily.mp3",
+    "sha256": "b9299a19d6086a50ef177b582665f393da0cf1b4090d08037c87707ee35061ae",
+    "bytes": 33837
+   }
   },
   {
    "id": "kokoro-bm_daniel",
@@ -537,7 +657,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bm_daniel.mp3",
+    "sha256": "839236c61aaed32cb44dde74a8d92097a5ce50711a38457f2c436e0b43653734",
+    "bytes": 32877
+   }
   },
   {
    "id": "kokoro-bm_fable",
@@ -558,7 +683,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bm_fable.mp3",
+    "sha256": "a15d8a6c465499c467afbdeee7fe4c7a30d174624755019b684de40f9f9e49a2",
+    "bytes": 36909
+   }
   },
   {
    "id": "kokoro-bm_george",
@@ -579,7 +709,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bm_george.mp3",
+    "sha256": "79014d90df9d9bb3b4b7f3b781bfc0dc1283c301dfc4f0f89b16e5c5aaf88642",
+    "bytes": 36717
+   }
   },
   {
    "id": "kokoro-bm_lewis",
@@ -600,7 +735,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-bm_lewis.mp3",
+    "sha256": "001837f2f302ad17289c137afdcb6ef0d8bb79324f4f4f6d41a603e7b36e45bb",
+    "bytes": 36717
+   }
   },
   {
    "id": "kokoro-ef_dora",
@@ -620,6 +760,11 @@
    },
    "files": [],
    "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-ef_dora.mp3",
+    "sha256": "6ddde1e8c928da9aa60857662109f4bb3961a662b340919964af9f3fdfcbc1d7",
+    "bytes": 30573
+   },
    "recommended": true
   },
   {
@@ -639,7 +784,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-em_alex.mp3",
+    "sha256": "72ddeb088c3d7ae816c494da492bd2b7d19857f2057c31323224a81b25e5c996",
+    "bytes": 31341
+   }
   },
   {
    "id": "kokoro-em_santa",
@@ -658,7 +808,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-em_santa.mp3",
+    "sha256": "2c0c5fcd776602f7014e0c70cef452fc8733a4b14e9cf6fa61654b9b2b694533",
+    "bytes": 31341
+   }
   },
   {
    "id": "kokoro-ff_siwis",
@@ -680,6 +835,11 @@
    },
    "files": [],
    "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-ff_siwis.mp3",
+    "sha256": "d08c9946064fc13df57304f6e391c1729fba1f4e02e8374bbbfcf55afbc0992c",
+    "bytes": 41133
+   },
    "recommended": true
   },
   {
@@ -702,6 +862,11 @@
    },
    "files": [],
    "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-hf_alpha.mp3",
+    "sha256": "7c61af997504a7a51724d883449ea0a3fdcbced0a42536645e162412b7b58b09",
+    "bytes": 58029
+   },
    "recommended": true
   },
   {
@@ -723,7 +888,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-hf_beta.mp3",
+    "sha256": "20c0fef3e97226ca22f4ffcdac301e6cf5dc5ddeb572405791cc56f37a68612d",
+    "bytes": 50541
+   }
   },
   {
    "id": "kokoro-hm_omega",
@@ -744,7 +914,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-hm_omega.mp3",
+    "sha256": "f4a25c0bfb158d7b37c5201c89c87064425178b68fabacbc5a35773573d49a78",
+    "bytes": 60333
+   }
   },
   {
    "id": "kokoro-hm_psi",
@@ -765,7 +940,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-hm_psi.mp3",
+    "sha256": "cb4ba8862efe868b9c4d4184f3846d8673e79437b135e2d9b73ffe0b34ed8948",
+    "bytes": 59757
+   }
   },
   {
    "id": "kokoro-if_sara",
@@ -787,6 +967,11 @@
    },
    "files": [],
    "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-if_sara.mp3",
+    "sha256": "c6e05f027efd96f0abd8f9d33272caa2a916217af132b604cd41d1ff163debaa",
+    "bytes": 37869
+   },
    "recommended": true
   },
   {
@@ -808,7 +993,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-im_nicola.mp3",
+    "sha256": "2dd4cddbe1945d9ed438fc439c0fb4f56e091be2cc5f2651dd25a01596608ef4",
+    "bytes": 42477
+   }
   },
   {
    "id": "kokoro-jf_alpha",
@@ -830,6 +1020,11 @@
    },
    "files": [],
    "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jf_alpha.mp3",
+    "sha256": "b1dd434bcf6315e7e14b0522cbd18716d4d0897e9eea44e1a98461877f087bf5",
+    "bytes": 48429
+   },
    "recommended": true
   },
   {
@@ -851,7 +1046,12 @@
     "attribution": "Kokoro-82M by hexgrad; trained on gongitsune — https://github.com/koniwa/koniwa/blob/master/source/tnc/tnc__gongitsune.txt"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jf_gongitsune.mp3",
+    "sha256": "192d182c2aca069dc0a95b4eb54d88689e59636019cc569f476a652f09ab9c40",
+    "bytes": 67821
+   }
   },
   {
    "id": "kokoro-jf_nezumi",
@@ -872,7 +1072,12 @@
     "attribution": "Kokoro-82M by hexgrad; trained on nezuminoyomeiri — https://github.com/koniwa/koniwa/blob/master/source/tnc/tnc__nezuminoyomeiri.txt"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jf_nezumi.mp3",
+    "sha256": "a719eb32b06d17b362e9222c3381cd40a649b7b40678c831361cdd4623b38bd4",
+    "bytes": 67629
+   }
   },
   {
    "id": "kokoro-jf_tebukuro",
@@ -893,7 +1098,12 @@
     "attribution": "Kokoro-82M by hexgrad; trained on tebukurowokaini — https://github.com/koniwa/koniwa/blob/master/source/tnc/tnc__tebukurowokaini.txt"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jf_tebukuro.mp3",
+    "sha256": "916ee181b464c306f660325127b3975f35d9c7bbe18b485f58d9f080cf00bb9f",
+    "bytes": 63597
+   }
   },
   {
    "id": "kokoro-jm_kumo",
@@ -914,7 +1124,12 @@
     "attribution": "Kokoro-82M by hexgrad; trained on kumonoito — https://github.com/koniwa/koniwa/blob/master/source/tnc/tnc__kumonoito.txt"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-jm_kumo.mp3",
+    "sha256": "93bb98b3cbb8e6b8d0afd29b1ac9139f4be5432eeeb6c6390e36d372ca675427",
+    "bytes": 56877
+   }
   },
   {
    "id": "kokoro-pf_dora",
@@ -934,6 +1149,11 @@
    },
    "files": [],
    "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-pf_dora.mp3",
+    "sha256": "1f1d3a0ff1460661728ecd95c57368e787df42a3fcf8ccb9bab0a765a2ed3759",
+    "bytes": 34413
+   },
    "recommended": true
   },
   {
@@ -953,7 +1173,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-pm_alex.mp3",
+    "sha256": "d30838fd02f4d22cde2bd702d6e7474b9f36d1b821a2f57e87f163efeac1efba",
+    "bytes": 34413
+   }
   },
   {
    "id": "kokoro-pm_santa",
@@ -972,7 +1197,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-pm_santa.mp3",
+    "sha256": "537da37ba8e5a734dc0494490e70bf94fcffa9e4dd2819f6f4fb5a3d83cd711f",
+    "bytes": 34605
+   }
   },
   {
    "id": "kokoro-zf_xiaobei",
@@ -994,6 +1224,11 @@
    },
    "files": [],
    "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zf_xiaobei.mp3",
+    "sha256": "b8fecfef2a8e5cf50858ad4f6e881a12f5318f55f1e8ee647d3afcfff0bf8d67",
+    "bytes": 41133
+   },
    "recommended": true
   },
   {
@@ -1015,7 +1250,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zf_xiaoni.mp3",
+    "sha256": "3482380208dfcf55b3f15b2c382ac135fbea5cb51bb2e917d56e8f58713a50a0",
+    "bytes": 34989
+   }
   },
   {
    "id": "kokoro-zf_xiaoxiao",
@@ -1036,7 +1276,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zf_xiaoxiao.mp3",
+    "sha256": "ac33101cc4442c6a51725e454fef8daa6ef1f495f3ce4497b829deddc7abc555",
+    "bytes": 34605
+   }
   },
   {
    "id": "kokoro-zf_xiaoyi",
@@ -1057,7 +1302,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zf_xiaoyi.mp3",
+    "sha256": "8fc7a3598414f47bd49836e3955d789230e8b07e3de86a31c99e12dc12696de7",
+    "bytes": 33837
+   }
   },
   {
    "id": "kokoro-zm_yunjian",
@@ -1078,7 +1328,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zm_yunjian.mp3",
+    "sha256": "bd8fb66ea6ec3c643c41368d9421a046842d428ddd67a9015bb0da4a2f0a0681",
+    "bytes": 34029
+   }
   },
   {
    "id": "kokoro-zm_yunxi",
@@ -1099,7 +1354,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zm_yunxi.mp3",
+    "sha256": "acdcc0d2cecb6c2ee60d6d5515cffc33021db154ad7a64eba7a9232f3d7965a3",
+    "bytes": 30765
+   }
   },
   {
    "id": "kokoro-zm_yunxia",
@@ -1120,7 +1380,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zm_yunxia.mp3",
+    "sha256": "a21d6dc64d93b7dc6ed5b0f44add1286f75da85a867d688371c541607fdf4742",
+    "bytes": 35949
+   }
   },
   {
    "id": "kokoro-zm_yunyang",
@@ -1141,7 +1406,12 @@
     "attribution": "Kokoro-82M by hexgrad"
    },
    "files": [],
-   "sizeMb": 0
+   "sizeMb": 0,
+   "preview": {
+    "url": "https://github.com/codertapsu/multilingual-dubbed-video/releases/download/voice-previews-1/kokoro-zm_yunyang.mp3",
+    "sha256": "592d81503b7504483e4ecd85289dcc539a60b98c08d661e697295d882c58e4e2",
+    "bytes": 32877
+   }
   }
  ]
 }

@@ -105,6 +105,30 @@ Voice ids are stored in projects: **an id never changes**. A voice an engine
 update removes stays in the catalog with `replacedBy` naming its stand-in, so
 the run gate can suggest it.
 
+### Samples we render ourselves
+
+Piper and ZeroTTS host a sample of every voice upstream. VieNeu 3.8, Kokoro and
+Supertonic do not, so their samples are made here, once, and published as
+assets of the GitHub release **`voice-previews-1`**, a pre-release that is never
+marked Latest (the updater follows Latest). Each voice says one greeting in its
+own language (Vietnamese when it speaks Vietnamese), 64 kbps mono MP3, about
+30-70 KB:
+
+```bash
+# an orchestrator with the engines installed (spare port, isolated home)
+node scripts/render-voice-previews.mjs --orchestrator http://127.0.0.1:5291 --release voice-previews-1
+gh release create voice-previews-1 --prerelease --latest=false --notes-file <notes> <tmp>/vd-voice-previews/*.mp3
+node scripts/gen-voice-catalog.mjs vieneu && node scripts/gen-voice-catalog.mjs kokoro && node scripts/gen-voice-catalog.mjs supertonic
+```
+
+The render script writes `scripts/voice-previews.json` (URL, sha256, size per
+voice), which the generator merges into the catalogs. `--match <regex>` with
+`--force` redoes some voices (then `gh release upload --clobber` the files).
+**Listen to, or at least transcribe, every new sample before publishing it.**
+The first render of Kokoro's Japanese voices was 20-25 s of espeak-ng reading
+each kanji by its name; Whisper large-v3 caught it, and Kokoro now phonemizes
+Japanese and Chinese with misaki, the G2P its voices were trained with.
+
 The check enforces: ids unique across engines, the id prefix naming the engine
 (`vieneu38-`, `vieneu-v3-`, `zerotts-`, `kokoro-`, `supertonic-`, `openai-`;
 anything else is Piper), every file and preview pinned and hashed, every voice

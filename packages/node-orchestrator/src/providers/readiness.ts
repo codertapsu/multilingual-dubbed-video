@@ -25,6 +25,7 @@ import {
   type InstalledModels,
   type PipelineStepId,
   type Project,
+  type VoiceProfile,
 } from '@videodubber/shared';
 import { computeRequiredResources } from '../setup/requiredResources.js';
 import type { CredentialsStore } from '../credentials/credentialsStore.js';
@@ -40,7 +41,7 @@ import {
   whisperCppUnsupportedModelError,
 } from '../engines/packSelection.js';
 import { findPack } from '../engines/enginePackCatalog.js';
-import { checkProjectVoices, describeVoiceProblem } from '../voices/projectVoices.js';
+import { checkProfileVoices, checkProjectVoices, describeVoiceProblem } from '../voices/projectVoices.js';
 import { OLLAMA_MODEL, OLLAMA_URL, type ProviderRegistry } from './registry.js';
 
 /** Why a provider is (not) ready. `ready` means usable right now. */
@@ -124,6 +125,8 @@ export interface ReadinessDeps {
    * Omitted => nothing is ever reported as downloading.
    */
   packInstalling?: (packId: string) => boolean;
+  /** The user's cloned voices, so a run naming one is checked at Start. */
+  voiceProfile?: (id: string) => Promise<VoiceProfile | undefined>;
   /** Platform/arch for runtime-pack lookups; default this machine. Tests set
    * them so a Windows-only engine is exercised on every OS. */
   platform?: NodeJS.Platform;
@@ -482,11 +485,14 @@ export async function checkProviderReadiness(
   );
   // A voice the TTS engine does not have would stop the run at the TTS step
   // (engines never swap in their default voice); stop it at Start instead.
+  const ttsReady = results.some((r) => r.phase === 'tts' && r.ready);
+  const problem = ttsReady
+    ? (checkProjectVoices(project.settings)[0] ??
+      (deps.voiceProfile ? (await checkProfileVoices(project.settings, deps.voiceProfile))[0] : undefined))
+    : undefined;
+  const engine = voiceEngineOfProvider(project.settings.ttsProviderId ?? 'piper-local');
   return results.map((r) => {
-    if (r.phase !== 'tts' || !r.ready) return r;
-    const problem = checkProjectVoices(project.settings)[0];
-    const engine = voiceEngineOfProvider(project.settings.ttsProviderId ?? 'piper-local');
-    if (!problem || !engine) return r;
+    if (r.phase !== 'tts' || !r.ready || !problem || !engine) return r;
     const { message, remediation } = describeVoiceProblem(problem, engine);
     return { ...r, status: 'voice-mismatch', ready: false, message, remediation, action: { kind: 'guide', ref: 'voices' } };
   });

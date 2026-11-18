@@ -94,6 +94,10 @@ import { listVoicesForLanguage } from './setup/voicesCatalog.js';
 import { listNeuralVoicesForLanguage } from './setup/neuralVoicesCatalog.js';
 import { listOmnivoiceForLanguage } from './setup/omnivoicesCatalog.js';
 import { VoicePreviewCache } from './voices/previewCache.js';
+import { registerProfileRoutes } from './voices/profileRoutes.js';
+import { VoiceProfileService } from './voices/profileService.js';
+import { VoiceProfileStore } from './voices/profileStore.js';
+import { ReferencePrep } from './voices/referencePrep.js';
 import { VoiceFavorites } from './voices/voicePreferences.js';
 import { registerVoiceRoutes } from './voices/voiceRoutes.js';
 import { runPreflight } from './setup/preflight.js';
@@ -281,10 +285,30 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // the model installer that streams progress over it. Declared before the
   // readiness deps so the run gate can read the installed-model inventory.
   const setupStore = options.setupStore ?? new SetupStore(config.configDir);
-  const registry =
+  // Voice profiles (cloning). Built before the registry: the engines that can
+  // clone resolve a profile id to their voice file through the service.
+  const voiceProfileStore = new VoiceProfileStore(config.configDir, config.projectsDir);
+  const referencePrep = new ReferencePrep({
+    workRoot: join(config.configDir, 'voices', 'work'),
+    media,
+    speechMap: sttWorkerSpeechMap(config.sttWorkerUrl),
+  });
+  const voiceProfiles: VoiceProfileService = new VoiceProfileService({
+    store: voiceProfileStore,
+    prep: referencePrep,
+    registry: (): ProviderRegistry => registry,
+    projectExists: (id) => store.exists(id).catch(() => false),
+  });
+  const registry: ProviderRegistry =
     options.registry ??
-    createDefaultRegistry(config, credentials, engineManager, enginePackStore, registryProfile, async () =>
-      (await setupStore.getPreferences()).localModels,
+    createDefaultRegistry(
+      config,
+      credentials,
+      engineManager,
+      enginePackStore,
+      registryProfile,
+      async () => (await setupStore.getPreferences()).localModels,
+      voiceProfiles,
     );
   const bus = options.bus ?? new EventBusRegistry();
 
@@ -338,6 +362,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     // language hasn't finished downloading, instead of failing mid-pipeline.
     installedModels: () => setupStore.getStatus().then((s) => s.installed),
     packInstalling: (id) => engineInstaller.isInstalling(id),
+    voiceProfile: (id) => voiceProfileStore.get(id),
   });
   /**
    * Start downloading the whisper.cpp speech model a project is waiting for
@@ -611,6 +636,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
     favorites: new VoiceFavorites(config.configDir),
     previews: new VoicePreviewCache(config.configDir),
+    profiles: (projectId) => voiceProfileStore.list(projectId),
     packStates: async (packIds) => {
       const [installed, profile] = await Promise.all([
         usablePackIds(),
@@ -641,6 +667,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     installPack: startPackInstall,
     sendError,
   });
+  registerProfileRoutes(app, { store: voiceProfileStore, service: voiceProfiles, prep: referencePrep, sendError });
 
   app.post('/setup/complete', async (_req, reply) => {
     try {

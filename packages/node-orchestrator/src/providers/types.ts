@@ -66,3 +66,39 @@ export function isTranslationRefiner(
 export interface CancellableTtsProvider extends TtsProvider {
   synthesizeSegments(input: TtsInput, signal?: AbortSignal): Promise<TtsResult>;
 }
+
+/** What an engine returns for a voice made from a recording. */
+export interface VoiceEnrollmentResult {
+  /** Hash of the voice data: names the voice in clip caches and seeds. */
+  fingerprint: string;
+  engineVersion: string;
+  codeFrames?: number;
+}
+
+/** A TTS provider whose engine can make a voice from a recording (VieNeu 3.8). */
+export interface VoiceCloner {
+  enroll(
+    referencePath: string,
+    outPath: string,
+    opts: { denoise: boolean },
+    signal?: AbortSignal,
+  ): Promise<VoiceEnrollmentResult>;
+}
+
+export function isVoiceCloner(p: CancellableTtsProvider): p is CancellableTtsProvider & VoiceCloner {
+  return typeof (p as Partial<VoiceCloner>).enroll === 'function';
+}
+
+/**
+ * Turns a voice-profile id ("vp_…") into the voice file of a provider's engine,
+ * enrolling the kept recording on first use with that engine. Implemented by
+ * voices/profileService.ts and handed to the providers that can clone.
+ */
+export interface VoiceRefResolver {
+  resolve(
+    profileId: string,
+    providerId: string,
+    enroll: (referencePath: string, outPath: string) => Promise<VoiceEnrollmentResult>,
+    signal?: AbortSignal,
+  ): Promise<{ file: string; fingerprint: string }>;
+}

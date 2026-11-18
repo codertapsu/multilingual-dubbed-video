@@ -26,6 +26,7 @@ import {
 import { allCatalogVoices, findCatalogVoice, VOICE_ENGINES, voiceEngineInfo } from './voiceCatalog.js';
 import { libraryItems, queryVoices, type VoiceLibraryState, type VoiceQuery } from './voiceLibrary.js';
 import type { VoiceFavorites } from './voicePreferences.js';
+import { projectOfProfileId } from './profileStore.js';
 import { PREVIEW_CONTENT_TYPES, type VoicePreviewCache } from './previewCache.js';
 
 /** One engine pack as the voice screens show it. */
@@ -54,7 +55,8 @@ export interface VoiceRoutesDeps {
   libraryState: () => Promise<Omit<VoiceLibraryState, 'favorites' | 'profiles'>>;
   favorites: VoiceFavorites;
   previews: VoicePreviewCache;
-  profiles?: () => Promise<VoiceProfile[]>;
+  /** The user's cloned voices: the library's, plus one project's own. */
+  profiles?: (projectId?: string) => Promise<VoiceProfile[]>;
   /** Engine packs of a voice engine, with their state here. */
   packStates: (packIds: readonly string[]) => Promise<VoicePackState[]>;
   /** Start downloading one Piper model (progress on /setup/events). */
@@ -151,18 +153,18 @@ export function planVoiceInstall(
 }
 
 export function registerVoiceRoutes(app: FastifyInstance, deps: VoiceRoutesDeps): void {
-  const state = async (): Promise<VoiceLibraryState> => {
+  const state = async (projectId?: string): Promise<VoiceLibraryState> => {
     const [base, favorites, profiles] = await Promise.all([
       deps.libraryState(),
       deps.favorites.list(),
-      deps.profiles ? deps.profiles().catch(() => []) : Promise.resolve([]),
+      deps.profiles ? deps.profiles(projectId).catch(() => []) : Promise.resolve([]),
     ]);
     return { ...base, favorites, profiles };
   };
 
   app.get('/voices', async (req: FastifyRequest<{ Querystring: Query }>, reply) => {
     try {
-      const items = libraryItems(allCatalogVoices(), VOICE_ENGINES, await state());
+      const items = libraryItems(allCatalogVoices(), VOICE_ENGINES, await state(req.query?.projectId?.trim() || undefined));
       const { voices, total } = queryVoices(items, parseVoiceQuery(req.query ?? {}));
       const body: VoiceLibraryResponse = { voices, total, engines: [...VOICE_ENGINES] };
       return body;
@@ -214,7 +216,7 @@ export function registerVoiceRoutes(app: FastifyInstance, deps: VoiceRoutesDeps)
     async (req: FastifyRequest<{ Params: { id: string }; Body: { favorite?: boolean } }>, reply) => {
       try {
         const id = req.params.id;
-        const known = Boolean(findCatalogVoice(id)) || ((await deps.profiles?.()) ?? []).some((p) => p.id === id);
+        const known = Boolean(findCatalogVoice(id)) || ((await deps.profiles?.(projectOfProfileId(id))) ?? []).some((p) => p.id === id);
         if (!known) {
           return reply.status(404).send({ error: { code: 'TTS_VOICE_MISSING', message: `Unknown voice "${id}".` } });
         }

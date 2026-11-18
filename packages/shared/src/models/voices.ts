@@ -182,15 +182,23 @@ export interface VoiceConsent {
 export interface VoiceReferenceChecks {
   /** Speech inside the chosen window (ms). */
   speechMs: number;
-  /** Integrated loudness of the window before levelling (LUFS). */
-  loudnessLufs?: number;
+  /** Average level of the speech before levelling (dBFS, RMS). */
+  levelDb?: number;
   /** Share of samples at full scale (0..1). */
   clippedShare?: number;
-  /** Background level against speech (dB; higher is cleaner). */
+  /** Speech level against the background between words (dB; higher is cleaner). */
   snrDb?: number;
-  /** Plain-word findings, as i18n keys ("voice-check.too-quiet"…). */
-  warnings: string[];
+  /** Longest pause inside the window (ms). */
+  longestPauseMs?: number;
+  /**
+   * Findings, as keys under `voice-check.*`: "too-short" refuses the
+   * recording; the others ("short", "too-quiet", "clipped", "noisy",
+   * "long-pause") warn and the user decides.
+   */
+  warnings: VoiceCheckWarning[];
 }
+
+export type VoiceCheckWarning = 'too-short' | 'short' | 'too-quiet' | 'clipped' | 'noisy' | 'long-pause';
 
 /** Engine-specific voice data made from a reference (enrollment). */
 export interface VoiceEnrollment {

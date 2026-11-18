@@ -16,8 +16,9 @@ import {
   voiceEngineOfProvider,
   type ProjectSettings,
   type VoiceEngineId,
+  type VoiceProfile,
 } from '@videodubber/shared';
-import { findCatalogVoice } from './voiceCatalog.js';
+import { findCatalogVoice, voiceEngineInfo } from './voiceCatalog.js';
 
 /** Engines whose every voice is in the catalog (Piper also loads local .onnx files). */
 const CLOSED_CATALOG: ReadonlySet<VoiceEngineId> = new Set(['vieneu', 'vieneu-classic', 'zerotts', 'kokoro', 'supertonic']);
@@ -27,8 +28,14 @@ export interface ProjectVoiceProblem {
   /** Where the project names it. */
   where: 'project' | 'speaker';
   speakerId?: string;
-  /** The voice belongs to another engine than the project's TTS provider. */
-  kind: 'other-engine' | 'unknown';
+  /**
+   * other-engine: the voice belongs to another engine than the project's;
+   * unknown: the engine (or the profiles) have no such voice;
+   * cannot-clone: a cloned voice, on an engine that only speaks presets;
+   * no-recording: a cloned voice saved without its recording, for an engine
+   * it was not made for.
+   */
+  kind: 'other-engine' | 'unknown' | 'cannot-clone' | 'no-recording';
   /** The engine the voice belongs to (other-engine). */
   voiceEngine?: VoiceEngineId;
   /** The suggested stand-in, when an engine update removed the voice. */
@@ -63,11 +70,29 @@ export const VOICE_ENGINE_LABEL: Readonly<Record<VoiceEngineId, string>> = {
 export function describeVoiceProblem(p: ProjectVoiceProblem, providerEngine: VoiceEngineId): { message: string; remediation: string } {
   const owner = p.where === 'speaker' ? ` (speaker ${p.speakerId})` : '';
   const engine = VOICE_ENGINE_LABEL[providerEngine];
+  if (p.kind === 'cannot-clone') {
+    return {
+      message: `"${p.voiceId}"${owner} is a cloned voice, and ${engine} only speaks its preset voices.`,
+      remediation: `Switch the project's voice engine to ${VOICE_ENGINE_LABEL.vieneu}, which speaks cloned voices, or pick a ${engine} voice.`,
+    };
+  }
+  if (p.kind === 'no-recording') {
+    return {
+      message: `The cloned voice "${p.voiceId}"${owner} was saved without its recording, so it cannot be made for ${engine}.`,
+      remediation: 'Use the voice engine it was made with, or record the voice again (Voices → My voices).',
+    };
+  }
   if (p.kind === 'other-engine' && p.voiceEngine) {
     const theirs = VOICE_ENGINE_LABEL[p.voiceEngine];
     return {
       message: `The voice "${p.voiceId}"${owner} belongs to ${theirs}, but this project's voice engine is ${engine}.`,
       remediation: `Pick a ${engine} voice in the project's voice settings, or switch the project's voice engine to ${theirs}. Voices never change by themselves.`,
+    };
+  }
+  if (isVoiceProfileId(p.voiceId)) {
+    return {
+      message: `The cloned voice "${p.voiceId}"${owner} no longer exists.`,
+      remediation: "Pick another voice in the project's voice settings.",
     };
   }
   return {
@@ -76,6 +101,30 @@ export function describeVoiceProblem(p: ProjectVoiceProblem, providerEngine: Voi
       ? `A newer ${engine} removed it; "${p.replacement}" is its suggested replacement. Pick a voice in the project's voice settings.`
       : `Pick one of ${engine}'s voices in the project's voice settings (Voices screen lists them).`,
   };
+}
+
+/**
+ * The cloned voices a project names: each must exist, its engine must speak
+ * cloned voices, and it must have been made for that engine or kept its
+ * recording (to be made for it on first use).
+ */
+export async function checkProfileVoices(
+  settings: Pick<ProjectSettings, 'ttsProviderId' | 'ttsVoiceId' | 'speakerVoices'>,
+  getProfile: (id: string) => Promise<VoiceProfile | undefined>,
+): Promise<ProjectVoiceProblem[]> {
+  const engine = voiceEngineOfProvider(settings.ttsProviderId ?? 'piper-local');
+  const problems: ProjectVoiceProblem[] = [];
+  for (const ref of projectVoiceRefs(settings)) {
+    if (!isVoiceProfileId(ref.voiceId)) continue;
+    if (!engine || !voiceEngineInfo(engine)?.cloning) {
+      problems.push({ ...ref, kind: 'cannot-clone' });
+      continue;
+    }
+    const profile = await getProfile(ref.voiceId);
+    if (!profile) problems.push({ ...ref, kind: 'unknown' });
+    else if (!profile.enrollments[engine] && !profile.reference) problems.push({ ...ref, kind: 'no-recording' });
+  }
+  return problems;
 }
 
 export function checkProjectVoices(

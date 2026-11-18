@@ -10,16 +10,20 @@
  * contract as the bundled local TTS worker — only the base URL differs (resolved
  * on demand via the EngineManager).
  *
- * Stock/preset voices only; any zero-shot cloning inputs the underlying models
- * expose are not surfaced (policy).
+ * Preset voices, and for VieNeu 3.8 (`vieneu-tts`) cloned voices: a "vp_…"
+ * voice id is resolved to the engine's voice file through the voice profiles
+ * (voices/profileService.ts), which hold the user's consent record; the engine
+ * never sees a recording it was not given through POST /enroll.
  */
 import {
   AppErrorException,
+  isVoiceProfileId,
   type TtsInput,
   type TtsProvider,
   type TtsResult,
   type TtsSegment,
 } from '@videodubber/shared';
+import type { VoiceEnrollmentResult, VoiceRefResolver } from '../types.js';
 import { getWorkerJson, postWorkerJson } from '../workerHttp.js';
 import type { EngineManager } from '../../engines/engineManager.js';
 import type { EnginePackStore } from '../../engines/enginePackStore.js';
@@ -98,7 +102,50 @@ export class NeuralTtsProvider implements TtsProvider {
      * interactive voice picker (which must not evict a resident engine).
      */
     private readonly exclusive = false,
+    /**
+     * Voice profiles (cloned voices), for engines that can clone: turns a
+     * "vp_…" voice id into the engine's voice file. Absent = presets only.
+     */
+    private readonly voiceRefs?: VoiceRefResolver,
   ) {}
+
+  /**
+   * Make a voice from a reference recording (engine POST /enroll). Engines
+   * that cannot clone answer VOICE_ENGINE_CANNOT_CLONE, which surfaces as is.
+   */
+  async enroll(
+    referencePath: string,
+    outPath: string,
+    opts: { denoise: boolean },
+    signal?: AbortSignal,
+  ): Promise<VoiceEnrollmentResult> {
+    const base = (await this.baseUrl(true)).replace(/\/$/, '');
+    await this.waitUntilWarm(base, signal);
+    return this.enrollAt(base, referencePath, outPath, opts.denoise, signal);
+  }
+
+  private enrollAt(
+    base: string,
+    referencePath: string,
+    outPath: string,
+    denoise: boolean,
+    signal?: AbortSignal,
+  ): Promise<VoiceEnrollmentResult> {
+    return postWorkerJson<VoiceEnrollmentResult>(
+      `${base}/enroll`,
+      { referencePath, outPath, denoise },
+      { timeoutMs: Math.min(this.timeoutMs, 10 * 60_000), workerName: 'Neural TTS engine', signal },
+    );
+  }
+
+  /** The voiceRef a cloned voice needs in a synthesis request (undefined for a preset). */
+  private async voiceRefFor(base: string, voiceId: string | undefined, signal?: AbortSignal): Promise<{ file: string; fingerprint: string } | undefined> {
+    if (!isVoiceProfileId(voiceId)) return undefined;
+    if (!this.voiceRefs) {
+      throw new AppErrorException('VOICE_ENGINE_CANNOT_CLONE', `${this.displayName} only speaks its preset voices.`);
+    }
+    return this.voiceRefs.resolve(voiceId!, this.id, (ref, out) => this.enrollAt(base, ref, out, true, signal), signal);
+  }
 
   /**
    * Start the engine on the best installed pack (the GPU build first), falling
@@ -194,6 +241,8 @@ export class NeuralTtsProvider implements TtsProvider {
     // the whole run with WORKER_TIMEOUT. /voices does NOT wait, so the wizard's
     // voice picker stays responsive (and starts this warm-up early).
     await this.waitUntilWarm(base, signal);
+    // A cloned voice travels as its voice file (enrolled on first use).
+    const voiceRef = await this.voiceRefFor(base, input.voiceId, signal);
     let data: WorkerSynthesizeResponse;
     try {
       data = await postWorkerJson<WorkerSynthesizeResponse>(
@@ -201,6 +250,7 @@ export class NeuralTtsProvider implements TtsProvider {
         {
           language: input.language,
           voiceId: input.voiceId,
+          ...(voiceRef ? { voiceRef } : {}),
           segments: input.segments,
           outputDir: input.outputDir,
           speed: input.speed ?? 1.0,

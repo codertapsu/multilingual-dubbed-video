@@ -29,6 +29,7 @@ import type {
   CancellableSttProvider,
   CancellableTranslationProvider,
   CancellableTtsProvider,
+  VoiceRefResolver,
 } from './types.js';
 import { FasterWhisperProvider } from './stt/fasterWhisperProvider.js';
 import { OpenAiSttProvider } from './stt/openaiSttProvider.js';
@@ -178,6 +179,8 @@ export function createDefaultRegistry(
   profile?: SystemProfile,
   /** The user's local-model choices, read at every engine start (Settings → Engines). */
   localModels: () => Promise<LocalModelPreferences | undefined> = async () => undefined,
+  /** Cloned voices, for the engines that can speak them (voices/profileService.ts). */
+  voiceRefs?: VoiceRefResolver,
 ): ProviderRegistry {
   const registry = new ProviderRegistry();
   const timeout = config.workerRequestTimeoutMs;
@@ -322,7 +325,16 @@ export function createDefaultRegistry(
     // VieNeu through SDK 3.8: 25 voices and voice cloning, its own packs, so the
     // ten 3.0.5 voices above keep sounding the same in existing projects.
     registry.registerTts(
-      new NeuralTtsProvider('vieneu-tts', 'VieNeu-TTS 3.8 (25 Vietnamese voices)', 'vieneu-tts', engines, store, timeout),
+      new NeuralTtsProvider(
+        'vieneu-tts',
+        'VieNeu-TTS 3.8 (25 Vietnamese voices)',
+        'vieneu-tts',
+        engines,
+        store,
+        timeout,
+        false,
+        voiceRefs,
+      ),
     );
     // OmniVoice — massively-multilingual neural TTS, Apple Silicon ONLY (MLX).
     // Registered only where its pack can actually run, so it isn't offered as a

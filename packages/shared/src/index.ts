@@ -179,6 +179,7 @@ export type {
   VoiceProfile,
   VoiceReferenceChecks,
   VoiceReferencePolicy,
+  VoiceCheckWarning,
   VoiceSpeaker,
 } from './models/voices.js';
 export {

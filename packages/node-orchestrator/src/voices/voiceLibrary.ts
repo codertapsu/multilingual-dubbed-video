@@ -67,6 +67,7 @@ export function libraryItems(
       license: v.license,
       sizeMb: v.sizeMb,
       hasPreview: Boolean(v.preview) || (installed && v.engine !== 'openai'),
+      ...(v.preview ? { sample: true } : {}),
       ...(v.recommended ? { recommended: true } : {}),
       ...(v.replacedBy ? { replacedBy: v.replacedBy } : {}),
       installed,

@@ -495,6 +495,21 @@ export class IpcService {
     return `${this.baseUrl}/voices/${encodeURIComponent(voiceId)}/preview`;
   }
 
+  /** POST /voices/:id/speak — an installed voice saying `text`, as a playable URL (object URL). */
+  async speakVoice(voiceId: string, text: string, language?: string): Promise<string> {
+    const res = await this.fetchWaitingForBackend(`${this.baseUrl}/voices/${encodeURIComponent(voiceId)}/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'audio/wav, application/json' },
+      body: JSON.stringify({ text, ...(language ? { language } : {}) }),
+      signal: AbortSignal.timeout(10 * 60 * 1000),
+    });
+    if (!res.ok) {
+      const json = safeJsonParse(await res.text()) as { error?: unknown } | undefined;
+      throw json?.error ?? { code: 'UNKNOWN', message: `The voice could not speak (${res.status}).` };
+    }
+    return URL.createObjectURL(await res.blob());
+  }
+
   /** PUT /voices/:id/favorite */
   setVoiceFavorite(voiceId: string, favorite: boolean): Promise<{ id: string; favorite: boolean }> {
     return this.http('PUT', `/voices/${encodeURIComponent(voiceId)}/favorite`, { favorite });

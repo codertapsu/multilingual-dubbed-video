@@ -201,6 +201,17 @@
           }
         </select>
       </label>
+      <label class="search">
+        <span>{{ 'voices.own-sentence' | translate }}</span>
+        <input
+          type="text"
+          maxlength="300"
+          [placeholder]="'voices.own-sentence-placeholder' | translate"
+          [ngModel]="sentence()"
+          (ngModelChange)="sentence.set($event)"
+          [title]="'voices.own-sentence-help' | translate"
+        />
+      </label>
       <label class="check">
         <input type="checkbox" [ngModel]="filter().installedOnly" (ngModelChange)="setFilter('installedOnly', $event)" />
         {{ 'voices.installed-only' | translate }}
@@ -256,7 +267,7 @@
             [title]="(v.hasPreview ? (playing() === v.id ? 'voices.stop' : 'voices.play') : 'voices.no-preview') | translate: { name: v.name }"
             (click)="togglePreview(v)"
           >
-            {{ playing() === v.id ? '■' : '▶' }}
+            {{ speaking() === v.id ? '…' : playing() === v.id ? '■' : '▶' }}
           </button>
           <div class="who">
             <div class="name-line">

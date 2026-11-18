@@ -260,6 +260,8 @@ export interface VoiceLibraryItem {
   sizeMb: number;
   /** A preview can be played (a sample exists, or the voice is installed). */
   hasPreview: boolean;
+  /** The catalog has a sample of it (playable before installing). */
+  sample?: boolean;
   recommended?: boolean;
   replacedBy?: string;
   /** The voice itself is on this computer (files, or shipped by its engine). */

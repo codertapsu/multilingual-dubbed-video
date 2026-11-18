@@ -4,12 +4,14 @@
  *   GET  /voices                 the library, filtered (VoiceQuery as query params)
  *   GET  /voices/engines         each voice engine with its packs and install state
  *   GET  /voices/:id/preview     a verified, cached sample (needs nothing installed)
+ *   POST /voices/:id/speak       { text, language? } -> WAV of an installed voice saying it
  *   PUT  /voices/:id/favorite    { favorite: boolean }
  *   POST /voices/:id/install     { packId? } -> VoiceInstallResult (202)
  *
  * The old /setup/voices and /setup/install-voice stay as they were, for the
  * MCP server and the first-run wizard.
  */
+import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -63,6 +65,11 @@ export interface VoiceRoutesDeps {
   installPiperVoice: (modelId: string) => void;
   /** Start installing an engine pack; resolves to every pack it started. */
   installPack: (packId: string) => Promise<string[]>;
+  /**
+   * Speak `text` in an installed voice (its engine's provider); resolves to
+   * the WAV. Optional: without it the route answers 404.
+   */
+  speak?: (voiceId: string, text: string, language: string) => Promise<string>;
   sendError: (reply: FastifyReply, err: unknown) => unknown;
 }
 
@@ -88,6 +95,31 @@ const int = (v: string | undefined): number | undefined => {
   const n = Number(v);
   return v !== undefined && v !== '' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
 };
+
+/**
+ * The folder name of a "hear it say this" clip: everything that decides its
+ * audio. Voice, text and language alone kept serving an engine's old take
+ * after the engine changed: Kokoro's Japanese went on reading kanji as their
+ * names after the misaki fix (2026-11-18). So the installed versions of the
+ * voice's engine packs are in it, and for a cloned voice its recording (or,
+ * kept without one, its voice data).
+ */
+export function speakCacheKey(input: {
+  voiceId: string;
+  text: string;
+  language: string;
+  /** Installed packs of the voice's engine ({ id, version }). */
+  packs: readonly { id: string; version?: string }[];
+  profile?: Pick<VoiceProfile, 'engine' | 'reference' | 'enrollments'>;
+}): string {
+  const packs = input.packs.map((p) => `${p.id}@${p.version ?? ''}`).sort();
+  const p = input.profile;
+  const voiceData = p ? (p.reference?.sha256 ?? p.enrollments[p.engine]?.fingerprint ?? '') : '';
+  return createHash('sha256')
+    .update(JSON.stringify([input.voiceId, input.text, input.language, packs, voiceData]))
+    .digest('hex')
+    .slice(0, 24);
+}
 
 /** Query string -> VoiceQuery, ignoring values it does not know. */
 export function parseVoiceQuery(q: Query): VoiceQuery {
@@ -210,6 +242,25 @@ export function registerVoiceRoutes(app: FastifyInstance, deps: VoiceRoutesDeps)
       return deps.sendError(reply, err);
     }
   });
+
+  // "Listen with your own sentence": any installed voice, spoken by its engine.
+  app.post(
+    '/voices/:id/speak',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { text?: string; language?: string } }>, reply) => {
+      try {
+        if (!deps.speak) return reply.status(404).send({ error: { code: 'UNKNOWN', message: 'Not available.' } });
+        const id = req.params.id;
+        const entry = findCatalogVoice(id);
+        const text = (req.body?.text ?? '').trim().slice(0, 300);
+        if (!text) throw new AppErrorException('UNKNOWN', 'Type a sentence to hear.');
+        const language = (req.body?.language ?? entry?.languages.find((l) => l !== '*') ?? 'vi-VN').trim();
+        const file = await deps.speak(id, text, language);
+        return reply.header('Content-Type', 'audio/wav').header('Cache-Control', 'no-store').send(await fsp.readFile(file));
+      } catch (err) {
+        return deps.sendError(reply, err);
+      }
+    },
+  );
 
   app.put(
     '/voices/:id/favorite',

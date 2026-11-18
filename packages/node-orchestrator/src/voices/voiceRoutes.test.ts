@@ -9,7 +9,30 @@ import { toHttpError } from '../httpErrors.js';
 import { findCatalogVoice } from './voiceCatalog.js';
 import { VoicePreviewCache } from './previewCache.js';
 import { VoiceFavorites } from './voicePreferences.js';
-import { parseVoiceQuery, planVoiceInstall, registerVoiceRoutes, type VoicePackState } from './voiceRoutes.js';
+import { parseVoiceQuery, planVoiceInstall, registerVoiceRoutes, speakCacheKey, type VoicePackState } from './voiceRoutes.js';
+
+describe('speakCacheKey', () => {
+  const base = { voiceId: 'kokoro-jf_alpha', text: 'こんにちは', language: 'ja-JP', packs: [{ id: 'tts-kokoro', version: '0.6.1' }] };
+
+  it('changes when the engine is updated, so an old take is never replayed', () => {
+    const before = speakCacheKey(base);
+    expect(speakCacheKey({ ...base, packs: [{ id: 'tts-kokoro', version: '0.6.1' }] })).toBe(before);
+    expect(speakCacheKey({ ...base, packs: [{ id: 'tts-kokoro', version: '0.6.1+misaki-0.9.4' }] })).not.toBe(before);
+    expect(speakCacheKey({ ...base, text: 'こんばんは' })).not.toBe(before);
+    expect(speakCacheKey({ ...base, language: 'ja' })).not.toBe(before);
+  });
+
+  it('follows a cloned voice by its recording, not by its name', () => {
+    const profile = (sha256: string) => ({
+      engine: 'vieneu' as const,
+      reference: { file: 'reference.wav', durationMs: 8000, sampleRate: 48000, sha256 },
+      enrollments: {},
+    });
+    const one = speakCacheKey({ ...base, voiceId: 'vp_x', profile: profile('a'.repeat(64)) });
+    expect(speakCacheKey({ ...base, voiceId: 'vp_x', profile: profile('a'.repeat(64)) })).toBe(one);
+    expect(speakCacheKey({ ...base, voiceId: 'vp_x', profile: profile('b'.repeat(64)) })).not.toBe(one);
+  });
+});
 
 const pack = (over: Partial<VoicePackState> & { id: string }): VoicePackState => ({
   displayName: over.id,
@@ -154,6 +177,41 @@ describe('voice routes', () => {
     const res = await app.inject({ method: 'GET', url: '/voices/zerotts-maichi/preview' });
     expect(res.statusCode).toBeGreaterThanOrEqual(400);
     expect(await fsp.readdir(path.join(tmp, 'cache', 'voice-previews')).catch(() => [])).toEqual([]);
+  });
+
+  it("speaks the user's sentence in an installed voice, in the voice's language by default", async () => {
+    const app = Fastify();
+    const calls: [string, string, string][] = [];
+    const wav = path.join(tmp, 'said.wav');
+    await fsp.writeFile(wav, Buffer.from('RIFF....WAVEfake'));
+    registerVoiceRoutes(app, {
+      libraryState: async () => ({
+        installedPiper: new Set(),
+        installedPacks: new Set(),
+        availablePacks: new Set(),
+        cloudServices: new Set(),
+      }),
+      favorites: new VoiceFavorites(tmp),
+      previews: new VoicePreviewCache(tmp, vi.fn() as unknown as typeof fetch),
+      packStates: async () => [],
+      installPiperVoice: vi.fn(),
+      installPack: vi.fn(),
+      speak: async (id, text, language) => {
+        calls.push([id, text, language]);
+        return wav;
+      },
+      sendError: (reply, err) => {
+        const { status, body } = toHttpError(err);
+        return reply.status(status).send(body);
+      },
+    });
+    await app.ready();
+    const res = await app.inject({ method: 'POST', url: '/voices/kokoro-jf_alpha/speak', payload: { text: ' こんにちは ' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('audio/wav');
+    expect(calls).toEqual([['kokoro-jf_alpha', 'こんにちは', 'ja-JP']]);
+    const empty = await app.inject({ method: 'POST', url: '/voices/kokoro-jf_alpha/speak', payload: { text: '  ' } });
+    expect(empty.statusCode).toBeGreaterThanOrEqual(400);
   });
 
   it('installs a Piper voice by its model, and a pack voice by its engine pack', async () => {

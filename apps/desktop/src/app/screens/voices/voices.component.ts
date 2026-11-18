@@ -36,6 +36,22 @@ import {
 /** Rows rendered before "Show more" (the library holds a few hundred). */
 const PAGE = 60;
 
+/** What an installed voice without a sample says, in its own language. */
+const SAMPLE_SENTENCES: Record<string, string> = {
+  vi: 'Xin chào, đây là giọng đọc dùng để lồng tiếng cho video của bạn.',
+  en: 'Hello, this is a voice you can use to dub your videos.',
+  ja: 'こんにちは、これはあなたの動画の吹き替えに使える声です。',
+  zh: '你好，这是可以为你的视频配音的声音。',
+  es: 'Hola, esta es una voz que puedes usar para doblar tus vídeos.',
+  fr: 'Bonjour, voici une voix que vous pouvez utiliser pour doubler vos vidéos.',
+  hi: 'नमस्ते, यह एक आवाज़ है जिससे आप अपने वीडियो डब कर सकते हैं।',
+  it: 'Ciao, questa è una voce che puoi usare per doppiare i tuoi video.',
+  pt: 'Olá, esta é uma voz que você pode usar para dublar seus vídeos.',
+  ko: '안녕하세요, 동영상 더빙에 사용할 수 있는 목소리입니다.',
+  de: 'Hallo, das ist eine Stimme, mit der du deine Videos synchronisieren kannst.',
+  ru: 'Здравствуйте, этим голосом можно озвучивать ваши видео.',
+};
+
 interface Progress {
   percent: number | null;
   message: string;
@@ -212,14 +228,35 @@ export class VoicesComponent implements OnInit, OnDestroy {
 
   // ---- previews --------------------------------------------------------------
 
-  protected togglePreview(item: VoiceLibraryItem): void {
+  /** The sentence installed voices say when played (the user's own, or a default). */
+  protected readonly sentence = signal('');
+  protected readonly speaking = signal<string | null>(null);
+  private objectUrl: string | null = null;
+
+  protected async togglePreview(item: VoiceLibraryItem): Promise<void> {
     if (this.playing() === item.id) {
       this.stopPreview();
       return;
     }
     this.stopPreview();
     this.previewError.set(null);
-    const audio = new Audio(this.ipc.voicePreviewUrl(item.id));
+    // An installed voice says the user's sentence (or, without a sample, a
+    // default one); a voice not installed plays the catalog's sample.
+    const own = this.sentence().trim();
+    let url = this.ipc.voicePreviewUrl(item.id);
+    if (item.installed && item.engine !== 'openai' && (own || !item.sample)) {
+      this.speaking.set(item.id);
+      try {
+        url = await this.ipc.speakVoice(item.id, own || this.defaultSentence(item));
+        this.objectUrl = url;
+      } catch (err) {
+        this.error.set(err as AppError);
+        return;
+      } finally {
+        this.speaking.set(null);
+      }
+    }
+    const audio = new Audio(url);
     this.audio = audio;
     this.playing.set(item.id);
     audio.onended = () => this.playing.set(null);
@@ -237,6 +274,14 @@ export class VoicesComponent implements OnInit, OnDestroy {
     this.audio?.pause();
     this.audio = null;
     this.playing.set(null);
+    if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
+    this.objectUrl = null;
+  }
+
+  /** A sentence in the voice's own language, for voices with no sample. */
+  private defaultSentence(item: VoiceLibraryItem): string {
+    const lang = baseLanguage(item.languages.find((l) => l !== '*') ?? this.filter().language ?? 'vi') || 'vi';
+    return SAMPLE_SENTENCES[lang] ?? SAMPLE_SENTENCES['en']!;
   }
 
   // ---- favourites ------------------------------------------------------------

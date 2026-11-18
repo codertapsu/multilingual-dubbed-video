@@ -19,7 +19,10 @@ import {
   ALL_CLOUD_SERVICES,
   AppErrorException,
   COMMON_LANGUAGES,
+  isVoiceProfileId,
   projectOutputFiles,
+  VOICE_ENGINE_PROVIDER,
+  voiceEngineOfId,
   type ArgosPair,
   type CloudServiceId,
   type CreateProjectInput,
@@ -99,7 +102,8 @@ import { VoiceProfileService } from './voices/profileService.js';
 import { VoiceProfileStore } from './voices/profileStore.js';
 import { ReferencePrep } from './voices/referencePrep.js';
 import { VoiceFavorites } from './voices/voicePreferences.js';
-import { registerVoiceRoutes } from './voices/voiceRoutes.js';
+import { VOICE_ENGINES } from './voices/voiceCatalog.js';
+import { registerVoiceRoutes, speakCacheKey } from './voices/voiceRoutes.js';
 import { runPreflight } from './setup/preflight.js';
 import { SetupEventBus } from './setup/setupBus.js';
 import { SetupInstaller } from './setup/installer.js';
@@ -665,6 +669,34 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
     installPiperVoice: (modelId) => void installer.run({ piperVoices: [modelId] }),
     installPack: startPackInstall,
+    speak: async (voiceId, text, language) => {
+      const profile = isVoiceProfileId(voiceId) ? await voiceProfileStore.require(voiceId) : undefined;
+      const engine = profile ? profile.engine : voiceEngineOfId(voiceId);
+      const providerId = engine ? VOICE_ENGINE_PROVIDER[engine] : undefined;
+      const provider = providerId ? registry.getTts(providerId) : undefined;
+      if (!provider || provider.id !== providerId) {
+        throw new AppErrorException('ENGINE_UNAVAILABLE', `No engine on this computer speaks "${voiceId}".`);
+      }
+      // Cached by what decides the audio, the engine's installed version
+      // included (temporary cache: Settings → Storage).
+      const enginePacks = new Set(VOICE_ENGINES.find((e) => e.id === engine)?.packIds ?? []);
+      const packs = (await enginePackStore.list()).filter((r) => enginePacks.has(r.id));
+      const key = speakCacheKey({ voiceId, text, language, packs, ...(profile ? { profile } : {}) });
+      const dir = join(config.configDir, 'cache', 'voice-speak', key);
+      const done = join(dir, 'segment_0001.wav');
+      if (await stat(done).then((s) => s.size > 44, () => false)) return done;
+      const result = await provider.synthesizeSegments({
+        language,
+        voiceId,
+        segments: [{ id: 'seg_0001', text, startMs: 0, endMs: 15_000 }],
+        outputDir: dir,
+      });
+      const clip = result.segments[0]?.audioPath;
+      if (!clip || (result.fallbackSegments ?? 0) > 0 || result.engine === 'fallback') {
+        throw new AppErrorException('ENGINE_UNAVAILABLE', `The voice "${voiceId}" could not speak this sentence.`);
+      }
+      return clip;
+    },
     sendError,
   });
   registerProfileRoutes(app, { store: voiceProfileStore, service: voiceProfiles, prep: referencePrep, sendError });

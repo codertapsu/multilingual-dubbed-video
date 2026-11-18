@@ -1138,6 +1138,9 @@
     "n-speakers": "{{ count }} speakers",
     "speakers-help": "This model has several speakers; pick one when you assign the voice in a project.",
     "show-more": "Show more ({{ count }})",
+    "own-sentence": "Your sentence (installed voices say it)",
+    "own-sentence-placeholder": "Type a sentence, or leave empty for the sample",
+    "own-sentence-help": "Installed voices read this sentence when you press ▶ (write it in the voice's language). Voices that are not installed play their sample.",
     "engine": {
       "vieneu": "VieNeu-TTS 3.8",
       "vieneu-classic": "VieNeu v3 (10 earlier voices)",

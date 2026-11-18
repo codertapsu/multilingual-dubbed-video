@@ -391,6 +391,16 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     healthPath: '/health',
     heavy: false,
   },
+  // audio.cpp (the audiocpp-* runtime packs). Vocal separation runs its
+  // command-line tool instead (providers/separation/audioCppSeparationProvider.ts);
+  // this server is for models served over HTTP, which a provider lists in the
+  // pack's server.json before starting it.
+  'audio-cpp': {
+    binaryNames: ['audiocpp_server', 'audiocpp_server.exe'],
+    args: ({ port, packDir }) => ['--config', path.join(packDir, 'server.json'), '--host', '127.0.0.1', '--port', String(port), '--no-ui'],
+    healthPath: '/health',
+    heavy: true,
+  },
   'audio-separator': {
     pythonModule: 'vd_separator',
     args: ({ port }) => ['--port', String(port)],
@@ -486,6 +496,23 @@ export class EngineManager {
    */
   releaseHeavyLane(ownerId: string): void {
     if (this.heavyOwner === ownerId) this.heavyOwner = undefined;
+  }
+
+  /**
+   * Claim the heavy lane for a one-shot job that is not a server (audio.cpp's
+   * command-line separation): the same rules as a heavy exclusive start, so
+   * another owner's lane is never taken (ENGINE_BUSY) and resident heavy
+   * engines are unloaded first, freeing the graphics card's memory for it.
+   * The owner releases the lane as for a server (releaseHeavyLane, or the
+   * run's hand-over).
+   */
+  async claimForJob(label: string, ownerId?: string): Promise<void> {
+    const owner = ownerId ?? currentEngineOwner() ?? ANONYMOUS_OWNER;
+    if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
+      throw new AppErrorException('ENGINE_BUSY', `${label} needs the engines another dub is using (${this.heavyOwner}).`);
+    }
+    this.heavyOwner = owner;
+    await this.unloadHeavyExcept('');
   }
 
   /** Base URL of a running engine, or undefined. */

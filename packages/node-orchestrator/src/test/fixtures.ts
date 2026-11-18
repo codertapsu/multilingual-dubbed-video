@@ -164,6 +164,18 @@ export class FakeMediaService implements PipelineMediaService {
     return { audioPath: outputPath, sampleRate: opts.sampleRate ?? 48_000, channels: 1, durationMs };
   }
 
+  async prepareStemInput(inputPath: string, outputPath: string): Promise<AudioExtractResult> {
+    this.calls.push(`prepareStemInput:${inputPath}`);
+    await this.touch(outputPath);
+    return { audioPath: outputPath, sampleRate: 44_100, channels: 2, durationMs: 0 };
+  }
+
+  async mixStems(inputPaths: readonly string[], outputPath: string): Promise<AudioExtractResult> {
+    this.calls.push(`mixStems:${inputPaths.length}`);
+    await this.touch(outputPath);
+    return { audioPath: outputPath, sampleRate: 48_000, channels: 2, durationMs: 0 };
+  }
+
   /** Every timeline build's input, so tests can see what the mix was asked to play. */
   public timelineInputs: BuildTtsTimelineInput[] = [];
 

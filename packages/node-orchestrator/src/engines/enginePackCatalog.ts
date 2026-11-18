@@ -90,6 +90,9 @@ const WHISPER_GGML_DL = `https://huggingface.co/ggerganov/whisper.cpp/resolve/${
 /** Fixed filename every `whisper-cpp-model` pack installs (see packSelection). */
 export const WHISPER_CPP_MODEL_FILE = 'model.bin';
 
+/** The file the HTDemucs model pack installs (separation-htdemucs). */
+export const HTDEMUCS_MODEL_FILE = 'htdemucs-q8_0.gguf';
+
 function whisperCppModelPack(
   size: string,
   sha256: string,
@@ -204,6 +207,16 @@ const GEMMA4_IT_LICENSE_NOTE =
   '(ai.google.dev/gemma/apache_2) — the first Gemma generation with a standard ' +
   'permissive license and no Gemma Terms of Use pass-through. Downloaded from ' +
   'ggml-org’s official GGUF mirror of google/gemma-4-*-it.';
+
+/**
+ * audio.cpp (Apache-2.0, ShugoAI): GGUF audio models on ggml. Release assets are
+ * pinned to the sha256 digests GitHub publishes for the tag; the Windows builds
+ * carry their own MSVC runtime DLLs. Its models are GGUF conversions in the
+ * audio-cpp/audio.cpp-gguf repo, pinned to a commit.
+ */
+const AUDIOCPP = 'v0.9.5';
+const AUDIOCPP_DL = `https://github.com/0xShug0/audio.cpp/releases/download/${AUDIOCPP}`;
+const AUDIOCPP_GGUF = 'https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/7a103b33f04120535bdfe97b5f65b79d3c90d708';
 
 /**
  * The speaker-embedding model speaker detection uses (diarization-sherpa), with
@@ -919,6 +932,113 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
       },
     ],
     licenseNote: `sherpa-onnx Apache-2.0 (k2-fsa); pyannote segmentation 3.0 MIT; ${DIARIZATION_EMBEDDING.licence}`,
+  },
+
+  // --- audio.cpp runtimes + HTDemucs (music & voice separation) ---------------
+  // HTDemucs splits a soundtrack into vocals, drums, bass and the rest, so a
+  // dub can replace the voices and keep the score. Measured in Phase 0
+  // (2026-11-18, 2-minute excerpts of real projects): 0.09 of real time on an
+  // RTX 3050 through Vulkan, 0.20 (Metal) and 0.25 (CPU) on an M-series Mac,
+  // 1.05 on an i5-13400F's processor alone. The runtimes are listed best first
+  // (packsForProvider ranks them); the separation provider falls back to the
+  // next installed one, and to the processor, when one cannot run.
+  {
+    id: 'audiocpp-vulkan',
+    kind: 'separation',
+    packKind: 'binary',
+    displayName: 'audio.cpp (graphics card, Vulkan)',
+    description:
+      'Runs audio models, such as music and voice separation, on the graphics card (NVIDIA, AMD or Intel) through Vulkan. Installed together with the models that need it.',
+    providerId: 'audio-cpp',
+    version: AUDIOCPP,
+    platforms: ['win32'],
+    arch: ['x64'],
+    accel: 'vulkan',
+    tier: 'balanced',
+    approxSizeMb: 86,
+    artifacts: [
+      {
+        url: `${AUDIOCPP_DL}/audio-${AUDIOCPP}-bin-windows-x64-vulkan.zip`,
+        sha256: 'dc103660e5fac85860677af2b39361154d863953777ab812d891721e6e163148',
+        approxSizeMb: 86,
+        destPath: '.',
+        archive: true,
+      },
+    ],
+    licenseNote: 'audio.cpp Apache-2.0 (ShugoAI); ggml MIT.',
+  },
+  {
+    id: 'audiocpp-cpu',
+    kind: 'separation',
+    packKind: 'binary',
+    displayName: 'audio.cpp (processor)',
+    description:
+      'Runs audio models, such as music and voice separation, on the processor, for computers without a usable graphics card. Installed together with the models that need it, also beside the graphics-card build as its fallback (that build cannot run on the processor itself).',
+    providerId: 'audio-cpp',
+    version: AUDIOCPP,
+    platforms: ['win32'],
+    arch: ['x64'],
+    accel: 'cpu',
+    tier: 'balanced',
+    approxSizeMb: 34,
+    artifacts: [
+      {
+        url: `${AUDIOCPP_DL}/audio-${AUDIOCPP}-bin-windows-x64-cpu.zip`,
+        sha256: 'fa38ab6f02ebb1256728068549c0beac3bf2fdf1e348a301f0892d44ac14e26a',
+        approxSizeMb: 34,
+        destPath: '.',
+        archive: true,
+      },
+    ],
+    licenseNote: 'audio.cpp Apache-2.0 (ShugoAI); ggml MIT.',
+  },
+  {
+    id: 'audiocpp-metal',
+    kind: 'separation',
+    packKind: 'binary',
+    displayName: 'audio.cpp (Apple Silicon, Metal)',
+    description:
+      'Runs audio models, such as music and voice separation, on Apple Silicon through Metal. Installed together with the models that need it.',
+    providerId: 'audio-cpp',
+    version: AUDIOCPP,
+    platforms: ['darwin'],
+    arch: ['arm64'],
+    accel: 'metal',
+    tier: 'balanced',
+    approxSizeMb: 39,
+    artifacts: [
+      {
+        url: `${AUDIOCPP_DL}/audio-${AUDIOCPP}-bin-macos-arm64-metal.tar.gz`,
+        sha256: '286e4e266212b2cd4012418268f4f972440bdd984cf5decfe6b427b543ccb5fd',
+        approxSizeMb: 39,
+        destPath: '.',
+        archive: true,
+      },
+    ],
+    licenseNote: 'audio.cpp Apache-2.0 (ShugoAI); ggml MIT.',
+  },
+  {
+    id: 'separation-htdemucs',
+    kind: 'separation',
+    packKind: 'model',
+    displayName: 'Music & voice separation (HTDemucs)',
+    description:
+      "Splits the original soundtrack into the voices and everything else, so “Replace the voices, keep the music” keeps the score and sound effects at full volume under the dub instead of turning them down. Takes about a tenth of the video's length on a graphics card or Apple Silicon, about the video's length on a processor alone.",
+    providerId: 'audio-cpp-separation-model',
+    version: 'htdemucs-q8_0@7a103b33',
+    accel: 'cpu',
+    tier: 'balanced',
+    minRamMb: 4096,
+    approxSizeMb: 62,
+    artifacts: [
+      {
+        url: `${AUDIOCPP_GGUF}/HTDemucs-GGUF/htdemucs-q8_0.gguf`,
+        sha256: 'b0f532ac6e5f373aeb11fa0df73253251e133832d9c8b9942dc58f50bc5b4388',
+        approxSizeMb: 62,
+        destPath: HTDEMUCS_MODEL_FILE,
+      },
+    ],
+    licenseNote: 'HTDemucs (Meta) MIT, in the audio.cpp project’s GGUF conversion; an audio.cpp runtime is installed with it.',
   },
 
   // --- vocal separation (uv-managed Python env) ----------------------------

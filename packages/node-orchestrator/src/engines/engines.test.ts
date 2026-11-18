@@ -25,6 +25,7 @@ import {
   resolveWhisperCppModel,
   whisperCppModelPackFor,
   companionRuntimeFor,
+  companionRuntimesFor,
 } from './packSelection.js';
 import {
   nvidiaDriverSupportsPack,
@@ -1593,6 +1594,30 @@ describe('whisper.cpp speech models', () => {
     await mkdir(p, { recursive: true });
     await store.add({ id: 'llama-cpp-vulkan', path: p, installedAt: '2026-11-17T00:00:00Z' });
     expect(await companionRuntimeFor(store, 'translategemma-12b', nvidia, 'win32', 'x64')).toBeUndefined();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("separation on Windows gets the processor build beside the graphics one, which cannot fall back itself", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-companions-'));
+    const store = new EnginePackStore(dir);
+    const nvidia = profile({
+      platform: 'win32', arch: 'x64', appleSilicon: false,
+      gpus: [{ name: 'NVIDIA GeForce RTX 3050', vramMb: 8192, driverVersion: '621.24' }],
+    });
+    expect(await companionRuntimesFor(store, 'separation-htdemucs', nvidia, 'win32', 'x64')).toEqual(['audiocpp-vulkan', 'audiocpp-cpu']);
+    // The Mac's Metal build runs on its own processor backend: nothing extra.
+    expect(await companionRuntimesFor(store, 'separation-htdemucs', profile(), 'darwin', 'arm64')).toEqual(['audiocpp-metal']);
+    // Other families are unchanged.
+    expect(await companionRuntimesFor(store, 'translategemma-4b', nvidia, 'win32', 'x64')).toEqual(['llama-cpp-cuda']);
+    // Vulkan already there (an earlier install): the processor build still comes, once.
+    const v = store.packDir('audiocpp-vulkan');
+    await mkdir(v, { recursive: true });
+    await store.add({ id: 'audiocpp-vulkan', path: v, installedAt: '2026-11-19T00:00:00Z' });
+    expect(await companionRuntimesFor(store, 'separation-htdemucs', nvidia, 'win32', 'x64')).toEqual(['audiocpp-cpu']);
+    const c = store.packDir('audiocpp-cpu');
+    await mkdir(c, { recursive: true });
+    await store.add({ id: 'audiocpp-cpu', path: c, installedAt: '2026-11-19T00:00:00Z' });
+    expect(await companionRuntimesFor(store, 'separation-htdemucs', nvidia, 'win32', 'x64')).toEqual([]);
     await rm(dir, { recursive: true, force: true });
   });
 

@@ -48,7 +48,7 @@ import { systemVcDeps } from './engines/vcRuntime.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
 import {
-  companionRuntimeFor,
+  companionRuntimesFor,
   installedPacksForProvider,
   isPackUsable,
   pickInstalledLocalLlmChatModel,
@@ -56,7 +56,8 @@ import {
 } from './engines/packSelection.js';
 import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engines/engineRecommendation.js';
 import { configureUvHome, resolveUvPath, uvObtainable } from './engines/uv.js';
-import { AudioSeparatorProvider } from './providers/separation/audioSeparatorProvider.js';
+import { AudioCppSeparationProvider } from './providers/separation/audioCppSeparationProvider.js';
+import type { SeparationService } from './media.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 import { SherpaDiarizationProvider } from './providers/diarization/sherpaDiarizationProvider.js';
 import { EventBusRegistry } from './events.js';
@@ -156,7 +157,7 @@ export interface CreateServerOptions {
   /** Injected engine-pack installer. */
   engineInstaller?: EngineInstaller;
   /** Injected vocal-separation service. */
-  separation?: AudioSeparatorProvider;
+  separation?: SeparationService;
 }
 
 /**
@@ -277,8 +278,17 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       bus: engineBus,
       ...(onWindows ? { vcRuntime: (progress: (message: string) => void) => systemVcDeps(progress) } : {}),
     });
-  const separation =
-    options.separation ?? new AudioSeparatorProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
+  // Music & voice separation: HTDemucs through audio.cpp's command-line tool
+  // (the vd_separator Python worker the old provider expected was never built).
+  const separation: SeparationService =
+    options.separation ??
+    new AudioCppSeparationProvider({
+      engines: engineManager,
+      store: enginePackStore,
+      media,
+      threads: performanceCoresFromSttWorker(config.sttWorkerUrl),
+      logger: { warn: (m) => console.warn(`[separation] ${m}`) },
+    });
   const alignment = new WhisperxAlignmentProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
   const diarization = new SherpaDiarizationProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
 
@@ -623,9 +633,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const startPackInstall = async (packId: string): Promise<string[]> => {
     if (!engineInstaller.isInstalling(packId)) void engineInstaller.install(packId);
     const profile = (await buildSystemResponse().catch(() => undefined))?.profile;
-    const companion = profile ? await companionRuntimeFor(enginePackStore, packId, profile) : undefined;
-    if (companion && !engineInstaller.isInstalling(companion)) void engineInstaller.install(companion);
-    return companion ? [packId, companion] : [packId];
+    const companions = profile ? await companionRuntimesFor(enginePackStore, packId, profile) : [];
+    for (const c of companions) if (!engineInstaller.isInstalling(c)) void engineInstaller.install(c);
+    return [packId, ...companions];
   };
   registerVoiceRoutes(app, {
     libraryState: async () => {
@@ -1327,11 +1337,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // Kick off asynchronously; progress observed via GET /engines/events.
       void engineInstaller.install(packId);
       // A model pack cannot run without its runtime: install the best one for
-      // this machine alongside it when none is installed (companionRuntimeFor).
+      // this machine alongside it when none is installed, and the processor
+      // build too where a graphics build cannot fall back (companionRuntimesFor).
       const profile = (await buildSystemResponse().catch(() => undefined))?.profile;
-      const companion = profile ? await companionRuntimeFor(enginePackStore, packId, profile) : undefined;
-      if (companion && !engineInstaller.isInstalling(companion)) void engineInstaller.install(companion);
-      return reply.status(202).send({ started: true, ...(companion ? { alsoInstalling: [companion] } : {}) });
+      const companions = profile ? await companionRuntimesFor(enginePackStore, packId, profile) : [];
+      for (const c of companions) if (!engineInstaller.isInstalling(c)) void engineInstaller.install(c);
+      return reply.status(202).send({ started: true, ...(companions.length ? { alsoInstalling: companions } : {}) });
     } catch (err) {
       return sendError(reply, err);
     }

@@ -236,6 +236,10 @@ export interface PipelineMediaService extends MediaService {
     opts: { startMs?: number; endMs?: number; maxMs?: number; sampleRate?: number; loudnessLufs?: number },
     signal?: AbortSignal,
   ): Promise<AudioExtractResult>;
+  /** The 44.1 kHz stereo WAV vocal separation (HTDemucs) insists on. */
+  prepareStemInput?(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<AudioExtractResult>;
+  /** One 48 kHz stereo WAV from separated stems: one converted, several summed unscaled. */
+  mixStems?(inputPaths: readonly string[], outputPath: string, signal?: AbortSignal): Promise<AudioExtractResult>;
 }
 
 /**
@@ -268,6 +272,8 @@ const MEDIA_SERVICE_METHOD_TABLE: Record<keyof PipelineMediaService, true> = {
   renderFittedClip: true,
   measureSpeech: true,
   referenceClip: true,
+  prepareStemInput: true,
+  mixStems: true,
 };
 
 /** A method name of {@link PipelineMediaService}. */

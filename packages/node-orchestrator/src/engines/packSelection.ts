@@ -150,6 +150,7 @@ const RUNTIME_FOR_MODEL_FAMILY: Readonly<Record<string, string>> = {
   'local-llm-model': 'local-llm',
   'local-llm-chat-model': 'local-llm',
   'whisper-cpp-model': 'whisper-cpp',
+  'audio-cpp-separation-model': 'audio-cpp',
 };
 
 /**
@@ -173,6 +174,50 @@ export async function companionRuntimeFor(
   return packsForProvider(family, platform, arch).find(
     (p) => packHardwareSupported(p, profile) && nvidiaDriverSupportsPack(p, profile),
   )?.id;
+}
+
+/**
+ * Runtime families whose graphics build cannot fall back to its own processor
+ * backend on a platform, so their processor build is installed beside it.
+ *
+ * audio.cpp on Windows: the Vulkan package has no per-CPU ggml variants, and
+ * its processor backend dies at start with 0xC000001D (illegal instruction) on
+ * an i5-13400F (Phase 0, and again 2026-11-19), where the processor package
+ * separated the same clip. Without it, a graphics card the Vulkan build cannot
+ * use left separation with nothing that runs. It is 34 MB. (The Mac's Metal
+ * package runs on its processor backend fine.)
+ */
+const PROCESSOR_BUILD_BESIDE: Readonly<Record<string, readonly NodeJS.Platform[]>> = {
+  'audio-cpp': ['win32'],
+};
+
+/** True when `family`'s graphics builds have a processor backend that runs here. */
+export function graphicsBuildRunsOnProcessor(family: string, platform: NodeJS.Platform = process.platform): boolean {
+  return !PROCESSOR_BUILD_BESIDE[family]?.includes(platform);
+}
+
+/**
+ * Every runtime to install with a model pack: the best one for the machine
+ * ({@link companionRuntimeFor}), plus the processor build where the family's
+ * graphics builds cannot fall back to the processor themselves.
+ */
+export async function companionRuntimesFor(
+  store: EnginePackStore,
+  packId: string,
+  profile: SystemProfile,
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): Promise<string[]> {
+  const family = RUNTIME_FOR_MODEL_FAMILY[findPack(packId)?.providerId ?? ''];
+  if (!family) return [];
+  const out: string[] = [];
+  const best = await companionRuntimeFor(store, packId, profile, platform, arch);
+  if (best) out.push(best);
+  if (!graphicsBuildRunsOnProcessor(family, platform)) {
+    const processor = packsForProvider(family, platform, arch).find((p) => p.accel === 'cpu');
+    if (processor && !out.includes(processor.id) && !(await store.get(processor.id))) out.push(processor.id);
+  }
+  return out;
 }
 
 /** The best pack to SUGGEST installing for a provider (most capable for the machine). */

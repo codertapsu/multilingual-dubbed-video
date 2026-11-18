@@ -104,6 +104,8 @@ interface MediaWorkerModule {
     opts?: Parameters<NonNullable<PipelineMediaService['referenceClip']>>[2],
     run?: MediaWorkerRunOptions,
   ): Promise<AudioExtractResult>;
+  prepareStemInput?(input: string, output: string, run?: MediaWorkerRunOptions): Promise<AudioExtractResult>;
+  mixStems?(inputs: readonly string[], output: string, run?: MediaWorkerRunOptions): Promise<AudioExtractResult>;
 }
 
 /**
@@ -228,6 +230,12 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
             signal?: AbortSignal,
           ) => mod.referenceClip!(i, o, opts, runOpts(signal)),
         }
+      : {}),
+    ...(typeof mod.prepareStemInput === 'function'
+      ? { prepareStemInput: (i: string, o: string, signal?: AbortSignal) => mod.prepareStemInput!(i, o, runOpts(signal)) }
+      : {}),
+    ...(typeof mod.mixStems === 'function'
+      ? { mixStems: (i: readonly string[], o: string, signal?: AbortSignal) => mod.mixStems!(i, o, runOpts(signal)) }
       : {}),
     // clip16kMono is optional on the interface: only expose it when the loaded
     // media-worker provides it, so the runner can detect support and otherwise

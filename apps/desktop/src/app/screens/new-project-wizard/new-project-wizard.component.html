@@ -27,6 +27,58 @@
         />
       </div>
 
+      <!-- Presets: the choices for a channel's videos, saved once (also used by
+           the Download screen to dub many videos at once, and by the plugin). -->
+      <fieldset>
+        <legend>{{ 'wizard.preset-label' | translate }}</legend>
+        <p class="hint muted">{{ 'wizard.preset-hint' | translate }}</p>
+        <div class="row">
+          <select
+            class="grow"
+            name="preset"
+            [attr.aria-label]="'wizard.preset-label' | translate"
+            [ngModel]="presetId()"
+            (ngModelChange)="applyPreset($event)"
+          >
+            <option value="">{{ 'wizard.preset-none' | translate }}</option>
+            @for (p of presets(); track p.id) {
+              <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage }})</option>
+            }
+          </select>
+          @if (presetId()) {
+            <button type="button" class="btn btn-ghost btn-sm" (click)="deletePreset()">
+              {{ 'wizard.preset-delete' | translate }}
+            </button>
+          }
+        </div>
+        <div class="row">
+          <input
+            class="grow"
+            type="text"
+            name="presetName"
+            [attr.aria-label]="'wizard.preset-name-ph' | translate"
+            [placeholder]="'wizard.preset-name-ph' | translate"
+            [ngModel]="presetName()"
+            (ngModelChange)="presetName.set($event)"
+            autocomplete="off"
+          />
+          <button
+            type="button"
+            class="btn btn-sm"
+            (click)="savePreset()"
+            [disabled]="savingPreset() || !presetName().trim()"
+          >
+            {{ 'wizard.preset-save' | translate }}
+          </button>
+        </div>
+        @if (presetFolder(); as folder) {
+          <p class="hint muted">{{ 'wizard.preset-folder' | translate: { folder: folder } }}</p>
+        }
+        @if (presetNotice(); as n) {
+          <p class="hint">{{ n }}</p>
+        }
+      </fieldset>
+
       <fieldset>
         <legend>{{ 'wizard.source-video' | translate }}</legend>
         <div class="row">
@@ -102,6 +154,17 @@
         </p>
       </fieldset>
 
+      <label class="check-row">
+        <input
+          type="checkbox"
+          name="useSourceSubtitles"
+          [ngModel]="settings().useSourceSubtitles === true"
+          (ngModelChange)="patchSettings('useSourceSubtitles', $event)"
+        />
+        <span>{{ 'wizard.use-site-subtitles' | translate }}</span>
+      </label>
+      <p class="hint muted">{{ 'wizard.use-site-subtitles-hint' | translate }}</p>
+
       <fieldset>
         <legend>{{ 'wizard.subtitles' | translate }}</legend>
         <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.subtitles-aria' | translate">
@@ -121,6 +184,17 @@
             </label>
           }
         </div>
+      </fieldset>
+
+      <!-- Logo & greeting (optional; applied only when mixing and rendering). -->
+      <fieldset>
+        <legend>{{ 'branding.heading' | translate }}</legend>
+        <p class="hint muted">{{ 'branding.intro' | translate }}</p>
+        <vd-branding-form
+          [value]="settings().branding"
+          [assets]="brandAssets()"
+          (changed)="patchSettings('branding', $event)"
+        />
       </fieldset>
 
       <fieldset>
@@ -292,6 +366,61 @@
             >
           </span>
         </label>
+      </fieldset>
+
+      <!-- A long video as a series of parts (needs an AI from Settings). -->
+      <fieldset>
+        <legend>{{ 'series.wizard-legend' | translate }}</legend>
+        <p class="hint muted">{{ 'series.wizard-intro' | translate }}</p>
+        @if (seriesAiReady().length === 0) {
+          <p class="hint warn-text">{{ 'series.wizard-no-ai' | translate }}</p>
+          <a class="hint" routerLink="/settings">{{ 'series.wizard-open-settings' | translate }}</a>
+        } @else {
+          <label class="check-row">
+            <input type="checkbox" name="splitSeries" [ngModel]="splitSeries()" (ngModelChange)="splitSeries.set($event)" />
+            <span>{{ 'series.wizard-enable' | translate }}</span>
+          </label>
+          @if (splitSeries()) {
+            <div class="row series-grid">
+              <label class="stack-sm grow">
+                <span class="label">{{ 'series.length' | translate }}</span>
+                <select name="seriesLength" [ngModel]="seriesLength()" (ngModelChange)="seriesLength.set($event)">
+                  <option value="15-20">{{ 'series.length-15' | translate }}</option>
+                  <option value="30-40">{{ 'series.length-30' | translate }}</option>
+                  <option value="55-65">{{ 'series.length-60' | translate }}</option>
+                  <option value="custom">{{ 'series.length-custom' | translate }}</option>
+                </select>
+              </label>
+              @if (seriesLength() === 'custom') {
+                <label class="stack-sm">
+                  <span class="label">{{ 'series.min' | translate }}</span>
+                  <input type="number" name="seriesMin" min="5" max="120" [ngModel]="seriesMin()" (ngModelChange)="seriesMin.set(+$event)" />
+                </label>
+                <label class="stack-sm">
+                  <span class="label">{{ 'series.max' | translate }}</span>
+                  <input type="number" name="seriesMax" min="5" max="180" [ngModel]="seriesMax()" (ngModelChange)="seriesMax.set(+$event)" />
+                </label>
+              }
+              <label class="stack-sm grow">
+                <span class="label">{{ 'series.ai' | translate }}</span>
+                <select name="seriesAi" [ngModel]="seriesAi()" (ngModelChange)="seriesAi.set($event)">
+                  @for (o of seriesAiReady(); track o.id) {
+                    <option [value]="o.id">{{ o.label }}{{ o.viaMotherClaude ? ' (Mother Claude)' : '' }}</option>
+                  }
+                </select>
+              </label>
+              <label class="stack-sm">
+                <span class="label">{{ 'series.recap' | translate }}</span>
+                <input type="number" name="seriesRecap" min="0" max="8" [ngModel]="seriesRecap()" (ngModelChange)="seriesRecap.set(+$event)" />
+              </label>
+            </div>
+            <label class="check-row">
+              <input type="checkbox" name="seriesAuto" [ngModel]="seriesAuto()" (ngModelChange)="seriesAuto.set($event)" />
+              <span>{{ 'series.auto-start' | translate }}</span>
+            </label>
+            <p class="hint muted">{{ 'series.wizard-how' | translate }}</p>
+          }
+        }
       </fieldset>
 
       <fieldset>

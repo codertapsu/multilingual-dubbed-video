@@ -1,0 +1,115 @@
+/**
+ * Dub presets ("Mẫu lồng tiếng", `<config>/dub-presets.json`): the choices a
+ * user makes for every video of a channel (languages, engines, voice,
+ * subtitles, where files go), saved once and used by New project, a batch of
+ * downloads and the plugin.
+ *
+ * A preset holds only what the user chose: a project made from it starts from
+ * the settings the app recommends for this machine and lays the preset over
+ * them, so a preset saved before an engine was installed still gets that
+ * engine's defaults for everything it does not name.
+ */
+import { randomBytes } from 'node:crypto';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+
+import { AppErrorException, type DubPreset, type ProjectSettings } from '@videodubber/shared';
+
+import { writeJsonAtomic } from './projectStore.js';
+
+export const PRESETS_FILE = 'dub-presets.json';
+
+/** What a client may set (id and times are the store's). */
+export type DubPresetInput = Pick<DubPreset, 'name' | 'targetLanguage'> &
+  Partial<Pick<DubPreset, 'sourceLanguage' | 'settings' | 'outputDir' | 'start'>>;
+
+/** Keep only well-formed fields; refuse a preset without a name or a target language. Pure. */
+export function cleanPresetInput(raw: unknown): DubPresetInput {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const name = typeof r['name'] === 'string' ? r['name'].trim().slice(0, 80) : '';
+  const targetLanguage = typeof r['targetLanguage'] === 'string' ? r['targetLanguage'].trim() : '';
+  if (!name || !targetLanguage) {
+    throw new AppErrorException('INVALID_EDIT', 'A preset needs a name and a dub language.', {
+      remediation: 'Give it a name (for example the channel it is for) and choose the language to dub into.',
+    });
+  }
+  const settings = r['settings'] && typeof r['settings'] === 'object' && !Array.isArray(r['settings'])
+    ? (r['settings'] as Partial<ProjectSettings>)
+    : {};
+  const outputDir = typeof r['outputDir'] === 'string' && r['outputDir'].trim() ? r['outputDir'].trim() : undefined;
+  if (outputDir && !path.isAbsolute(outputDir)) {
+    throw new AppErrorException('INVALID_EDIT', 'The save folder must be a full path, like D:\\Dubs.');
+  }
+  return {
+    name,
+    targetLanguage,
+    ...(typeof r['sourceLanguage'] === 'string' && r['sourceLanguage'].trim() ? { sourceLanguage: r['sourceLanguage'].trim() } : {}),
+    // The languages live outside `settings`, so the preset has one place for each.
+    settings: Object.fromEntries(
+      Object.entries(settings).filter(([k]) => k !== 'sourceLanguage' && k !== 'targetLanguage'),
+    ) as Partial<ProjectSettings>,
+    ...(outputDir ? { outputDir } : {}),
+    ...(r['start'] === true ? { start: true } : {}),
+  };
+}
+
+export class PresetStore {
+  private readonly file: string;
+  private chain: Promise<unknown> = Promise.resolve();
+
+  constructor(configDir: string) {
+    this.file = path.join(configDir, PRESETS_FILE);
+  }
+
+  async list(): Promise<DubPreset[]> {
+    try {
+      const raw = JSON.parse(await fsp.readFile(this.file, 'utf8')) as { presets?: DubPreset[] };
+      return Array.isArray(raw.presets) ? raw.presets.filter((p) => p && typeof p.id === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async get(id: string): Promise<DubPreset> {
+    const preset = (await this.list()).find((p) => p.id === id);
+    if (!preset) {
+      throw new AppErrorException('INVALID_EDIT', `There is no preset "${id}".`, {
+        remediation: 'GET /presets lists the saved presets (New project → Presets in the app).',
+      });
+    }
+    return preset;
+  }
+
+  /** Create (no id) or replace a preset. Writes are serialized: two saves never lose one. */
+  save(input: DubPresetInput, id?: string): Promise<DubPreset> {
+    return this.serial(async () => {
+      const all = await this.list();
+      const now = new Date().toISOString();
+      const existing = id ? all.find((p) => p.id === id) : undefined;
+      if (id && !existing) await this.get(id); // throws the readable error
+      const preset: DubPreset = {
+        id: existing?.id ?? `preset_${randomBytes(5).toString('hex')}`,
+        ...input,
+        settings: input.settings ?? {},
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      const next = existing ? all.map((p) => (p.id === preset.id ? preset : p)) : [...all, preset];
+      await writeJsonAtomic(this.file, { presets: next });
+      return preset;
+    });
+  }
+
+  delete(id: string): Promise<void> {
+    return this.serial(async () => {
+      const all = await this.list();
+      await writeJsonAtomic(this.file, { presets: all.filter((p) => p.id !== id) });
+    });
+  }
+
+  private serial<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(fn, fn);
+    this.chain = run.catch(() => undefined);
+    return run;
+  }
+}

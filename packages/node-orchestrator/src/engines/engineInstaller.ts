@@ -75,6 +75,11 @@ export class EngineInstaller {
     return this.running.has(packId);
   }
 
+  /** Whether any pack is being installed now (a batch dub waits for it). */
+  installingAny(): boolean {
+    return this.running.size > 0;
+  }
+
   private get fetchImpl(): typeof fetch {
     return this.deps.fetchImpl ?? fetch;
   }

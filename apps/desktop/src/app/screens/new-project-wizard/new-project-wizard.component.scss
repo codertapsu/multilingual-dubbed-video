@@ -130,3 +130,15 @@
     white-space: nowrap;
   }
 }
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+}
+
+.series-grid {
+  flex-wrap: wrap;
+  gap: var(--vd-sp-3);
+  align-items: flex-end;
+}

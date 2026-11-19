@@ -263,6 +263,13 @@ async function dirSize(dir: string): Promise<number> {
  */
 export class SetupInstaller {
   private running = false;
+  /**
+   * Requests that arrived while a run was going: it takes them on before it
+   * ends. They used to be ignored ("already in progress"), so a batch of new
+   * projects in different languages got the first one's models and the others
+   * stalled at Start on a missing language pack.
+   */
+  private readonly incoming: SetupInstallRequest[] = [];
 
   constructor(private readonly deps: InstallerDeps) {}
 
@@ -284,7 +291,10 @@ export class SetupInstaller {
    */
   async run(request: SetupInstallRequest): Promise<void> {
     if (this.running) {
-      this.emitLog('warn', 'An install is already in progress; ignoring the new request.');
+      // Joins the run in progress, whose `done` then covers it too: a wizard
+      // waiting for these downloads must not be told they are ready early.
+      this.incoming.push(request);
+      this.emitLog('info', 'Another download is running; these were added to it.');
       return;
     }
     this.running = true;
@@ -297,6 +307,13 @@ export class SetupInstaller {
       this.deps.bus.emit({ type: 'error', error: toAppError(err) });
     } finally {
       this.running = false;
+      // Requests that came in while the result was being reported start the
+      // next run (which takes the rest of them on at once).
+      const [next, ...rest] = this.incoming.splice(0);
+      if (next) {
+        this.incoming.push(...rest);
+        void this.run(next);
+      }
     }
   }
 
@@ -313,13 +330,28 @@ export class SetupInstaller {
    */
   private async installAll(request: SetupInstallRequest): Promise<void> {
     const steps: (() => Promise<void>)[] = [];
-    const whisperModel = request.whisperModel;
-    if (whisperModel) steps.push(() => this.installWhisperModel(whisperModel));
-    for (const pair of request.argosPairs ?? []) steps.push(() => this.installArgosPair(pair));
-    for (const voiceId of request.piperVoices ?? []) steps.push(() => this.installPiperVoice(voiceId));
+    const queued = new Set<string>();
+    const add = (req: SetupInstallRequest): void => {
+      const once = (key: string, step: () => Promise<void>): void => {
+        if (queued.has(key)) return;
+        queued.add(key);
+        steps.push(step);
+      };
+      const whisperModel = req.whisperModel;
+      if (whisperModel) once(`whisper:${whisperModel}`, () => this.installWhisperModel(whisperModel));
+      for (const pair of req.argosPairs ?? []) once(`argos:${pair.from}-${pair.to}`, () => this.installArgosPair(pair));
+      for (const voiceId of req.piperVoices ?? []) once(`piper:${voiceId}`, () => this.installPiperVoice(voiceId));
+    };
+    add(request);
 
     const failures: AppError[] = [];
-    for (const step of steps) {
+    let attempted = 0;
+    for (;;) {
+      // What other projects asked for meanwhile, minus what this run has.
+      for (const more of this.incoming.splice(0)) add(more);
+      const step = steps[attempted];
+      if (!step) break;
+      attempted += 1;
       try {
         await step();
       } catch (err) {
@@ -328,11 +360,11 @@ export class SetupInstaller {
     }
     const first = failures[0];
     if (!first) return;
-    const succeeded = steps.length - failures.length;
+    const succeeded = attempted - failures.length;
     const message =
       failures.length === 1
         ? first.message
-        : `${failures.length} of ${steps.length} downloads failed. First: ${first.message}`;
+        : `${failures.length} of ${attempted} downloads failed. First: ${first.message}`;
     throw new AppErrorException({
       ...first,
       message: succeeded > 0 ? `${message} The other downloads finished.` : message,

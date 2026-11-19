@@ -114,6 +114,41 @@ describe('SetupInstaller', () => {
     expect(events.some((e) => e.type === 'progress')).toBe(true);
   });
 
+  it('takes on what another project asks for while it runs, and ends with one done', async () => {
+    // A batch: the second project (another language) asks while the first one's
+    // model is still downloading. Its pack used to be ignored.
+    let releaseWhisper!: () => void;
+    const whisperGate = new Promise<void>((resolve) => (releaseWhisper = resolve));
+    const ensured: string[] = [];
+    setWorkerTransport(async (_method, url, body) => {
+      if (url.endsWith('/models/ensure')) {
+        await whisperGate;
+        return rawJson({ ok: true, model: 'small', alreadyCached: false });
+      }
+      if (url.endsWith('/packages/ensure')) {
+        const pair = JSON.parse(String(body)) as { from: string; to: string };
+        ensured.push(`${pair.from}-${pair.to}`);
+        return rawJson({ ok: true, installed: true });
+      }
+      throw new Error(`unexpected worker call: ${url}`);
+    });
+    const installer = new SetupInstaller({ config: config(), store, bus, fetchImpl: vi.fn() as unknown as typeof fetch });
+
+    const first = installer.run({ whisperModel: 'small', argosPairs: [{ from: 'zh', to: 'en' }] });
+    await vi.waitFor(() => expect(installer.isRunning()).toBe(true));
+    // Same model again (nothing twice) plus a new pair.
+    await installer.run({ whisperModel: 'small', argosPairs: [{ from: 'zh', to: 'en' }, { from: 'en', to: 'vi' }] });
+    expect(events.filter((e) => e.type === 'done')).toHaveLength(0);
+    releaseWhisper();
+    await first;
+
+    expect(ensured).toEqual(['zh-en', 'en-vi']);
+    expect(events.filter((e) => e.type === 'done')).toHaveLength(1);
+    const pairs = (await store.getStatus()).installed.argosPairs;
+    expect(pairs).toEqual(expect.arrayContaining([{ from: 'zh', to: 'en' }, { from: 'en', to: 'vi' }]));
+    expect(installer.isRunning()).toBe(false);
+  });
+
   it('does not re-download a Piper voice that is already on disk', async () => {
     // Regression: the wizard downloaded the voice unconditionally, so a build
     // that seed-copies the default voice into <models>/piper still failed the

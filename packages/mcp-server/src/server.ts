@@ -26,6 +26,7 @@ import type {
   TranslationDocContext,
 } from '@videodubber/shared';
 import { AppNotRunningError, VideoDubberApiError, type VideoDubberApi } from './api.js';
+import { cookiesOfSite, takeCookieExport } from './cookies.js';
 import { ensureAppRunning, type LaunchTarget } from './launcher.js';
 import {
   clock,
@@ -85,6 +86,8 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   originalAudioMode: 'audio-mix',
   ttsGainDb: 'audio-mix',
   roomTone: 'audio-mix',
+  branding: 'audio-mix',
+  useSourceSubtitles: 'stt',
   syncSubtitlesToVoice: 'render',
   subtitleExportMode: 'render',
   renderQuality: 'render',
@@ -98,7 +101,7 @@ const subtitleMode = z
 /** The settings a project may change after creation (orchestrator EDITABLE_SETTING_KEYS). */
 const editableSettings = z
   .object({
-    sourceLanguage: z.string().describe('Spoken language of the video, e.g. "zh", "en", "ja". Empty string = auto-detect.'),
+    sourceLanguage: z.string().describe('Spoken language of the video, e.g. "zh", "en", "ja" (the app does not detect it).'),
     targetLanguage: z.string().describe('Dub language, e.g. "vi-VN", "en-US".'),
     sttProviderId: z.string().describe('Speech-to-text engine id (list_providers).'),
     sttModel: z.string().describe('Whisper model: tiny, base, small, medium, large-v3, large-v3-turbo, phowhisper-medium, …'),
@@ -138,6 +141,34 @@ const editableSettings = z
       .min(0)
       .max(20)
       .describe('How many people speak, when known (2-20; 0 = let speaker detection decide). Far more reliable than detecting the count.'),
+    branding: z
+      .object({
+        logo: z
+          .object({
+            assetId: z.string().describe('A logo id from list_brand_kit (logo_…).'),
+            corner: z.enum(['top-right', 'top-left', 'bottom-right', 'bottom-left']).optional(),
+            widthPct: z.number().min(2).max(50).optional().describe('Width as % of the video width (default 10).'),
+            opacity: z.number().min(0.05).max(1).optional(),
+            show: z.enum(['always', 'periods', 'interval']).optional(),
+            periods: z.array(z.object({ startMs: z.number(), endMs: z.number() })).optional(),
+            showSec: z.number().optional(),
+            everyMin: z.number().optional(),
+          })
+          .optional(),
+        greeting: z
+          .object({
+            assetId: z.string().describe('A greeting id from list_brand_kit (greeting_…).'),
+            atStart: z.boolean().optional().describe('In the first quiet moment of the opening (never before the video).'),
+            startWindowSec: z.number().optional(),
+            repeat: z.union([z.enum(['off', 'auto']), z.number().int().min(0).max(20)]).optional(),
+            gainDb: z.number().optional(),
+          })
+          .optional(),
+      })
+      .describe('Logo drawn over the video and a spoken greeting played in quiet moments; {} turns both off.'),
+    useSourceSubtitles: z
+      .boolean()
+      .describe("Use the subtitles the site published (Bilibili CC/AI) as the transcript when the download has them in the spoken language: much faster than speech-to-text."),
     speakerVoices: z
       .array(z.object({ speakerId: z.string().regex(/^SPEAKER_\d{2,3}$/), voiceId: z.string() }))
       .max(100)
@@ -163,6 +194,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         'For the best translation, create the project with reviewBeforeSynthesis=true: the run pauses after a quick draft translation, you read the whole transcript, record names/terms/forms of address with set_translation_context, rewrite the lines with set_translations, then start_dubbing continues with your text.',
         'Every line must be speakable in its own time slot: get_transcript shows each line\'s budget at the voice\'s pace (e.g. "≤13 syllables (aim 11)") and the current length in [brackets]. Aim for the target and never exceed the ceiling, but keep the full meaning: an over-short line is a worse dub than a slightly fast one. Never merge or split lines. Fix every line marked NEEDS FIX.',
         'Changing settings, engines or downloads is the user\'s machine: say what you are about to install (sizes are in list_engines) before doing it.',
+        'Batches (Bilibili, Douyin): set_download_login with the path of a browser cookie export (never cookie values; optional, logged out gets up to 720p) -> download_videos -> follow_jobs_command (long batches) or wait_jobs -> dub_downloads (a preset from list_presets, or targetLanguage + settings) -> follow the projects -> get_outputs -> post -> mark_published.',
         'A long dub can be paused (pause_dubbing) and continued later with start_dubbing, also after the app was closed: nothing done is lost. get_project says when a dub is paused.',
         'Voices: list_voices searches every engine\'s voices (and the user\'s cloned voices) with licences; install_voice downloads one. A cloned voice is made only by the user in the app (Voices screen), which records their consent: ask them to do it, never try to.',
       ].join('\n'),
@@ -266,7 +298,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     },
     guarded(async (_args, ctx) => {
       const signal = ctx.mcpReq.signal;
-      const [health, system, workers, queue, engines, recs] = await Promise.all([
+      const [health, system, workers, queue, engines, recs, motherClaude] = await Promise.all([
         api.get<{ version?: string; commit?: string; platform?: string }>('/health', { signal }),
         api.get<{ profile: SystemProfileLite }>('/system', { signal }).catch(() => undefined),
         api.get<unknown>('/workers/health', { signal }).catch(() => undefined),
@@ -275,6 +307,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         api
           .get<{ recommendations: { packId: string; reason: string }[] }>('/engines/recommended', { signal })
           .catch(() => undefined),
+        api.get<{ url?: string; reachable?: boolean; keyRejected?: boolean }>('/credentials/mother-claude', { signal }).catch(() => undefined),
       ]);
       const p = system?.profile;
       const installed = new Set((engines?.installed ?? []).map((e) => e.id));
@@ -295,6 +328,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           ? `Recommended for this computer, not installed:\n${missing.map((r) => `  - ${r.packId}: ${r.reason}`).join('\n')}`
           : 'Every engine recommended for this computer is installed.',
         `Dubbing queue: ${JSON.stringify(queue ?? 'unknown')}`,
+        motherClaude?.reachable
+          ? `Claude through Mother Claude: reachable at ${motherClaude.url}${motherClaude.keyRejected ? ' (but its HTTP API refused the key)' : ''}.`
+          : `Claude through Mother Claude: not reachable${motherClaude?.url ? ` at ${motherClaude.url}` : ''} (start Mother Claude's HTTP API to use it).`,
       ];
       return text(lines.join('\n'));
     }),
@@ -573,18 +609,73 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
 
   // ---------------------------------------------------------- video & project
 
+  // ------------------------------------------------------------- downloads
+
+  type DlItem = {
+    id: string;
+    state: string;
+    percent: number | null;
+    page: number;
+    input: string;
+    sourceKey?: string;
+    source?: { title: string; partTitle?: string; partCount: number; ownerName?: string; url: string; durationSec?: number };
+    filePath?: string;
+    heightPx?: number;
+    error?: { code?: string; message?: string; remediation?: string };
+    retryAt?: string;
+    projectIds?: string[];
+  };
+  const FINAL_DL = new Set(['done', 'failed', 'cancelled']);
+
+  /** One line about a download (no paths but the finished file). */
+  const describeDownload = (d: DlItem): string => {
+    const title = d.source ? `"${d.source.title}"${d.source.partCount > 1 ? ` P${d.page}${d.source.partTitle ? ` ${d.source.partTitle}` : ''}` : ''}` : d.input;
+    const where =
+      d.state === 'done'
+        ? `done${d.heightPx ? ` (${d.heightPx}p)` : ''}: ${d.filePath}`
+        : d.state === 'failed'
+          ? `FAILED: ${d.error?.message ?? 'unknown error'}${d.error?.code ? ` (${d.error.code})` : ''}${d.error?.remediation ? `\n    How to fix: ${d.error.remediation}` : ''}`
+          : d.state === 'queued' && d.retryAt
+            ? `waiting until ${d.retryAt} (the site is limiting requests)`
+            : `${d.state}${d.percent !== null && d.percent !== undefined ? ` ${Math.round(d.percent)}%` : ''}`;
+    return `- ${d.id} ${title}${d.sourceKey ? ` [${d.sourceKey}]` : ''}: ${where}${d.projectIds?.length ? ` (projects: ${d.projectIds.join(', ')})` : ''}`;
+  };
+
+  /** Follow one download until it ends or the time is up; the last state either way. */
+  async function followDownload(id: string, ctx: ServerContext, budgetMs: number): Promise<CallToolResult> {
+    const signal = ctx.mcpReq.signal;
+    let item = await api.get<DlItem>(`/downloads/${encodeURIComponent(id)}`, { signal });
+    if (!FINAL_DL.has(item.state)) {
+      type Ev = { type: string; item?: DlItem };
+      const end = await api.followEvents<Ev>('/download/events', {
+        timeoutMs: budgetMs,
+        signal,
+        until: (e) => e.type === 'item' && e.item?.id === id && FINAL_DL.has(e.item.state),
+        onEvent: (e) => {
+          if (e.type !== 'item' || e.item?.id !== id) return;
+          item = e.item;
+          void progress(ctx, e.item.percent ?? 0, 100, `${e.item.state} ${Math.round(e.item.percent ?? 0)}%`);
+        },
+      });
+      if (end?.item) item = end.item;
+    }
+    if (item.state === 'done') return text(`Downloaded ${describeDownload(item).slice(2)}\nUse ${item.filePath} as create_project's video, or dub_downloads with downloadIds ["${item.id}"].`);
+    if (item.state === 'failed' || item.state === 'cancelled') return { isError: true, content: [{ type: 'text', text: describeDownload(item) }] };
+    return text(`Still going: ${describeDownload(item).slice(2)}\nCall get_download with "${item.id}" to keep waiting (or follow it with follow_jobs_command).`);
+  }
+
   server.registerTool(
     'download_video',
     {
       title: 'Download a video from a link',
       description:
-        'Download a video to dub from a link (YouTube, Bilibili and other supported sites). Waits up to ~45 s; if it is still downloading, returns a jobId for get_download. Returns the local file path for create_project.',
+        'Download one video to dub from a Bilibili or Douyin link (or a bare BV id). Waits up to ~45 s; if it is still downloading, returns its download id for get_download. For several videos use download_videos.',
       inputSchema: z.object({
-        url: z.url(),
+        url: z.string().min(1),
         part: z.number().int().min(1).optional().describe('Part/page number for multi-part videos (Bilibili "P2" = 2).'),
         maxHeight: z.number().int().optional().describe('Highest video height to fetch, e.g. 720 or 1080.'),
       }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     guarded(async ({ url, part, maxHeight }, ctx) => {
       const { jobId } = await api.post<{ jobId: string }>(
@@ -597,36 +688,501 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
   );
 
   server.registerTool(
+    'download_videos',
+    {
+      title: 'Download many videos',
+      description:
+        'Queue many Bilibili/Douyin links (or BV ids) at once; two download at a time, the rest wait, and a rate-limited site is waited out. Returns at once with a download id per video. Asking for a video already in the list returns that download (each has a sourceKey like bilibili:BV…:p2), retrying it when it failed. parts="all" adds every part of a multi-part video. Follow them with follow_jobs_command (best for long batches) or wait_jobs, then dub_downloads.',
+      inputSchema: z.object({
+        urls: z.array(z.string().min(1)).min(1).max(200),
+        parts: z.enum(['link', 'all']).default('link').describe('link = the part each link points at; all = every part of multi-part videos.'),
+        maxHeight: z.number().int().optional().describe('Highest video height to fetch, e.g. 720 or 1080; the best the video has when omitted.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    guarded(async ({ urls, parts, maxHeight }, ctx) => {
+      const res = await api.post<{ added: DlItem[]; existing: DlItem[]; rejected: { input: string; error: { message?: string } }[] }>(
+        '/downloads',
+        { items: urls.map((input) => ({ input, ...(maxHeight ? { targetHeightPx: maxHeight } : {}) })), allParts: parts === 'all' },
+        { signal: ctx.mcpReq.signal },
+      );
+      const lines = [
+        `Queued ${res.added.length}, already in the list ${res.existing.length}, refused ${res.rejected.length}.`,
+        ...res.added.map(describeDownload),
+        ...res.existing.map(describeDownload),
+        ...res.rejected.map((r) => `- refused ${r.input}: ${r.error.message ?? 'not a supported link'}`),
+      ];
+      const ids = [...res.added, ...res.existing].map((d) => d.id);
+      if (ids.length > 0) lines.push(`Download ids: ${JSON.stringify(ids)}`);
+      return text(lines.join('\n'));
+    }),
+  );
+
+  server.registerTool(
     'get_download',
     {
       title: 'Download status',
-      description: 'Status of a download started by download_video. Waits up to waitSeconds for it to finish.',
-      inputSchema: z.object({ jobId: z.string(), waitSeconds: z.number().min(0).max(50).default(30) }),
+      description: 'Status of one download (download_video / download_videos). Waits up to waitSeconds for it to finish.',
+      inputSchema: z.object({ jobId: z.string().describe('The download id.'), waitSeconds: z.number().min(0).max(50).default(30) }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ jobId, waitSeconds }, ctx) => followDownload(jobId, ctx, Math.max(1000, waitSeconds * 1000))),
   );
 
-  async function followDownload(jobId: string, ctx: ServerContext, budgetMs: number): Promise<CallToolResult> {
-    type Ev = { type: string; jobId?: string; percent?: number; phase?: string; filePath?: string; title?: string; error?: { message?: string; remediation?: string } };
-    let latest: Ev | undefined;
-    const end = await api.followEvents<Ev>('/download/events', {
-      timeoutMs: budgetMs,
-      signal: ctx.mcpReq.signal,
-      until: (e) => e.jobId === jobId && (e.type === 'done' || e.type === 'error'),
-      onEvent: (e) => {
-        if (e.jobId !== jobId) return;
-        latest = e;
-        if (e.type === 'progress') void progress(ctx, e.percent ?? 0, 100, `${e.phase ?? 'downloading'} ${Math.round(e.percent ?? 0)}%`);
-      },
-    });
-    if (end?.type === 'done') return text(`Downloaded "${end.title ?? 'video'}" to:\n${end.filePath}\nUse this path as create_project's video.`);
-    if (end?.type === 'error') {
-      return { isError: true, content: [{ type: 'text', text: `Download failed: ${end.error?.message ?? 'unknown error'}${end.error?.remediation ? `\nHow to fix: ${end.error.remediation}` : ''}` }] };
-    }
-    const where = latest?.type === 'progress' ? ` (${latest.phase ?? 'downloading'} ${Math.round(latest.percent ?? 0)}%)` : '';
-    return text(`Still downloading${where}. Call get_download with jobId "${jobId}" to keep waiting.`);
+  server.registerTool(
+    'list_downloads',
+    {
+      title: 'Downloads',
+      description: 'Every download the app knows, newest first, with its state, source key, file and the projects made from it.',
+      inputSchema: z.object({ state: z.enum(['queued', 'resolving', 'downloading', 'merging', 'done', 'failed', 'cancelled']).optional() }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ state }, ctx) => {
+      const all = await api.get<DlItem[]>('/downloads', { signal: ctx.mcpReq.signal });
+      const shown = state ? all.filter((d) => d.state === state) : all;
+      return text(shown.length === 0 ? 'No downloads.' : shown.map(describeDownload).join('\n'));
+    }),
+  );
+
+  for (const [name, title, verb, description] of [
+    ['cancel_download', 'Cancel a download', 'cancel', 'Stop a download (or take it out of the line); its partial files are removed. retry_download starts it again.'],
+    ['retry_download', 'Retry a download', 'retry', 'Try a failed or cancelled download again (it continues from what it already has when it can).'],
+  ] as const) {
+    server.registerTool(
+      name,
+      { title, description, inputSchema: z.object({ downloadId: z.string() }), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: verb === 'retry' } },
+      guarded(async ({ downloadId }, ctx) =>
+        text(describeDownload(await api.post<DlItem>(`/downloads/${encodeURIComponent(downloadId)}/${verb}`, {}, { signal: ctx.mcpReq.signal }))),
+      ),
+    );
   }
+
+  server.registerTool(
+    'delete_download',
+    {
+      title: 'Remove a download',
+      description:
+        'Take a download off the list. deleteFile=true also deletes the downloaded video (projects made from it keep their own copy of it).',
+      inputSchema: z.object({ downloadId: z.string(), deleteFile: z.boolean().default(false) }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ downloadId, deleteFile }, ctx) => {
+      await api.delete(`/downloads/${encodeURIComponent(downloadId)}?deleteFile=${deleteFile ? 'true' : 'false'}`, { signal: ctx.mcpReq.signal });
+      return text(`Removed ${downloadId}${deleteFile ? ' and its file' : ''}.`);
+    }),
+  );
+
+  server.registerTool(
+    'set_download_login',
+    {
+      title: 'Give the app the browser\'s site cookies',
+      description:
+        'Sign VideoDubber in to Bilibili with the user\'s browser cookies: pass the path of the file Mother Claude\'s browser_cookies export wrote (never the cookie values). The file is read and deleted here; only SESSDATA and buvid3 of bilibili.com are kept. Logged out in the browser works too (up to 720p). Answers logged in or not, the account, and the best quality available.',
+      inputSchema: z.object({
+        provider: z.enum(['bilibili']).default('bilibili'),
+        cookiesFile: z.string().describe('Absolute path of the cookie export (Netscape cookies.txt or JSON).'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    guarded(async ({ provider, cookiesFile }, ctx) => {
+      if (!path.isAbsolute(cookiesFile)) return failure(new Error('cookiesFile must be an absolute path.'));
+      const cookies = cookiesOfSite(await takeCookieExport(cookiesFile), 'bilibili.com');
+      const res = await api.post<{ configured: boolean; check?: { valid: boolean; uname?: string; premium?: boolean } }>(
+        `/download/providers/${provider}/session/import`,
+        { cookies },
+        { signal: ctx.mcpReq.signal },
+      );
+      return text(describeLogin(res));
+    }),
+  );
+
+  server.registerTool(
+    'get_download_login',
+    {
+      title: 'Is the app signed in to the site?',
+      description: 'Whether VideoDubber holds a Bilibili login, the account, and the best quality it can download. Changes nothing.',
+      inputSchema: z.object({ provider: z.enum(['bilibili']).default('bilibili') }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
+    },
+    guarded(async ({ provider }, ctx) => {
+      const signal = ctx.mcpReq.signal;
+      const described = await api.get<{ configured: boolean }>(`/download/providers/${provider}/session`, { signal });
+      const check = described.configured
+        ? await api.post<{ valid: boolean; uname?: string; premium?: boolean }>(`/download/providers/${provider}/session/test`, {}, { signal }).catch(() => undefined)
+        : undefined;
+      return text(describeLogin({ ...described, ...(check ? { check } : {}) }));
+    }),
+  );
+
+  function describeLogin(s: { configured: boolean; check?: { valid: boolean; uname?: string; premium?: boolean } }): string {
+    if (!s.configured || !s.check?.valid) {
+      return `Not logged in to Bilibili${s.configured ? ' (the saved login no longer works)' : ''}: downloads get up to 720p.`;
+    }
+    return `Logged in to Bilibili${s.check.uname ? ` as ${s.check.uname}` : ''}${s.check.premium ? ' (premium)' : ''}: downloads get up to ${s.check.premium ? '1080p60 / 4K where the video has them' : '1080p'}.`;
+  }
+
+  // ------------------------------------------------------------ batches
+
+  server.registerTool(
+    'list_brand_kit',
+    {
+      title: 'Logos and greetings',
+      description:
+        "The user's brand kit (Settings → Logo & greeting): logos and spoken greetings, by id, for a project's settings.branding. The user adds them in the app.",
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async (_args, ctx) => {
+      type A = { id: string; kind: string; name: string; durationMs?: number; text?: string; width?: number; height?: number };
+      const list = await api.get<A[]>('/branding', { signal: ctx.mcpReq.signal });
+      if (list.length === 0) return text('The brand kit is empty: the user can add a logo or a greeting in Settings → Logo & greeting.');
+      return text(
+        list
+          .map((a) =>
+            a.kind === 'logo'
+              ? `- ${a.id} logo "${a.name}" (${a.width}x${a.height})`
+              : `- ${a.id} greeting "${a.name}" (${((a.durationMs ?? 0) / 1000).toFixed(1)} s${a.text ? `, says "${a.text}"` : ''})`,
+          )
+          .join('\n'),
+      );
+    }),
+  );
+
+  server.registerTool(
+    'list_presets',
+    {
+      title: 'Dub presets',
+      description: 'The user\'s saved dub presets (languages, engines, voice, subtitles, save folder), for dub_downloads. The user makes them in New project.',
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async (_args, ctx) => {
+      type P = { id: string; name: string; targetLanguage: string; sourceLanguage?: string; outputDir?: string; start?: boolean; settings: Partial<ProjectSettings> };
+      const list = await api.get<P[]>('/presets', { signal: ctx.mcpReq.signal });
+      if (list.length === 0) return text('No presets yet. dub_downloads also takes targetLanguage and settings directly.');
+      return text(
+        list
+          .map((p) => `- ${p.id} "${p.name}": ${p.sourceLanguage || 'auto'} -> ${p.targetLanguage}${p.settings.ttsVoiceId ? `, voice ${p.settings.ttsVoiceId}` : ''}${p.settings.subtitleExportMode ? `, subtitles ${p.settings.subtitleExportMode}` : ''}${p.outputDir ? `, saves to ${p.outputDir}` : ''}${p.start ? ', starts at once' : ''}`)
+          .join('\n'),
+      );
+    }),
+  );
+
+  server.registerTool(
+    'dub_downloads',
+    {
+      title: 'Dub finished downloads',
+      description:
+        'Make a project per finished download (the video is linked, not copied), from a preset and/or settings, and start them when start=true: they dub one after another in the queue, and one whose models are still downloading starts when they arrive. Returns the project ids; follow them with follow_jobs_command or wait_jobs.',
+      inputSchema: z.object({
+        downloadIds: z.array(z.string()).min(1).max(200),
+        presetId: z.string().optional(),
+        targetLanguage: z.string().optional().describe('Dub language, e.g. "vi-VN" (required without a preset).'),
+        sourceLanguage: z.string().optional().describe('Spoken language, e.g. "zh" (required without a preset that has one).'),
+        saveTo: z.string().optional().describe('Absolute folder for the finished videos and subtitles.'),
+        settings: editableSettings.optional(),
+        start: z.boolean().optional().describe('Start dubbing right away (default: the preset\'s choice, else no).'),
+        series: z
+          .object({
+            minMinutes: z.number().min(5).max(120).optional(),
+            maxMinutes: z.number().min(5).max(180).optional(),
+            ai: z.string().optional().describe('anthropic | openai | gemini | llama-cpp-chat; default Claude through Mother Claude when set up.'),
+            recapSec: z.number().min(0).max(8).optional(),
+            autoStart: z.boolean().optional(),
+            longerThanMinutes: z.number().min(5).optional().describe('Only videos longer than this are split (default 1.5 x maxMinutes).'),
+          })
+          .optional()
+          .describe('Dub the long downloads as series of parts (15-20 min by default); follow each with get_series.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    guarded(async ({ downloadIds, presetId, targetLanguage, sourceLanguage, saveTo, settings, start, series }, ctx) => {
+      type R = {
+        downloadId: string;
+        projectId?: string;
+        name?: string;
+        started?: boolean;
+        queued?: boolean;
+        waiting?: boolean;
+        series?: boolean;
+        error?: { message?: string; code?: string };
+      };
+      const res = await api.post<{ results: R[] }>(
+        '/downloads/dub',
+        {
+          downloadIds,
+          ...(presetId ? { presetId } : {}),
+          ...(targetLanguage ? { targetLanguage } : {}),
+          ...(sourceLanguage !== undefined ? { sourceLanguage } : {}),
+          ...(saveTo?.trim() ? { outputDir: saveTo.trim() } : {}),
+          ...(settings ? { settings } : {}),
+          ...(start !== undefined ? { start } : {}),
+          ...(series
+            ? {
+                series: {
+                  ...(series.minMinutes ? { minMinutes: series.minMinutes } : {}),
+                  ...(series.maxMinutes ? { maxMinutes: series.maxMinutes } : {}),
+                  ...(series.ai ? { aiProviderId: series.ai } : {}),
+                  ...(series.recapSec !== undefined ? { recapSec: series.recapSec } : {}),
+                  ...(series.autoStart !== undefined ? { autoStart: series.autoStart } : {}),
+                  ...(series.longerThanMinutes ? { longerThanMinutes: series.longerThanMinutes } : {}),
+                },
+              }
+            : {}),
+        },
+        { signal: ctx.mcpReq.signal, timeoutMs: 300_000 },
+      );
+      const lines = res.results.map((r) =>
+        r.projectId
+          ? `- ${r.downloadId} -> ${r.projectId} "${r.name ?? ''}"${r.series ? ' (long: split into parts, get_series for them)' : ''}${r.waiting ? ': starts when its models have downloaded' : r.queued ? ': queued' : r.started ? ': dubbing' : ': created (start_dubbing to begin)'}`
+          : `- ${r.downloadId}: not made: ${r.error?.message ?? 'unknown error'}`,
+      );
+      const ids = res.results.flatMap((r) => (r.projectId ? [r.projectId] : []));
+      if (ids.length > 0) lines.push(`Project ids: ${JSON.stringify(ids)}`);
+      return text(lines.join('\n'));
+    }),
+  );
+
+  /** One line about where a job is (wait_jobs). */
+  async function jobLine(kind: 'download' | 'project', id: string, signal: AbortSignal): Promise<{ key: string; line: string; stopped: boolean }> {
+    try {
+      if (kind === 'download') {
+        const d = await api.get<DlItem>(`/downloads/${encodeURIComponent(id)}`, { signal });
+        return { key: `${d.state}|${Math.floor((d.percent ?? 0) / 10)}`, line: describeDownload(d), stopped: FINAL_DL.has(d.state) };
+      }
+      const { project, pipeline } = await getProject(id, signal);
+      const state = pipeline.awaitingReview ? 'awaiting review' : project.status;
+      return {
+        key: `${state}|${pipeline.currentStep}|${Math.floor(pipeline.progressPercent / 10)}`,
+        line: `- ${id} "${project.name}": ${state}${project.status === 'running' ? ` (${pipeline.currentStep ?? ''} ${Math.round(pipeline.progressPercent)}%)` : ''}`,
+        stopped: project.status !== 'running' && project.status !== 'queued',
+      };
+    } catch {
+      return { key: 'unknown', line: `- ${id}: unknown (no such ${kind})`, stopped: true };
+    }
+  }
+
+  server.registerTool(
+    'wait_jobs',
+    {
+      title: 'Wait for downloads and dubs',
+      description:
+        'Wait (up to waitSeconds, at most 50) until any of the named downloads or dubs moves on or stops, then say where each one is. For batches that take hours, follow_jobs_command is cheaper.',
+      inputSchema: z.object({
+        downloadIds: z.array(z.string()).max(200).default([]),
+        projectIds: z.array(z.string()).max(200).default([]),
+        waitSeconds: z.number().min(0).max(50).default(45),
+      }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ downloadIds, projectIds, waitSeconds }, ctx) => {
+      const signal = ctx.mcpReq.signal;
+      const jobs = [...downloadIds.map((id) => ['download', id] as const), ...projectIds.map((id) => ['project', id] as const)];
+      if (jobs.length === 0) return failure(new Error('Name at least one download or project id.'));
+      const read = () => Promise.all(jobs.map(([kind, id]) => jobLine(kind, id, signal)));
+      let now = await read();
+      const start = now.map((j) => j.key).join(',');
+      const deadline = Date.now() + waitSeconds * 1000;
+      while (!now.every((j) => j.stopped) && Date.now() < deadline && !signal.aborted) {
+        await sleep(pollMs, signal);
+        now = await read();
+        if (now.map((j) => j.key).join(',') !== start) break;
+      }
+      const stopped = now.filter((j) => j.stopped).length;
+      return text([`${stopped} of ${now.length} stopped (finished, failed, paused or waiting for a review).`, ...now.map((j) => j.line)].join('\n'));
+    }),
+  );
+
+  server.registerTool(
+    'follow_jobs_command',
+    {
+      title: 'A command that follows jobs',
+      description:
+        'The shell command that streams one JSON line per change of the named downloads and dubs ({seq, at, kind, id, state, title?, progress?, step?, error?}), and exits once all of them have stopped: run it in the background or under a monitor and act on its lines. Progress is written every 25% or 5 minutes. Pass since=<seq> to get only what was missed after a reconnect.',
+      inputSchema: z.object({
+        downloadIds: z.array(z.string()).max(500).default([]),
+        projectIds: z.array(z.string()).max(500).default([]),
+        since: z.number().int().min(0).optional(),
+      }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ downloadIds, projectIds, since }) => {
+      if (downloadIds.length + projectIds.length === 0) return failure(new Error('Name at least one download or project id.'));
+      const q = new URLSearchParams({
+        ...(downloadIds.length ? { downloads: downloadIds.join(',') } : {}),
+        ...(projectIds.length ? { projects: projectIds.join(',') } : {}),
+        ...(since !== undefined ? { since: String(since) } : {}),
+        untilDone: '1',
+      });
+      const url = `${api.baseUrl}/jobs/events?${q.toString()}`;
+      return text(
+        [
+          `PowerShell: curl.exe -sN "${url}"`,
+          `bash: curl -sN '${url}'`,
+          'It exits (code 0) once every job has stopped. When the app is not running, curl exits 7 ("Failed to connect"). In Windows PowerShell 5.1 write curl.exe: plain curl is Invoke-WebRequest there.',
+        ].join('\n'),
+      );
+    }),
+  );
+
+  type SeriesViewLite = {
+    parentId: string;
+    name: string;
+    state: string;
+    settings: { minMinutes: number; maxMinutes: number; aiProviderId: string; recapSec: number };
+    plan?: { parts: { index: number; startMs: number; endMs: number; title: string; summary: string; cutBy: string }[]; notes: string[] };
+    parts: { index: number; projectId?: string; title: string; startMs: number; endMs: number; status?: string; progressPercent?: number }[];
+    error?: { message?: string };
+  };
+
+  const describeSeries = (v: SeriesViewLite): string => {
+    const lines = [
+      `Series "${v.name}" (${v.parentId}): ${v.state}${v.error?.message ? ` — ${v.error.message}` : ''}`,
+      `Parts of ${v.settings.minMinutes}-${v.settings.maxMinutes} min, cuts by ${v.settings.aiProviderId}, ${v.settings.recapSec} s recap.`,
+      ...(v.plan?.notes ?? []).map((n) => `Note: ${n}`),
+      ...v.parts.map((p) => {
+        const planned = v.plan?.parts.find((x) => x.index === p.index);
+        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${planned?.summary ? ` (${planned.summary})` : ''}${p.projectId ? ` project ${p.projectId}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}`;
+      }),
+    ];
+    if (v.state === 'review') lines.push('Next: set_split_plan to change cuts or titles, or start_series to make and dub the parts.');
+    return lines.join('\n');
+  };
+
+  server.registerTool(
+    'get_series',
+    {
+      title: 'A long video dubbed in parts',
+      description:
+        'Where a series stands (analysing, planning, review, parts, failed), its planned cuts with titles and summaries, and each part\'s project and progress. Works with the parent or any part\'s project id.',
+      inputSchema: z.object({ projectId: z.string() }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId }, ctx) =>
+      text(describeSeries(await api.get<SeriesViewLite>(`/projects/${encodeURIComponent(projectId)}/series`, { signal: ctx.mcpReq.signal }))),
+    ),
+  );
+
+  server.registerTool(
+    'set_split_plan',
+    {
+      title: 'Change where a series is cut',
+      description:
+        'Before the parts are made (state review): set the cut times (each part at least a minute; the parts follow them) and/or the parts\' titles and one-sentence summaries. Use your own reading of get_transcript to cut between topics. Times as "m:ss", "h:mm:ss" or ms.',
+      inputSchema: z.object({
+        projectId: z.string(),
+        cuts: z.array(z.union([z.string(), z.number()])).optional().describe('Where each part after the first starts.'),
+        titles: z.array(z.object({ title: z.string(), summary: z.string().optional() })).optional().describe('One per part, in order.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, cuts, titles }, ctx) => {
+      const toMs = (t: string | number): number => {
+        if (typeof t === 'number') return t;
+        const parts = t.trim().split(':').map(Number);
+        return Math.round(parts.reduce((acc, p) => acc * 60 + p, 0) * 1000);
+      };
+      await api.put(
+        `/projects/${encodeURIComponent(projectId)}/series/plan`,
+        { ...(cuts ? { cuts: cuts.map(toMs) } : {}), ...(titles ? { titles } : {}) },
+        { signal: ctx.mcpReq.signal },
+      );
+      return text(describeSeries(await api.get<SeriesViewLite>(`/projects/${encodeURIComponent(projectId)}/series`, { signal: ctx.mcpReq.signal })));
+    }),
+  );
+
+  server.registerTool(
+    'start_series',
+    {
+      title: 'Make and dub the parts',
+      description: 'Make the parts of a planned series (once) and queue them in order. Follow them with get_series or follow_jobs_command (their project ids).',
+      inputSchema: z.object({ projectId: z.string() }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId }, ctx) => {
+      const res = await api.post<{ parts: { projectId: string; error?: string; queued?: boolean; waiting?: boolean }[] }>(
+        `/projects/${encodeURIComponent(projectId)}/series/start`,
+        {},
+        { signal: ctx.mcpReq.signal, timeoutMs: 300_000 },
+      );
+      return text(
+        [
+          ...res.parts.map((p, i) => `- part ${i + 1}: ${p.projectId}${p.error ? ` not started: ${p.error}` : p.waiting ? ' (starts when its models arrive)' : p.queued ? ' queued' : ' dubbing'}`),
+          `Project ids: ${JSON.stringify(res.parts.map((p) => p.projectId))}`,
+        ].join('\n'),
+      );
+    }),
+  );
+
+  server.registerTool(
+    'get_outputs',
+    {
+      title: 'A finished dub, for posting it',
+      description:
+        'A project\'s finished files (video with size and sha256, subtitles), its length, the source it was downloaded from (title, uploader, link: for the caption and its credit line) and where it has been posted (mark_published).',
+      inputSchema: z.object({ projectId: z.string() }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId }, ctx) => {
+      type O = {
+        name: string;
+        status: string;
+        finished: boolean;
+        durationMs?: number;
+        targetLanguage: string;
+        files: { kind: string; path: string; sizeBytes: number; sha256?: string }[];
+        source?: { title: string; partTitle?: string; page: number; partCount: number; ownerName?: string; url: string };
+        part?: { index: number; count: number; seriesName: string; title?: string; summary?: string };
+        published: { url: string; at: string; part?: number }[];
+      };
+      const o = await api.get<O>(`/projects/${encodeURIComponent(projectId)}/outputs`, { signal: ctx.mcpReq.signal, timeoutMs: 120_000 });
+      const lines = [
+        `"${o.name}" (${projectId}): ${o.finished ? 'finished' : `not finished (${o.status})`}${o.durationMs ? `, ${clock(o.durationMs)}` : ''}, dubbed into ${o.targetLanguage}`,
+        ...(o.files.length > 0
+          ? o.files.map((f) => `- ${f.kind}: ${f.path} (${(f.sizeBytes / 1024 ** 2).toFixed(1)} MB${f.sha256 ? `, sha256 ${f.sha256}` : ''})`)
+          : ['- no files yet']),
+        o.source
+          ? `Source: "${o.source.title}"${o.source.partCount > 1 ? ` part ${o.source.page}/${o.source.partCount}${o.source.partTitle ? ` "${o.source.partTitle}"` : ''}` : ''}${o.source.ownerName ? ` by ${o.source.ownerName}` : ''}, ${o.source.url}`
+          : 'Source: a local file (no download).',
+        ...(o.part ? [`Part ${o.part.index} of ${o.part.count} of "${o.part.seriesName}"${o.part.title ? `: ${o.part.title}` : ''}${o.part.summary ? ` — ${o.part.summary}` : ''}`] : []),
+        o.published.length > 0 ? `Posted: ${o.published.map((p) => `${p.url} (${p.at}${p.part ? `, part ${p.part}` : ''})`).join('; ')}` : 'Not posted yet.',
+      ];
+      return text(lines.join('\n'));
+    }),
+  );
+
+  server.registerTool(
+    'mark_published',
+    {
+      title: 'Record where a dub was posted',
+      description: 'After posting a finished dub, record the post\'s address: get_outputs and the app then show it, so a rerun never posts it twice.',
+      inputSchema: z.object({ projectId: z.string(), url: z.url(), part: z.number().int().min(1).optional() }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    guarded(async ({ projectId, url, part }, ctx) => {
+      const res = await api.post<{ published: { url: string }[] }>(
+        `/projects/${encodeURIComponent(projectId)}/published`,
+        { url, ...(part ? { part } : {}) },
+        { signal: ctx.mcpReq.signal },
+      );
+      return text(`Recorded. ${projectId} has been posted ${res.published.length} time(s).`);
+    }),
+  );
+
+  server.registerTool(
+    'delete_project',
+    {
+      title: 'Delete a project',
+      description:
+        'Delete a project and its working files (and its finished video when it is saved in the project\'s own folder; files saved to a chosen folder stay). Refused while it dubs or waits in the queue. Ask the user first.',
+      inputSchema: z.object({ projectId: z.string() }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId }, ctx) => {
+      await api.delete(`/projects/${encodeURIComponent(projectId)}`, { signal: ctx.mcpReq.signal });
+      return text(`Deleted ${projectId}.`);
+    }),
+  );
 
   server.registerTool(
     'list_projects',
@@ -712,7 +1268,10 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       inputSchema: z.object({
         videoPath: z.string().describe('Absolute path of the video file on this computer.'),
         targetLanguage: z.string().describe('Dub language, e.g. "vi-VN".'),
-        sourceLanguage: z.string().optional().describe('Spoken language, e.g. "zh". Omit to auto-detect.'),
+        sourceLanguage: z
+          .string()
+          .optional()
+          .describe('Spoken language, e.g. "zh" (Bilibili and Douyin videos are usually "zh"). Needed: the app does not detect it, and refuses a project without one.'),
         name: z.string().optional(),
         saveTo: z
           .string()
@@ -721,20 +1280,48 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
             'Absolute folder for the finished video and subtitles, e.g. "D:\\Dubs". They are named after the project ("<name>.<lang>.mp4"), so projects can share a folder. Omit to keep them in the project\'s own folder in the app\'s data.',
           ),
         settings: editableSettings.optional(),
+        series: z
+          .object({
+            minMinutes: z.number().min(5).max(120).default(15),
+            maxMinutes: z.number().min(5).max(180).default(20),
+            ai: z
+              .string()
+              .optional()
+              .describe('anthropic | openai | gemini | llama-cpp-chat (or the full ids anthropic-translate, openai-translate, gemini-translate); default Claude through Mother Claude when set up, else the first AI set up.'),
+            recapSec: z.number().min(0).max(8).default(4),
+            autoStart: z.boolean().default(true).describe('Make and dub the parts without stopping for a review of the cuts.'),
+          })
+          .optional()
+          .describe('Dub a long video as a series of parts (15-20 min by default). Needs an AI set up in Settings. start=true then transcribes the whole video once, plans the cuts and dubs the parts in order; follow with get_series.'),
         start: z.boolean().default(false),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    guarded(async ({ videoPath, targetLanguage, sourceLanguage, name, saveTo, settings, start }, ctx) => {
+    guarded(async ({ videoPath, targetLanguage, sourceLanguage, name, saveTo, settings, series, start }, ctx) => {
       const signal = ctx.mcpReq.signal;
       const q = new URLSearchParams({ targetLanguage, sourceLanguage: sourceLanguage ?? '' });
       const defaults = await api.get<{ settings: ProjectSettings; notes?: string[] }>(`/project-defaults?${q}`, { signal });
       const merged: ProjectSettings = {
         ...defaults.settings,
-        ...(settings ?? {}),
+        // The app fills what a partial logo or greeting leaves out (branding/sanitize.ts).
+        ...((settings ?? {}) as Partial<ProjectSettings>),
         sourceLanguage: settings?.sourceLanguage ?? sourceLanguage ?? '',
         targetLanguage: settings?.targetLanguage ?? targetLanguage,
       };
+      // A series: when Mother Claude drives, Claude through Mother Claude chooses the cuts by default.
+      let seriesBody: Record<string, unknown> | undefined;
+      if (series) {
+        const options = await api.get<{ id: string; ready: boolean; viaMotherClaude?: boolean }[]>('/series/ai-options', { signal });
+        const ready = options.filter((o) => o.ready);
+        const ai = series.ai ?? (ready.find((o) => o.viaMotherClaude) ?? ready[0])?.id;
+        seriesBody = {
+          minMinutes: series.minMinutes,
+          maxMinutes: Math.max(series.minMinutes, series.maxMinutes),
+          ...(ai ? { aiProviderId: ai } : {}),
+          recapSec: series.recapSec,
+          autoStart: series.autoStart,
+        };
+      }
       const project = await api.post<Project>(
         '/projects',
         {
@@ -742,6 +1329,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           inputVideoPath: videoPath,
           settings: merged,
           ...(saveTo?.trim() ? { outputDir: saveTo.trim() } : {}),
+          ...(seriesBody ? { series: seriesBody } : {}),
         },
         { signal },
       );

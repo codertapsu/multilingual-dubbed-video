@@ -18,6 +18,10 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   NO_AUDIO_STREAM: 422, // Unprocessable Entity
   INVALID_LANGUAGE: 400,
   INVALID_VIDEO_LINK: 400, // the pasted link is not a recognisable video
+  SOURCE_RATE_LIMITED: 429, // the video site is throttling us; retry later
+  SOURCE_LOGIN_REQUIRED: 403, // the video needs a signed-in account
+  SOURCE_UNAVAILABLE: 404, // removed, private or region-locked
+  DISK_FULL: 507, // no room left for the download
   OUTPUT_NOT_WRITABLE: 500,
   WORKER_UNAVAILABLE: 503,
   WORKER_TIMEOUT: 504,

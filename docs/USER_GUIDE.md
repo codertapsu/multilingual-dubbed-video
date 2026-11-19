@@ -262,8 +262,93 @@ Press **?** in the editor for the full list of keyboard shortcuts.
 ### Getting the finished file
 
 The **Export** screen shows the finished video, its output path, and an
-**Open output folder** button. **Re-render** produces the video again with a
-different subtitle treatment without redoing any of the dubbing work.
+**Open output folder** button. **Render again** makes the video again with the
+subtitle choice on that screen, without redoing any of the dubbing work. It
+includes every change made since the last render: when the dub sound has
+changed (lines edited in the editor, a mix setting changed), it is mixed again
+first, otherwise only the video is made again. It runs like a dub, on the
+progress screen: you can pause it, it waits its turn in the queue, and it uses
+the project's render quality.
+
+<a id="logo-and-greeting"></a>
+
+### Your logo and a spoken greeting
+
+A dub can carry your channel's **logo** in a corner of the picture and a short
+spoken **greeting** ("Chào mừng các bạn đến với kênh…"). Both are optional and
+change nothing else about the dub.
+
+**Make them once**, in **Settings → Logo & greeting**:
+
+- **Add logo**: a picture file. A PNG with a transparent background looks best;
+  JPG and WebP work too.
+- **Add greeting from file**: a sound file, or a video whose sound is used.
+  Silence at the start and end is cut, and the level is matched to the dub. At
+  most 15 seconds; 2–8 seconds is ideal.
+- **Or have a voice say it**: type the words, pick one of the voices installed
+  on this computer, and press **Make the greeting**.
+
+**Choose them for a project** in the **Logo & greeting** section of New
+project, in the editor's Project tab, or on the Export screen (then **Render
+again**). The project keeps its own copy, so changing or deleting one in
+Settings never changes a project that uses it.
+
+- **Logo**: the corner, its size (a share of the video's width, 10 % by
+  default), its opacity, and when it shows: the whole video, only at the times
+  you list (`0:00-0:10, 5:00-5:10`), or a few seconds every few minutes. A logo
+  means the picture is encoded again, which adds a few minutes per hour of video
+  (less with a graphics card, and almost nothing when subtitles are burned in
+  anyway). With subtitles at the bottom, a logo in a bottom corner can cover
+  them, and the form says so.
+- **Greeting**: it plays only where nobody speaks (music is fine: it is turned
+  down under the greeting), and never before the video starts. **In the first
+  quiet moment of the opening** looks for a pause in the first 60 seconds (you
+  can change the window); when there is none, it does not play at the start
+  rather than talk over someone. **Also during the video** plays it again: about
+  once every 10 minutes (**Automatic**), or as many times as you choose; when
+  fewer quiet moments fit, it plays as many as fit. **Volume change** makes it
+  louder or quieter, in dB.
+
+In the editor's Project tab, **Where the greeting plays** lists the times the
+next render uses: change a time, remove one, or **Add at the playhead**, then
+**Save times** and render again.
+
+<a id="splitting-a-long-video"></a>
+
+### Splitting a long video into parts
+
+A long video (an hour or more) can be dubbed as a **series** of shorter videos:
+the first part is ready much sooner, a failure holds up only one part, and each
+part is easier to post. In New project, tick **Dub this video as a series of
+parts** under **Split into parts**.
+
+It needs an AI set up in Settings: Claude (an API key, or your Claude plan
+through Mother Claude), OpenAI, Gemini, or the built-in Gemma chat model. With
+more than one, **AI that chooses the cuts** picks which; Claude through Mother
+Claude comes first when it is set up.
+
+- **Length of each part**: 15–20 minutes (the default), 30–40 minutes, about an
+  hour, or your own shortest and longest.
+- **Repeat from the part before**: each part opens with the last few seconds of
+  the one before (4 by default; 0 for none).
+- **Make and dub the parts right away, without stopping to check the cuts**:
+  leave it off to check them first.
+
+What happens: the whole video is transcribed once (the Processing screen says
+so). The AI then picks each cut in a pause between lines, never in the middle of
+a sentence, and gives each part a title and a one-sentence summary. The
+**series screen** (open the project from Projects) shows the plan: change a
+part's start time (m:ss) or its title, then **Make the parts and start
+dubbing**. **Plan again** asks the AI again.
+
+Each part is a project of its own (*My video - Part 01*, *Part 02*…), marked in
+Projects, with its own progress, editor and Export screen. The parts share one
+character sheet, so names and forms of address stay the same from part to part,
+and the seconds a part repeats keep the translation the part before used. In the
+finished video, each part fades in with the series name and *Part 2/5* with its
+title; the repeated opening is a little darker and marked *Previously*; and the
+part ends on *To be continued · Part 3* (*The end* for the last one), in the
+language of the dub.
 
 <a id="choosing-where-a-project-is-saved"></a>
 
@@ -299,17 +384,77 @@ full path.
 
 ## 5. Downloading a source video
 
-The **Download** screen (in the top navigation) fetches a video from a supported
-site so you can dub it. Paste a link, choose a quality target, and download.
+The **Download** screen (in the top navigation) fetches videos from a supported
+site so you can dub them. Paste one link or many (one per line), choose a quality
+target, and press **Add to downloads**. With a single link you can **Check link**
+first to see its title, uploader, length and parts, and pick the part you want.
+Tick **All parts of a multi-part video** to add every part (P1, P2…) of a Bilibili
+video at once.
+
+A Bilibili **list** link adds the videos in it: a collection (合集) or series
+list, a favourites folder, or an uploader's page (`space.bilibili.com/…`). **Check
+link** on one shows its videos, all ticked: untick the ones you do not want and
+press **Add N videos to downloads**. A list gives at most 500 videos.
+
+### The download list
+
+Every download appears in the list below, with its progress. Two download at a
+time and the others wait their turn. The list is kept: a download the app could
+not finish (it was closed, the connection dropped) continues from where it
+stopped the next time, instead of starting over. A video already in the list is
+not downloaded twice: adding it again points at the one you have.
+
+- **Retry** tries a failed or cancelled download again.
+- **Cancel** stops one; its partial file is removed.
+- **Remove from list** takes it off the list and keeps the video file;
+  **Delete video** removes the file too.
+- **Use in a new project** opens New project with that video; **Open folder**
+  shows it in Explorer or Finder.
+
+When Bilibili limits requests from your connection, the download waits (20 s,
+45 s, then 90 s) and tries again by itself; the list shows when. Downloads are
+saved in the `downloads` folder beside your projects (`<projects folder>\..\downloads`),
+and they move with the projects when you change the projects folder.
+
+A project made from a downloaded video does not copy it: on the same drive it
+gets a link to the same file, so a long video does not take twice the space,
+and deleting the download later does not affect the project.
+
+### Dubbing many downloads at once
+
+**Dub finished downloads** makes a project for each ticked video with one of
+your **presets** (see [Presets](#presets)), and can start them right away: they
+dub one after another in the queue. A project whose language models are still
+downloading starts by itself when they arrive.
+
+**Dub long videos as a series of parts** (it needs an AI in Settings) splits
+only the videos longer than one and a half times the longest part, 30 minutes
+with 15–20-minute parts; the others are dubbed whole. The parts are made and
+dubbed right away: to check a video's cuts first, dub it from New project
+instead (see [Splitting a long video into parts](#splitting-a-long-video)).
+
+### Using the subtitles the site published
+
+Many Bilibili videos come with subtitles: the uploader's own, or Bilibili's AI
+subtitles. Bilibili gives them only to a signed-in account, so a download saves
+them beside the video once your Bilibili login is set (see [Raising the ceiling
+with your own account](#raising-the-ceiling-with-your-own-account-optional), or
+let Mother Claude pass your browser's cookies). Tick **Use the subtitles the site
+published** in New project (a preset keeps it too) and the dub uses them instead
+of speech-to-text, which saves the longest step on a long video. The timing is
+the site's. A video without subtitles in its spoken language is transcribed as
+usual.
 
 **Supported sources: Bilibili and Douyin.** Bilibili accepts a full
 `bilibili.com/video/BV…` or `av…` link, a `b23.tv` short link, festival/list
 pages that carry `?bvid=`, and a bare `BV` id. Douyin accepts
 `douyin.com/video/…` links, the `?modal_id=…` form that its share button
-produces, `v.douyin.com` short links, and the bare numeric id.
+produces, `v.douyin.com` short links, and the bare numeric id. On Bilibili, a
+collection, series list, favourites folder or uploader's page adds its videos
+(see above).
 
-Copy the address out of your browser's address bar. A search-results page or a
-user profile is not a video, and the app will tell you so.
+Copy the address out of your browser's address bar. A search-results page is not
+a video, and the app will tell you so.
 
 ### Why the quality is lower than what the site shows
 
@@ -340,7 +485,22 @@ from that screen at any time. Logging out on Bilibili also invalidates it.
 
 An **expired** cookie does not produce an error — it silently drops you back to
 the anonymous ceiling while the screen still shows a saved value. The **Check**
-button tells you whether it is still live.
+button tells you whether it is still live. A paste with no `SESSDATA` in it is
+refused, so a slip of the clipboard never logs you out.
+
+If you use **Mother Claude**, it can hand VideoDubber your browser's Bilibili
+cookies by itself: it saves them to a file that VideoDubber reads and deletes,
+so the values never pass through the conversation. Logged out works too (up to
+720p).
+
+### Presets
+
+A **preset** ("Mẫu lồng tiếng") saves the choices for a kind of video: the
+languages, engines, voice, subtitle style and where finished videos are saved.
+In **New project**, fill in the form and press **Save as preset** (the same name
+replaces that preset); choose one from **Preset** to fill the form in. The
+Download screen uses presets to dub many videos at once, and so can Claude
+through the plugin.
 
 ---
 
@@ -357,10 +517,11 @@ button tells you whether it is still live.
 | **Processing defaults** | Which engine each phase of a *new* project uses. You can still change them per project. |
 | **Cloud API keys** | Optional. Only needed if you choose a cloud engine for a phase. Under the Anthropic key you choose the Claude model used for translation and review: Opus (best), Sonnet (about half the cost) or Haiku (cheapest). Claude can also use your Claude plan instead of an API key: choose **My Claude plan, through Mother Claude** and follow the steps shown there (details in [`PROVIDERS.md`](PROVIDERS.md#claude-through-mother-claude)). |
 | **Claude** | Connect Claude Desktop or Claude Code so Claude can run dubs for you — see [`MCP.md`](MCP.md). |
+| **Logo & greeting** | Your logos and spoken greetings, made once and chosen per project — see [Your logo and a spoken greeting](#logo-and-greeting). |
 | **Engines** | Optional downloadable "engine packs" — see below. |
 | **Translation packs** | Offline translation language packs. Non-English pairs go through English, so e.g. Chinese → Vietnamese needs both the Chinese → English and English → Vietnamese packs. |
 | **Projects folder** | Where your projects are, and moving them all to another folder (another drive, say) with the same structure — see [Moving the projects folder](#moving-the-projects-folder). |
-| **Storage** | How much disk the downloaded models, packs and caches are using, and a button to delete all of it. Your projects are never touched. |
+| **Storage** | How much disk the downloaded models, packs and caches are using, and a button to delete all of it. Your projects are never touched. Downloaded videos are listed apart, with their own **Delete finished downloads** button: the other button never deletes them. |
 | **Updates** | See [Updating](#8-updating). |
 
 ### What an engine pack is

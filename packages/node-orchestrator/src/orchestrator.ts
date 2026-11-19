@@ -33,7 +33,6 @@ import {
   type ProjectSettings,
   type QueueState,
   type RunScheduleResult,
-  type RenderFinalVideoResult,
   type SegmentPatch,
   type SubtitleStyle,
   type SystemProfile,
@@ -87,7 +86,12 @@ import { fitWindowMs, resolveVoiceRate, voiceRateBookFor } from './providers/tra
 import { PipelineRunner, type RunnerDeps } from './pipeline/runner.js';
 import type { SpeechMapService } from './pipeline/speechMap.js';
 import type { ProjectStore } from './workspace/projectStore.js';
-import { segmentIdToIndex, type WorkspacePaths } from './workspace/paths.js';
+import { fileExistsNonEmpty, segmentIdToIndex, type WorkspacePaths } from './workspace/paths.js';
+import { mixFingerprint, readMixFingerprint } from './pipeline/mixFingerprint.js';
+import type { BrandKit } from './branding/brandKit.js';
+import { greetingSettingsKey, readGreetingPlan } from './branding/greetingMix.js';
+import { sanitizeBranding } from './branding/sanitize.js';
+import { rangedMediaInfo } from './series/seriesRange.js';
 import { acceptOutputDir, moveOutputFiles, samePath } from './workspace/outputFolder.js';
 import { clearCueOverridesFor, displayCuesFor, readCueOverrides } from './workspace/subtitleTiming.js';
 import { writeJsonAtomic, writeTextAtomic } from './workspace/projectStore.js';
@@ -107,6 +111,10 @@ export interface OrchestratorDeps {
   bus: EventBusRegistry;
   /** Optional vocal-separation engine for the "replace-vocals" mix mode. */
   separation?: SeparationService;
+  /** The brand kit projects take their logo and greeting from (branding/brandKit.ts). */
+  brandKit?: Pick<BrandKit, 'get'>;
+  /** A series parent finished analysing its video (series/seriesService.ts plans the parts). */
+  seriesAnalysed?: (projectId: string) => Promise<void>;
   /** Optional forced-alignment/diarization engine for tighter timing. */
   alignment?: AlignmentService;
   /** Optional speaker detection: who says each line (the diarize setting). */
@@ -198,6 +206,7 @@ const EDITABLE_SETTING_KEYS = [
   'subtitleExportMode',
   'forcedAlignment',
   'diarize',
+  'useSourceSubtitles',
 ] as const satisfies readonly (keyof ProjectSettings)[];
 
 /**
@@ -283,8 +292,6 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   private closing = false;
   /** Projects whose finished files are moving to another folder (setProjectOutputDir). */
   private readonly movingOutput = new Set<string>();
-  /** Projects being re-rendered from the Export screen (renderFinalVideo), which no run tracks. */
-  private readonly rendering = new Set<string>();
   private pumpAgain = false;
   /** Memoized hardware capacity (specs don't change while the app runs). */
   private capacityPromise: Promise<CapacityRecommendation> | undefined;
@@ -332,6 +339,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       // How fast each voice really speaks, measured from its clips and kept
       // between runs, so the next translation budgets lines at the voice's pace.
       voiceRates: voiceRateBookFor(this.deps.config.configDir),
+      ...(this.deps.brandKit ? { brandKit: this.deps.brandKit } : {}),
     };
     return { runner: new PipelineRunner(deps), bus, logger };
   }
@@ -344,14 +352,14 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /**
-   * The projects something is working on now: dubbing, waiting in the queue,
-   * rendering from Export, moving their finished files, or an editor action
+   * The projects something is working on now: dubbing (a render from Export
+   * is a run too), waiting in the queue, moving their finished files, or an editor action
    * (re-voicing a line, separating a voice). Deleting or moving a project
    * under any of them would pull its files from under the work.
    */
   busyProjects(): string[] {
     const editing = [...this.editorLaneRefs.keys()].map((owner) => owner.replace(/^editor:/, ''));
-    return [...new Set([...this.running.keys(), ...this.queued, ...this.rendering, ...this.movingOutput, ...editing])];
+    return [...new Set([...this.running.keys(), ...this.queued, ...this.movingOutput, ...editing])];
   }
 
   /**
@@ -534,6 +542,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       if (style) next.burnSubtitleStyle = style;
       else delete next.burnSubtitleStyle;
     }
+    // Logo and greeting: checked field by field; null or {} turns both off.
+    if (patch.branding !== undefined) {
+      const branding = sanitizeBranding(patch.branding);
+      if (branding) next.branding = branding;
+      else delete next.branding;
+    }
     // A known speaker count: a whole number of people, or nothing (automatic).
     if (patch.diarizeSpeakers !== undefined) {
       const n = Number(patch.diarizeSpeakers);
@@ -650,10 +664,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    */
   async probe(projectId: string): Promise<MediaInfo> {
     const project = await this.deps.store.getProject(projectId);
-    const info = await this.deps.media.probe(project.inputVideoPath);
-    if (!info.hasAudio || info.audioStreams.length === 0) {
+    const probed = await this.deps.media.probe(project.inputVideoPath);
+    if (!probed.hasAudio || probed.audioStreams.length === 0) {
       throw new AppErrorException('NO_AUDIO_STREAM', 'The input video has no audio stream to dub.');
     }
+    const info = rangedMediaInfo(probed, project.sourceRange);
     await this.deps.store.saveProject({ ...project, mediaInfo: info });
     return info;
   }
@@ -833,7 +848,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     }
     return this.onceInFlight(`filmstrip:${projectId}`, async () => {
       await fsp.mkdir(paths.cacheDir, { recursive: true });
-      const result = await media.renderFilmstrip!(project.inputVideoPath, paths.filmstripJpg, durationMs);
+      // A series part: only its window of the video (durationMs is the window's).
+      const result = await media.renderFilmstrip!(project.inputVideoPath, paths.filmstripJpg, durationMs, undefined, project.sourceRange);
       const layout: TimelineFilmstrip = {
         path: result.path,
         count: result.count,
@@ -1366,60 +1382,70 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /**
-   * Render the final video. Optional overrides update the project settings
-   * (subtitle export mode / burn style) before delegating to the runner's
-   * render step semantics.
+   * Export's "Render again": keep the chosen subtitle mode / burn style, then
+   * re-run from the mix when it is out of date (an edit since it was made, a
+   * mix setting changed; pipeline/mixFingerprint.ts), else from the render.
+   *
+   * A run like any other, so the queue, pausing, the render-quality setting
+   * and the subtitle files all apply. It used to call the media service
+   * directly: after editor edits it rendered the OLD mix under the new
+   * subtitles, always with bare x264, and could not be paused or queued.
    */
-  async renderFinalVideo(
+  async rerender(
     projectId: string,
     opts: { subtitleExportMode?: Project['settings']['subtitleExportMode']; burnSubtitleStyle?: Project['settings']['burnSubtitleStyle'] },
-  ): Promise<RenderFinalVideoResult> {
+  ): Promise<RunScheduleResult & { fromStep: PipelineStepId }> {
     this.assertNotMoving(projectId);
-    this.rendering.add(projectId);
-    try {
-      return await this.renderNow(projectId, opts);
-    } finally {
-      this.rendering.delete(projectId);
-    }
-  }
-
-  private async renderNow(
-    projectId: string,
-    opts: { subtitleExportMode?: Project['settings']['subtitleExportMode']; burnSubtitleStyle?: Project['settings']['burnSubtitleStyle'] },
-  ): Promise<RenderFinalVideoResult> {
-    let project = await this.deps.store.getProject(projectId);
-    const paths = this.deps.store.paths(projectId);
-
-    // Apply overrides to settings (persisted so subsequent runs are consistent).
     if (opts.subtitleExportMode !== undefined || opts.burnSubtitleStyle !== undefined) {
-      project = await this.deps.store.saveProject({
-        ...project,
-        settings: {
-          ...project.settings,
-          ...(opts.subtitleExportMode !== undefined ? { subtitleExportMode: opts.subtitleExportMode } : {}),
-          ...(opts.burnSubtitleStyle !== undefined ? { burnSubtitleStyle: opts.burnSubtitleStyle } : {}),
-        },
+      await this.updateProjectSettings(projectId, {
+        ...(opts.subtitleExportMode !== undefined ? { subtitleExportMode: opts.subtitleExportMode } : {}),
+        ...(opts.burnSubtitleStyle !== undefined ? { burnSubtitleStyle: opts.burnSubtitleStyle } : {}),
       });
     }
+    const fromStep: PipelineStepId = (await this.mixIsCurrent(projectId)) ? 'render' : 'audio-mix';
+    return { ...(await this.retryStep(projectId, fromStep)), fromStep };
+  }
 
-    const mode = project.settings.subtitleExportMode;
-    const subtitlePath =
-      mode === 'vtt-file'
-        ? paths.translatedVtt
-        : mode === 'srt-file' || mode === 'embedded-soft' || mode === 'burned-in'
-          ? paths.translatedSrt
-          : undefined;
-
-    await fsp.mkdir(project.outputDir, { recursive: true });
-    return this.deps.media.renderFinalVideo({
-      inputVideoPath: project.inputVideoPath,
-      audioPath: paths.finalMixWav,
-      outputPath: projectOutputVideoPath(project),
-      subtitleExportMode: mode,
-      subtitlePath,
-      burnSubtitleStyle: project.settings.burnSubtitleStyle,
-      copyVideoStream: mode !== 'burned-in',
+  /** Whether final_mix.wav is the mix of what is on disk now (see {@link rerender}). */
+  async mixIsCurrent(projectId: string): Promise<boolean> {
+    const project = await this.deps.store.getProject(projectId);
+    const paths = this.deps.store.paths(projectId);
+    if (!(await fileExistsNonEmpty(paths.finalMixWav))) return false;
+    const recorded = await readMixFingerprint(paths.finalMixInputsJson);
+    if (recorded === undefined) return false;
+    let aligned: AlignedSegment[];
+    try {
+      aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8')) as AlignedSegment[];
+    } catch {
+      return false;
+    }
+    const totalDurationMs =
+      project.mediaInfo?.durationMs ??
+      aligned.reduce((max, a) => Math.max(max, a.endMs, a.startMs + a.placedDurationMs), 0);
+    // The greeting's share, as the last mix planned it; a plan made for other
+    // greeting settings means the mix is out of date.
+    const greetingSettings = project.settings.branding?.greeting;
+    let greeting: { file: string; placements: { atMs: number }[]; gainDb: number; key: string } | undefined;
+    if (greetingSettings?.assetId) {
+      const plan = await readGreetingPlan(paths.greetingPlanJson);
+      const key = greetingSettingsKey(greetingSettings);
+      if (!plan || plan.settingsKey !== key) return false;
+      greeting = {
+        file: path.join(project.workspaceDir, 'branding', `${greetingSettings.assetId}.wav`),
+        placements: plan.placements,
+        gainDb: greetingSettings.gainDb,
+        key,
+      };
+    }
+    const now = await mixFingerprint({
+      workspaceDir: project.workspaceDir,
+      aligned,
+      totalDurationMs,
+      settings: project.settings,
+      originalWav: paths.originalWav,
+      ...(greeting ? { greeting } : {}),
     });
+    return now === recorded;
   }
 
   /** Languages helper: proxy the translation worker, tolerating unavailability. */
@@ -1922,6 +1948,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         project,
         retryFromStep ? { retryFromStep, signal: controller.signal } : { signal: controller.signal },
       );
+      // A series parent that has analysed its video: plan the parts.
+      if (project.series?.role === 'parent' && this.deps.seriesAnalysed) {
+        const after = await this.deps.store.getProject(project.id).catch(() => undefined);
+        if (after?.status === 'completed') void this.deps.seriesAnalysed(project.id);
+      }
     })
       .finally(() => {
         stopWatching();
@@ -2074,10 +2105,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         'This project is waiting in the dubbing queue. Remove it from the queue to change where it is saved.',
       );
     }
-    if (this.rendering.has(projectId) || this.movingOutput.has(projectId)) {
+    if (this.movingOutput.has(projectId)) {
       throw new AppErrorException(
         'RUN_IN_PROGRESS',
-        'This project is rendering or moving its files right now. Try again when that has finished.',
+        'This project is moving its files right now. Try again when that has finished.',
       );
     }
   }

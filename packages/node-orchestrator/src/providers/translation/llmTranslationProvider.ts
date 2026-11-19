@@ -460,7 +460,7 @@ const LANGUAGE_NAMES: Record<string, string> = {
 };
 
 /** Display name for a language code ("en" -> "English"); falls back to the code. */
-function languageName(code: string): string {
+export function languageName(code: string): string {
   const base = code.split('-')[0]!.toLowerCase();
   return LANGUAGE_NAMES[base] ?? code;
 }

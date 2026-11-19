@@ -112,3 +112,21 @@ describe('claudeJsonSchema', () => {
     });
   });
 });
+
+describe('claudeMessage through Mother Claude', () => {
+  it('names the client for its HTTP API, and only there', async () => {
+    const seen: { via?: string; clientId?: string }[] = [];
+    const send: ClaudeSend = async (params, ctx) => {
+      seen.push({ ...(ctx.via ? { via: ctx.via } : {}), ...(ctx.clientId ? { clientId: ctx.clientId } : {}) });
+      return { model: String(params.model), stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] };
+    };
+    await claudeMessage({ ...base, model: 'claude-opus-5-5', via: 'mother-claude' }, send);
+    await claudeMessage({ ...base, model: 'claude-opus-5-5', via: 'mother-claude', clientId: 'videodubber/proj_1' }, send);
+    await claudeMessage({ ...base, model: 'claude-opus-5-5' }, send);
+    expect(seen).toEqual([
+      { via: 'mother-claude', clientId: 'videodubber' },
+      { via: 'mother-claude', clientId: 'videodubber/proj_1' },
+      {},
+    ]);
+  });
+});

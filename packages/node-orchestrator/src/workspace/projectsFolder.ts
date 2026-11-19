@@ -139,7 +139,9 @@ export async function moveFolder(src: string, dest: string): Promise<boolean> {
     }
   }
   try {
-    await fsp.cp(src, dest, { recursive: true, errorOnExist: true, force: false });
+    // Keep the files' times: the mix records its clips by size and time
+    // (pipeline/mixFingerprint.ts), and a move is not an edit.
+    await fsp.cp(src, dest, { recursive: true, errorOnExist: true, force: false, preserveTimestamps: true });
   } catch (err) {
     await fsp.rm(dest, { recursive: true, force: true }).catch(() => undefined);
     throw err;

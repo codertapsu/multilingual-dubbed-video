@@ -127,6 +127,12 @@ export interface SeparationService {
  * least the {@link MediaService} part plus these methods; the composition root
  * adapts it to this interface.
  */
+/** A window of an input, in ms (a series part's share of the video). */
+export interface MediaRange {
+  startMs: number;
+  endMs: number;
+}
+
 export interface PipelineMediaService extends MediaService {
   /**
    * Every method takes the run's cancellation signal, because POST /cancel used
@@ -136,10 +142,11 @@ export interface PipelineMediaService extends MediaService {
    * to the spawned child, which is the only place a cancel can actually land.
    */
   probe(inputPath: string, signal?: AbortSignal): Promise<MediaInfo>;
-  extractAudio(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<AudioExtractResult>;
+  /** `range`: only that window of the input (a series part). */
+  extractAudio(inputPath: string, outputPath: string, signal?: AbortSignal, range?: MediaRange): Promise<AudioExtractResult>;
   renderFinalVideo(input: RenderFinalVideoInput, signal?: AbortSignal): Promise<RenderFinalVideoResult>;
-  /** Extract a 16 kHz mono PCM WAV suitable for faster-whisper. */
-  extract16kMono(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<AudioExtractResult>;
+  /** Extract a 16 kHz mono PCM WAV suitable for faster-whisper (`range`: only that window). */
+  extract16kMono(inputPath: string, outputPath: string, signal?: AbortSignal, range?: MediaRange): Promise<AudioExtractResult>;
   /**
    * Extract a `[startMs, endMs)` window as a 16 kHz mono WAV — used to cut long
    * audio into bounded STT chunks. Optional so older adapters still satisfy the
@@ -185,7 +192,12 @@ export interface PipelineMediaService extends MediaService {
     outputPath: string,
     durationMs: number,
     signal?: AbortSignal,
+    range?: MediaRange,
   ): Promise<Omit<TimelineFilmstrip, 'path'> & { path: string }>;
+  /** Brand kit: any picture → a PNG at most 1024 px wide; its size. */
+  prepareLogo?(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<{ width: number; height: number }>;
+  /** Brand kit: any audio/video → a trimmed, levelled 48 kHz stereo WAV; its length. */
+  prepareGreeting?(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<{ durationMs: number }>;
   /**
    * Trim and tempo-fit one dub clip exactly as the timeline mix will (atrim,
    * atempo), for the editor's WebAudio preview — which can only resample, i.e.
@@ -270,6 +282,8 @@ const MEDIA_SERVICE_METHOD_TABLE: Record<keyof PipelineMediaService, true> = {
   computeWaveformPeaks: true,
   renderFilmstrip: true,
   renderFittedClip: true,
+  prepareLogo: true,
+  prepareGreeting: true,
   measureSpeech: true,
   referenceClip: true,
   prepareStemInput: true,

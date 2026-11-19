@@ -52,7 +52,14 @@ export function planFilmstrip(durationMs: number, tileWidth = 160, tileHeight = 
 }
 
 /** ffmpeg argv for the sprite. Pure. */
-export function buildFilmstripArgs(input: string, output: string, durationMs: number, layout: FilmstripLayout): string[] {
+export function buildFilmstripArgs(
+  input: string,
+  output: string,
+  durationMs: number,
+  layout: FilmstripLayout,
+  /** A series part: only its window of the video (durationMs is the window's). */
+  range?: { startMs: number; endMs: number },
+): string[] {
   const seconds = Math.max(0.001, durationMs / 1000);
   const { tileWidth: w, tileHeight: h } = layout;
   const vf = [
@@ -72,6 +79,7 @@ export function buildFilmstripArgs(input: string, output: string, durationMs: nu
     // Decoder option, so it must precede -i: decode keyframes only.
     '-skip_frame',
     'nokey',
+    ...(range ? ['-ss', (range.startMs / 1000).toFixed(3), '-t', ((range.endMs - range.startMs) / 1000).toFixed(3)] : []),
     '-i',
     input,
     '-an',
@@ -97,12 +105,13 @@ export async function renderFilmstrip(
   output: string,
   durationMs: number,
   opts: RunOptions = {},
+  range?: { startMs: number; endMs: number },
 ): Promise<FilmstripResult> {
   assertInputReadable(input);
   assertOutputWritable(output);
   const layout = planFilmstrip(durationMs);
   await writeAtomically(output, async (partial) => {
-    await runFfmpeg(buildFilmstripArgs(input, partial, durationMs, layout), {
+    await runFfmpeg(buildFilmstripArgs(input, partial, durationMs, layout, range), {
       timeoutMs: 10 * 60_000,
       ...opts,
     });

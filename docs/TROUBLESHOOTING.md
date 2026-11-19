@@ -287,6 +287,10 @@ contract points at this page.
 | `NO_AUDIO_STREAM` | No audio to transcribe | Video has no audio track | Use a video with audio, or add a track | [#no_audio_stream](#no_audio_stream) |
 | `INVALID_LANGUAGE` | Bad/unsupported language code | Typo or unknown locale | Use a valid code (e.g. `en`, `vi-VN`); see normalization rules | [#invalid_language](#invalid_language) |
 | `INVALID_VIDEO_LINK` | The pasted link isn't a downloadable video | Not a video page, unsupported site, or private/removed | Copy the full address from the browser address bar | [#invalid_video_link](#invalid_video_link) |
+| `SOURCE_RATE_LIMITED` | The video site is limiting requests from this computer | Too many requests, or the site's risk control (Bilibili HTTP 412, code -352/-412) | Nothing: the download waits 20/45/90 s and retries by itself; after that, Retry later | [#source-rate-limited](#source-rate-limited) |
+| `SOURCE_LOGIN_REQUIRED` | The video needs a signed-in account | Members-only, paid or charging-exclusive video | Give VideoDubber your Bilibili cookie (Download screen → Source account, or Mother Claude) | [#source-login-required](#source-login-required) |
+| `SOURCE_UNAVAILABLE` | The site does not offer the video | Removed, private, under review, or region-locked | Open the link in a browser; nothing to retry | [#source-unavailable](#source-unavailable) |
+| `DISK_FULL` | No room for the download | The drive with the downloads folder is full | Free space, or move the projects folder (the downloads move with it) | [#disk-full](#disk-full) |
 | `OUTPUT_NOT_WRITABLE` | Can't write output/workspace | Permissions / missing dir / disk full | Fix permissions; ensure `VIDEODUBBER_PROJECTS_DIR` is writable; free space | [#output_not_writable](#output_not_writable) |
 | `WORKER_UNAVAILABLE` | A worker didn't respond | Worker not started / wrong port / crashed | Start the worker; check the `*_WORKER_URL` | [#worker_unavailable](#worker_unavailable) |
 | `WORKER_TIMEOUT` | A worker took too long | Large media / slow model / hang | Use a smaller model; retry the step | [#worker_timeout](#worker_timeout) |
@@ -604,6 +608,50 @@ The source video has no audio — see [`NO_AUDIO_STREAM`](#no_audio_stream).
 
 ### output not writable
 Fix permissions / disk space — see [`OUTPUT_NOT_WRITABLE`](#output_not_writable).
+
+<a id="source-rate-limited"></a>
+
+### `SOURCE_RATE_LIMITED`
+
+Bilibili's risk control refused the request: HTTP 412, or code -352 / -412 / -509 /
+-799 in its answer. A download waits 20 s, then 45 s, then 90 s and tries again by
+itself (the list says until when), and only then fails; **Retry** later starts it
+again from what it already has. All downloads from the same site wait together,
+since the next request would be refused too.
+
+Bilibili also refuses (HTTP 412, every time on some networks) calls that carry no
+browser device id. VideoDubber asks Bilibili for one before its first call, as the
+site's own pages do (`/x/frontend/finger/spi`), or uses the `buvid3` cookie from
+your browser when Mother Claude handed over the cookies. Through 0.15.0 it sent
+none, and every anonymous download failed this way on such a network.
+
+<a id="source-login-required"></a>
+
+### `SOURCE_LOGIN_REQUIRED`
+
+The video plays only to a signed-in account (members-only, paid, "charging"
+exclusive). Give VideoDubber your Bilibili cookie on the Download screen (Source
+account), or let Mother Claude hand over your browser's cookies; a video only
+paying members can watch also needs that membership.
+
+<a id="source-unavailable"></a>
+
+### `SOURCE_UNAVAILABLE`
+
+The site answered that it does not offer this video: removed (Bilibili's "啥都木有",
+-404), private or visible to its uploader only, still under review, or not
+available in your region (-10403). Retrying does not help; open the link in a
+browser to see what the site says.
+
+<a id="disk-full"></a>
+
+### `DISK_FULL`
+
+Before a download starts, VideoDubber checks that the drive holding the downloads
+folder has room for it (both streams, and the combined file beside them until it
+is finished). Free space (Settings → Storage → **Delete finished downloads**, or
+the caches), or move the projects folder to a larger drive: the downloads folder
+moves with it.
 
 <a id="invalid-video-link"></a>
 

@@ -15,9 +15,13 @@ import { IpcService } from '../../core/ipc/ipc.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { QUALITY_LADDER, pickClosestHeight } from '@videodubber/shared';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
+import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import type { AppError } from '../../core/models';
+import type { SeriesAiOption } from '@videodubber/shared';
 import type {
+  DownloadItem,
   DownloadProvider,
+  DubPreset,
   QualityOption,
   ResolvedVideo,
   SessionCheck,
@@ -25,13 +29,15 @@ import type {
 } from '../../core/models/download';
 
 /**
- * DownloadComponent (route "download") — fetch a source video to dub.
+ * DownloadComponent (route "download") — fetch source videos to dub.
  *
- * Two steps on purpose: resolving a link is cheap and shows the user exactly
- * what they are about to fetch (title, uploader, part list), so nobody spends
- * several hundred megabytes discovering they pasted the wrong link.
+ * Paste one link or many. One link can be checked first (title, uploader,
+ * parts) so nobody spends hundreds of megabytes on the wrong link; several go
+ * straight to the download list, which the orchestrator works through two at
+ * a time (providers/download/queue.ts) and keeps across restarts. Finished
+ * videos can be dubbed in one go with a preset, or one by one in New project.
  *
- * Marked experimental in the UI: it depends on a third-party site's public web
+ * Marked experimental in the UI: it depends on third-party sites' public web
  * endpoints, which can change without notice.
  */
 @Component({
@@ -46,55 +52,69 @@ export class DownloadComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
   private readonly router = inject(Router);
   private readonly translate = inject(TranslateService);
+  private readonly confirm = inject(ConfirmService);
   protected readonly events = inject(DownloadEventsService);
 
   protected readonly input = signal('');
+  /** The pasted lines that hold something. */
+  protected readonly links = computed(() =>
+    this.input()
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean),
+  );
   protected readonly resolving = signal(false);
-  protected readonly starting = signal(false);
+  protected readonly adding = signal(false);
   protected readonly video = signal<ResolvedVideo | null>(null);
+  /** A list link's videos (a collection, favourites, an uploader's page), to tick. */
+  protected readonly list = signal<{ title: string; total: number; videos: { input: string; title: string; durationSec: number }[] } | null>(null);
+  protected readonly listPicked = signal<ReadonlySet<string>>(new Set());
   protected readonly selectedPage = signal(1);
   /**
    * Preferred quality, as a pixel height. Undefined means "the best there is".
-   *
-   * A standing preference rather than a pick from this video's list: the whole
-   * ladder stays selectable, and the download snaps to the closest the video
-   * can actually serve.
+   * A standing preference rather than a pick from one video's list: the whole
+   * ladder stays selectable, and each download snaps to the closest its video
+   * can serve.
    */
   protected readonly targetHeight = signal<number | undefined>(undefined);
+  protected readonly allParts = signal(false);
   protected readonly qualityLadder = QUALITY_LADDER;
-  private readonly localError = signal<AppError | null>(null);
+  protected readonly error = signal<AppError | null>(null);
+  /** What the last action did ("3 added to downloads."). */
+  protected readonly notice = signal<string | null>(null);
 
-  /** Either a local failure (bad link) or one reported by the running job. */
-  protected readonly error = computed<AppError | null>(
-    () => this.localError() ?? this.events.error(),
-  );
+  protected readonly items = this.events.items;
+  protected readonly doneItems = computed(() => this.items().filter((i) => i.state === 'done'));
 
-  protected readonly progress = this.events.progress;
-  protected readonly completedPath = this.events.completedPath;
-
-  /** True while bytes are moving, so the form stays locked. */
-  protected readonly downloading = computed(
-    () => this.progress() !== null && this.completedPath() === null && this.error() === null,
-  );
+  // ---- dubbing finished downloads with a preset ------------------------
+  protected readonly presets = signal<DubPreset[]>([]);
+  protected readonly presetId = signal('');
+  protected readonly dubStart = signal(true);
+  protected readonly dubbing = signal(false);
+  protected readonly selected = signal<ReadonlySet<string>>(new Set());
+  protected readonly selectedDone = computed(() => this.doneItems().filter((i) => this.selected().has(i.id)));
+  /**
+   * Long ones as a series of parts (series/): only with an AI from Settings,
+   * which the user picks when there are several (Claude through Mother Claude
+   * first, as in New project).
+   */
+  protected readonly seriesAiReady = signal<SeriesAiOption[]>([]);
+  protected readonly dubSplit = signal(false);
+  protected readonly dubSplitLength = signal<'15-20' | '30-40' | '55-65'>('15-20');
+  protected readonly dubSplitAi = signal('');
+  /** Only videos longer than this are split: below it, two parts would be shorter than the shortest part asked for. */
+  protected readonly dubSplitAbove = computed(() => Math.round(Number(this.dubSplitLength().split('-')[1]) * 1.5));
 
   /** Only multi-part videos need a picker; a single part is implied. */
   protected readonly showPartPicker = computed(() => (this.video()?.parts.length ?? 0) > 1);
 
-  /**
-   * Offer a quality picker only when there is a real choice to make.
-   *
-   * With one option the control is decoration, and with none the probe failed
-   * — in which case showing an empty or guessed list would be worse than
-   * saying nothing and letting the download take the best available.
-   */
+  /** The checked video's qualities (empty when none was checked, or the probe failed). */
   protected readonly qualities = computed<QualityOption[]>(() => this.video()?.qualities ?? []);
-  protected readonly showQualityPicker = computed(() => this.qualities().length > 0);
 
   /**
-   * What the current preference will actually download for THIS video.
-   *
-   * Computed with the same function the orchestrator uses, so the promise made
-   * here and the choice made there cannot drift.
+   * What the preference will download for the checked video. Same function as
+   * the orchestrator's, so the promise made here and the choice made there
+   * cannot drift.
    */
   protected readonly resolvedQuality = computed<QualityOption | undefined>(() => {
     const available = this.qualities();
@@ -105,7 +125,6 @@ export class DownloadComponent implements OnInit, OnDestroy {
     return available.find((q) => q.heightPx === height);
   });
 
-  /** True when the preference cannot be met exactly, so the UI can say so. */
   protected readonly qualityDowngraded = computed(() => {
     const target = this.targetHeight();
     const resolved = this.resolvedQuality()?.heightPx;
@@ -113,25 +132,36 @@ export class DownloadComponent implements OnInit, OnDestroy {
   });
 
   // ---- optional per-provider credentials -------------------------------
-  // Deliberately owned by this screen rather than Settings: it exists only to
-  // raise the ceiling of THIS feature, and a credential for a downloader is
-  // meaningless anywhere else in the app.
+  // Owned by this screen rather than Settings: it exists only to raise the
+  // ceiling of THIS feature.
   protected readonly providers = signal<DownloadProvider[]>([]);
   protected readonly sessionInput = signal('');
   protected readonly sessionBusy = signal<string | null>(null);
   protected readonly sessionCheck = signal<SessionCheck | null>(null);
   protected readonly sessionOpen = signal(false);
-
-  /** Only providers that actually take a credential get any UI. */
-  protected readonly sessionProviders = computed(() =>
-    this.providers().filter((p) => p.supportsSession),
-  );
+  protected readonly sessionProviders = computed(() => this.providers().filter((p) => p.supportsSession));
 
   ngOnInit(): void {
-    // Connect on entry so a download already running (started before the user
-    // navigated away) is picked up from the server's replayed state.
+    // The server replays every download on connect: the list is right after a
+    // navigation or a reload mid-download.
     this.events.connect();
     void this.loadProviders();
+    void this.loadPresets();
+    void this.loadSeriesAi();
+  }
+
+  private async loadSeriesAi(): Promise<void> {
+    try {
+      const ready = (await this.ipc.seriesAiOptions()).filter((o) => o.ready);
+      this.seriesAiReady.set(ready);
+      if (!ready.some((o) => o.id === this.dubSplitAi())) this.dubSplitAi.set((ready.find((o) => o.viaMotherClaude) ?? ready[0])?.id ?? '');
+    } catch {
+      /* the option says it needs an AI */
+    }
+  }
+
+  ngOnDestroy(): void {
+    this.events.disconnect();
   }
 
   private async loadProviders(): Promise<void> {
@@ -142,31 +172,28 @@ export class DownloadComponent implements OnInit, OnDestroy {
     }
   }
 
+  private async loadPresets(): Promise<void> {
+    try {
+      const list = await this.ipc.listPresets();
+      this.presets.set(list);
+      if (!list.some((p) => p.id === this.presetId())) this.presetId.set(list[0]?.id ?? '');
+    } catch {
+      /* the dub card says there are none */
+    }
+  }
+
   protected sessionFor(providerId: string): SessionInfo | undefined {
     return this.providers().find((p) => p.id === providerId)?.session;
   }
 
-  /**
-   * Display name for a provider.
-   *
-   * The key is built from the provider id so a new source needs only one line
-   * of i18n — but a missing key renders as the raw key string, which would be
-   * an ugly way to meet a new provider. Fall back to the id itself, so adding
-   * a provider without translations still looks deliberate.
-   */
+  /** A provider's display name; the id itself when there is no translation yet. */
   protected providerLabel(providerId: string): string {
     const key = `source-video.provider.${providerId}`;
     const label = this.translate.instant(key);
     return label === key ? providerId : label;
   }
 
-  /**
-   * Name a quality rung.
-   *
-   * Same shape as {@link providerLabel}: the key is derived from the ladder so
-   * a new rung needs one line of i18n, and a missing key falls back to a plain
-   * "1080p" rather than rendering the raw key at the user.
-   */
+  /** A quality rung's name; a plain "1080p" when it has no translation. */
   protected qualityLabelFor(rung: { heightPx: number; key: string }): string {
     const key = `source-video.quality-${rung.key}`;
     const label = this.translate.instant(key);
@@ -180,12 +207,11 @@ export class DownloadComponent implements OnInit, OnDestroy {
     this.sessionCheck.set(null);
     try {
       await this.ipc.setProviderSession(providerId, value);
-      // Drop the plaintext from the form as soon as it is stored; leaving a
-      // live credential sitting in an input is needless exposure.
+      // Drop the plaintext from the form as soon as it is stored.
       this.sessionInput.set('');
       await this.loadProviders();
     } catch (err) {
-      this.localError.set(err as AppError);
+      this.error.set(err as AppError);
     } finally {
       this.sessionBusy.set(null);
     }
@@ -200,7 +226,7 @@ export class DownloadComponent implements OnInit, OnDestroy {
       this.sessionCheck.set(null);
       await this.loadProviders();
     } catch (err) {
-      this.localError.set(err as AppError);
+      this.error.set(err as AppError);
     } finally {
       this.sessionBusy.set(null);
     }
@@ -214,87 +240,208 @@ export class DownloadComponent implements OnInit, OnDestroy {
     try {
       this.sessionCheck.set(await this.ipc.testProviderSession(providerId));
     } catch (err) {
-      this.localError.set(err as AppError);
+      this.error.set(err as AppError);
     } finally {
       this.sessionBusy.set(null);
     }
   }
 
-  ngOnDestroy(): void {
-    this.events.disconnect();
-  }
-
-  /** Look the link up without committing to a download. */
+  /** Look one link up without downloading anything. */
   protected async resolve(): Promise<void> {
-    const value = this.input().trim();
-    if (!value || this.resolving()) return;
-
+    const value = this.links()[0];
+    if (!value || this.links().length !== 1 || this.resolving()) return;
     this.resolving.set(true);
-    this.localError.set(null);
-    this.events.reset();
+    this.error.set(null);
+    this.notice.set(null);
     this.video.set(null);
+    this.list.set(null);
     try {
+      // A list link: its videos, all ticked.
+      const { list } = await this.ipc.expandDownload(value);
+      if (list) {
+        this.list.set(list);
+        this.listPicked.set(new Set(list.videos.map((v) => v.input)));
+        return;
+      }
       const info = await this.ipc.resolveDownload(value);
       this.video.set(info);
       // Preselect the part the link pointed at, falling back to the first.
       const wanted = info.parts.find((p) => p.page === info.requestedPage);
       this.selectedPage.set(wanted?.page ?? info.parts[0]?.page ?? 1);
-      // Default to the best that can actually be delivered.
-      // Leave the preference alone across resolves: it is the user's standing
-      // choice, not a property of whichever video they just pasted.
     } catch (err) {
-      this.localError.set(err as AppError);
+      this.error.set(err as AppError);
     } finally {
       this.resolving.set(false);
     }
   }
 
-  /** Begin the download; progress arrives over SSE. */
-  protected async start(): Promise<void> {
-    const value = this.input().trim();
-    if (!value || this.downloading() || this.starting()) return;
-
-    this.starting.set(true);
-    this.localError.set(null);
-    this.events.reset();
+  /** Put the pasted links on the download list. */
+  protected async add(): Promise<void> {
+    const links = this.links();
+    if (links.length === 0 || this.adding()) return;
+    // A checked single video downloads the part picked in its preview.
+    const page = links.length === 1 && this.video() && !this.allParts() ? this.selectedPage() : undefined;
+    const height = this.targetHeight();
+    this.adding.set(true);
+    this.error.set(null);
+    this.notice.set(null);
     try {
-      await this.ipc.startDownload(value, this.selectedPage(), this.targetHeight());
+      const res = await this.ipc.addDownloads(
+        links.map((input) => ({ input, ...(page ? { page } : {}), ...(height ? { targetHeightPx: height } : {}) })),
+        this.allParts(),
+      );
+      for (const item of [...res.added, ...res.existing]) this.events.upsert(item);
+      const lines = [
+        ...(res.added.length > 0 ? [this.translate.instant('source-video.added', { n: res.added.length })] : []),
+        ...(res.existing.length > 0 ? [this.translate.instant('source-video.already', { n: res.existing.length })] : []),
+        ...res.rejected.map((r) => this.translate.instant('source-video.rejected', { input: r.input })),
+      ];
+      this.notice.set(lines.join(' '));
+      if (res.rejected.length === 0) {
+        this.input.set('');
+        this.video.set(null);
+      } else {
+        // Keep only the links that were refused, so they can be fixed.
+        this.input.set(res.rejected.map((r) => r.input).join('\n'));
+      }
     } catch (err) {
-      this.localError.set(err as AppError);
+      this.error.set(err as AppError);
     } finally {
-      this.starting.set(false);
+      this.adding.set(false);
     }
   }
 
+  protected toggleListItem(input: string, on: boolean): void {
+    this.listPicked.update((s) => {
+      const next = new Set(s);
+      if (on) next.add(input);
+      else next.delete(input);
+      return next;
+    });
+  }
+
+  /** The ticked videos of a list link, to the download list. */
+  protected async addPicked(): Promise<void> {
+    const picked = [...this.listPicked()];
+    if (picked.length === 0) return;
+    this.input.set(picked.join('\n'));
+    this.list.set(null);
+    await this.add();
+  }
+
+  protected async cancel(item: DownloadItem): Promise<void> {
+    await this.act(async () => this.events.upsert(await this.ipc.cancelDownload(item.id)));
+  }
+
+  protected async retry(item: DownloadItem): Promise<void> {
+    await this.act(async () => this.events.upsert(await this.ipc.retryDownload(item.id)));
+  }
+
+  /** Off the list; the video stays where it is. */
+  protected async remove(item: DownloadItem): Promise<void> {
+    await this.act(() => this.ipc.removeDownload(item.id, false));
+  }
+
+  /** Off the list, and the video deleted (projects keep their own copy). */
+  protected async deleteFile(item: DownloadItem): Promise<void> {
+    const ok = await this.confirm.confirm({
+      title: this.translate.instant('source-video.remove-confirm-title'),
+      message: this.translate.instant('source-video.remove-confirm-body'),
+      confirmLabel: this.translate.instant('source-video.remove-file'),
+    });
+    if (ok) await this.act(() => this.ipc.removeDownload(item.id, true));
+  }
+
+  private async act(fn: () => Promise<unknown>): Promise<void> {
+    this.error.set(null);
+    try {
+      await fn();
+    } catch (err) {
+      this.error.set(err as AppError);
+    }
+  }
+
+  /** The folder a finished video is in (not the video: it would start playing). */
+  protected async reveal(item: DownloadItem): Promise<void> {
+    const file = item.filePath;
+    if (!file) return;
+    const cut = Math.max(file.lastIndexOf('\\'), file.lastIndexOf('/'));
+    await this.act(() => this.ipc.openOutputFolder(cut > 0 ? file.slice(0, cut) : file));
+  }
+
   /**
-   * Hand the finished file to the New Project wizard.
-   *
-   * The path travels as a query param rather than shared state so the wizard
-   * stays independently reachable and a reload does not lose the selection.
+   * Hand a finished file to New project. The path travels as a query param so
+   * the wizard stays independently reachable; the server links it into the
+   * project (no second copy) because it is a download.
    */
-  protected useAsSource(): void {
-    const path = this.completedPath();
-    if (!path) return;
-    void this.router.navigate(['/new'], { queryParams: { source: path } });
+  protected useAsSource(item: DownloadItem): void {
+    if (item.filePath) void this.router.navigate(['/new'], { queryParams: { source: item.filePath } });
   }
 
-  /** Reveal the finished file in Finder/Explorer. */
-  protected async reveal(): Promise<void> {
-    const path = this.completedPath();
-    if (path) await this.ipc.openOutputFolder(path);
+  protected toggle(item: DownloadItem, on: boolean): void {
+    this.selected.update((s) => {
+      const next = new Set(s);
+      if (on) next.add(item.id);
+      else next.delete(item.id);
+      return next;
+    });
   }
 
-  /** Clear everything so the screen can take another link. */
-  protected reset(): void {
-    this.events.reset();
-    this.localError.set(null);
-    this.video.set(null);
-    this.input.set('');
+  protected selectAllDone(): void {
+    this.selected.set(new Set(this.doneItems().map((i) => i.id)));
+  }
+
+  /** A project per ticked video, from the chosen preset. */
+  protected async dubSelected(): Promise<void> {
+    const ids = this.selectedDone().map((i) => i.id);
+    if (ids.length === 0 || !this.presetId() || this.dubbing()) return;
+    this.dubbing.set(true);
+    this.error.set(null);
+    this.notice.set(null);
+    try {
+      const split = this.dubSplit() && this.dubSplitAi();
+      const [min, max] = this.dubSplitLength().split('-').map(Number);
+      const { results } = await this.ipc.dubDownloads({
+        downloadIds: ids,
+        presetId: this.presetId(),
+        start: this.dubStart(),
+        ...(split
+          ? { series: { minMinutes: min!, maxMinutes: max!, aiProviderId: this.dubSplitAi(), longerThanMinutes: this.dubSplitAbove(), autoStart: true } }
+          : {}),
+      });
+      const made = results.filter((r) => r.projectId).length;
+      const parts = results.filter((r) => r.series).length;
+      const failed = results.find((r) => r.error)?.error;
+      this.notice.set(
+        parts > 0
+          ? this.translate.instant('source-video.dub-done-split', { n: made, s: parts })
+          : this.translate.instant('source-video.dub-done', { n: made }),
+      );
+      if (failed) this.error.set(failed);
+      this.selected.set(new Set());
+    } catch (err) {
+      this.error.set(err as AppError);
+    } finally {
+      this.dubbing.set(false);
+    }
+  }
+
+  protected titleOf(item: DownloadItem): string {
+    return item.source?.title ?? item.input;
+  }
+
+  /** Clock time of a rate-limit retry. */
+  protected timeOf(iso: string): string {
+    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  protected formatBytes(n: number | undefined): string {
+    if (!n) return '0 MB';
+    return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GB` : `${(n / 1024 ** 2).toFixed(1)} MB`;
   }
 
   protected dismissError(): void {
-    this.localError.set(null);
-    this.events.reset();
+    this.error.set(null);
   }
 
   /** mm:ss for a part duration. */

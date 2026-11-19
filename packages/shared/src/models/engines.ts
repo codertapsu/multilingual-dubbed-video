@@ -276,6 +276,12 @@ export interface StorageInfo {
   freeBytes: number | null;
   /** Number of installed engine packs (for the confirmation copy). */
   installedEnginePacks: number;
+  /**
+   * The downloaded source videos (`<projects root>\downloads`): the user's own
+   * files, so not in `locations`/`totalBytes` and never cleared with them;
+   * POST /downloads/clear-finished deletes the finished ones.
+   */
+  downloads?: { path: string; bytes: number };
 }
 
 /** POST /storage/clear body. An omitted/true flag clears that category (default: all). */

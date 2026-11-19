@@ -12,7 +12,7 @@
  * string ids, so a provider whose parts are UUIDs or whose qualities are named
  * "hd"/"sd" needs no change to anything shared.
  */
-import type { AppError } from '@videodubber/shared';
+import type { AppError, DownloadSource } from '@videodubber/shared';
 
 /** One selectable part of a (possibly multi-part) video. */
 export interface SourceVideoPart {
@@ -30,6 +30,16 @@ export interface SourceQuality {
   id: string;
   label: string;
   heightPx?: number;
+}
+
+/** The videos a list link names (POST /download/expand). */
+export interface SourceList {
+  providerId: string;
+  kind: string;
+  title: string;
+  /** How many the list has (more than `videos` when it was cut at the limit). */
+  total: number;
+  videos: { input: string; title: string; durationSec: number }[];
 }
 
 /** The preview shown before committing to a download. */
@@ -57,12 +67,23 @@ export interface ResolvedSourceVideo {
 export interface PreparedDownload {
   videoUrl: string;
   audioUrl?: string;
+  /** Mirrors of each stream, tried in order when a host fails. */
+  videoFallbackUrls?: string[];
+  audioFallbackUrls?: string[];
+  /** Expected size of everything fetched, when the site says; for the free-space check. */
+  expectedBytes?: number;
+  /** Height of the stream chosen. */
+  heightPx?: number;
   /** Filename stem, without extension; sanitised downstream. */
   baseName: string;
   /** Human title, for the completion message. */
   title: string;
-  /** Headers the media fetch must carry (Referer, Cookie, …). */
+  /** Headers the media fetch must carry (Referer, …). */
   headers: Record<string, string>;
+  /** What this is, for the queue, the project and the caption. */
+  source: DownloadSource;
+  /** Subtitles the site publishes for it, fetched and saved beside the video once it is done. */
+  subtitleTracks?: { language: string; label: string; url: string; ai: boolean }[];
 }
 
 /** Display-safe view of a stored credential. */
@@ -79,6 +100,15 @@ export interface SessionCheck {
   valid: boolean;
   /** Account name, when the credential is live. */
   uname?: string;
+  /** A paid membership with higher qualities, when the site says. */
+  premium?: boolean;
+}
+
+/** A cookie read from the user's browser (Mother Claude's export). */
+export interface BrowserCookie {
+  name: string;
+  value: string;
+  domain: string;
 }
 
 /**
@@ -93,6 +123,12 @@ export interface SessionCapability {
   describe(): Promise<SessionInfo>;
   /** Store (or, given an empty value, clear) the credential. */
   set(raw: string): Promise<void>;
+  /**
+   * Replace the credential with what the user's browser holds (its cookies
+   * for this site; the provider keeps only the ones it uses). Logged out in
+   * the browser clears the stored login.
+   */
+  importCookies?(cookies: readonly BrowserCookie[]): Promise<void>;
   clear(): Promise<void>;
   /** Ask the site whether the stored credential still works. */
   check(): Promise<SessionCheck>;
@@ -113,6 +149,21 @@ export interface SourceProvider {
   matches(input: string): boolean;
   /** Look the input up without downloading anything. */
   resolve(input: string): Promise<ResolvedSourceVideo>;
+  /**
+   * The videos of a list link (a collection, favourites, an uploader's page),
+   * or undefined when the input is not one. Optional: a provider without lists
+   * omits it.
+   */
+  expand?(input: string): Promise<SourceList | undefined>;
+  /** Whether the input is a list link (offline, cheap, like `matches`). */
+  isList?(input: string): boolean;
+  /**
+   * The download's identity (`bilibili:BV…:p2`) when it can be told from the
+   * input alone, offline; undefined when it takes a network call (a short
+   * link). No `page` = the part the link itself points at. Same rule as
+   * `matches`: cheap, no I/O.
+   */
+  sourceKey?(input: string, page?: number): string | undefined;
   /**
    * Resolve concrete media URLs for one part.
    *

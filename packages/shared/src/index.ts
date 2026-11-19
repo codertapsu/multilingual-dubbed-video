@@ -41,6 +41,7 @@ export type {
   AlignmentStatus,
   AlignedSegment,
   CreateProjectInput,
+  PublishedRecord,
   ReviseProjectInput,
 } from './models/domain.js';
 
@@ -143,12 +144,49 @@ export type {
 } from './models/setup.js';
 export { ALL_CLOUD_SERVICES, MOTHER_CLAUDE_DEFAULT_URL } from './models/setup.js';
 export { QUALITY_LADDER, pickClosestHeight } from './models/download.js';
-export type { QualityTarget } from './models/download.js';
+export type {
+  QualityTarget,
+  DownloadItem,
+  DownloadQueueEvent,
+  DownloadRequest,
+  DownloadSource,
+  DownloadState,
+  DubDownloadResult,
+  DubDownloadsRequest,
+  DubPreset,
+} from './models/download.js';
+export type {
+  BrandAsset,
+  BrandingSettings,
+  GreetingPlacement,
+  GreetingPlan,
+  GreetingSettings,
+  LogoCorner,
+  LogoSettings,
+  TimeSpan,
+} from './models/branding.js';
+export { DEFAULT_GREETING, DEFAULT_LOGO, logoPeriods } from './models/branding.js';
+export type {
+  SeriesAiOption,
+  SeriesCandidate,
+  SeriesInfo,
+  SeriesParentInfo,
+  SeriesPartInfo,
+  SeriesPlan,
+  SeriesPlanPart,
+  SeriesSettings,
+  SeriesState,
+  SeriesView,
+} from './models/series.js';
+export { DEFAULT_SERIES_SETTINGS } from './models/series.js';
 
 // ---- Provider / service contracts -----------------------------------------
 export type {
   RenderFinalVideoInput,
   RenderFinalVideoResult,
+  RenderCard,
+  RenderEffects,
+  RenderLogo,
   MediaService,
   SttInput,
   SttResult,

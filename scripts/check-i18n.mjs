@@ -257,6 +257,20 @@ for (const locale of locales.slice(1)) {
   }
 }
 
+// 2c. A placeholder in single braces is shown as it is: TranslateService fills
+//     `{{ name }}` only, so `{n}` reached the screen as a literal "{n}"
+//     ("Đã dùng cho {n} dự án" on the Download list, and the quality and
+//     cookie lines there since they were written). Find them here instead.
+const SINGLE_BRACE = /(?<!\{)\{\s*[A-Za-z][\w]*\s*\}(?!\})/;
+for (const locale of locales) {
+  const bad = [...defined[locale]].filter((key) => SINGLE_BRACE.test(String(leafOf(trees[locale], key)))).sort();
+  if (bad.length) {
+    failed = true;
+    console.error(`\n✗ ${locale}.json has ${bad.length} placeholder(s) in single braces, shown literally (write {{ name }}):`);
+    for (const k of bad) console.error(`    ${k}`);
+  }
+}
+
 // 3. Defined but unused — a warning, never a failure: a key may be referenced
 //    in a way this scan cannot see, and failing the build on a false positive
 //    would teach people to delete real strings.

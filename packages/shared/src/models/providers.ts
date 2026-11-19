@@ -45,6 +45,45 @@ export interface RenderFinalVideoInput {
    * (VideoToolbox/NVENC) when available.
    */
   renderQuality?: RenderQuality;
+  /** A logo drawn over the picture (branding); forces a video re-encode. */
+  logo?: RenderLogo;
+  /**
+   * Only this window of the input video (a series part). The audio and the
+   * subtitles are already the window's; the video is cut with an accurate seek.
+   */
+  range?: { startMs: number; endMs: number };
+  /** Opening and closing of a series part: fades, a darker recap, text cards. */
+  effects?: RenderEffects;
+}
+
+/** A logo for {@link RenderFinalVideoInput}. */
+export interface RenderLogo {
+  imagePath: string;
+  corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  widthPct: number;
+  marginPct: number;
+  opacity: number;
+  /** Shown only in these windows (output time, ms); absent = the whole video. */
+  periods?: { startMs: number; endMs: number }[];
+}
+
+/** Text over the picture for a while, drawn by libass (reliable Vietnamese on Windows). */
+export interface RenderCard {
+  text: string;
+  startMs: number;
+  endMs: number;
+  /** `title` (large, centred), `label` (small, top left), `end` (centred, lower). */
+  kind: 'title' | 'label' | 'end';
+}
+
+export interface RenderEffects {
+  /** Picture and sound fade in from the start, ms. */
+  fadeInMs?: number;
+  /** Picture and sound fade out at the end, ms. */
+  fadeOutMs?: number;
+  /** Darken the picture slightly until this time (the recap of the previous part), ms. */
+  darkenUntilMs?: number;
+  cards?: RenderCard[];
 }
 
 /** Result of rendering the final dubbed video. */

@@ -1,3 +1,7 @@
+import type { AppError } from '../errors.js';
+import type { ProjectSettings } from './domain.js';
+import type { SeriesSettings } from './series.js';
+
 /**
  * Source-video quality targets, shared by the orchestrator and the UI.
  *
@@ -60,3 +64,145 @@ export function pickClosestHeight(
   const atOrBelow = heights.find((h) => h <= targetHeightPx);
   return atOrBelow ?? heights[heights.length - 1];
 }
+
+// ---------------------------------------------------------------- the queue
+
+/**
+ * Where a download is. `queued` waits for a free slot (two run at once);
+ * `resolving` asks the site what to fetch; `downloading` / `merging` fetch and
+ * combine the streams. `done`, `failed` and `cancelled` are final; a failed or
+ * cancelled one can be retried, and an interrupted one (the app closed)
+ * continues from its partial files at the next start.
+ */
+export type DownloadState = 'queued' | 'resolving' | 'downloading' | 'merging' | 'done' | 'failed' | 'cancelled';
+
+/** The video a download is of, once the site has answered. */
+export interface DownloadSource {
+  providerId: string;
+  /**
+   * The download's identity: `bilibili:BV1xx411c7mD:p2`. Asking for the same
+   * key again returns the existing download (Mother Claude's manifest is keyed
+   * by it too).
+   */
+  sourceKey: string;
+  /** The page a browser opens for it. */
+  url: string;
+  /** The video's title (a part's own name is in `partTitle`). */
+  title: string;
+  page: number;
+  /** Parts the video has (Bilibili 分P); 1 for a single video. */
+  partCount: number;
+  partTitle?: string;
+  ownerName?: string;
+  durationSec?: number;
+  coverUrl?: string;
+  /** The site's chapter marks (Bilibili 视频看点), in the part's time: cut hints for a series. */
+  chapters?: { startMs: number; title: string }[];
+  /**
+   * Subtitles the site publishes for it, saved beside the video (Bilibili CC,
+   * or its AI subtitles when signed in): `useSourceSubtitles` uses them as the
+   * transcript.
+   */
+  subtitles?: { language: string; label: string; path: string; ai: boolean }[];
+}
+
+/** One download in the queue (GET /downloads). */
+export interface DownloadItem {
+  /** `dl_<hex>`. */
+  id: string;
+  /** What was pasted (a link or a bare id). */
+  input: string;
+  /** 1-based part. */
+  page: number;
+  /** A preferred height (pickClosestHeight); none = the best on offer. */
+  targetHeightPx?: number;
+  state: DownloadState;
+  /** 0-100, or null while the size is unknown. */
+  percent: number | null;
+  phase?: 'video' | 'audio' | 'merging';
+  bytesDone?: number;
+  bytesTotal?: number;
+  /** Known offline for most links (a short link only once resolved). */
+  sourceKey?: string;
+  source?: DownloadSource;
+  /** The finished file. */
+  filePath?: string;
+  /** Height actually delivered. */
+  heightPx?: number;
+  error?: AppError;
+  /** A rate-limited download waits for this time before it tries again (`queued`). */
+  retryAt?: string;
+  /** Tries so far, including automatic ones after a rate limit. */
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  /** Projects made from this file. */
+  projectIds?: string[];
+}
+
+/** POST /downloads: add links to the queue. */
+export interface DownloadRequest {
+  input: string;
+  /** 1-based part; default the one the link points at (or 1). */
+  page?: number;
+  targetHeightPx?: number;
+}
+
+/**
+ * A saved set of dub choices ("Mẫu lồng tiếng"): New project, a batch of
+ * downloads and the plugin start from one (GET/PUT/DELETE /presets).
+ */
+export interface DubPreset {
+  /** `preset_<hex>`. */
+  id: string;
+  name: string;
+  targetLanguage: string;
+  /** Empty or absent: detect the spoken language. */
+  sourceLanguage?: string;
+  /** Applied over the settings the app recommends for this machine (engines, voice, subtitles, mix…). */
+  settings: Partial<ProjectSettings>;
+  /** Where finished files go; absent = each project's own folder. */
+  outputDir?: string;
+  /** Start dubbing as soon as a project is made from it. */
+  start?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** POST /downloads/dub: a project per finished download. */
+export interface DubDownloadsRequest {
+  downloadIds: string[];
+  /** A preset to start from; the fields below override it. */
+  presetId?: string;
+  targetLanguage?: string;
+  sourceLanguage?: string;
+  settings?: Partial<ProjectSettings>;
+  outputDir?: string;
+  /** Start (or queue) each dub right away. */
+  start?: boolean;
+  /**
+   * Dub the long ones as a series of parts (models/series.ts): only downloads
+   * longer than `longerThanMinutes` (default 1.5 x maxMinutes); the rest whole.
+   */
+  series?: Partial<SeriesSettings> & { longerThanMinutes?: number };
+}
+
+/** One download's outcome in {@link DubDownloadsRequest}. */
+export interface DubDownloadResult {
+  downloadId: string;
+  projectId?: string;
+  name?: string;
+  started?: boolean;
+  queued?: boolean;
+  /** Its models are still downloading; it starts once they are in. */
+  waiting?: boolean;
+  /** Split into parts (the request's `series`): projectId is the series; its parts are on GET /projects/:id/series. */
+  series?: boolean;
+  error?: AppError;
+}
+
+/** A change to the queue, on GET /download/events. */
+export type DownloadQueueEvent =
+  | { type: 'item'; item: DownloadItem; replay?: boolean }
+  | { type: 'removed'; id: string };

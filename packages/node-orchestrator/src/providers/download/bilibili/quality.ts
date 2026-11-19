@@ -57,6 +57,9 @@ export interface DashVideo {
   id?: number;
   baseUrl?: string;
   base_url?: string;
+  /** Mirrors of the same stream on other hosts. */
+  backupUrl?: string[];
+  backup_url?: string[];
   height?: number;
   width?: number;
   codecid?: number;
@@ -69,6 +72,8 @@ export interface DashAudio {
   id?: number;
   baseUrl?: string;
   base_url?: string;
+  backupUrl?: string[];
+  backup_url?: string[];
   codecs?: string;
   bandwidth?: number;
 }
@@ -194,4 +199,15 @@ export function pickAudio(audios: readonly DashAudio[]): DashAudio | undefined {
 /** DASH streams carry the URL under one of two spellings depending on the field. */
 export function streamUrl(s: DashVideo | DashAudio | undefined): string | undefined {
   return s?.baseUrl ?? s?.base_url;
+}
+
+/**
+ * The stream's mirrors, after its main URL: the same file on other hosts. A
+ * host that refuses or drops the connection is common on long downloads, and
+ * the next mirror usually serves the rest.
+ */
+export function streamBackupUrls(s: DashVideo | DashAudio | undefined): string[] {
+  const main = streamUrl(s);
+  const backups = [...(s?.backupUrl ?? []), ...(s?.backup_url ?? [])].filter((u) => typeof u === 'string' && u !== main);
+  return [...new Set(backups)];
 }

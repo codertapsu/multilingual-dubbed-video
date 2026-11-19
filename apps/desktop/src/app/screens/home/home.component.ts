@@ -183,6 +183,11 @@ export class HomeComponent implements OnInit, OnDestroy {
    */
   protected open(project: Project): void {
     const id = project.id;
+    // A series: its parts, the plan to review, or the analysis' progress.
+    if (project.series?.role === 'parent') {
+      void this.router.navigate(['/project', id, 'series']);
+      return;
+    }
     switch (project.status) {
       case 'completed':
         void this.router.navigate(['/project', id, 'editor']);
@@ -195,6 +200,14 @@ export class HomeComponent implements OnInit, OnDestroy {
         void this.router.navigate(['/project', id, 'processing']);
         break;
     }
+  }
+
+  protected partIndex(project: Project): number {
+    return project.series?.role === 'part' ? project.series.index : 0;
+  }
+
+  protected partCount(project: Project): number {
+    return project.series?.role === 'part' ? project.series.count : 0;
   }
 
   /** Map a project status to a badge status. */

@@ -22,7 +22,11 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+
+import { AppErrorException } from '@videodubber/shared';
+
 import { renameReplacing } from '../../../fsRename.js';
+import type { BrowserCookie } from '../types.js';
 
 /** Display-safe view of whether a session is configured. */
 export interface BilibiliSessionInfo {
@@ -35,6 +39,32 @@ export interface BilibiliSessionInfo {
 
 interface SessionFile {
   sessdata?: string;
+  /** The browser's device id cookie, when imported (see client.ts deviceCookie). */
+  buvid3?: string;
+}
+
+/** The cookies the client sends, as stored. */
+export interface BilibiliCookies {
+  sessdata?: string;
+  buvid3?: string;
+}
+
+/** True for a cookie domain of bilibili.com itself or one of its subdomains. */
+export function isBilibiliCookieDomain(domain: string): boolean {
+  const d = domain.trim().toLowerCase().replace(/^\./, '');
+  return d === 'bilibili.com' || d.endsWith('.bilibili.com');
+}
+
+/**
+ * The two cookies the client uses out of a browser's cookies: bilibili.com's
+ * own only (a same-named cookie of another site is not Bilibili's), the rest
+ * dropped. Pure.
+ */
+export function pickBilibiliCookies(cookies: readonly BrowserCookie[]): BilibiliCookies {
+  const own = cookies.filter((c) => isBilibiliCookieDomain(c.domain) && c.value.trim() !== '');
+  const sessdata = own.find((c) => c.name === 'SESSDATA')?.value.trim();
+  const buvid3 = own.find((c) => c.name === 'buvid3')?.value.trim();
+  return { ...(sessdata ? { sessdata } : {}), ...(buvid3 ? { buvid3 } : {}) };
 }
 
 const FILE_NAME = 'bilibili-session.json';
@@ -79,20 +109,50 @@ export class BilibiliSessionStore {
 
   /** The effective cookie value, or undefined when not configured. */
   async get(): Promise<string | undefined> {
-    const fromEnv = process.env['BILIBILI_SESSDATA']?.trim();
-    if (fromEnv) return fromEnv;
-    const file = await this.read();
-    return file.sessdata?.trim() || undefined;
+    return (await this.getAll()).sessdata;
   }
 
-  /** Save (or, given an empty value, clear) the cookie. */
+  /** Both cookies the client sends (the environment's SESSDATA wins). */
+  async getAll(): Promise<BilibiliCookies> {
+    const file = await this.read();
+    const sessdata = process.env['BILIBILI_SESSDATA']?.trim() || file.sessdata?.trim();
+    const buvid3 = file.buvid3?.trim();
+    return { ...(sessdata ? { sessdata } : {}), ...(buvid3 ? { buvid3 } : {}) };
+  }
+
+  /**
+   * Save a pasted cookie, or clear it given an empty value.
+   *
+   * A paste that is not empty but holds no SESSDATA is refused: it used to
+   * clear the saved login without a word, so a slip of the clipboard logged
+   * the user out while the screen said "saved".
+   */
   async set(raw: string): Promise<void> {
-    const value = normalizeSessdata(raw);
-    if (!value) {
+    if (!raw.trim()) {
       await this.writeAtomic({});
       return;
     }
-    await this.writeAtomic({ sessdata: value });
+    const value = normalizeSessdata(raw);
+    if (!value) {
+      throw new AppErrorException('INVALID_EDIT', 'There is no SESSDATA cookie in what was pasted.', {
+        remediation:
+          'Copy the value of the SESSDATA cookie (or the whole Cookie header) from a signed-in bilibili.com tab. The saved session was left as it was.',
+      });
+    }
+    const jar = raw.trim().replace(/^Cookie:\s*/i, '');
+    const buvid3 = /(?:^|;\s*)buvid3=([^;]+)/i.exec(jar)?.[1]?.trim() ?? (await this.read()).buvid3;
+    await this.writeAtomic({ sessdata: value, ...(buvid3 ? { buvid3 } : {}) });
+  }
+
+  /**
+   * Replace both cookies with what the user's browser holds (Mother Claude's
+   * export). Logged out there means no SESSDATA: the stored login is cleared
+   * and the device id kept, which is what a logged-out browser sends.
+   */
+  async importCookies(cookies: readonly BrowserCookie[]): Promise<BilibiliCookies> {
+    const picked = pickBilibiliCookies(cookies);
+    await this.writeAtomic(picked);
+    return picked;
   }
 
   /** Remove the stored cookie entirely. */

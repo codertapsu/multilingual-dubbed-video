@@ -26,6 +26,10 @@ export type ErrorCode =
   | 'NO_AUDIO_STREAM'
   | 'INVALID_LANGUAGE'
   | 'INVALID_VIDEO_LINK'
+  | 'SOURCE_RATE_LIMITED'
+  | 'SOURCE_LOGIN_REQUIRED'
+  | 'SOURCE_UNAVAILABLE'
+  | 'DISK_FULL'
   | 'OUTPUT_NOT_WRITABLE'
   | 'WORKER_UNAVAILABLE'
   | 'WORKER_TIMEOUT'
@@ -125,6 +129,26 @@ export const REMEDIATIONS: Record<ErrorCode, { remediation: string; docsRef: str
     remediation:
       'That link could not be recognised as a downloadable video. Paste the full address from the browser address bar.',
     docsRef: 'docs/TROUBLESHOOTING.md#invalid-video-link',
+  },
+  SOURCE_RATE_LIMITED: {
+    remediation:
+      'The video site is limiting requests from this computer for now. Wait a few minutes and retry; downloads already finished are kept, and an interrupted one continues where it stopped.',
+    docsRef: 'docs/TROUBLESHOOTING.md#source-rate-limited',
+  },
+  SOURCE_LOGIN_REQUIRED: {
+    remediation:
+      'This video needs a signed-in account on the site (members only, paid, or age-restricted). Sign in to the site in your browser and give VideoDubber its cookies (Download screen → Bilibili session).',
+    docsRef: 'docs/TROUBLESHOOTING.md#source-login-required',
+  },
+  SOURCE_UNAVAILABLE: {
+    remediation:
+      'The site does not offer this video: it was removed, is private, or is not available in your region. Open the link in a browser to check it plays there.',
+    docsRef: 'docs/TROUBLESHOOTING.md#source-unavailable',
+  },
+  DISK_FULL: {
+    remediation:
+      'Not enough free space on the drive that holds the downloads folder. Free some space (Settings → Storage can clear finished downloads and caches), or move the projects folder to a larger drive, then retry.',
+    docsRef: 'docs/TROUBLESHOOTING.md#disk-full',
   },
   OUTPUT_NOT_WRITABLE: {
     remediation:

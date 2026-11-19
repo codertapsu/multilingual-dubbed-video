@@ -53,6 +53,12 @@ export interface ClaudeRequest {
   signal?: AbortSignal;
   /** Claude reached through Mother Claude's HTTP API: errors then say how to fix that. */
   via?: 'mother-claude';
+  /**
+   * Who is asking, for Mother Claude's HTTP API (`X-Client-Id`, a folder per
+   * client there): `videodubber/<projectId>` when a project is known, else
+   * `videodubber`. Sent only through Mother Claude.
+   */
+  clientId?: string;
 }
 
 export interface ClaudeReply {
@@ -74,7 +80,7 @@ export interface ClaudeMessageLike {
 /** Sends one request; the SDK in production, a fake in tests. */
 export type ClaudeSend = (
   params: Record<string, unknown>,
-  ctx: { apiKey: string; baseUrl?: string; timeoutMs: number; signal?: AbortSignal; beta: boolean; via?: 'mother-claude' },
+  ctx: { apiKey: string; baseUrl?: string; timeoutMs: number; signal?: AbortSignal; beta: boolean; via?: 'mother-claude'; clientId?: string },
 ) => Promise<ClaudeMessageLike>;
 
 /**
@@ -139,7 +145,7 @@ export async function claudeMessage(req: ClaudeRequest, send: ClaudeSend = sdkSe
     timeoutMs: req.timeoutMs,
     ...(req.signal ? { signal: req.signal } : {}),
     beta,
-    ...(req.via ? { via: req.via } : {}),
+    ...(req.via ? { via: req.via, clientId: req.clientId ?? 'videodubber' } : {}),
   });
 
   if (message.stop_reason === 'refusal') {
@@ -176,6 +182,8 @@ export const sdkSend: ClaudeSend = async (params, ctx) => {
   const client = new Anthropic({
     apiKey: ctx.apiKey,
     ...(ctx.baseUrl ? { baseURL: sdkBaseUrl(ctx.baseUrl) } : {}),
+    // Mother Claude's HTTP API keeps a folder per client (agreed with its session).
+    ...(ctx.via === 'mother-claude' ? { defaultHeaders: { 'X-Client-Id': ctx.clientId ?? 'videodubber' } } : {}),
     timeout: ctx.timeoutMs,
     maxRetries: 2,
   });

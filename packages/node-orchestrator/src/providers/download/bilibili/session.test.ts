@@ -128,3 +128,34 @@ describe('BilibiliSessionStore', () => {
     expect(await store.describe()).toMatchObject({ configured: true, fromEnv: true });
   });
 });
+
+describe('BilibiliSessionStore and the browser', () => {
+  it('refuses a paste with no SESSDATA instead of clearing the saved login', async () => {
+    const store = new BilibiliSessionStore(dir);
+    await store.set('SESSDATA=keepme12345');
+    await expect(store.set('bili_jct=x; DedeUserID=1')).rejects.toMatchObject({ appError: { code: 'INVALID_EDIT' } });
+    expect(await store.get()).toBe('keepme12345');
+  });
+
+  it('keeps the device id from a pasted Cookie header, and nothing else', async () => {
+    const store = new BilibiliSessionStore(dir);
+    await store.set('Cookie: buvid3=dev-1; SESSDATA=sess-1; bili_jct=secret');
+    expect(await store.getAll()).toEqual({ sessdata: 'sess-1', buvid3: 'dev-1' });
+    expect(await fsp.readFile(path.join(dir, 'bilibili-session.json'), 'utf8')).not.toContain('secret');
+  });
+
+  it("imports the browser's bilibili.com cookies only; logged out clears the login", async () => {
+    const store = new BilibiliSessionStore(dir);
+    await store.importCookies([
+      { name: 'SESSDATA', value: 'from-browser', domain: '.bilibili.com' },
+      { name: 'buvid3', value: 'device', domain: 'www.bilibili.com' },
+      { name: 'SESSDATA', value: 'not-bilibili', domain: '.evil-bilibili.com' },
+      { name: 'bili_jct', value: 'csrf', domain: '.bilibili.com' },
+    ]);
+    expect(await store.getAll()).toEqual({ sessdata: 'from-browser', buvid3: 'device' });
+
+    await store.importCookies([{ name: 'buvid3', value: 'device-2', domain: '.bilibili.com' }]);
+    expect(await store.getAll()).toEqual({ buvid3: 'device-2' });
+    expect(await store.describe()).toEqual({ configured: false });
+  });
+});

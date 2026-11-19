@@ -10,7 +10,7 @@ import {
   input,
   signal,
 } from '@angular/core';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
 import { IpcService } from '../../core/ipc/ipc.service';
 import { PipelineEventsService } from '../../core/ipc/pipeline-events.service';
@@ -46,7 +46,7 @@ const QUEUE_POLL_MS = 3000;
   selector: 'vd-processing',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ErrorBannerComponent, StatusBadgeComponent, BusyIndicatorComponent, TranslatePipe],
+  imports: [ErrorBannerComponent, StatusBadgeComponent, BusyIndicatorComponent, TranslatePipe, RouterLink],
   templateUrl: './processing.component.html',
   styleUrl: './processing.component.scss',
 })

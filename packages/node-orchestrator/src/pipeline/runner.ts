@@ -108,6 +108,15 @@ import {
 } from './grouping.js';
 import { anchorSegmentsToSpeech, needsSpeechMap, type SpeechRegion } from './segmentTiming.js';
 import { cachedSpeechRegions, type SpeechMapService } from './speechMap.js';
+import { mixFingerprint, writeMixFingerprint } from './mixFingerprint.js';
+import { projectBrandFiles, type BrandKit } from '../branding/brandKit.js';
+import { planGreetings } from '../branding/greetingPlanner.js';
+import { dubWindows, greetingSettingsKey, originalSpeech, readGreetingPlan, type SavedGreetingPlan } from '../branding/greetingMix.js';
+import { logoPeriods } from '@videodubber/shared';
+import { partEffects } from '../series/seriesPlanner.js';
+import { rangedMediaInfo } from '../series/seriesRange.js';
+import { reuseRecapTranslations } from '../series/recap.js';
+import { siteTranscript } from '../providers/download/siteSubtitles.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
 import { describeStretch } from '../media.js';
@@ -161,6 +170,12 @@ export interface RunnerDeps {
    * run budgets with its TTS engine's default rate.
    */
   voiceRates?: VoiceRateBook;
+  /**
+   * The brand kit a project's logo and greeting come from (copied into the
+   * project the first time; branding/brandKit.ts). Absent: a project that has
+   * no copy of its branding yet fails at the mix/render with how to fix it.
+   */
+  brandKit?: Pick<BrandKit, 'get'>;
 }
 
 /** Options controlling a single run. */
@@ -545,6 +560,13 @@ export class PipelineRunner {
       for (const stepId of PIPELINE_STEP_IDS) {
         throwIfCancelled(options.signal);
 
+        // A series parent only analyses the video (speech-to-text once, for the
+        // whole of it); its parts dub the rest, each as a project of its own.
+        if (project.series?.role === 'parent' && pipelineStepIndex(stepId) > pipelineStepIndex('stt')) {
+          state = await transition(this.deps, state, stepId, 'skipped');
+          continue;
+        }
+
         const stepState = state.steps.find((s) => s.id === stepId);
         const forceRun = pipelineStepIndex(stepId) >= retryIndex;
 
@@ -788,7 +810,13 @@ export class PipelineRunner {
       case 'stt':
         return this.stepStt(project, paths, signal, onProgress);
       case 'translation':
-        return this.stepTranslation(project, paths, signal, onProgress);
+        await this.stepTranslation(project, paths, signal, onProgress);
+        // A series part's recap says what the previous part said: in the same words.
+        await reuseRecapTranslations(project, this.deps.store).then(
+          (n) => n > 0 && this.deps.logger.info(`Recap: ${n} line(s) take the previous part's translation.`),
+          (err: unknown) => this.deps.logger.warn(`Recap lines keep their own translation (${String(err)}).`),
+        );
+        return;
       case 'refine':
         return this.stepRefine(project, paths, signal, onProgress);
       case 'tts':
@@ -810,10 +838,12 @@ export class PipelineRunner {
 
   private async stepProbe(project: Project, _paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
     throwIfCancelled(signal);
-    const info = await this.deps.media.probe(project.inputVideoPath, signal);
-    if (!info.hasAudio || info.audioStreams.length === 0) {
+    const probed = await this.deps.media.probe(project.inputVideoPath, signal);
+    if (!probed.hasAudio || probed.audioStreams.length === 0) {
       throw new AppErrorException('NO_AUDIO_STREAM', 'The input video has no audio stream to dub.');
     }
+    // A series part dubs a window of the video: everything inside it is timed from the window's start.
+    const info = rangedMediaInfo(probed, project.sourceRange);
     const fresh = await this.deps.store.getProject(project.id);
     await this.deps.store.saveProject({ ...fresh, mediaInfo: info });
     this.deps.logger.info(
@@ -823,11 +853,12 @@ export class PipelineRunner {
 
   private async stepExtractAudio(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
     throwIfCancelled(signal);
-    this.deps.logger.info('Extracting full-rate audio (original.wav)...');
-    await this.deps.media.extractAudio(project.inputVideoPath, paths.originalWav, signal);
+    const range = project.sourceRange;
+    this.deps.logger.info(`Extracting full-rate audio (original.wav)${range ? ' of this part' : ''}...`);
+    await this.deps.media.extractAudio(project.inputVideoPath, paths.originalWav, signal, range);
     throwIfCancelled(signal);
     this.deps.logger.info('Extracting 16 kHz mono audio for STT (original_16k_mono.wav)...');
-    await this.deps.media.extract16kMono(project.inputVideoPath, paths.original16kMonoWav, signal);
+    await this.deps.media.extract16kMono(project.inputVideoPath, paths.original16kMonoWav, signal, range);
   }
 
   private async stepStt(
@@ -867,7 +898,20 @@ export class PipelineRunner {
     };
 
     let transcript: { segments: TranscriptSegment[]; detectedLanguage: string | undefined };
-    try {
+    // The site's own subtitles (Bilibili CC/AI) instead of the engine, when the
+    // project asks for them and the download has some in its spoken language.
+    const fromSite = project.settings.useSourceSubtitles ? await siteTranscript(project) : undefined;
+    if (project.settings.useSourceSubtitles && !fromSite) {
+      this.deps.logger.info(
+        'The site published no subtitles for this video in its spoken language (Bilibili gives them only to a signed-in account): transcribing it.',
+      );
+    }
+    if (fromSite) {
+      this.deps.logger.info(
+        `Using the "${fromSite.label}" subtitles the site published (${fromSite.segments.length} lines) instead of speech-to-text.`,
+      );
+      transcript = { segments: fromSite.segments, detectedLanguage: fromSite.language };
+    } else try {
       transcript = await transcribeWith(provider);
     } catch (err) {
       const fallback = this.sttFallbackFor(project, provider.id, err);
@@ -2400,21 +2444,37 @@ export class PipelineRunner {
     const aligned = await this.readAligned(paths.translatedAlignedJson);
     const mediaInfo = (await this.deps.store.getProject(project.id)).mediaInfo;
     const totalDurationMs = mediaInfo?.durationMs ?? this.estimateTotalDuration(aligned);
+    // The spoken greeting (branding): planned into quiet moments, laid into the
+    // dub's track so the original is lowered under it like under a line.
+    const greeting = await this.greetingClips(project, paths, aligned, totalDurationMs);
+    // What this mix is made of, taken before it is built: recorded once it is
+    // written, so a later render can tell whether it is still current.
+    const fingerprint = await mixFingerprint({
+      workspaceDir: project.workspaceDir,
+      aligned,
+      totalDurationMs,
+      settings: project.settings,
+      originalWav: paths.originalWav,
+      ...(greeting ? { greeting: greeting.fingerprint } : {}),
+    });
 
     // Build the full-length TTS timeline, applying per-clip time-stretch (the
     // engine choice is policy: rubberband when available/warranted, else atempo)
     // and micro-fades at every join. Clip durations let the worker place the
     // fade-outs without probing.
-    const timelineSegments: TimelineSegmentInput[] = aligned.map((a) => ({
-      audioPath: a.audioPath,
-      startMs: a.startMs,
-      speedRatio: a.speedRatio,
-      durationMs: a.generatedDurationMs,
-      // Only the speech plays (clipSpeech.ts); durationMs is already its length.
-      ...(a.trimStartMs !== undefined && a.trimEndMs !== undefined
-        ? { trimStartMs: a.trimStartMs, trimEndMs: a.trimEndMs }
-        : {}),
-    }));
+    const timelineSegments: TimelineSegmentInput[] = [
+      ...aligned.map((a) => ({
+        audioPath: a.audioPath,
+        startMs: a.startMs,
+        speedRatio: a.speedRatio,
+        durationMs: a.generatedDurationMs,
+        // Only the speech plays (clipSpeech.ts); durationMs is already its length.
+        ...(a.trimStartMs !== undefined && a.trimEndMs !== undefined
+          ? { trimStartMs: a.trimStartMs, trimEndMs: a.trimEndMs }
+          : {}),
+      })),
+      ...(greeting?.clips ?? []),
+    ];
 
     this.deps.logger.info(`Building TTS timeline (${timelineSegments.length} clips, ${totalDurationMs}ms)...`);
     const timeline = await this.deps.media.buildTtsTimeline(
@@ -2495,12 +2555,84 @@ export class PipelineRunner {
       },
       signal,
     );
+    await writeMixFingerprint(paths.finalMixInputsJson, fingerprint);
     this.deps.logger.info('Audio mix complete (final_mix.wav).');
+  }
+
+  /**
+   * The greeting's clips and plan. A plan the user edited (the editor) is used
+   * as it is while the greeting settings stay the same; otherwise the planner
+   * places it afresh around the dub and the original speech.
+   */
+  private async greetingClips(
+    project: Project,
+    paths: WorkspacePaths,
+    aligned: readonly AlignedSegment[],
+    totalDurationMs: number,
+  ): Promise<{ clips: TimelineSegmentInput[]; fingerprint: { file: string; placements: { atMs: number }[]; gainDb: number; key: string } } | undefined> {
+    const settings = project.settings.branding?.greeting;
+    if (!settings?.assetId) return undefined;
+    const files = await projectBrandFiles(project.workspaceDir, { greeting: settings }, this.brandKit());
+    if (!files.greetingPath || !files.greetingDurationMs) return undefined;
+    const key = greetingSettingsKey(settings);
+    const previous = await readGreetingPlan(paths.greetingPlanJson);
+    let plan: SavedGreetingPlan;
+    if (previous?.edited && previous.settingsKey === key) {
+      plan = previous;
+    } else {
+      const busy = [...dubWindows(aligned), ...(await originalSpeech(paths.speechRegionsJson, paths.sourceJson))];
+      plan = {
+        ...planGreetings({ assetId: settings.assetId, durationMs: totalDurationMs, greetingMs: files.greetingDurationMs, busy, settings }),
+        settingsKey: key,
+      };
+      await writeJsonAtomic(paths.greetingPlanJson, plan);
+    }
+    this.deps.logger.info(
+      `Greeting: ${plan.placements.length} time(s)` +
+        (plan.openingSkipped ? '; no quiet moment in the opening, so none at the start' : '') +
+        (plan.found < plan.requested ? `; ${plan.found} of ${plan.requested} repeats fitted between lines` : '') +
+        '.',
+    );
+    const greetingPath = files.greetingPath;
+    const greetingMs = files.greetingDurationMs;
+    return {
+      clips: plan.placements.map((p) => ({ audioPath: greetingPath, startMs: p.atMs, speedRatio: 1, durationMs: greetingMs, gainDb: settings.gainDb })),
+      fingerprint: { file: greetingPath, placements: plan.placements, gainDb: settings.gainDb, key },
+    };
+  }
+
+  /** The brand kit, or one that has nothing (projects then use the copies they already have). */
+  private brandKit(): Pick<BrandKit, 'get'> {
+    return (
+      this.deps.brandKit ?? {
+        get: async (id: string) => {
+          throw new AppErrorException('INVALID_EDIT', `The brand kit item "${id}" is not available here.`);
+        },
+      }
+    );
   }
 
   private async stepRender(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
     throwIfCancelled(signal);
     const mode = project.settings.subtitleExportMode;
+    // The logo (branding): drawn over the picture, so the video is re-encoded.
+    const logoSettings = project.settings.branding?.logo;
+    const logoFile = logoSettings?.assetId
+      ? (await projectBrandFiles(project.workspaceDir, { logo: logoSettings }, this.brandKit())).logoPath
+      : undefined;
+    const videoMs = (await this.deps.store.getProject(project.id)).mediaInfo?.durationMs ?? 0;
+    const periods = logoSettings ? logoPeriods(logoSettings, videoMs) : undefined;
+    const logo =
+      logoSettings && logoFile
+        ? {
+            imagePath: logoFile,
+            corner: logoSettings.corner,
+            widthPct: logoSettings.widthPct,
+            marginPct: logoSettings.marginPct,
+            opacity: logoSettings.opacity,
+            ...(periods ? { periods } : {}),
+          }
+        : undefined;
     // Choose the subtitle sidecar that matches the requested mode.
     const subtitlePath =
       mode === 'vtt-file'
@@ -2524,6 +2656,22 @@ export class PipelineRunner {
         burnSubtitleStyle: project.settings.burnSubtitleStyle,
         copyVideoStream: mode !== 'burned-in',
         ...(project.settings.renderQuality ? { renderQuality: project.settings.renderQuality } : {}),
+        ...(logo ? { logo } : {}),
+        // A series part: its window of the video, its recap, title and end cards.
+        ...(project.sourceRange ? { range: project.sourceRange } : {}),
+        ...(project.series?.role === 'part'
+          ? {
+              effects: partEffects({
+                index: project.series.index,
+                count: project.series.count,
+                seriesName: project.series.seriesName,
+                ...(project.series.title ? { title: project.series.title } : {}),
+                recapEndMs: project.series.recapEndMs,
+                durationMs: videoMs,
+                targetLanguage: project.settings.targetLanguage,
+              }),
+            }
+          : {}),
       },
       signal,
     );

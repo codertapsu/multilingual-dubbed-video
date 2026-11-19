@@ -507,12 +507,15 @@ describe('estimateTimelineTmpBytes', () => {
     expect(estimateTimelineTmpBytes(1, 7_200_000)).toBe(0);
   });
 
-  it('scales with intermediate count and full-clip length for chunked builds', () => {
-    // 2-hour timeline, 2400 clips => ceil(2400/32)=75 level-1 + ceil(75/32)=3 level-2.
+  it('grows with the length, not with the length times the line count', () => {
+    // 2-hour timeline, 2400 clips => 75 level-1 intermediates (> 32, so a level 2):
+    // each covers its own stretch, so the two levels are ~one timeline each.
     const bytes = estimateTimelineTmpBytes(2400, 2 * 60 * 60 * 1000);
     const perFull = Math.ceil((7_200_000 / 1000) * 48_000 * 2 * 2);
-    expect(bytes).toBe(Math.ceil((75 + 3) * perFull * 1.2));
-    // Sanity: this is tens of GiB, which is exactly why the guard exists.
-    expect(bytes / 1024 ** 3).toBeGreaterThan(50);
+    expect(bytes).toBe(Math.ceil(2 * perFull * 1.2));
+    // It was 78 full-length WAVs (over 120 GiB) when every intermediate spanned the video.
+    expect(bytes / 1024 ** 3).toBeLessThan(4);
+    // One level when the intermediates fit one mix.
+    expect(estimateTimelineTmpBytes(500, 3_600_000)).toBe(Math.ceil(Math.ceil(3600 * 48_000 * 2 * 2) * 1.2));
   });
 });

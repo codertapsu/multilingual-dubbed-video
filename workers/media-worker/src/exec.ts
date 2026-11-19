@@ -11,7 +11,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { accessSync, constants as fsConstants } from 'node:fs';
+import { accessSync, closeSync, constants as fsConstants, openSync, readSync } from 'node:fs';
 import { dirname, resolve as resolvePath } from 'node:path';
 import {
   AppErrorException,
@@ -233,14 +233,62 @@ function tail(s: string, n: number): string {
   return s.length > n ? s.slice(s.length - n) : s;
 }
 
+/**
+ * True when the file opens with a WAV header (`RIFF` or `RF64`, then `WAVE`).
+ * Unreadable or short files are not WAVs.
+ */
+export function opensAsWav(file: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(file, 'r');
+    const head = Buffer.alloc(12);
+    if (readSync(fd, head, 0, 12, 0) < 12) return false;
+    const riff = head.toString('latin1', 0, 4);
+    return (riff === 'RIFF' || riff === 'RF64') && head.toString('latin1', 8, 12) === 'WAVE';
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/**
+ * Put `-f wav` before every `-i` whose file is a WAV, unless that input
+ * already names its format. Pure (the header check is passed in).
+ *
+ * ffmpeg 9.0.2's MPEG-TS probe can outscore the WAV probe: PCM that holds the
+ * byte 0x47 at a transport packet's spacing (a steady tone can, a jingle or a
+ * test sine) is then read as a broken transport stream, and the step fails or
+ * reads garbage (ffmpeg-skill #518). Every WAV this app reads is one it wrote
+ * or converted, so naming the format costs nothing and removes the guess.
+ */
+export function forceWavInputs(args: readonly string[], isWav: (file: string) => boolean): string[] {
+  const out: string[] = [];
+  // Where the options of the input being read start: they run up to its -i.
+  let optionsFrom = 0;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    const file = args[i + 1];
+    if (arg === '-i' && file !== undefined) {
+      if (!out.slice(optionsFrom).includes('-f') && isWav(file)) out.push('-f', 'wav');
+      out.push(arg, file);
+      i++;
+      optionsFrom = out.length;
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
+}
+
 /** Run ffmpeg with an argv array. ENOENT -> FFMPEG_NOT_FOUND. */
 export function runFfmpeg(args: string[], opts: RunOptions = {}): Promise<RunResult> {
-  return run(resolveFfmpegBinary(), args, 'FFMPEG_NOT_FOUND', opts);
+  return run(resolveFfmpegBinary(), forceWavInputs(args, opensAsWav), 'FFMPEG_NOT_FOUND', opts);
 }
 
 /** Run ffprobe with an argv array. ENOENT -> FFPROBE_NOT_FOUND. */
 export function runFfprobe(args: string[], opts: RunOptions = {}): Promise<RunResult> {
-  return run(resolveFfprobeBinary(), args, 'FFPROBE_NOT_FOUND', opts);
+  return run(resolveFfprobeBinary(), forceWavInputs(args, opensAsWav), 'FFPROBE_NOT_FOUND', opts);
 }
 
 /**

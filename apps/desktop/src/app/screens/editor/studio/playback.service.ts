@@ -1,6 +1,8 @@
 import type { OnDestroy } from '@angular/core';
 import { Injectable, NgZone, computed, inject, signal } from '@angular/core';
 
+import { StudioStore } from './studio.store';
+
 /** A dub clip as the preview plays it. */
 export interface PreviewClip {
   id: string;
@@ -43,6 +45,19 @@ const MAX_BUFFERS = 80;
 @Injectable()
 export class PlaybackService implements OnDestroy {
   private readonly zone = inject(NgZone);
+  /** A series part plays only its window of the video (project.sourceRange); 0 / none for a whole video. */
+  private readonly studio = inject(StudioStore, { optional: true });
+  private readonly range = computed(() => this.studio?.project()?.sourceRange);
+
+  /** The timeline's time of the video's current frame (a part's window starts at 0). */
+  private videoMs(v: HTMLVideoElement): number {
+    return this.videoMs(v) - (this.range()?.startMs ?? 0);
+  }
+
+  /** The video's time for a timeline time. */
+  private toVideoSeconds(ms: number): number {
+    return (ms + (this.range()?.startMs ?? 0)) / 1000;
+  }
 
   readonly currentMs = signal(0);
   readonly playing = signal(false);
@@ -87,19 +102,23 @@ export class PlaybackService implements OnDestroy {
     on('ended', () => this.onPause());
     on('seeking', () => this.stopSources());
     on('seeked', () => {
-      this.currentMs.set(video.currentTime * 1000);
+      this.currentMs.set(this.videoMs(video));
       if (!video.paused) this.reanchor();
-      this.prefetchAround(video.currentTime * 1000);
+      this.prefetchAround(this.videoMs(video));
     });
     on('ratechange', () => {
       this.rate.set(video.playbackRate);
       if (!video.paused) this.reanchor();
     });
-    on('loadedmetadata', () =>
-      this.durationMs.set(Number.isFinite(video.duration) ? video.duration * 1000 : 0),
-    );
+    on('loadedmetadata', () => {
+      const whole = Number.isFinite(video.duration) ? video.duration * 1000 : 0;
+      const range = this.range();
+      this.durationMs.set(range ? Math.max(0, Math.min(whole || range.endMs, range.endMs) - range.startMs) : whole);
+      // A part opens on its own first frame, not the video's.
+      if (range && video.currentTime * 1000 < range.startMs) video.currentTime = range.startMs / 1000;
+    });
     on('timeupdate', () => {
-      if (video.paused) this.currentMs.set(video.currentTime * 1000);
+      if (video.paused) this.currentMs.set(this.videoMs(video));
     });
     this.applyVolumes();
   }
@@ -150,7 +169,7 @@ export class PlaybackService implements OnDestroy {
     const v = this.video;
     const clamped = Math.max(0, Math.min(ms, this.durationMs() || ms));
     this.currentMs.set(clamped);
-    if (v) v.currentTime = clamped / 1000;
+    if (v) v.currentTime = this.toVideoSeconds(clamped);
   }
 
   /** Nudge the playhead (frame steps, 1 s jumps). */
@@ -230,9 +249,14 @@ export class PlaybackService implements OnDestroy {
       const loop = (): void => {
         const v = this.video;
         if (!v || v.paused) return;
-        const ms = v.currentTime * 1000;
+        const ms = this.videoMs(v);
         this.zone.run(() => this.currentMs.set(ms));
         if (this.stopAtMs !== null && ms >= this.stopAtMs) {
+          this.zone.run(() => this.pause());
+          return;
+        }
+        // A part's window ends before the video does.
+        if (this.range() && ms >= this.durationMs()) {
           this.zone.run(() => this.pause());
           return;
         }
@@ -250,7 +274,7 @@ export class PlaybackService implements OnDestroy {
     this.anchor = null;
     this.activeClipIds.set(new Set());
     this.applyVolumes();
-    if (this.video) this.currentMs.set(this.video.currentTime * 1000);
+    if (this.video) this.currentMs.set(this.videoMs(this.video));
   }
 
   private reanchor(): void {
@@ -259,7 +283,7 @@ export class PlaybackService implements OnDestroy {
     if (!v || !ctx) return;
     this.stopSources();
     this.anchor = {
-      mediaMs: v.currentTime * 1000,
+      mediaMs: this.videoMs(v),
       ctxTime: ctx.currentTime,
       rate: v.playbackRate || 1,
     };
@@ -275,7 +299,7 @@ export class PlaybackService implements OnDestroy {
   private tick(): void {
     const v = this.video;
     if (!v || v.paused || !this.anchor) return;
-    const videoMs = v.currentTime * 1000;
+    const videoMs = this.videoMs(v);
     if (Math.abs(videoMs - this.mediaNow()) > RESYNC_MS) {
       this.reanchor();
     } else {

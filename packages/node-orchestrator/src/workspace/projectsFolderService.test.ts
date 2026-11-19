@@ -24,12 +24,18 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fsp.rm(tmp, { recursive: true, force: true });
+  // A move still copying would refill the folder being removed (ENOTEMPTY).
+  await settled();
+  await fsp.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
-/** Wait until the background move has ended. */
+/**
+ * Wait until the background move has ended. Generous: in the full parallel
+ * suite on Windows a two-project move took over 2 s, and a test that read the
+ * folder mid-move failed on a state that was only late.
+ */
 async function settled() {
-  for (let i = 0; i < 200 && service.moving; i++) await new Promise((r) => setTimeout(r, 10));
+  for (let i = 0; i < 1500 && service.moving; i++) await new Promise((r) => setTimeout(r, 20));
   return service.info();
 }
 

@@ -24,6 +24,19 @@
 
   <vd-error-banner [error]="displayError()" (dismiss)="dismissError()" />
 
+  <!-- A series: this run only transcribes the whole video; the parts dub the rest. -->
+  @if (store.current()?.series; as s) {
+    <div class="card stack">
+      @if (s.role === 'parent') {
+        <p>{{ 'series.processing-parent' | translate }}</p>
+        <a class="btn" [routerLink]="['/project', store.current()?.id, 'series']">{{ 'series.open' | translate }}</a>
+      } @else {
+        <p>{{ 'series.processing-part' | translate: { n: s.index, count: s.count, name: s.seriesName } }}</p>
+        <a class="btn" [routerLink]="['/project', s.parentId, 'series']">{{ 'series.open' | translate }}</a>
+      }
+    </div>
+  }
+
   <!-- Waiting for a free dubbing slot: this project is queued behind others. -->
   @if (queueEntry(); as entry) {
     <div class="card banner-info stack" role="status">

@@ -70,6 +70,31 @@ describe('buildTtsTimeline chunked mix (parallel)', () => {
     expect(existsSync(dirname(finalInputs[0]!))).toBe(false);
   });
 
+  it('mixes each chunk over its own stretch only, and places it back where it starts', async () => {
+    const graphs = new Map<string, string>();
+    runFfmpegMock.mockImplementation((async (args: string[]) => {
+      const out = args[args.length - 1]!;
+      graphs.set(basename(out).replace(/\.partial/, ''), args[args.indexOf('-filter_complex') + 1]!);
+      writeFileSync(out, inputsOf(args).join('\n'));
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }) as never);
+
+    await buildTtsTimeline({ segments, totalDurationMs: 60_000, outputPath: join(dir, 'tts_full.wav'), mixConcurrency: 1 });
+
+    // Chunk 1 starts at its first clip (32 x 10 ms): relative delays from 0, and
+    // no padding to the video's length (that made every intermediate full-length).
+    const chunk1 = graphs.get('chunk_0001.wav')!;
+    expect(chunk1).toContain('adelay=0|0');
+    expect(chunk1).toContain('adelay=310|310');
+    expect(chunk1).not.toContain('apad');
+    // The final mix places each chunk at its start, unfaded, and pins the full length.
+    const final = [...graphs.entries()].find(([name]) => !name.startsWith('chunk_'))![1];
+    expect(final).toContain('[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=320|320');
+    expect(final).toContain('[2:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=640|640');
+    expect(final).not.toContain('afade');
+    expect(final).toContain('apad=whole_dur=60.000');
+  });
+
   it('a failing chunk kills its siblings, skips the final mix, and cleans up', async () => {
     const signals: AbortSignal[] = [];
     let scratch = '';

@@ -106,6 +106,15 @@
               <span class="project-path mono">{{ project.inputVideoPath }}</span>
             </div>
             <div class="project-meta">
+              @if (project.series?.role === 'parent') {
+                <span class="badge badge-warning">{{ 'home.series-badge' | translate }}</span>
+              }
+              @if (project.series?.role === 'part') {
+                <span class="badge">{{ 'home.part-badge' | translate: { n: partIndex(project), count: partCount(project) } }}</span>
+              }
+              @if (project.published?.length) {
+                <span class="badge badge-completed">{{ 'home.published-badge' | translate }}</span>
+              }
               <span class="badge badge-pending">{{ dubLabel(project) }}</span>
               @if (project.mediaInfo) {
                 <span class="muted">{{

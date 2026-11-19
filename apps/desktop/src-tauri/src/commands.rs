@@ -144,16 +144,18 @@ pub async fn synthesize_single_segment(
 // Render
 // ---------------------------------------------------------------------------
 
-/// `render_final_video` -> `POST /projects/:id/render`.
+/// `render_final_video` -> `POST /projects/:id/render` (Export's "Render again").
 ///
-/// Body `{ subtitleExportMode?, burnSubtitleStyle? }`. Returns `RenderFinalVideoResult`.
-/// `options` is forwarded verbatim (may be omitted to use project settings).
+/// Body `{ subtitleExportMode?, burnSubtitleStyle? }`. Returns
+/// `{ started, queued, position?, fromStep }` (202): since 0.16 the route is a
+/// kick-off like `/run` (a run from the mix or the render), followed on the
+/// project's events. `options` is forwarded verbatim (may be omitted to use
+/// project settings).
 ///
-/// Uses the LONG timeout: unlike `/run`, this route is NOT a kick-off — the
-/// orchestrator awaits `renderFinalVideo` to completion, so the response only
-/// arrives after FFmpeg has finished. On the 120s ceiling, re-rendering with
-/// burned-in subtitles told the user the export had failed while FFmpeg ran on
-/// to success, and pressing the button again started a second render.
+/// Keeps the LONG timeout from when the route awaited FFmpeg (on the 120s
+/// ceiling a burned-in render was reported failed while it ran on): deciding
+/// whether the mix is current reads every dub clip's size, which takes a
+/// moment on a long video.
 #[tauri::command]
 pub async fn render_final_video(
     project_id: String,
@@ -243,6 +245,39 @@ pub async fn pick_video_file(app: AppHandle) -> Result<Value, String> {
         )
     })?;
 
+    Ok(json!({ "path": picked }))
+}
+
+/// `pick_media_file` opens a native open-file picker for the brand kit: a
+/// picture (`kind` = "image", a logo) or a sound (`kind` = "audio": audio
+/// files, and videos whose sound is used; a greeting). `title` comes from the
+/// UI so it is in the user's language. Returns `{ path: string | null }`.
+#[tauri::command]
+pub async fn pick_media_file(app: AppHandle, kind: String, title: Option<String>) -> Result<Value, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<String>>();
+    let (label, extensions): (&str, &[&str]) = if kind == "image" {
+        ("Images", &["png", "jpg", "jpeg", "webp", "bmp", "gif"])
+    } else {
+        (
+            "Audio and video",
+            &["mp3", "wav", "m4a", "aac", "flac", "ogg", "opus", "wma", "mp4", "mov", "mkv", "webm"],
+        )
+    };
+    app.dialog()
+        .file()
+        .set_title(title.unwrap_or_else(|| "Choose a file".to_string()))
+        .add_filter(label, extensions)
+        .add_filter("All files", &["*"])
+        .pick_file(move |maybe_path| {
+            let _ = tx.send(maybe_path.map(|p| p.to_string()));
+        });
+    let picked = rx.await.map_err(|e| {
+        app_error_json(
+            "UNKNOWN",
+            &format!("file dialog channel closed before a selection was made: {e}"),
+            None,
+        )
+    })?;
     Ok(json!({ "path": picked }))
 }
 

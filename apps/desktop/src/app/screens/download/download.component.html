@@ -11,37 +11,91 @@
 
   <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
 
-  <!-- Step 1: paste a link -->
+  <!-- Paste one link or many -->
   <div class="card stack">
     <h2>{{ 'source-video.link-heading' | translate }}</h2>
     <label class="stack-sm">
       <span class="label">{{ 'source-video.link-label' | translate }}</span>
-      <input
-        type="text"
-        class="input"
+      <textarea
+        class="input links"
+        rows="4"
         [ngModel]="input()"
-        (ngModelChange)="input.set($event)"
-        (keydown.enter)="resolve()"
+        (ngModelChange)="input.set($event); video.set(null)"
         [placeholder]="'source-video.link-placeholder' | translate"
-        [disabled]="downloading()"
-      />
+      ></textarea>
       <span class="hint muted">{{ 'source-video.link-hint' | translate }}</span>
       <span class="hint muted">{{ 'source-video.quality-note' | translate }}</span>
     </label>
 
+    <label class="stack-sm">
+      <span class="label">{{ 'source-video.quality-label' | translate }}</span>
+      <select
+        class="input"
+        [ngModel]="targetHeight() ?? ''"
+        (ngModelChange)="targetHeight.set($event === '' ? undefined : +$event)"
+      >
+        <!-- The whole ladder stays selectable even when a video cannot serve a
+             rung: it is a standing preference, not a claim about one video. -->
+        <option value="">{{ 'source-video.quality-best' | translate }}</option>
+        @for (q of qualityLadder; track q.heightPx) {
+          <option [value]="q.heightPx">{{ qualityLabelFor(q) }}</option>
+        }
+      </select>
+    </label>
+
+    <label class="check">
+      <input type="checkbox" [ngModel]="allParts()" (ngModelChange)="allParts.set($event)" />
+      <span>{{ 'source-video.all-parts' | translate }}</span>
+    </label>
+    <span class="hint muted">{{ 'source-video.all-parts-hint' | translate }}</span>
+
     <div class="row">
+      @if (links().length === 1) {
+        <button type="button" class="btn" (click)="resolve()" [disabled]="resolving() || adding()">
+          {{ (resolving() ? 'source-video.resolving' : 'source-video.resolve') | translate }}
+        </button>
+      }
       <button
         type="button"
-        class="btn"
-        (click)="resolve()"
-        [disabled]="resolving() || downloading() || !input().trim()"
+        class="btn btn-primary"
+        (click)="add()"
+        [disabled]="adding() || links().length === 0"
       >
-        {{ (resolving() ? 'source-video.resolving' : 'source-video.resolve') | translate }}
+        {{
+          links().length > 1
+            ? ('source-video.add-many' | translate: { n: links().length })
+            : ('source-video.add' | translate)
+        }}
       </button>
     </div>
+    @if (notice(); as n) {
+      <p class="notice">{{ n }}</p>
+    }
   </div>
 
-  <!-- Step 2: confirm what was found -->
+  <!-- A list link checked: its videos, to tick -->
+  @if (list(); as l) {
+    <div class="card stack">
+      <h2>{{ l.title || ('source-video.list-heading' | translate) }}</h2>
+      <p class="muted">{{ 'source-video.list-count' | translate: { n: l.videos.length, total: l.total } }}</p>
+      <ul class="dl-list">
+        @for (v of l.videos; track v.input) {
+          <li class="row check">
+            <input type="checkbox" [ngModel]="listPicked().has(v.input)" (ngModelChange)="toggleListItem(v.input, $event)" />
+            <span class="dl-title">{{ v.title }}</span>
+            <span class="muted small">{{ formatDuration(v.durationSec) }}</span>
+          </li>
+        }
+      </ul>
+      <div class="row">
+        <button type="button" class="btn btn-primary" (click)="addPicked()" [disabled]="adding() || listPicked().size === 0">
+          {{ 'source-video.add-many' | translate: { n: listPicked().size } }}
+        </button>
+      </div>
+    </div>
+  }
+
+  <!-- One link checked: what it is, and which part -->
   @if (video(); as info) {
     <div class="card stack">
       <h2>{{ 'source-video.preview-heading' | translate }}</h2>
@@ -58,15 +112,10 @@
         </div>
       </div>
 
-      @if (showPartPicker()) {
+      @if (showPartPicker() && !allParts()) {
         <label class="stack-sm">
           <span class="label">{{ 'source-video.part-label' | translate }}</span>
-          <select
-            class="input"
-            [ngModel]="selectedPage()"
-            (ngModelChange)="selectedPage.set(+$event)"
-            [disabled]="downloading()"
-          >
+          <select class="input" [ngModel]="selectedPage()" (ngModelChange)="selectedPage.set(+$event)">
             @for (part of info.parts; track part.id) {
               <option [value]="part.page">
                 P{{ part.page }} — {{ part.title }} ({{ formatDuration(part.durationSec) }})
@@ -76,110 +125,202 @@
         </label>
       }
 
-      @if (showQualityPicker()) {
-        <label class="stack-sm">
-          <span class="label">{{ 'source-video.quality-label' | translate }}</span>
-          <select
-            class="input"
-            [ngModel]="targetHeight() ?? ''"
-            (ngModelChange)="targetHeight.set($event === '' ? undefined : +$event)"
-            [disabled]="downloading()"
-          >
-            <!-- The whole ladder stays selectable even when this video cannot
-                 serve a rung: it is a standing preference, not a claim about
-                 this video. What it resolves to is stated underneath. -->
-            <option value="">{{ 'source-video.quality-best' | translate }}</option>
-            @for (q of qualityLadder; track q.heightPx) {
-              <option [value]="q.heightPx">
-                {{ qualityLabelFor(q) }}
-              </option>
-            }
-          </select>
-          @if (resolvedQuality(); as picked) {
-            <span class="hint muted">
-              {{
-                (qualityDowngraded()
-                  ? 'source-video.quality-resolved-lower'
-                  : 'source-video.quality-resolved'
-                ) | translate: { quality: picked.label }
-              }}
-            </span>
-          }
-        </label>
+      @if (resolvedQuality(); as picked) {
+        <span class="hint muted">
+          {{
+            (qualityDowngraded() ? 'source-video.quality-resolved-lower' : 'source-video.quality-resolved')
+              | translate: { quality: picked.label }
+          }}
+        </span>
       }
 
       <div class="row">
-        <button
-          type="button"
-          class="btn btn-primary"
-          (click)="start()"
-          [disabled]="starting() || downloading()"
-        >
+        <button type="button" class="btn btn-primary" (click)="add()" [disabled]="adding()">
           {{ 'source-video.start' | translate }}
         </button>
       </div>
     </div>
   }
 
-  <!-- Step 3: progress / result -->
-  @if (progress(); as p) {
-    <div class="card stack">
-      <h2>{{ 'source-video.progress-heading' | translate }}</h2>
+  <!-- The download list -->
+  <div class="card stack">
+    <h2>{{ 'source-video.queue-heading' | translate }}</h2>
+    <p class="muted">{{ 'source-video.queue-intro' | translate }}</p>
 
-      @if (completedPath(); as path) {
-        <p>{{ 'source-video.done' | translate }}</p>
-        <p>
-          <span class="label">{{ 'source-video.saved-to' | translate }}</span>
-          <span class="mono">{{ path }}</span>
-        </p>
+    @if (items().length === 0) {
+      <p class="muted">{{ 'source-video.queue-empty' | translate }}</p>
+    } @else {
+      <ul class="dl-list">
+        @for (item of items(); track item.id) {
+          <li class="dl-item stack-sm">
+            <div class="dl-head">
+              @if (item.state === 'done') {
+                <input
+                  type="checkbox"
+                  [attr.aria-label]="'source-video.select' | translate"
+                  [ngModel]="selected().has(item.id)"
+                  (ngModelChange)="toggle(item, $event)"
+                />
+              }
+              <span class="dl-title" [title]="item.input">{{ titleOf(item) }}</span>
+              @if (item.source && item.source.partCount > 1) {
+                <span class="badge">{{ 'source-video.parts' | translate: { page: item.page, count: item.source.partCount } }}</span>
+              }
+              <!-- Literal keys per state: the i18n checker can only verify keys it can see. -->
+              <span
+                class="badge"
+                [class.badge-completed]="item.state === 'done'"
+                [class.badge-failed]="item.state === 'failed'"
+              >
+                @switch (item.state) {
+                  @case ('queued') { {{ 'source-video.state-queued' | translate }} }
+                  @case ('resolving') { {{ 'source-video.state-resolving' | translate }} }
+                  @case ('downloading') { {{ 'source-video.state-downloading' | translate }} }
+                  @case ('merging') { {{ 'source-video.state-merging' | translate }} }
+                  @case ('done') { {{ 'source-video.state-done' | translate }} }
+                  @case ('failed') { {{ 'source-video.state-failed' | translate }} }
+                  @case ('cancelled') { {{ 'source-video.state-cancelled' | translate }} }
+                }
+              </span>
+            </div>
+
+            @if (item.source?.ownerName; as owner) {
+              <span class="muted small">{{ owner }}</span>
+            }
+
+            @if (item.state === 'downloading' || item.state === 'merging' || item.state === 'resolving') {
+              @if (item.percent !== null) {
+                <div
+                  class="progress"
+                  role="progressbar"
+                  [attr.aria-label]="'source-video.progress-aria' | translate"
+                  [attr.aria-valuenow]="item.percent"
+                >
+                  <span [style.width.%]="item.percent"></span>
+                </div>
+                <span class="muted small">
+                  {{ item.percent }}%
+                  @if (item.bytesTotal) {
+                    · {{ 'source-video.bytes' | translate: { done: formatBytes(item.bytesDone), total: formatBytes(item.bytesTotal) } }}
+                  }
+                </span>
+              } @else {
+                <div class="progress indeterminate" role="progressbar" [attr.aria-label]="'source-video.progress-aria' | translate">
+                  <span></span>
+                </div>
+              }
+            }
+
+            @if (item.state === 'queued' && item.retryAt) {
+              <span class="hint">{{ 'source-video.retry-at' | translate: { time: timeOf(item.retryAt) } }}</span>
+            }
+            @if (item.state === 'failed' && item.error) {
+              <span class="test-fail small">{{ item.error.message }}</span>
+              @if (item.error.remediation) {
+                <span class="hint small">{{ item.error.remediation }}</span>
+              }
+            }
+            @if (item.state === 'done' && item.filePath) {
+              <span class="mono small">{{ item.filePath }}</span>
+            }
+            @if (item.projectIds?.length; as made) {
+              <span class="muted small">{{ 'source-video.projects-made' | translate: { n: made } }}</span>
+            }
+
+            <div class="row dl-actions">
+              @if (item.state === 'done') {
+                <button type="button" class="btn btn-sm btn-primary" (click)="useAsSource(item)">
+                  {{ 'source-video.use-as-source' | translate }}
+                </button>
+                <button type="button" class="btn btn-sm" (click)="reveal(item)">
+                  {{ 'source-video.reveal' | translate }}
+                </button>
+              }
+              @if (item.state === 'failed' || item.state === 'cancelled') {
+                <button type="button" class="btn btn-sm" (click)="retry(item)">{{ 'source-video.retry' | translate }}</button>
+              }
+              @if (item.state !== 'done' && item.state !== 'failed' && item.state !== 'cancelled') {
+                <button type="button" class="btn btn-sm" (click)="cancel(item)">{{ 'source-video.cancel' | translate }}</button>
+              }
+              <button type="button" class="btn btn-sm btn-ghost" (click)="remove(item)">
+                {{ 'source-video.remove' | translate }}
+              </button>
+              @if (item.state === 'done') {
+                <button type="button" class="btn btn-sm btn-ghost" (click)="deleteFile(item)">
+                  {{ 'source-video.remove-file' | translate }}
+                </button>
+              }
+            </div>
+          </li>
+        }
+      </ul>
+    }
+  </div>
+
+  <!-- Finished downloads, dubbed in one go with a preset -->
+  @if (doneItems().length > 0) {
+    <div class="card stack">
+      <h2>{{ 'source-video.dub-heading' | translate }}</h2>
+      <p class="muted">{{ 'source-video.dub-intro' | translate }}</p>
+      @if (presets().length === 0) {
+        <p class="hint">{{ 'source-video.dub-no-presets' | translate }}</p>
+      } @else {
+        <label class="stack-sm">
+          <span class="label">{{ 'source-video.dub-preset' | translate }}</span>
+          <select class="input" [ngModel]="presetId()" (ngModelChange)="presetId.set($event)">
+            @for (p of presets(); track p.id) {
+              <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage }})</option>
+            }
+          </select>
+        </label>
+        <label class="check">
+          <input type="checkbox" [ngModel]="dubStart()" (ngModelChange)="dubStart.set($event)" />
+          <span>{{ 'source-video.dub-start' | translate }}</span>
+        </label>
+        <!-- Long videos as series of parts: needs an AI from Settings. -->
+        <label class="check">
+          <input
+            type="checkbox"
+            [ngModel]="dubSplit() && seriesAiReady().length > 0"
+            (ngModelChange)="dubSplit.set($event)"
+            [disabled]="seriesAiReady().length === 0"
+          />
+          <span>{{ 'source-video.dub-split' | translate }}</span>
+        </label>
+        @if (seriesAiReady().length === 0) {
+          <p class="hint muted">{{ 'source-video.dub-split-no-ai' | translate }}</p>
+        } @else if (dubSplit()) {
+          <div class="row">
+            <label class="stack-sm">
+              <span class="label">{{ 'series.length' | translate }}</span>
+              <select class="input" [ngModel]="dubSplitLength()" (ngModelChange)="dubSplitLength.set($event)">
+                <option value="15-20">{{ 'series.length-15' | translate }}</option>
+                <option value="30-40">{{ 'series.length-30' | translate }}</option>
+                <option value="55-65">{{ 'series.length-60' | translate }}</option>
+              </select>
+            </label>
+            <label class="stack-sm">
+              <span class="label">{{ 'series.ai' | translate }}</span>
+              <select class="input" [ngModel]="dubSplitAi()" (ngModelChange)="dubSplitAi.set($event)">
+                @for (o of seriesAiReady(); track o.id) {
+                  <option [value]="o.id">{{ o.label }}{{ o.viaMotherClaude ? ' (Mother Claude)' : '' }}</option>
+                }
+              </select>
+            </label>
+          </div>
+          <p class="hint muted">{{ 'source-video.dub-split-hint' | translate: { min: dubSplitAbove() } }}</p>
+        }
         <div class="row">
-          <button type="button" class="btn btn-primary" (click)="useAsSource()">
-            {{ 'source-video.use-as-source' | translate }}
-          </button>
-          <button type="button" class="btn" (click)="reveal()">
-            {{ 'source-video.reveal' | translate }}
-          </button>
-          <button type="button" class="btn btn-ghost" (click)="reset()">
-            {{ 'source-video.another' | translate }}
+          <button type="button" class="btn" (click)="selectAllDone()">{{ 'source-video.select-all-done' | translate }}</button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            (click)="dubSelected()"
+            [disabled]="dubbing() || selectedDone().length === 0 || !presetId()"
+          >
+            {{ 'source-video.dub-button' | translate: { n: selectedDone().length } }}
           </button>
         </div>
-      } @else {
-        <!-- Literal keys per branch, not a built string: the i18n checker can
-             only verify keys it can see. -->
-        <p class="muted">
-          @switch (p.phase) {
-            @case ('video') {
-              {{ 'source-video.phase-video' | translate }}
-            }
-            @case ('audio') {
-              {{ 'source-video.phase-audio' | translate }}
-            }
-            @case ('merging') {
-              {{ 'source-video.phase-merging' | translate }}
-            }
-          }
-        </p>
-        <!-- A null percent means the server sent no length: show an
-             indeterminate bar rather than a number that would be a guess. -->
-        @if (p.percent !== null) {
-          <div
-            class="progress"
-            role="progressbar"
-            [attr.aria-label]="'source-video.progress-aria' | translate"
-            [attr.aria-valuenow]="p.percent"
-          >
-            <span [style.width.%]="p.percent"></span>
-          </div>
-          <p class="muted">{{ p.percent }}%</p>
-        } @else {
-          <div
-            class="progress indeterminate"
-            role="progressbar"
-            [attr.aria-label]="'source-video.progress-aria' | translate"
-          >
-            <span></span>
-          </div>
-        }
       }
     </div>
   }
@@ -191,6 +332,7 @@
     <details class="card stack" [open]="sessionOpen()">
       <summary class="session-summary">{{ 'source-video.session.heading' | translate }}</summary>
       <p class="muted">{{ 'source-video.session.intro' | translate }}</p>
+      <p class="muted">{{ 'source-video.session.mother-claude' | translate }}</p>
       <p class="hint">{{ 'source-video.session.warning' | translate }}</p>
 
       @for (p of sessionProviders(); track p.id) {

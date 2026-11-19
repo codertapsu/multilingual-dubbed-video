@@ -5,7 +5,7 @@ import {
   resolveInput,
   type DouyinFetch,
 } from './client.js';
-import { looksLikeDouyin } from './url.js';
+import { looksLikeDouyin, parseDouyinInput } from './url.js';
 import type {
   PreparedDownload,
   ResolvedSourceVideo,
@@ -41,6 +41,11 @@ export function createDouyinProvider(deps: DouyinProviderDeps = {}): SourceProvi
     id: DOUYIN_PROVIDER_ID,
 
     matches: (input) => looksLikeDouyin(input),
+
+    sourceKey(input) {
+      const parsed = parseDouyinInput(input);
+      return parsed?.kind === 'ref' ? `${DOUYIN_PROVIDER_ID}:${parsed.awemeId}` : undefined;
+    },
 
     async resolve(input): Promise<ResolvedSourceVideo> {
       const ref = await resolveInput(fetchImpl, input);
@@ -82,9 +87,21 @@ export function createDouyinProvider(deps: DouyinProviderDeps = {}): SourceProvi
       // choice we cannot make would be worse than plainly taking what exists.
       return {
         videoUrl: playUrl(info.playUri),
+        ...(info.heightPx ? { heightPx: info.heightPx } : {}),
         baseName: info.title,
         title: info.title,
         headers: mediaHeaders(),
+        source: {
+          providerId: DOUYIN_PROVIDER_ID,
+          sourceKey: `${DOUYIN_PROVIDER_ID}:${info.awemeId}`,
+          url: `https://www.douyin.com/video/${info.awemeId}`,
+          title: info.title,
+          page: 1,
+          partCount: 1,
+          ...(info.ownerName ? { ownerName: info.ownerName } : {}),
+          durationSec: info.durationSec,
+          ...(info.coverUrl ? { coverUrl: info.coverUrl } : {}),
+        },
       };
     },
   };

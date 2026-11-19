@@ -76,6 +76,10 @@ export class VideoDubberApi {
     return this.request<T>('PUT', path, body, opts);
   }
 
+  delete<T>(path: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
+    return this.request<T>('DELETE', path, undefined, opts);
+  }
+
   patch<T>(path: string, body: unknown, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
     return this.request<T>('PATCH', path, body, opts);
   }

@@ -35,6 +35,10 @@ export interface WorkspacePaths {
   readonly ttsSegmentsDir: string;
   readonly ttsFullWav: string;
   readonly finalMixWav: string;
+  /** What final_mix.wav was made from (pipeline/mixFingerprint.ts). */
+  readonly finalMixInputsJson: string;
+  /** Where the spoken greeting plays (branding/greetingPlanner.ts). */
+  readonly greetingPlanJson: string;
   /** Synthesis-group plan (which cues were merged into one TTS utterance). */
   readonly synthesisGroupsJson: string;
   /** Where speech is in original_16k_mono.wav (cache; see pipeline/speechMap.ts). */
@@ -133,6 +137,8 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     ttsSegmentsDir,
     ttsFullWav: path.join(audioDir, 'tts_full.wav'),
     finalMixWav: path.join(audioDir, 'final_mix.wav'),
+    finalMixInputsJson: path.join(audioDir, 'final_mix.inputs.json'),
+    greetingPlanJson: path.join(audioDir, 'greeting_plan.json'),
     synthesisGroupsJson: path.join(audioDir, 'synthesis_groups.json'),
     speechRegionsJson: path.join(audioDir, 'speech_regions.json'),
     diarizationJson: path.join(audioDir, 'diarization.json'),

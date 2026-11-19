@@ -1,3 +1,4 @@
+import { BrandingPanelComponent } from './branding-panel.component';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
@@ -75,7 +76,15 @@ const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libret
   selector: 'vd-project-panel',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, OutputFolderComponent, TranslatePipe, VoiceCloneDialogComponent, SpeakerVoicesDialogComponent],
+  imports: [
+    FormsModule,
+    RouterLink,
+    OutputFolderComponent,
+    TranslatePipe,
+    VoiceCloneDialogComponent,
+    SpeakerVoicesDialogComponent,
+    BrandingPanelComponent,
+  ],
   templateUrl: './project-panel.component.html',
   styleUrl: './project-panel.component.scss',
 })

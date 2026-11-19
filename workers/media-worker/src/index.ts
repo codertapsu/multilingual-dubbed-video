@@ -12,7 +12,7 @@
 
 import type { AudioExtractResult, MediaInfo, MediaService } from '@videodubber/shared';
 
-import { clip16kMono, extract16kMono, extractAudio } from './extract.js';
+import { clip16kMono, extract16kMono, extractAudio, type MediaWindow } from './extract.js';
 import { probe } from './probe.js';
 import { renderFinalVideo, type RenderFinalVideoOptions, type RenderFinalVideoReport } from './render.js';
 import { measureSpeech, type MeasureSpeechOptions, type SpeechMeasurement } from './speech.js';
@@ -46,12 +46,12 @@ export class FfmpegMediaService implements MediaService {
     return probe(inputPath, this.opts(opts));
   }
 
-  extractAudio(inputPath: string, outputPath: string, opts?: RunOptions): Promise<AudioExtractResult> {
-    return extractAudio(inputPath, outputPath, this.opts(opts));
+  extractAudio(inputPath: string, outputPath: string, opts?: RunOptions, range?: MediaWindow): Promise<AudioExtractResult> {
+    return extractAudio(inputPath, outputPath, this.opts(opts), range);
   }
 
-  extract16kMono(inputPath: string, outputPath: string, opts?: RunOptions): Promise<AudioExtractResult> {
-    return extract16kMono(inputPath, outputPath, this.opts(opts));
+  extract16kMono(inputPath: string, outputPath: string, opts?: RunOptions, range?: MediaWindow): Promise<AudioExtractResult> {
+    return extract16kMono(inputPath, outputPath, this.opts(opts), range);
   }
 
   clip16kMono(
@@ -172,6 +172,9 @@ export {
 } from './extract.js';
 
 export { referenceClip, buildReferenceClipArgs, REFERENCE_MAX_MS, type ReferenceClipOptions } from './reference.js';
+export { prepareLogo, prepareGreeting, buildPrepareLogoArgs, buildPrepareGreetingArgs, MAX_GREETING_MS } from './brand.js';
+export { buildCardsAss, buildFilteredRenderArgs, buildLogoFilter, logoPlacement } from './overlay.js';
+export { windowArgs, type MediaWindow } from './extract.js';
 export { prepareStemInput, mixStems, buildStemInputArgs, buildStemMixArgs } from './stems.js';
 
 export {

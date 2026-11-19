@@ -18,10 +18,24 @@ import {
 } from './exec.js';
 import { probe } from './probe.js';
 
+/** A window of the input (a series part), in ms. */
+export interface MediaWindow {
+  startMs: number;
+  endMs: number;
+}
+
+/** `-ss`/`-t` before `-i`: an input seek, sample-accurate when the audio is decoded. Pure. */
+export function windowArgs(range?: MediaWindow): string[] {
+  if (!range) return [];
+  const start = Math.max(0, range.startMs);
+  return ['-ss', (start / 1000).toFixed(3), '-t', (Math.max(0, range.endMs - start) / 1000).toFixed(3)];
+}
+
 /** ffmpeg args: input -> 48kHz stereo WAV (pcm_s16le), drop video. */
-export function buildExtractAudioArgs(inputPath: string, outputPath: string): string[] {
+export function buildExtractAudioArgs(inputPath: string, outputPath: string, range?: MediaWindow): string[] {
   return [
     '-y', // overwrite output (idempotent for resume)
+    ...windowArgs(range),
     '-i',
     inputPath,
     '-vn', // no video
@@ -31,14 +45,19 @@ export function buildExtractAudioArgs(inputPath: string, outputPath: string): st
     '48000', // 48kHz
     '-c:a',
     'pcm_s16le',
+    // A plain RIFF header overflows past 4 GiB (~6.2 h at 48 kHz stereo);
+    // `auto` writes RF64 only then, so every shorter file is unchanged.
+    '-rf64',
+    'auto',
     outputPath,
   ];
 }
 
 /** ffmpeg args: input -> 16kHz mono WAV (pcm_s16le) for STT. */
-export function buildExtract16kMonoArgs(inputPath: string, outputPath: string): string[] {
+export function buildExtract16kMonoArgs(inputPath: string, outputPath: string, range?: MediaWindow): string[] {
   return [
     '-y',
+    ...windowArgs(range),
     '-i',
     inputPath,
     '-vn',
@@ -63,11 +82,12 @@ export async function extractAudio(
   inputPath: string,
   outputPath: string,
   opts: RunOptions = {},
+  range?: MediaWindow,
 ): Promise<AudioExtractResult> {
   assertInputReadable(inputPath);
   assertOutputWritable(outputPath);
   await writeAtomically(outputPath, (partial) =>
-    runFfmpeg(buildExtractAudioArgs(inputPath, partial), opts),
+    runFfmpeg(buildExtractAudioArgs(inputPath, partial, range), opts),
   );
   return measure(outputPath);
 }
@@ -84,11 +104,12 @@ export async function extract16kMono(
   inputPath: string,
   outputPath: string,
   opts: RunOptions = {},
+  range?: MediaWindow,
 ): Promise<AudioExtractResult> {
   assertInputReadable(inputPath);
   assertOutputWritable(outputPath);
   await writeAtomically(outputPath, (partial) =>
-    runFfmpeg(buildExtract16kMonoArgs(inputPath, partial), opts),
+    runFfmpeg(buildExtract16kMonoArgs(inputPath, partial, range), opts),
   );
   return measure(outputPath);
 }

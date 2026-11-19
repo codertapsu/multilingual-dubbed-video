@@ -453,6 +453,15 @@ legend {
   flex-direction: column;
   gap: var(--vd-sp-4);
 }
+
+/* The tighter stack (a label over its control and hint, a list row's lines).
+   Many screens use it; it lived in two components only, so elsewhere the
+   lines ran together on one line (the Download list, 2026-11-19). */
+.stack-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
 .row {
   display: flex;
   gap: var(--vd-sp-3);

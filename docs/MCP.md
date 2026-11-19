@@ -99,6 +99,38 @@ Good to know:
   prompts below are the slash commands `/mcp__videodubber__dub_video` and
   `/mcp__videodubber__improve_translation`.
 
+### Batches: from Bilibili to a post
+
+With Mother Claude driving (a session, or a skill written for this chain), the whole chain runs
+from one conversation:
+
+1. Mother Claude collects the video links in your browser (a whole collection, series list,
+   favourites folder or uploader's page is one link) and, optionally, exports the Bilibili
+   cookies to a file: `set_download_login` reads that file (logged out works too, up to 720p).
+2. `download_videos` queues them; `follow_jobs_command` gives the command its Monitor watches.
+3. `dub_downloads` with a preset makes and starts the projects. With `series`, the long ones are
+   dubbed as parts (by default those over 30 minutes, in parts of 15–20 minutes), and
+   `get_series` lists each one's parts in order. The same command follows them all.
+4. `get_outputs` gives each finished video and its source for the caption (for a part, which
+   part of how many). Mother Claude posts it to Facebook in your browser, as you, and
+   `mark_published` records the post so it is never posted twice.
+
+The skill posts one video at a time, at least 10 minutes apart and at most 5 a day, and stops at
+the first warning Facebook shows.
+
+**One-time setup** (Mother Claude 0.16.4 or later, with its browser extension 0.1.5 or later):
+
+1. Update Mother Claude and its browser extension.
+2. In the extension, grant it **Debugger** access and turn on **Allow access to file URLs**: an
+   upload reads the video from your disk.
+3. In Mother Claude's **Browser** settings, set `bilibili.com` to **Read** and `facebook.com` to
+   **Act** (and `business.facebook.com` too, to post as a Page).
+4. Add VideoDubber's projects folder, or the save folder of the preset you dub with, to Mother
+   Claude's upload folders.
+5. For Claude to choose the cuts of a series through your Claude plan: start Mother Claude's HTTP
+   API, and in VideoDubber choose **My Claude plan, through Mother Claude** under Settings →
+   Cloud API keys. (Any other AI set up in Settings works too.)
+
 ## The app must be running — or startable
 
 Every tool first checks that VideoDubber answers. If it does not, the server starts the installed
@@ -112,10 +144,19 @@ http://127.0.0.1:5100` or set `VIDEODUBBER_URL`.
 |---|---|
 | `get_status` | App version, CPU/RAM/GPU, which local services are up, installed and recommended engines, the queue. Call it first. |
 | `list_languages`, `list_providers`, `list_voices`, `list_engines` | What can be chosen, per step and per language, and what each engine pack costs to install. |
+| `install_voice` | Download a voice from `list_voices` (and its engine, when it is not installed yet). |
 | `install_engine` | Install an engine pack (reports download progress). Claude is asked to tell you the size first. |
-| `download_video`, `get_download` | Fetch a video from a link and follow the download. |
+| `download_video`, `get_download` | Fetch one video from a Bilibili or Douyin link and follow the download. |
+| `download_videos`, `list_downloads`, `cancel_download`, `retry_download`, `delete_download` | Queue many links at once (two download at a time, kept across restarts, a rate-limited site waited out); a video already queued is returned, not downloaded twice (its `sourceKey`, e.g. `bilibili:BV…:p2`). A Bilibili collection, series list, favourites folder or uploader's page link queues its videos. |
+| `set_download_login`, `get_download_login` | Sign in to Bilibili with the browser's cookies: pass the **path** of a cookie export (Mother Claude's `browser_cookies` export); the file is read and deleted, only `SESSDATA` and `buvid3` are kept, and no value is ever shown. Answers the account and the best quality available. |
+| `list_presets`, `dub_downloads` | Make a project per finished download from a preset (or languages + settings) and start them; one waiting for its models starts when they arrive. `series` dubs the long ones as parts (needs an AI set up in Settings; only videos longer than `longerThanMinutes`, by default 1.5 × the longest part). |
+| `list_brand_kit` | The logos and spoken greetings made in Settings → Logo & greeting, by id, for a project's `settings.branding` (`{ logo: { assetId, corner, … }, greeting: { assetId, atStart, repeat } }`). |
+| `get_series`, `set_split_plan`, `start_series` | A long video dubbed in parts: where the series stands, its cuts with titles and summaries, and each part's project and progress; change the cuts or titles before the parts are made (`create_project` with `series.autoStart: false`); make the parts and queue them in order. |
+| `wait_jobs`, `follow_jobs_command` | Follow downloads and dubs: a wait of up to 50 s, or a command (`curl.exe -sN …/jobs/events?…&untilDone=1`) that prints one JSON line per change and exits when all of them have stopped, for long batches. |
+| `get_outputs`, `mark_published` | A finished dub's files (with size and sha256), length and source (title, uploader, link) for a post's caption, and where it was posted; record a post so it is never posted twice. |
+| `delete_project` | Delete a project (asks you first). |
 | `list_projects`, `get_project` | Projects, and one project's progress, step by step, with the end of its log. `waitSeconds` (up to 50) waits for progress. |
-| `create_project` | Create a project from a video file, starting from the same automatic settings the New Project wizard uses (the best engines installed here), with any overrides. `saveTo` chooses the folder for the finished video. Can start the dub at once. |
+| `create_project` | Create a project from a video file, starting from the same automatic settings the New Project wizard uses (the best engines installed here), with any overrides. `saveTo` chooses the folder for the finished video. Can start the dub at once. `series` dubs it as parts (15–20 minutes by default); `settings.useSourceSubtitles` uses the subtitles the site published instead of speech-to-text (Bilibili gives them only to a signed-in account: `set_download_login` first); `settings.branding` adds a logo and a greeting. |
 | `start_dubbing` | Start, continue (after a pause, a review pause or a closed app), or redo from a step. |
 | `pause_dubbing`, `cancel_dubbing` | Pause a running dub: it keeps everything done so far, and `start_dubbing` continues it later, also after the app was closed. `cancel_dubbing` does the same, and takes a queued dub out of the queue. |
 | `update_settings` | Change project settings; reports which step must re-run for the change to take effect. |

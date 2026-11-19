@@ -44,6 +44,10 @@ import type {
   VoiceLibraryItem,
 } from '../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
+import type { DubPreset } from '../../core/models/download';
+import type { BrandAsset, SeriesAiOption } from '@videodubber/shared';
+import { BrandingFormComponent } from '../../shared/branding/branding-form.component';
+import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { environment } from '../../core/environment';
 import { baseLanguage, describeVoice } from '../../shared/voice-library/voice-filter';
@@ -119,6 +123,7 @@ function defaultSettings(): ProjectSettings {
     BusyIndicatorComponent,
     OutputFolderComponent,
     TranslatePipe,
+    BrandingFormComponent,
   ],
   templateUrl: './new-project-wizard.component.html',
   styleUrl: './new-project-wizard.component.scss',
@@ -126,6 +131,7 @@ function defaultSettings(): ProjectSettings {
 export class NewProjectWizardComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
   private readonly translate = inject(TranslateService);
+  private readonly confirm = inject(ConfirmService);
   private readonly router = inject(Router);
   private readonly store = inject(ProjectStore);
   private readonly drafts = inject(NewProjectDraftService);
@@ -416,6 +422,127 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
 
     void this.loadLanguages();
     void this.init(draft !== null);
+    void this.loadPresets();
+    void this.ipc.listBrandKit().then((a) => this.brandAssets.set(a), () => undefined);
+    void this.loadSeriesAi();
+  }
+
+  /** The brand kit's logos and greetings, for the Logo & greeting section. */
+  protected readonly brandAssets = signal<BrandAsset[]>([]);
+
+  // ---- Split into parts (series/) ----------------------------------------
+  protected readonly seriesAiOptions = signal<SeriesAiOption[]>([]);
+  protected readonly seriesAiReady = computed(() => this.seriesAiOptions().filter((o) => o.ready));
+  protected readonly splitSeries = signal(false);
+  protected readonly seriesLength = signal<'15-20' | '30-40' | '55-65' | 'custom'>('15-20');
+  protected readonly seriesMin = signal(15);
+  protected readonly seriesMax = signal(20);
+  protected readonly seriesAi = signal('');
+  protected readonly seriesRecap = signal(4);
+  protected readonly seriesAuto = signal(false);
+
+  private async loadSeriesAi(): Promise<void> {
+    try {
+      const options = await this.ipc.seriesAiOptions();
+      this.seriesAiOptions.set(options);
+      // Claude first (through Mother Claude when that is how it is set up), then the rest.
+      const ready = options.filter((o) => o.ready);
+      this.seriesAi.set((ready.find((o) => o.viaMotherClaude) ?? ready[0])?.id ?? '');
+    } catch {
+      /* no AI: the option says how to set one up */
+    }
+  }
+
+  /** The series settings the form asks for, or undefined when not splitting. */
+  private seriesRequest(): CreateProjectInput['series'] | undefined {
+    if (!this.splitSeries() || !this.seriesAi()) return undefined;
+    const preset = this.seriesLength();
+    const [min, max] = preset === 'custom' ? [this.seriesMin(), this.seriesMax()] : preset.split('-').map(Number);
+    return { minMinutes: min!, maxMinutes: Math.max(min!, max!), aiProviderId: this.seriesAi(), recapSec: this.seriesRecap(), autoStart: this.seriesAuto() };
+  }
+
+  // ---- presets ("Mẫu lồng tiếng", workspace/presetStore.ts) ----------------
+  protected readonly presets = signal<DubPreset[]>([]);
+  protected readonly presetId = signal('');
+  protected readonly presetName = signal('');
+  protected readonly savingPreset = signal(false);
+  protected readonly presetNotice = signal<string | null>(null);
+  /** Where the chosen preset saves finished files (else the last folder used). */
+  private readonly presetOutputDir = signal<string | undefined>(undefined);
+  /** The folder a preset saved from this form would keep. */
+  protected readonly presetFolder = computed(() => this.presetOutputDir() ?? readLastOutputDir() ?? null);
+
+  private async loadPresets(): Promise<void> {
+    try {
+      this.presets.set(await this.ipc.listPresets());
+    } catch {
+      /* no presets: the row offers only "Save as preset" */
+    }
+  }
+
+  /** Fill the form from a preset: its languages and choices over the form as it is. */
+  protected applyPreset(id: string): void {
+    this.presetId.set(id);
+    this.presetNotice.set(null);
+    const preset = this.presets().find((p) => p.id === id);
+    if (!preset) {
+      this.presetOutputDir.set(undefined);
+      return;
+    }
+    this.settings.update((s) => ({
+      ...s,
+      ...preset.settings,
+      sourceLanguage: preset.sourceLanguage ?? '',
+      targetLanguage: preset.targetLanguage,
+    }));
+    this.presetOutputDir.set(preset.outputDir);
+    this.presetName.set(preset.name);
+    this.syncProcessingMode();
+    this.stopPreview();
+    void this.loadVoicesForTarget();
+  }
+
+  /** Save the form's choices as a preset; the same name replaces that preset. */
+  protected async savePreset(): Promise<void> {
+    const name = this.presetName().trim();
+    if (!name || this.savingPreset()) return;
+    this.savingPreset.set(true);
+    this.presetNotice.set(null);
+    try {
+      const { sourceLanguage, targetLanguage, ...choices } = this.settings();
+      const same = this.presets().find((p) => p.name.trim().toLowerCase() === name.toLowerCase());
+      const folder = this.presetFolder();
+      const saved = await this.ipc.savePreset(
+        { name, targetLanguage, sourceLanguage, settings: choices, ...(folder ? { outputDir: folder } : {}) },
+        same?.id,
+      );
+      await this.loadPresets();
+      this.presetId.set(saved.id);
+      this.presetNotice.set(this.translate.instant('wizard.preset-saved', { name }));
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.savingPreset.set(false);
+    }
+  }
+
+  protected async deletePreset(): Promise<void> {
+    const preset = this.presets().find((p) => p.id === this.presetId());
+    if (!preset) return;
+    const ok = await this.confirm.confirm({
+      title: this.translate.instant('wizard.preset-delete-title', { name: preset.name }),
+      message: this.translate.instant('wizard.preset-delete-body'),
+      confirmLabel: this.translate.instant('wizard.preset-delete'),
+    });
+    if (!ok) return;
+    try {
+      await this.ipc.deletePreset(preset.id);
+      this.presetId.set('');
+      this.presetOutputDir.set(undefined);
+      await this.loadPresets();
+    } catch (err) {
+      this.error.set(toAppError(err));
+    }
   }
 
   ngOnDestroy(): void {
@@ -952,6 +1079,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     this.busy.set(true);
     this.error.set(null);
     try {
+      const series = this.seriesRequest();
       const input: CreateProjectInput = {
         name:
           this.name().trim() ||
@@ -959,6 +1087,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
           this.translate.instant('misc.untitled-project'),
         inputVideoPath: this.inputVideoPath().trim(),
         settings: this.settings(),
+        ...(series ? { series } : {}),
       };
       // Back, then Continue: the same project, as the form now is. Continue
       // created another one each time, so fixing a choice after Start refused
@@ -1024,7 +1153,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
    */
   private async createWithLastFolder(input: CreateProjectInput): Promise<Project> {
     this.outputFolderFallback.set(null);
-    const last = readLastOutputDir();
+    // A preset's own folder first (it was chosen for this kind of video).
+    const last = this.presetOutputDir() ?? readLastOutputDir();
     if (!last) return this.ipc.createProject(input);
     try {
       return await this.ipc.createProject({ ...input, outputDir: last });

@@ -237,6 +237,9 @@ export function buildMixArgs(opts: DuckAndMixInput, loudnorm?: string): string[]
     String(SAMPLE_RATE),
     '-c:a',
     'pcm_s16le',
+    // RF64 past 4 GiB (~6.2 h at 48 kHz stereo) only; see tts-timeline.ts.
+    '-rf64',
+    'auto',
     opts.output,
   ];
 }

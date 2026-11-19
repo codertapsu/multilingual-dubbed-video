@@ -31,20 +31,6 @@
       <p class="muted">{{ 'export.no-output' | translate }}</p>
     }
 
-    @if (result(); as r) {
-      <p><span class="label">{{ 'export.duration-label' | translate }}</span> {{ formatDuration(r.durationMs) }}</p>
-      @if (r.sidecarSubtitlePaths.length) {
-        <div>
-          <span class="label">{{ 'export.sidecar-label' | translate }}</span>
-          <ul class="sidecar-list">
-            @for (sp of r.sidecarSubtitlePaths; track sp) {
-              <li class="mono">{{ sp }}</li>
-            }
-          </ul>
-        </div>
-      }
-    }
-
     <!-- Best-effort preview -->
     @if (previewUrl(); as url) {
       @if (!previewFailed()) {
@@ -71,6 +57,20 @@
         [project]="proj"
         [locked]="rendering() || proj.status === 'running' || proj.status === 'queued'"
         (changed)="onOutputFolderChanged($event)"
+      />
+    </div>
+  }
+
+  <!-- Logo & greeting: saved at once, used by Render again -->
+  @if (store.current(); as proj) {
+    <div class="card stack">
+      <h2>{{ 'branding.heading' | translate }}</h2>
+      <p class="muted">{{ 'branding.intro' | translate }}</p>
+      <vd-branding-form
+        [value]="proj.settings.branding"
+        [assets]="brandAssets()"
+        [disabled]="savingBranding() || rendering() || proj.status === 'running' || proj.status === 'queued'"
+        (changed)="onBrandingChanged($event)"
       />
     </div>
   }

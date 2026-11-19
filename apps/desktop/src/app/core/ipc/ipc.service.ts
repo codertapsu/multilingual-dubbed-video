@@ -8,7 +8,6 @@ import type {
   PipelineStepId,
   Project,
   ProjectSettings,
-  RenderFinalVideoResult,
   RunScheduleResult,
   TranslationDocContext,
   SegmentPatch,
@@ -48,8 +47,14 @@ import type {
   UpdateInfo,
   UpdatePreferences,
 } from '../models/setup';
+import type { BrandAsset, GreetingPlacement, GreetingPlan, SeriesAiOption, SeriesView } from '@videodubber/shared';
 import type {
+  AddDownloadsResult,
+  DownloadItem,
   DownloadProvider,
+  DownloadRequest,
+  DubDownloadResult,
+  DubPreset,
   ResolvedVideo,
   SessionCheck,
   SessionInfo,
@@ -360,11 +365,15 @@ export class IpcService {
     return this.http('PUT', `/projects/${encodeURIComponent(projectId)}/translation-context`, { context });
   }
 
-  renderFinalVideo(
+  /**
+   * POST /projects/:id/render — Export's "Render again": a run from the mix
+   * when it is out of date, else from the render (202; follow it like a dub).
+   */
+  rerender(
     projectId: string,
     options: RenderFinalVideoBody = {},
-  ): Promise<RenderFinalVideoResult> {
-    return this.call<RenderFinalVideoResult>(
+  ): Promise<RunScheduleResult & { fromStep: PipelineStepId }> {
+    return this.call<RunScheduleResult & { fromStep: PipelineStepId }>(
       'render_final_video',
       // Tauri's `render_final_video` takes an `options` param (HTTP body uses it too).
       { projectId, options },
@@ -395,6 +404,17 @@ export class IpcService {
     // The Tauri command returns `{ path: string | null }` — extract the string
     // (returning the object made the UI show "[object Object]").
     const res = await this.invoke<{ path: string | null }>('pick_video_file');
+    return res?.path ?? null;
+  }
+
+  /**
+   * Native open-file dialog for the brand kit: a picture (`image`) or a sound
+   * (`audio`: audio files and videos). Tauri only; `null` in the browser (the
+   * UI offers a path field) and when the user cancels.
+   */
+  async pickMediaFile(kind: 'image' | 'audio', title?: string): Promise<string | null> {
+    if (!this.tauri) return null;
+    const res = await this.invoke<{ path: string | null }>('pick_media_file', { kind, title });
     return res?.path ?? null;
   }
 
@@ -778,25 +798,130 @@ export class IpcService {
 
   // ----- Source-video downloader (experimental) -----
 
+  /** POST /download/expand — the videos of a list link (collection, favourites, uploader); null for another link. */
+  expandDownload(input: string): Promise<{ list: { kind: string; title: string; total: number; videos: { input: string; title: string; durationSec: number }[] } | null }> {
+    return this.http('POST', '/download/expand', { input });
+  }
+
   /** POST /download/resolve — look up a pasted link without downloading. */
   resolveDownload(input: string): Promise<ResolvedVideo> {
     return this.http<ResolvedVideo>('POST', '/download/resolve', { input });
   }
 
   /**
-   * POST /download/start — kicks off the async download. Returns once the job
-   * is queued; progress arrives on the `/download/events` SSE stream.
+   * POST /downloads — add links to the download list (two download at once,
+   * the rest wait; a video already there is returned, not added twice).
+   * Progress arrives on the `/download/events` SSE stream.
    */
-  startDownload(
-    input: string,
-    page: number,
-    targetHeightPx?: number,
-  ): Promise<{ jobId: string }> {
-    return this.http<{ jobId: string }>('POST', '/download/start', {
-      input,
-      page,
-      targetHeightPx,
-    });
+  addDownloads(items: DownloadRequest[], allParts = false): Promise<AddDownloadsResult> {
+    return this.http<AddDownloadsResult>('POST', '/downloads', { items, allParts });
+  }
+
+  cancelDownload(id: string): Promise<DownloadItem> {
+    return this.http<DownloadItem>('POST', `/downloads/${encodeURIComponent(id)}/cancel`, {});
+  }
+
+  retryDownload(id: string): Promise<DownloadItem> {
+    return this.http<DownloadItem>('POST', `/downloads/${encodeURIComponent(id)}/retry`, {});
+  }
+
+  /** Take a download off the list; `deleteFile` deletes its video too (projects keep their own). */
+  removeDownload(id: string, deleteFile: boolean): Promise<{ ok: boolean }> {
+    return this.http<{ ok: boolean }>('DELETE', `/downloads/${encodeURIComponent(id)}?deleteFile=${deleteFile ? 'true' : 'false'}`);
+  }
+
+  // ----- Series: a long video dubbed in parts (series/seriesService.ts) -----
+
+  /** The AIs Settings has set up for choosing cuts and naming parts. */
+  seriesAiOptions(): Promise<SeriesAiOption[]> {
+    return this.http<SeriesAiOption[]>('GET', '/series/ai-options');
+  }
+
+  getSeries(projectId: string): Promise<SeriesView> {
+    return this.http<SeriesView>('GET', `/projects/${encodeURIComponent(projectId)}/series`);
+  }
+
+  /** Move the cuts and rename the parts before they are made. */
+  reviseSeriesPlan(projectId: string, edit: { cuts?: number[]; titles?: { title: string; summary: string }[] }): Promise<unknown> {
+    return this.http('PUT', `/projects/${encodeURIComponent(projectId)}/series/plan`, edit);
+  }
+
+  /** Make the parts (once) and queue them in order. */
+  startSeries(projectId: string): Promise<unknown> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/series/start`, {});
+  }
+
+  /** Plan the cuts again (after the AI failed). */
+  replanSeries(projectId: string): Promise<unknown> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/series/replan`, {});
+  }
+
+  // ----- Logo & greeting (the brand kit, branding/brandKit.ts) -----
+
+  listBrandKit(): Promise<BrandAsset[]> {
+    return this.http<BrandAsset[]>('GET', '/branding');
+  }
+
+  addLogo(name: string, path: string): Promise<BrandAsset> {
+    return this.http<BrandAsset>('POST', '/branding/logos', { name, path });
+  }
+
+  /** A greeting from a file (`path`), or said by an installed voice (`text` + `voiceId`). */
+  addGreeting(body: { name: string; path?: string; text?: string; voiceId?: string; language?: string }): Promise<BrandAsset> {
+    return this.http<BrandAsset>('POST', '/branding/greetings', body);
+  }
+
+  deleteBrandAsset(id: string): Promise<{ ok: boolean }> {
+    return this.http<{ ok: boolean }>('DELETE', `/branding/${encodeURIComponent(id)}`);
+  }
+
+  /** The logo picture / greeting sound, for an <img> or <audio>. */
+  brandAssetUrl(id: string): string {
+    return `${this.baseUrl}/branding/${encodeURIComponent(id)}/file`;
+  }
+
+  /** Where a project's greeting plays (the last mix's plan, or a `preview`). */
+  getGreetingPlan(projectId: string): Promise<{ plan: (GreetingPlan & { preview?: boolean; edited?: boolean }) | null }> {
+    return this.http('GET', `/projects/${encodeURIComponent(projectId)}/greeting-plan`);
+  }
+
+  /** The editor moved, added or removed greetings (kept until the greeting settings change). */
+  saveGreetingPlan(projectId: string, placements: GreetingPlacement[]): Promise<{ plan: GreetingPlan }> {
+    return this.http('PUT', `/projects/${encodeURIComponent(projectId)}/greeting-plan`, { placements });
+  }
+
+  /** POST /downloads/clear-finished — Settings → Storage: finished downloads and their videos. */
+  clearFinishedDownloads(): Promise<{ removed: number }> {
+    return this.http<{ removed: number }>('POST', '/downloads/clear-finished', {});
+  }
+
+  /** POST /downloads/dub — a project per finished download, from a preset. */
+  dubDownloads(body: {
+    downloadIds: string[];
+    presetId?: string;
+    start?: boolean;
+    /** Dub the downloads longer than `longerThanMinutes` as series of parts. */
+    series?: { minMinutes: number; maxMinutes: number; aiProviderId: string; longerThanMinutes: number; autoStart: boolean };
+  }): Promise<{ results: DubDownloadResult[] }> {
+    return this.http<{ results: DubDownloadResult[] }>('POST', '/downloads/dub', body);
+  }
+
+  /** Dub presets ("Mẫu lồng tiếng"). */
+  listPresets(): Promise<DubPreset[]> {
+    return this.http<DubPreset[]>('GET', '/presets');
+  }
+
+  savePreset(
+    preset: Pick<DubPreset, 'name' | 'targetLanguage' | 'settings'> & Partial<Pick<DubPreset, 'sourceLanguage' | 'outputDir' | 'start'>>,
+    id?: string,
+  ): Promise<DubPreset> {
+    return id
+      ? this.http<DubPreset>('PUT', `/presets/${encodeURIComponent(id)}`, preset)
+      : this.http<DubPreset>('POST', '/presets', preset);
+  }
+
+  deletePreset(id: string): Promise<{ ok: boolean }> {
+    return this.http<{ ok: boolean }>('DELETE', `/presets/${encodeURIComponent(id)}`);
   }
 
   /** The sources this build can download from, with credential status. */

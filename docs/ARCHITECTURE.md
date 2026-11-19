@@ -352,6 +352,8 @@ handlers. The rest, by family:
 | Project extras | `/projects/:id/settings`, `/segments/:segId/refit`, `/translation-context` | per-project settings, single-segment re-fit, the character sheet / glossary |
 | Files | `/file` | static read of a project artifact, honouring HTTP byte ranges (WKWebView will not play or seek media without them) |
 | Studio editor | `/projects/:id/timeline` (GET, PATCH), `/waveform`, `/filmstrip`, `/units/:unitId/fitted` | the timeline document, batched line edits, and the preview media — see §6a |
+| Brand kit | `/branding`, `/branding/logos`, `/branding/greetings`, `/branding/:id` (DELETE), `/branding/:id/file`, `/projects/:id/greeting-plan` (GET, PUT) | logos and greetings kept in `<config>/branding/` (`branding/brandKit.ts`; a project keeps its own copy in `<workspace>/branding/`), and where a project's greeting plays (`branding/greetingPlanner.ts`, saved as `audio/greeting_plan.json`) |
+| Series | `/series/ai-options`, `/projects/:id/series` (GET), `/series/plan` (PUT), `/series/replan`, `/series/parts`, `/series/start` | a long video dubbed as parts (`series/seriesService.ts`): the parent runs speech-to-text only, an AI from Settings picks the cuts among the pauses, each part is a project with a `sourceRange` and a pre-cut `source.json` |
 
 > Adding a route family here is easy to forget, and this table sat at 16 rows
 > against 62 handlers for months. If you touch `server.ts`, touch this section.
@@ -375,7 +377,17 @@ handlers. The rest, by family:
 | GET | `/projects/:id/segments` | — | → `TranscriptSegment[]` (merged w/ alignment status) |
 | PUT | `/projects/:id/segments` | `save_translated_segments` | `{ segments:[{id, translatedText}] }` → `{ ok:true }` |
 | POST | `/projects/:id/segments/:segId/tts` | `synthesize_single_segment` | `{ text?, voiceId?, speed? }` → `{ segment, alignment }` |
-| POST | `/projects/:id/render` | `render_final_video` | `{ subtitleExportMode?, burnSubtitleStyle? }` → `RenderFinalVideoResult` |
+| GET | `/downloads` | — | The download queue, newest first (`DownloadItem[]`; `providers/download/queue.ts`: two at a time, kept in `<config>/download-queue.json`, resumed after a restart) |
+| POST | `/downloads` | — | `{ items: [{ input, page?, targetHeightPx? }], allParts? }` → 202 `{ added, existing, rejected }`; a `sourceKey` already queued is returned, not added |
+| GET | `/downloads/:id` · POST `/downloads/:id/cancel` · POST `/downloads/:id/retry` · DELETE `/downloads/:id?deleteFile=` | — | One download |
+| POST | `/downloads/dub` | — | `{ downloadIds, presetId?, targetLanguage?, settings?, outputDir?, start?, series? }` → a linked project per finished download (`results`); with `series`, the downloads longer than `series.longerThanMinutes` (default 1.5 × `maxMinutes`) become series (`series: true` in their result), and no AI set up refuses the whole request (`CLOUD_CREDENTIALS_MISSING`) |
+| POST | `/download/expand` | — | `{ input }` → `{ list }`: the videos of a Bilibili collection, series list, favourites folder or uploader's page (at most 500), `null` for any other link. `POST /downloads` expands such a link by itself |
+| POST | `/downloads/clear-finished` | — | Settings → Storage: finished, failed and cancelled downloads and their files |
+| GET · POST · PUT · DELETE | `/presets`, `/presets/:id` | — | Dub presets (`workspace/presetStore.ts`, `<config>/dub-presets.json`) |
+| POST | `/download/providers/:id/session/import` | — | `{ cookies: [{ name, value, domain }] }` from the user's browser (the plugin's `set_download_login`) → masked status + check |
+| GET | `/jobs/events?downloads=&projects=&since=&untilDone=1` | — | NDJSON, one line per change of the named jobs (`jobFeed.ts`); ends once all have stopped |
+| GET | `/projects/:id/outputs` · POST `/projects/:id/published` | — | A finished dub's files (size, sha256), source and posts; record a post |
+| POST | `/projects/:id/render` | `render_final_video` | `{ subtitleExportMode?, burnSubtitleStyle? }` → 202 `{ started, queued, position?, fromStep }`: Export's "Render again", a run from `audio-mix` when the mix is out of date (`audio/final_mix.inputs.json`, `pipeline/mixFingerprint.ts`), else from `render` |
 | POST | `/open` | `open_output_folder` / `open_path` | `{ path }` → `{ ok:true }` |
 | GET | `/projects/:id/events` | — | SSE stream (see §8) |
 

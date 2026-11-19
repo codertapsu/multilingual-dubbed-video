@@ -130,6 +130,7 @@ pub fn run() {
             commands::open_path,
             commands::open_external,
             commands::pick_video_file,
+            commands::pick_media_file,
             commands::pick_folder,
             // convenience proxies
             commands::get_workers_health,

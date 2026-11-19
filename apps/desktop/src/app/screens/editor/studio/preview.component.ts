@@ -9,6 +9,9 @@ import {
   viewChild,
 } from '@angular/core';
 
+import { logoPeriods } from '@videodubber/shared';
+
+import { IpcService } from '../../../core/ipc/ipc.service';
 import { TranslatePipe } from '../../../core/i18n';
 import { formatTimecode } from '../../../core/util/format';
 import { PlaybackService, type MonitorMode } from './playback.service';
@@ -40,6 +43,19 @@ import { StudioStore } from './studio.store';
         }
         @if (videoFailed()) {
           <div class="fail">{{ 'studio.video-unavailable' | translate }}</div>
+        }
+        @if (logo(); as l) {
+          <img
+            class="logo"
+            alt=""
+            [src]="l.url"
+            [style.width.%]="l.widthPct"
+            [style.opacity]="l.opacity"
+            [style.left.%]="l.left"
+            [style.right.%]="l.right"
+            [style.top.%]="l.top"
+            [style.bottom.%]="l.bottom"
+          />
         }
         @if (activeLine(); as line) {
           <div class="subtitle" aria-live="off">
@@ -223,6 +239,11 @@ import { StudioStore } from './studio.store';
         background: #000;
         cursor: pointer;
       }
+      .logo {
+        position: absolute;
+        height: auto;
+        pointer-events: none;
+      }
       .fail {
         position: absolute;
         color: #ddd;
@@ -310,6 +331,7 @@ import { StudioStore } from './studio.store';
 export class PreviewComponent {
   protected readonly store = inject(StudioStore);
   protected readonly playback = inject(PlaybackService);
+  private readonly ipc = inject(IpcService);
   private readonly video = viewChild<ElementRef<HTMLVideoElement>>('video');
 
   protected readonly monitors: readonly MonitorMode[] = ['mix', 'original', 'dub'];
@@ -325,6 +347,35 @@ export class PreviewComponent {
   protected readonly aspect = computed(() => {
     const m = this.store.media();
     return m?.width && m?.height ? String(m.width / m.height) : String(16 / 9);
+  });
+
+  /**
+   * The project's logo where the render will draw it (corner, size, margin,
+   * opacity), shown only inside its periods at the playhead.
+   */
+  protected readonly logo = computed(() => {
+    const settings = this.store.project()?.settings.branding?.logo;
+    if (!settings) return null;
+    const m = this.store.media();
+    const w = m?.width || 16;
+    const h = m?.height || 9;
+    const periods = logoPeriods(settings, this.store.project()?.mediaInfo?.durationMs ?? 0);
+    const t = this.playback.currentMs();
+    if (periods && !periods.some((p) => t >= p.startMs && t < p.endMs)) return null;
+    const shorter = Math.min(w, h);
+    const mx = (settings.marginPct * shorter) / w;
+    const my = (settings.marginPct * shorter) / h;
+    const right = settings.corner.endsWith('right');
+    const bottom = settings.corner.startsWith('bottom');
+    return {
+      url: this.ipc.brandAssetUrl(settings.assetId),
+      widthPct: settings.widthPct,
+      opacity: settings.opacity,
+      left: right ? null : mx,
+      right: right ? mx : null,
+      top: bottom ? null : my,
+      bottom: bottom ? my : null,
+    };
   });
 
   /** One frame at the source frame rate (30 fps when unknown). */

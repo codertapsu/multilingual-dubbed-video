@@ -214,3 +214,106 @@ describe('filename safety', () => {
     expect(safeFilename('【中文】How to dub a video')).toBe('【中文】How to dub a video');
   });
 });
+
+describe('bilibiliApiError', () => {
+  it('tells waiting, signing in and gone apart', async () => {
+    const { bilibiliApiError } = await import('./client.js');
+    expect(bilibiliApiError(-352, '风控校验失败').appError.code).toBe('SOURCE_RATE_LIMITED');
+    expect(bilibiliApiError(-412, undefined).appError.code).toBe('SOURCE_RATE_LIMITED');
+    expect(bilibiliApiError(87008, '充电专属').appError.code).toBe('SOURCE_LOGIN_REQUIRED');
+    expect(bilibiliApiError(-404, '啥都木有').appError.code).toBe('SOURCE_UNAVAILABLE');
+    expect(bilibiliApiError(-10403, 'region').appError.message).toMatch(/region/);
+    expect(bilibiliApiError(12345, 'odd').appError.code).toBe('UNKNOWN');
+  });
+});
+
+describe('the device id Bilibili expects', () => {
+  it('asks for one before the first call and sends it, and goes on without one when the ask fails', async () => {
+    const { fetchVideoInfo, _resetDeviceId, setSessionCookies } = await import('./client.js');
+    const view = { code: 0, data: { bvid: 'BV1xx411c7mD', title: 'T', duration: 10, pages: [] } };
+    const seen: { url: string; cookie?: string }[] = [];
+    const fetchWith = (spiOk: boolean) => async (url: string, init?: { headers?: Record<string, string> }) => {
+      seen.push({ url, ...(init?.headers?.['Cookie'] ? { cookie: init.headers['Cookie'] } : {}) });
+      const body = url.includes('/finger/spi') ? { code: 0, data: { b_3: 'dev-3', b_4: 'dev-4' } } : view;
+      if (url.includes('/finger/spi') && !spiOk) throw new Error('offline');
+      return { ok: true, status: 200, url, json: async () => body };
+    };
+
+    setSessionCookies({});
+    _resetDeviceId();
+    await fetchVideoInfo(fetchWith(true), { bvid: 'BV1xx411c7mD', page: 1 });
+    expect(seen.map((s) => s.url.replace(/\?.*/, ''))).toEqual([
+      'https://api.bilibili.com/x/frontend/finger/spi',
+      'https://api.bilibili.com/x/web-interface/view',
+    ]);
+    expect(seen[1]?.cookie).toBe('buvid3=dev-3; buvid4=dev-4');
+
+    // One from the user's browser wins, and is not asked for again.
+    seen.length = 0;
+    setSessionCookies({ buvid3: 'browser-dev' });
+    await fetchVideoInfo(fetchWith(true), { bvid: 'BV1xx411c7mD', page: 1 });
+    expect(seen).toEqual([{ url: expect.stringContaining('/view?'), cookie: 'buvid3=browser-dev' }]);
+
+    // The ask failing costs nothing but the id.
+    seen.length = 0;
+    setSessionCookies({});
+    await fetchVideoInfo(fetchWith(false), { bvid: 'BV1xx411c7mD', page: 1 });
+    expect(seen.at(-1)).toEqual({ url: expect.stringContaining('/view?') });
+    _resetDeviceId();
+  });
+});
+
+describe('parseBilibiliList', () => {
+  it('recognises collections, series lists, favourites and uploader pages, and nothing else', async () => {
+    const { parseBilibiliList } = await import('./client.js');
+    expect(parseBilibiliList('https://space.bilibili.com/123/channel/collectiondetail?sid=456')).toEqual({ kind: 'season', mid: 123, id: 456 });
+    expect(parseBilibiliList('space.bilibili.com/123/lists/789?type=series')).toEqual({ kind: 'series', mid: 123, id: 789 });
+    expect(parseBilibiliList('https://space.bilibili.com/123/lists/789?type=season')).toEqual({ kind: 'season', mid: 123, id: 789 });
+    expect(parseBilibiliList('https://space.bilibili.com/123/favlist?fid=55&ftype=create')).toEqual({ kind: 'favourites', mid: 123, id: 55 });
+    expect(parseBilibiliList('https://www.bilibili.com/medialist/detail/ml55')).toEqual({ kind: 'favourites', id: 55 });
+    expect(parseBilibiliList('https://space.bilibili.com/123/video')).toEqual({ kind: 'uploader', mid: 123, id: 123 });
+    expect(parseBilibiliList('https://space.bilibili.com/123')).toEqual({ kind: 'uploader', mid: 123, id: 123 });
+    expect(parseBilibiliList('https://www.bilibili.com/video/BV1xx411c7mD')).toBeNull();
+    expect(parseBilibiliList('https://space.bilibili.com/123/dynamic')).toBeNull();
+  });
+
+  it('pages through a list and leaves out deleted favourites', async () => {
+    const { fetchBilibiliList } = await import('./client.js');
+    const pages: Record<number, unknown> = {
+      1: { code: 0, data: { info: { title: 'Mục yêu thích', media_count: 3 }, has_more: true, medias: [{ bvid: 'BV1aaaaaaaaa', title: 'A', duration: 60 }, { bvid: 'BV1bbbbbbbbb', title: '已失效视频', attr: 9 }] } },
+      2: { code: 0, data: { info: { title: 'Mục yêu thích', media_count: 3 }, has_more: false, medias: [{ bvid: 'BV1ccccccccc', title: 'C', duration: 90 }] } },
+    };
+    const fetchImpl = async (url: string) => ({
+      ok: true,
+      status: 200,
+      url,
+      json: async () => (url.includes('finger/spi') ? { code: 0, data: { b_3: 'x' } } : pages[Number(/pn=(\d+)/.exec(url)![1])]),
+    });
+    const list = await fetchBilibiliList(fetchImpl, { kind: 'favourites', id: 55 });
+    expect(list.title).toBe('Mục yêu thích');
+    expect(list.videos.map((v) => v.bvid)).toEqual(['BV1aaaaaaaaa', 'BV1ccccccccc']);
+  });
+
+  it("takes an uploader's videos the second way when risk control refuses the page's search", async () => {
+    const { fetchBilibiliList, _resetWbiKeyCache } = await import('./client.js');
+    _resetWbiKeyCache();
+    const asked: string[] = [];
+    const fetchImpl = async (url: string) => {
+      asked.push(url.replace(/\?.*$/, ''));
+      const body = url.includes('finger/spi')
+        ? { code: 0, data: { b_3: 'x' } }
+        : url.includes('/nav')
+          ? { code: -101, data: { wbi_img: { img_url: 'https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png', sub_url: 'https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png' } } }
+          : url.includes('/arc/search')
+            ? { code: -352, message: '风控校验失败' }
+            : url.includes('recArchivesByKeywords')
+              ? { code: 0, data: { archives: [{ bvid: 'BV1ddddddddd', title: 'D', duration: 61 }], page: { total: 1 } } }
+              : { code: 0, data: { card: { name: 'UP主' } } };
+      return { ok: true, status: 200, url, json: async () => body };
+    };
+    const list = await fetchBilibiliList(fetchImpl, { kind: 'uploader', mid: 7, id: 7 });
+    expect(list).toEqual({ title: 'UP主', total: 1, videos: [{ bvid: 'BV1ddddddddd', title: 'D', durationSec: 61 }] });
+    expect(asked).toContain('https://api.bilibili.com/x/space/wbi/arc/search');
+    expect(asked.at(-1)).toBe('https://api.bilibili.com/x/web-interface/card');
+  });
+});

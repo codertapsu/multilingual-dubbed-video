@@ -1,3 +1,4 @@
+import { BrandKitComponent } from '../../shared/branding/brand-kit.component';
 import type { OnDestroy, OnInit } from '@angular/core';
 import {
   ChangeDetectionStrategy,
@@ -99,6 +100,7 @@ const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> =
     TranslatePipe,
     RecommendedEnginesComponent,
     ClaudeConnectionsComponent,
+    BrandKitComponent,
   ],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
@@ -746,6 +748,29 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.storageMessage.set(`Freed ${this.formatBytes(res.freedBytes)}.`);
       // Refresh everything the wipe affected.
       await Promise.all([this.loadStorage(), this.loadEngines(), this.loadProcessingSetup()]);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.storageClearing.set(false);
+    }
+  }
+
+  /** Delete the finished downloads and their videos (with confirm), then refresh. */
+  protected async clearDownloads(): Promise<void> {
+    if (this.storageClearing()) return;
+    const ok = await this.confirmSvc.confirm({
+      title: this.translate.instant('confirm.clear-downloads-title'),
+      message: this.translate.instant('confirm.clear-downloads-body'),
+      confirmLabel: this.translate.instant('settings.storage.downloads-delete'),
+    });
+    if (!ok) return;
+    this.storageClearing.set(true);
+    this.storageMessage.set(null);
+    this.error.set(null);
+    try {
+      const res = await this.ipc.clearFinishedDownloads();
+      this.storageMessage.set(this.translate.instant('settings.storage.downloads-deleted', { n: res.removed }));
+      await this.loadStorage();
     } catch (err) {
       this.error.set(toAppError(err));
     } finally {

@@ -80,3 +80,62 @@
 .test-fail {
   color: var(--vd-danger);
 }
+
+.links {
+  font-family: var(--vd-font-mono, ui-monospace, monospace);
+  resize: vertical;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+}
+
+.notice {
+  margin: 0;
+  color: var(--vd-text-muted);
+}
+
+.small {
+  font-size: 0.8rem;
+}
+
+.dl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-3);
+}
+
+.dl-item {
+  padding: var(--vd-sp-3);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+}
+
+.dl-head {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+  flex-wrap: wrap;
+}
+
+/* Titles run long and carry CJK text with no spaces to break on. */
+.dl-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  flex: 1;
+  min-width: 0;
+}
+
+.dl-actions {
+  flex-wrap: wrap;
+  gap: var(--vd-sp-2);
+}
+
+.mono {
+  overflow-wrap: anywhere;
+}

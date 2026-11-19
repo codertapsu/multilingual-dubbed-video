@@ -65,6 +65,11 @@ export const APP_ROUTES: Routes = [
       import('./screens/editor/editor.component').then((m) => m.EditorComponent),
   },
   {
+    path: 'project/:id/series',
+    title: 'VideoDubber — Series',
+    loadComponent: () => import('./screens/series/series.component').then((m) => m.SeriesComponent),
+  },
+  {
     path: 'project/:id/export',
     title: 'VideoDubber — Export',
     loadComponent: () =>

@@ -8,6 +8,7 @@ import type { ProviderReadiness } from './providers/readiness.js';
 import { loadConfig } from './config.js';
 import { EventBusRegistry } from './events.js';
 import { ProjectStore } from './workspace/projectStore.js';
+import { moveFolder, rewriteMovedPaths } from './workspace/projectsFolder.js';
 import {
   FakeMediaService,
   FakeSttProvider,
@@ -665,14 +666,21 @@ describe('LocalJobOrchestrator — choosing where a project is saved', () => {
 
   it('renders straight into the chosen folder', async () => {
     const video = await writeDummyVideo(tmp);
-    const project = await orchestrator.createProject(createProjectInput(video, { name: 'Clip' }));
+    const media = new FakeMediaService();
+    const s = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media,
+      registry: fakeRegistry(new FakeSttProvider(makeSegments([[0, 1000, 'hi']])), new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+    });
+    const project = await s.createProject(createProjectInput(video, { name: 'Clip' }));
     const dubs = path.join(tmp, 'Dubs');
-    await orchestrator.setProjectOutputDir(project.id, dubs);
-    await fsp.writeFile(store.paths(project.id).finalMixWav, 'mix');
+    await s.setProjectOutputDir(project.id, dubs);
 
-    const result = await orchestrator.renderFinalVideo(project.id, {});
-    expect(result.outputPath).toBe(path.join(dubs, 'Clip.vi.mp4'));
-    await expect(fsp.stat(result.outputPath)).resolves.toBeTruthy();
+    await s.runPipeline(project.id);
+    await vi.waitFor(async () => expect((await store.getProject(project.id)).status).toBe('completed'), { timeout: 15_000 });
+    expect(media.calls).toContain(`renderFinalVideo:${path.join(dubs, 'Clip.vi.mp4')}`);
   });
 
   it('refuses a folder it cannot use, and leaves the project as it was', async () => {
@@ -691,6 +699,90 @@ describe('LocalJobOrchestrator — choosing where a project is saved', () => {
     });
     expect((await store.getProject(project.id)).outputDir).toBe(paths.renderDir);
     expect(await fsp.readFile(paths.outputMp4, 'utf8')).toBe('video');
+  });
+});
+
+describe('Export: Render again', () => {
+  /** A one-line dub, run to the end. */
+  async function finishedDub(): Promise<{ s: LocalJobOrchestrator; media: FakeMediaService; id: string }> {
+    const video = await writeDummyVideo(tmp);
+    const media = new FakeMediaService();
+    const s = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media,
+      registry: fakeRegistry(new FakeSttProvider(makeSegments([[0, 1000, 'hi'], [1500, 2500, 'there']])), new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+    });
+    const project = await s.createProject(createProjectInput(video, { name: 'Clip' }));
+    await s.runPipeline(project.id);
+    await vi.waitFor(async () => expect((await store.getProject(project.id)).status).toBe('completed'), { timeout: 15_000 });
+    return { s, media, id: project.id };
+  }
+
+  const count = (media: FakeMediaService, call: string): number => media.calls.filter((c) => c.startsWith(call)).length;
+
+  /** Until the run this test started has rendered and finished (the project read 'completed' before it, too). */
+  const rendered = async (id: string, media: FakeMediaService, renders: number): Promise<void> => {
+    await vi.waitFor(
+      async () => {
+        expect(count(media, 'renderFinalVideo')).toBe(renders);
+        expect((await store.getProject(id)).status).toBe('completed');
+      },
+      { timeout: 15_000 },
+    );
+  };
+
+  it('renders again without re-mixing when nothing the mix reads changed, keeping the chosen subtitle mode', async () => {
+    const { s, media, id } = await finishedDub();
+    expect(await s.mixIsCurrent(id)).toBe(true);
+    const mixes = count(media, 'duckAndMix');
+    const renders = count(media, 'renderFinalVideo');
+
+    const res = await s.rerender(id, { subtitleExportMode: 'vtt-file' });
+    expect(res.fromStep).toBe('render');
+    await rendered(id, media, renders + 1);
+    expect(count(media, 'duckAndMix')).toBe(mixes);
+    expect((await store.getProject(id)).settings.subtitleExportMode).toBe('vtt-file');
+  });
+
+  it('re-mixes first when a mix setting changed', async () => {
+    const { s, media, id } = await finishedDub();
+    await s.updateProjectSettings(id, { duckingLevelDb: -21 });
+    expect(await s.mixIsCurrent(id)).toBe(false);
+    const mixes = count(media, 'duckAndMix');
+    const renders = count(media, 'renderFinalVideo');
+
+    expect((await s.rerender(id, {})).fromStep).toBe('audio-mix');
+    await rendered(id, media, renders + 1);
+    expect(count(media, 'duckAndMix')).toBe(mixes + 1);
+    expect(await s.mixIsCurrent(id)).toBe(true);
+  });
+
+  it('re-mixes first when a dub clip was made again, or the mix has no record', async () => {
+    const { s, id } = await finishedDub();
+    const paths = store.paths(id);
+    const aligned = JSON.parse(await fsp.readFile(paths.translatedAlignedJson, 'utf8')) as { audioPath: string }[];
+    await fsp.writeFile(aligned[0]!.audioPath, Buffer.alloc(7777));
+    expect(await s.mixIsCurrent(id)).toBe(false);
+
+    const { s: s2, id: id2 } = await finishedDub();
+    await fsp.rm(store.paths(id2).finalMixInputsJson);
+    expect(await s2.mixIsCurrent(id2)).toBe(false);
+  });
+
+  it('does not count a moved projects folder as a change', async () => {
+    const { s, id } = await finishedDub();
+    // What Settings → Projects folder does across drives: copy, rewrite the
+    // paths in the JSON files, switch the store (projectsFolderService.ts).
+    const from = store.projectsDir;
+    const to = path.join(tmp, 'elsewhere', 'projects');
+    await moveFolder(from, to);
+    await rewriteMovedPaths(path.join(to, id), from, to);
+    store.setProjectsDir(to);
+    const aligned = JSON.parse(await fsp.readFile(store.paths(id).translatedAlignedJson, 'utf8')) as { audioPath: string }[];
+    expect(aligned[0]!.audioPath.startsWith(to)).toBe(true);
+    expect(await s.mixIsCurrent(id)).toBe(true);
   });
 });
 

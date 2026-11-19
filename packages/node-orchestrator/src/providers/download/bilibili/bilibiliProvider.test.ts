@@ -359,17 +359,16 @@ describe('session cookie', () => {
     expect(hasSessionCookie()).toBe(false);
   });
 
-  it('sends only SESSDATA when configured', () => {
+  it('sends no cookie to the media hosts, which a browser would not either', () => {
     setSessionCookie('abc123');
-    expect(mediaHeaders()['Cookie']).toBe('SESSDATA=abc123');
-    // Nothing else from a pasted jar may ride along.
-    expect(mediaHeaders()['Cookie']).not.toContain('bili_jct');
+    expect(hasSessionCookie()).toBe(true);
+    expect(mediaHeaders()['Cookie']).toBeUndefined();
+    expect(mediaHeaders()['Referer']).toBe('https://www.bilibili.com/');
   });
 
   it('treats an all-whitespace cookie as unconfigured', () => {
     setSessionCookie('   ');
     expect(hasSessionCookie()).toBe(false);
-    expect(mediaHeaders()['Cookie']).toBeUndefined();
   });
 
   it('exposes the credential as a capability, applied through the store', async () => {

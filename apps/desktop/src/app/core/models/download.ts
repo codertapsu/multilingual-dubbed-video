@@ -6,6 +6,7 @@
  * not to the provider's own types.
  */
 import type { AppError } from './index';
+import type { DownloadItem } from '@videodubber/shared';
 
 /** One selectable part of a (possibly multi-part) video. */
 export interface DownloadPart {
@@ -40,17 +41,23 @@ export interface ResolvedVideo {
   qualities: QualityOption[];
 }
 
-/** Which stage of the job is running. */
-export type DownloadPhase = 'video' | 'audio' | 'merging';
+/** The download queue (GET /downloads, events on /download/events): the shared contract. */
+export type {
+  DownloadItem,
+  DownloadQueueEvent,
+  DownloadRequest,
+  DownloadSource,
+  DownloadState,
+  DubDownloadResult,
+  DubPreset,
+} from '@videodubber/shared';
 
-export type DownloadEvent = (
-  | { type: 'progress'; jobId: string; phase: DownloadPhase; percent: number | null }
-  | { type: 'done'; jobId: string; filePath: string; title: string }
-  | { type: 'error'; jobId: string; error: AppError }
-) & {
-  /** Set on catch-up events sent when the stream is (re)connected. */
-  replay?: boolean;
-};
+/** POST /downloads's answer. */
+export interface AddDownloadsResult {
+  added: DownloadItem[];
+  existing: DownloadItem[];
+  rejected: { input: string; error: AppError }[];
+}
 
 /** Whether an optional provider credential is configured (never the value). */
 export interface SessionInfo {
@@ -65,6 +72,8 @@ export interface SessionInfo {
 export interface SessionCheck {
   valid: boolean;
   uname?: string;
+  /** A paid membership: 1080P60 / 4K where the video has them. */
+  premium?: boolean;
 }
 
 /** A source this build can download from. */

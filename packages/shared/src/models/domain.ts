@@ -3,6 +3,9 @@
  * TTS/alignment segments, and subtitle styling.
  */
 
+import type { BrandingSettings, TimeSpan } from './branding.js';
+import type { DownloadSource } from './download.js';
+import type { SeriesInfo, SeriesSettings } from './series.js';
 import type { MediaInfo } from './media.js';
 
 /**
@@ -255,6 +258,15 @@ export interface ProjectSettings {
   autoSelectedPhases?: ('stt' | 'translation' | 'tts')[];
   /** Optional style for burned-in subtitles. */
   burnSubtitleStyle?: SubtitleStyle;
+  /** Logo and spoken greeting (models/branding.ts); absent = neither. */
+  branding?: BrandingSettings;
+  /**
+   * Use the subtitles the source site published (Bilibili CC, or its AI
+   * subtitles when the session is signed in) as the transcript instead of
+   * speech-to-text, when the download carries them in this project's spoken
+   * language. Much faster on a long video; timing is the site's.
+   */
+  useSourceSubtitles?: boolean;
 }
 
 /** Lifecycle status of a project. */
@@ -309,6 +321,18 @@ export interface Project {
   mediaInfo?: MediaInfo;
   /** Set while `status === 'queued'` (waiting for a run slot). */
   queue?: ProjectQueueEntry;
+  /** The download it was made from (site, link, uploader), when it was. */
+  source?: DownloadSource;
+  /** Where the finished dub was posted, newest last (POST /projects/:id/published). */
+  published?: PublishedRecord[];
+  /** A long video dubbed in parts: the parent analyses, each part dubs (models/series.ts). */
+  series?: SeriesInfo;
+  /**
+   * The window of the input video this project dubs (a series part); absent =
+   * the whole video. Every time inside the project (transcript, dub, mix,
+   * subtitles) is relative to `startMs`.
+   */
+  sourceRange?: TimeSpan;
 }
 
 /** A single word with timing inside a transcript segment. */
@@ -487,6 +511,25 @@ export interface CreateProjectInput {
    * Absent or empty: the project's own render/ folder inside the app's data.
    */
   outputDir?: string;
+  /**
+   * Hard-link the video into the project instead of copying it (a download
+   * the app made: no second copy on the same drive). Copied when it cannot.
+   */
+  linkInputVideo?: boolean;
+  /** The download it was made from (site, link, uploader), for the caption. */
+  source?: DownloadSource;
+  /** Dub the video as a series of parts (a parent project; models/series.ts). */
+  series?: SeriesSettings;
+}
+
+/** Where a finished dub was posted (POST /projects/:id/published, Mother Claude). */
+export interface PublishedRecord {
+  /** The post's address. */
+  url: string;
+  /** ISO time it was recorded. */
+  at: string;
+  /** The part of a series, 1-based (Phase 3); absent for a single video. */
+  part?: number;
 }
 
 /**

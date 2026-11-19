@@ -232,8 +232,12 @@ export class FakeMediaService implements PipelineMediaService {
     return outputPath;
   }
 
+  /** Every render's input (logo, range, effects…). */
+  public renderInputs: RenderFinalVideoInput[] = [];
+
   async renderFinalVideo(input: RenderFinalVideoInput): Promise<RenderFinalVideoResult> {
     this.calls.push(`renderFinalVideo:${input.outputPath}`);
+    this.renderInputs.push(input);
     await this.touch(input.outputPath);
     return { outputPath: input.outputPath, durationMs: 10_000, sidecarSubtitlePaths: [] };
   }
@@ -241,6 +245,20 @@ export class FakeMediaService implements PipelineMediaService {
   /** Per-path speech measurements a test wants (e.g. a broken, mostly silent clip). */
   public speech = new Map<string, Awaited<ReturnType<NonNullable<PipelineMediaService['measureSpeech']>>>>();
   public speechCalls = 0;
+
+  /** Brand kit: the picture kept as it is, with a logo's proportions. */
+  async prepareLogo(inputPath: string, outputPath: string): Promise<{ width: number; height: number }> {
+    await fsp.mkdir(path.dirname(outputPath), { recursive: true });
+    await fsp.copyFile(inputPath, outputPath);
+    return { width: 400, height: 160 };
+  }
+
+  /** Brand kit: the sound kept as it is, two seconds long. */
+  async prepareGreeting(inputPath: string, outputPath: string): Promise<{ durationMs: number }> {
+    await fsp.mkdir(path.dirname(outputPath), { recursive: true });
+    await fsp.copyFile(inputPath, outputPath);
+    return { durationMs: 2000 };
+  }
 
   /**
    * A clean clip by default, shaped like a real VieNeu one: ~80 ms of silence

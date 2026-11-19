@@ -2,17 +2,20 @@ import { AppErrorException, pickClosestHeight } from '@videodubber/shared';
 
 import {
   checkSession,
+  fetchBilibiliList,
+  fetchPlayerInfo,
+  parseBilibiliList,
   fetchProgressiveStream,
   fetchStreams,
   fetchVideoInfo,
   mediaHeaders,
   resolveInput,
-  setSessionCookie,
+  setSessionCookies,
   type FetchLike,
 } from './client.js';
 import { qualityHeight, qualityLabel } from './quality.js';
 import { BilibiliSessionStore } from './session.js';
-import { looksLikeBilibili, type BilibiliRef } from './url.js';
+import { looksLikeBilibili, parseBilibiliInput, type BilibiliRef } from './url.js';
 import type {
   PreparedDownload,
   ResolvedSourceVideo,
@@ -32,6 +35,11 @@ import type {
  */
 
 export const BILIBILI_PROVIDER_ID = 'bilibili';
+
+/** `bilibili:BV…:p2` (or `bilibili:av123:p1` for a legacy id). Pure. */
+export function bilibiliSourceKey(id: { bvid?: string; aid?: number }, page: number): string {
+  return `${BILIBILI_PROVIDER_ID}:${id.bvid ?? `av${id.aid ?? 0}`}:p${page}`;
+}
 
 /**
  * Bilibili serves the same video through two different pipes, gated
@@ -150,7 +158,27 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
   return {
     id: BILIBILI_PROVIDER_ID,
 
-    matches: (input) => looksLikeBilibili(input),
+    matches: (input) => looksLikeBilibili(input) || parseBilibiliList(input) !== null,
+
+    isList: (input) => parseBilibiliList(input) !== null,
+
+    async expand(input) {
+      const list = parseBilibiliList(input);
+      if (!list) return undefined;
+      const found = await fetchBilibiliList(fetchImpl, list);
+      return {
+        providerId: BILIBILI_PROVIDER_ID,
+        kind: list.kind,
+        title: found.title,
+        total: found.total,
+        videos: found.videos.map((v) => ({ input: `https://www.bilibili.com/video/${v.bvid}`, title: v.title, durationSec: v.durationSec })),
+      };
+    },
+
+    sourceKey(input, page) {
+      const parsed = parseBilibiliInput(input);
+      return parsed?.kind === 'ref' ? bilibiliSourceKey(parsed, page ?? parsed.page) : undefined;
+    },
 
     async resolve(input): Promise<ResolvedSourceVideo> {
       const { ref, info, parts } = await lookup(input);
@@ -188,6 +216,24 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
       }
       const cid = Number(part.id);
       const baseName = partBaseName({ title: info.title, parts }, part);
+      const source = {
+        providerId: BILIBILI_PROVIDER_ID,
+        sourceKey: bilibiliSourceKey({ bvid: info.bvid }, part.page),
+        url: `https://www.bilibili.com/video/${info.bvid}${parts.length > 1 ? `?p=${part.page}` : ''}`,
+        title: info.title,
+        page: part.page,
+        partCount: parts.length,
+        ...(parts.length > 1 && part.title && part.title !== info.title ? { partTitle: part.title } : {}),
+        ...(info.ownerName ? { ownerName: info.ownerName } : {}),
+        durationSec: part.durationSec,
+        ...(info.coverUrl ? { coverUrl: info.coverUrl } : {}),
+      };
+      // Its subtitles and chapter marks, when the site has them (best effort:
+      // a video downloads the same without).
+      const extras = await fetchPlayerInfo(fetchImpl, ref, cid).catch(() => undefined);
+      const chapters = extras && extras.chapters.length > 1 ? extras.chapters : undefined;
+      const subtitleTracks = extras?.subtitles.length ? extras.subtitles : undefined;
+      if (chapters) Object.assign(source, { chapters });
 
       // Snap the preference onto what this video can actually serve, using the
       // SAME rule the screen used to promise a result before starting.
@@ -210,9 +256,14 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
           // ffmpeg step entirely rather than remuxing a complete file.
           return {
             videoUrl: prog.url,
+            videoFallbackUrls: prog.fallbackUrls,
+            ...(prog.sizeBytes ? { expectedBytes: prog.sizeBytes } : {}),
+            heightPx: chosen.heightPx,
             baseName,
             title: info.title,
             headers: mediaHeaders(),
+            source,
+            ...(subtitleTracks ? { subtitleTracks } : {}),
           };
         }
         // Fall through to DASH rather than failing: the legacy path can vanish
@@ -223,9 +274,15 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
       return {
         videoUrl: streams.videoUrl,
         audioUrl: streams.audioUrl,
+        videoFallbackUrls: streams.videoFallbackUrls,
+        audioFallbackUrls: streams.audioFallbackUrls,
+        ...(streams.estimatedBytes ? { expectedBytes: streams.estimatedBytes } : {}),
+        ...(streams.heightPx ? { heightPx: streams.heightPx } : chosen ? { heightPx: chosen.heightPx } : {}),
         baseName,
         title: info.title,
         headers: mediaHeaders(),
+        source,
+        ...(subtitleTracks ? { subtitleTracks } : {}),
       };
     },
 
@@ -235,15 +292,19 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
         await store.set(raw);
         // Re-read rather than reusing `raw`: the store normalises what was
         // pasted, and the live cookie must match what was persisted.
-        setSessionCookie(await store.get());
+        setSessionCookies(await store.getAll());
+      },
+      async importCookies(cookies) {
+        await store.importCookies(cookies);
+        setSessionCookies(await store.getAll());
       },
       async clear() {
         await store.clear();
-        setSessionCookie(undefined);
+        setSessionCookies({});
       },
       check: () => checkSession(fetchImpl),
       async load() {
-        setSessionCookie(await store.get());
+        setSessionCookies(await store.getAll());
       },
     },
   };

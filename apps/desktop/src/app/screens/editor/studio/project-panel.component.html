@@ -376,6 +376,11 @@
     </section>
   }
 
+  <!-- Logo & greeting: applied at once, like the speakers block. -->
+  @if (store.project()) {
+    <vd-branding-panel />
+  }
+
   <!-- Speakers: who says the lines, and each speaker's voice. Applied at once
        (lines whose voice moves are marked for re-voicing), not via the draft. -->
   @if (store.project()) {

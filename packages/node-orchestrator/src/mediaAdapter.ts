@@ -20,8 +20,7 @@ import type {
   ClipTrim,
   DuckAndMixInput,
   PipelineMediaService,
-  TimelineStretchReport,
-} from './media.js';
+  TimelineStretchReport, MediaRange } from './media.js';
 import type {
   AudioExtractResult,
   MediaInfo,
@@ -43,9 +42,9 @@ interface MediaWorkerRunOptions {
 interface MediaWorkerModule {
   FfmpegMediaService?: new () => {
     probe(inputPath: string, opts?: MediaWorkerRunOptions): Promise<MediaInfo>;
-    extractAudio(inputPath: string, outputPath: string, opts?: MediaWorkerRunOptions): Promise<AudioExtractResult>;
+    extractAudio(inputPath: string, outputPath: string, opts?: MediaWorkerRunOptions, range?: MediaRange): Promise<AudioExtractResult>;
     renderFinalVideo(input: RenderFinalVideoInput, opts?: MediaWorkerRunOptions): Promise<RenderFinalVideoResult>;
-    extract16kMono?(inputPath: string, outputPath: string, opts?: MediaWorkerRunOptions): Promise<AudioExtractResult>;
+    extract16kMono?(inputPath: string, outputPath: string, opts?: MediaWorkerRunOptions, range?: MediaRange): Promise<AudioExtractResult>;
     clip16kMono?(
       inputPath: string,
       outputPath: string,
@@ -62,7 +61,7 @@ interface MediaWorkerModule {
       opts?: MediaWorkerRunOptions,
     ): Promise<{ output: string; durationMs: number }>;
   };
-  extract16kMono?(inputPath: string, outputPath: string, opts?: MediaWorkerRunOptions): Promise<AudioExtractResult>;
+  extract16kMono?(inputPath: string, outputPath: string, opts?: MediaWorkerRunOptions, range?: MediaRange): Promise<AudioExtractResult>;
   clip16kMono?(
     inputPath: string,
     outputPath: string,
@@ -87,7 +86,10 @@ interface MediaWorkerModule {
     output: string,
     durationMs: number,
     opts?: MediaWorkerRunOptions,
+    range?: MediaRange,
   ): Promise<TimelineFilmstrip>;
+  prepareLogo?(input: string, output: string, opts?: MediaWorkerRunOptions): Promise<{ width: number; height: number }>;
+  prepareGreeting?(input: string, output: string, opts?: MediaWorkerRunOptions): Promise<{ durationMs: number }>;
   renderFittedClip?(
     input: string,
     output: string,
@@ -185,11 +187,11 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
 
   const adapter: PipelineMediaService = {
     probe: (inputPath, signal) => svc.probe(inputPath, runOpts(signal)),
-    extractAudio: (inputPath, outputPath, signal) =>
-      svc.extractAudio(inputPath, outputPath, runOpts(signal)),
+    extractAudio: (inputPath, outputPath, signal, range) =>
+      svc.extractAudio(inputPath, outputPath, runOpts(signal), range),
     renderFinalVideo: (input, signal) => svc.renderFinalVideo(input, runOpts(signal)),
-    extract16kMono: (inputPath, outputPath, signal) =>
-      extract16kMono ? extract16kMono(inputPath, outputPath, runOpts(signal)) : missing('extract16kMono'),
+    extract16kMono: (inputPath, outputPath, signal, range) =>
+      extract16kMono ? extract16kMono(inputPath, outputPath, runOpts(signal), range) : missing('extract16kMono'),
     buildTtsTimeline: (input, signal) =>
       buildTtsTimeline ? buildTtsTimeline(input, runOpts(signal)) : missing('buildTtsTimeline'),
     duckAndMix: (input, signal) => (duckAndMix ? duckAndMix(input, runOpts(signal)) : missing('duckAndMix')),
@@ -203,9 +205,16 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
       : {}),
     ...(typeof mod.renderFilmstrip === 'function'
       ? {
-          renderFilmstrip: (i: string, o: string, d: number, signal?: AbortSignal) =>
-            mod.renderFilmstrip!(i, o, d, runOpts(signal)),
+          renderFilmstrip: (i: string, o: string, d: number, signal?: AbortSignal, range?: MediaRange) =>
+            mod.renderFilmstrip!(i, o, d, runOpts(signal), range),
         }
+      : {}),
+    // Brand kit files (branding/brandKit.ts).
+    ...(typeof mod.prepareLogo === 'function'
+      ? { prepareLogo: (i: string, o: string, signal?: AbortSignal) => mod.prepareLogo!(i, o, runOpts(signal)) }
+      : {}),
+    ...(typeof mod.prepareGreeting === 'function'
+      ? { prepareGreeting: (i: string, o: string, signal?: AbortSignal) => mod.prepareGreeting!(i, o, runOpts(signal)) }
       : {}),
     ...(typeof mod.renderFittedClip === 'function'
       ? {

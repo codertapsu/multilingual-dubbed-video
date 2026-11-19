@@ -9,6 +9,9 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
+import type { BrandAsset, BrandingSettings } from '@videodubber/shared';
+import { BrandingFormComponent } from '../../shared/branding/branding-form.component';
 import { projectOutputVideoPath } from '@videodubber/shared';
 
 import { environment } from '../../core/environment';
@@ -20,12 +23,10 @@ import { OutputFolderComponent } from '../../shared/output-folder/output-folder.
 import {
   ALL_SUBTITLE_EXPORT_MODES,
   SUBTITLE_EXPORT_MODE_LABELS,
-  formatDurationCoarse,
 } from '../../core/util/format';
 import type {
   AppError,
   Project,
-  RenderFinalVideoResult,
   SubtitleExportMode,
 } from '../../core/models';
 import { TranslatePipe } from '../../core/i18n';
@@ -34,13 +35,15 @@ import { TranslatePipe } from '../../core/i18n';
  * ExportComponent (route "project/:id/export").
  *
  * Shows the final output path, a best-effort <video> preview, an "Open output
- * folder" action, and a control to re-render with a different subtitle mode.
+ * folder" action, and "Render again" with a different subtitle mode: a run
+ * from the mix when edits changed it, else from the render (POST
+ * /projects/:id/render), followed on the progress screen like any dub.
  */
 @Component({
   selector: 'vd-export',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent, OutputFolderComponent, TranslatePipe],
+  imports: [FormsModule, ErrorBannerComponent, BusyIndicatorComponent, OutputFolderComponent, TranslatePipe, BrandingFormComponent],
   templateUrl: './export.component.html',
   styleUrl: './export.component.scss',
 })
@@ -48,22 +51,19 @@ export class ExportComponent implements OnInit {
   readonly id = input.required<string>();
 
   private readonly ipc = inject(IpcService);
+  private readonly router = inject(Router);
   protected readonly store = inject(ProjectStore);
 
   protected readonly subtitleModes = ALL_SUBTITLE_EXPORT_MODES;
   protected readonly subtitleLabels = SUBTITLE_EXPORT_MODE_LABELS;
-  protected readonly formatDuration = formatDurationCoarse;
 
-  protected readonly result = signal<RenderFinalVideoResult | null>(null);
   protected readonly chosenMode = signal<SubtitleExportMode>('srt-file');
   protected readonly rendering = signal(false);
   protected readonly opening = signal(false);
   protected readonly error = signal<AppError | null>(null);
 
-  /** Output path: prefer a fresh render result, else the persisted project. */
+  /** Where the finished video is (or will be). */
   protected readonly outputPath = computed<string | null>(() => {
-    const r = this.result();
-    if (r) return r.outputPath;
     const proj = this.store.current();
     // Named after the project in a folder the user chose (pipeline/output.ts).
     return proj ? projectOutputVideoPath(proj) : null;
@@ -86,7 +86,26 @@ export class ExportComponent implements OnInit {
 
   protected readonly previewFailed = signal(false);
 
+  /** The brand kit, for the Logo & greeting card. */
+  protected readonly brandAssets = signal<BrandAsset[]>([]);
+  protected readonly savingBranding = signal(false);
+
+  /** Logo & greeting changed: saved at once; Render again uses it (a greeting change remixes). */
+  protected async onBrandingChanged(branding: BrandingSettings | undefined): Promise<void> {
+    this.savingBranding.set(true);
+    this.error.set(null);
+    try {
+      const res = await this.ipc.updateProjectSettings(this.id(), { branding: branding ?? ({} as BrandingSettings) });
+      this.store.setCurrent(res.project);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.savingBranding.set(false);
+    }
+  }
+
   ngOnInit(): void {
+    void this.ipc.listBrandKit().then((a) => this.brandAssets.set(a), () => undefined);
     void this.store.loadProject(this.id()).then((proj) => {
       if (proj) {
         this.chosenMode.set(proj.settings.subtitleExportMode);
@@ -98,17 +117,15 @@ export class ExportComponent implements OnInit {
     this.chosenMode.set(mode);
   }
 
-  /** Re-render the final video with the chosen subtitle mode. */
+  /** Render again with the chosen subtitle mode, then follow it on the progress screen. */
   protected async rerender(): Promise<void> {
     if (this.rendering()) return;
     this.rendering.set(true);
     this.error.set(null);
     this.previewFailed.set(false);
     try {
-      const result = await this.ipc.renderFinalVideo(this.id(), {
-        subtitleExportMode: this.chosenMode(),
-      });
-      this.result.set(result);
+      await this.ipc.rerender(this.id(), { subtitleExportMode: this.chosenMode() });
+      await this.router.navigate(['/project', this.id(), 'processing']);
     } catch (err) {
       this.error.set(toAppError(err));
     } finally {
@@ -135,7 +152,6 @@ export class ExportComponent implements OnInit {
   /** "Save to" changed: the files moved, so the last render's paths are stale. */
   protected onOutputFolderChanged(project: Project): void {
     this.store.setCurrent(project);
-    this.result.set(null);
     this.previewFailed.set(false);
   }
 

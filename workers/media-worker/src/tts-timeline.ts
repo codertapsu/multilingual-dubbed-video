@@ -19,6 +19,11 @@
  * The chunks are independent, so they are mixed several at a time
  * (concurrency.ts); the final mix still takes them in chunk order.
  *
+ * An intermediate covers only its chunk's stretch of the timeline (from its
+ * first clip to where its last one ends) and is placed there in the final mix.
+ * Each used to be as long as the whole video, so scratch space grew with the
+ * square of the length: a two-hour dub (2,400 lines) needed over 50 GiB.
+ *
  * Arg-builders are pure and unit-tested. The orchestrator passes already-
  * aligned segments (with absolute audio paths). Segments with an empty/missing
  * audioPath are skipped (they contribute only silence).
@@ -54,17 +59,18 @@ const BYTES_PER_SAMPLE = 2; // pcm_s16le
 
 /**
  * Estimate peak temp-dir bytes the CHUNKED timeline build will occupy. Each
- * chunk is mixed to a full-length intermediate WAV (so it can be amix'd at
- * t=0), so a long, densely-segmented video can need many gigabytes of scratch.
- * Returns 0 for the single-pass path (no intermediates). Pure / unit-tested.
+ * chunk's intermediate covers its own stretch of the timeline, and consecutive
+ * chunks hardly overlap, so the level-1 intermediates together are about one
+ * timeline long, and the level-2 ones (when there are any) another. Returns 0
+ * for the single-pass path (no intermediates). Pure / unit-tested.
  */
 export function estimateTimelineTmpBytes(clipCount: number, totalDurationMs: number): number {
   if (clipCount <= MAX_INPUTS_PER_MIX) return 0;
   const bytesPerFullWav = Math.ceil((Math.max(0, totalDurationMs) / 1000) * SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE);
   const level1 = Math.ceil(clipCount / MAX_INPUTS_PER_MIX);
-  const level2 = level1 > MAX_INPUTS_PER_MIX ? Math.ceil(level1 / MAX_INPUTS_PER_MIX) : 0;
+  const levels = level1 > MAX_INPUTS_PER_MIX ? 2 : 1;
   // Level-1 + level-2 intermediates coexist on disk; add 20% headroom.
-  return Math.ceil((level1 + level2) * bytesPerFullWav * 1.2);
+  return Math.ceil(levels * bytesPerFullWav * 1.2);
 }
 
 /**
@@ -124,6 +130,13 @@ export interface TimelineClip {
    */
   trimStartMs?: number;
   trimEndMs?: number;
+  /**
+   * An intermediate of the chunked build: already trimmed, faded and
+   * stretched, so it is only placed (no fade of its own).
+   */
+  premixed?: boolean;
+  /** Level change for this clip, in dB (a greeting's own gain); 0/absent = none. */
+  gainDb?: number;
 }
 
 /**
@@ -201,6 +214,8 @@ export function alignedSegmentsToClips(segments: AlignedSegment[]): TimelineClip
 export function buildTimelineFilterComplex(
   clips: TimelineClip[],
   totalDurationMs: number,
+  /** `natural`: end where the last clip ends (a chunk's intermediate) instead of at totalDurationMs. */
+  length: 'total' | 'natural' = 'total',
 ): string {
   if (clips.length === 0) {
     // No audio at all: emit silence of the right length from a generated source.
@@ -227,14 +242,18 @@ export function buildTimelineFilterComplex(
     // goes silent for the rest. Re-stamping each delayed clip on a clean,
     // sample-count PTS base lets amix place them at their true offsets. (Without
     // any stretch it already works, but the reset is harmless and uniform.)
-    const stretch =
-      clip.stretchWith === 'rubberband'
-        ? buildRubberbandFilterChain(clip.speedRatio)
-        : buildAtempoChain(clip.speedRatio);
+    const gain = clip.gainDb && Number.isFinite(clip.gainDb) ? `volume=${clip.gainDb.toFixed(2)}dB,` : '';
+    const shaping = clip.premixed
+      ? ''
+      : `${buildFadeChain(clip.durationMs)}${
+          clip.stretchWith === 'rubberband'
+            ? buildRubberbandFilterChain(clip.speedRatio)
+            : buildAtempoChain(clip.speedRatio)
+        }${gain}`;
     parts.push(
-      `[${i}:a]${buildTrimChain(clip.trimStartMs, clip.trimEndMs)}aresample=${SAMPLE_RATE},` +
+      `[${i}:a]${clip.premixed ? '' : buildTrimChain(clip.trimStartMs, clip.trimEndMs)}aresample=${SAMPLE_RATE},` +
         `aformat=sample_fmts=fltp:channel_layouts=stereo,` +
-        `${buildFadeChain(clip.durationMs)}${stretch}adelay=${delay}|${delay},asetpts=N/SR/TB[${label}]`,
+        `${shaping}adelay=${delay}|${delay},asetpts=N/SR/TB[${label}]`,
     );
     delayedLabels.push(`[${label}]`);
   });
@@ -245,6 +264,11 @@ export function buildTimelineFilterComplex(
   parts.push(
     `${delayedLabels.join('')}amix=inputs=${mixInputs}:normalize=0:dropout_transition=0[mixed]`,
   );
+  if (length === 'natural') {
+    // amix ends with its longest input: the chunk's last clip.
+    parts.push('[mixed]asetpts=N/SR/TB[out]');
+    return parts.join(';');
+  }
   // Pin exact total length: pad to total, then hard-trim.
   parts.push(
     `[mixed]apad=whole_dur=${msToSec(totalDurationMs)},atrim=0:${msToSec(totalDurationMs)},` +
@@ -262,6 +286,7 @@ export function buildTimelineMixArgs(
   clips: TimelineClip[],
   totalDurationMs: number,
   outputPath: string,
+  length: 'total' | 'natural' = 'total',
 ): string[] {
   const args: string[] = ['-y'];
 
@@ -281,7 +306,7 @@ export function buildTimelineMixArgs(
 
   args.push(
     '-filter_complex',
-    buildTimelineFilterComplex(clips, totalDurationMs),
+    buildTimelineFilterComplex(clips, totalDurationMs, length),
     '-map',
     '[out]',
     '-ac',
@@ -290,10 +315,27 @@ export function buildTimelineMixArgs(
     String(SAMPLE_RATE),
     '-c:a',
     'pcm_s16le',
+    // Past 4 GiB (~6.2 h at 48 kHz stereo) a plain RIFF header overflows;
+    // `auto` switches to RF64 only then, so every other file is unchanged.
+    '-rf64',
+    'auto',
     outputPath,
   );
 
   return args;
+}
+
+/**
+ * Where a group of clips starts on the timeline (its earliest clip). The
+ * group's intermediate is mixed relative to this point and placed back here.
+ */
+export function groupStartMs(clips: readonly TimelineClip[]): number {
+  return clips.reduce((min, c) => Math.min(min, c.startMs), Number.POSITIVE_INFINITY);
+}
+
+/** The clips of a group moved so that the group starts at 0 (see {@link groupStartMs}). */
+export function relativeToGroup(clips: readonly TimelineClip[], startMs: number): TimelineClip[] {
+  return clips.map((c) => ({ ...c, startMs: Math.max(0, c.startMs - startMs) }));
 }
 
 /** Split clips into chunks of at most MAX_INPUTS_PER_MIX. */
@@ -321,6 +363,8 @@ export interface TimelineSegmentInput {
   /** The part of the clip that plays, in ms of the clip (see {@link TimelineClip}). */
   trimStartMs?: number;
   trimEndMs?: number;
+  /** Level change in dB (a greeting's gain). */
+  gainDb?: number;
 }
 
 /** Input object for {@link buildTtsTimeline}. */
@@ -450,6 +494,7 @@ export async function buildTtsTimeline(
       ...(s.trimStartMs !== undefined && s.trimEndMs !== undefined
         ? { trimStartMs: s.trimStartMs, trimEndMs: s.trimEndMs }
         : {}),
+      ...(s.gainDb ? { gainDb: s.gainDb } : {}),
     }))
     .sort((a, b) => a.startMs - b.startMs);
 
@@ -510,20 +555,24 @@ async function mixGroupsToIntermediates(
     concurrency,
     async (group, c, signal) => {
       const out = join(tmpDir, `${prefix}_${String(c).padStart(4, '0')}.wav`);
-      await runFfmpeg(buildTimelineMixArgs(group, totalDurationMs, out), { ...opts, signal });
-      // Intermediates are already on the absolute timeline -> startMs 0.
-      return { audioPath: out, startMs: 0 };
+      // Mixed from the group's first clip to its last one's end, then placed
+      // back at that start: an intermediate only as long as its own stretch.
+      const startMs = groupStartMs(group);
+      await runFfmpeg(buildTimelineMixArgs(relativeToGroup(group, startMs), totalDurationMs, out, 'natural'), {
+        ...opts,
+        signal,
+      });
+      return { audioPath: out, startMs, premixed: true };
     },
     opts.signal,
   );
 }
 
 /**
- * Chunked path: mix each chunk to an intermediate full-length WAV, then mix the
- * intermediates (which already start at t=0) together. These intermediates are
- * full-length, so a long/dense video can need many GiB of scratch — fail fast
- * with a clear message if temp space is short. Running chunks side by side
- * changes nothing here: all intermediates coexisted on disk before too.
+ * Chunked path: mix each chunk to an intermediate covering its own stretch of
+ * the timeline, then mix the intermediates, each placed where its chunk starts.
+ * Fail fast with a clear message if temp space is short. Running chunks side
+ * by side changes nothing here: all intermediates coexisted on disk before too.
  */
 async function buildChunkedTimeline(
   clips: TimelineClip[],

@@ -4,7 +4,10 @@
  * HTTP port that answers only the routes these tools use (SSE streams too).
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { VideoDubberApi } from './api.js';
@@ -155,6 +158,11 @@ describe('VideoDubber MCP server', () => {
         'list_languages', 'list_projects', 'list_providers', 'list_voices', 'open_output_folder', 'pause_dubbing',
         'regenerate_voices', 'render_video', 'set_save_folder', 'set_translation_context', 'set_translations',
         'start_dubbing', 'update_settings',
+        // Batches (Mother Claude's flow, agreed 2026-11-19).
+        'download_videos', 'list_downloads', 'cancel_download', 'retry_download', 'delete_download', 'wait_jobs',
+        'follow_jobs_command', 'list_presets', 'dub_downloads', 'get_outputs', 'mark_published',
+        'set_download_login', 'get_download_login', 'delete_project', 'list_brand_kit', 'get_series',
+        'set_split_plan', 'start_series',
       ].sort(),
     );
     for (const t of tools) {
@@ -537,18 +545,78 @@ describe('VideoDubber MCP server', () => {
   });
 
   it('download_video follows the app\'s download events to the file', async () => {
-    fake.routes.set('POST /download/start', () => ({ jobId: 'job-7' }));
+    const source = { title: 'Wukong', partCount: 1, url: 'https://www.bilibili.com/video/BV1xx411c7mD' };
+    const item = (state: string, extra: object = {}) => ({ id: 'dl_7', input: 'BV1xx411c7mD', page: 1, state, percent: 40, source, ...extra });
+    fake.routes.set('POST /download/start', () => ({ jobId: 'dl_7' }));
+    fake.routes.set('GET /downloads/dl_7', () => item('downloading'));
     fake.routes.set('GET /download/events', (_q, _b, res) =>
       sse(res, [
-        { type: 'progress', jobId: 'other', phase: 'video', percent: 99 },
-        { type: 'progress', jobId: 'job-7', phase: 'video', percent: 40 },
-        { type: 'done', jobId: 'job-7', filePath: 'C:/Users/me/VideoDubber/downloads/wukong.mp4', title: 'Wukong' },
+        { type: 'item', item: { ...item('downloading'), id: 'dl_other', percent: 99 } },
+        { type: 'item', item: item('downloading') },
+        { type: 'item', item: item('done', { percent: 100, filePath: 'C:/Users/me/VideoDubber/downloads/wukong.mp4', heightPx: 720 }) },
       ]),
     );
     await connect();
     const r = await call('download_video', { url: 'https://www.bilibili.com/video/BV1xx411c7mD' });
     expect(r.isError).toBe(false);
-    expect(r.text).toContain('Downloaded "Wukong" to:\nC:/Users/me/VideoDubber/downloads/wukong.mp4');
+    expect(r.text).toContain('"Wukong": done (720p): C:/Users/me/VideoDubber/downloads/wukong.mp4');
+    expect(r.text).toContain('downloadIds ["dl_7"]');
+  });
+
+  it('get_download says plainly when the app knows no such download', async () => {
+    fake.routes.set('GET /downloads/dl_gone', (_q, _b, res) => {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { code: 'SOURCE_UNAVAILABLE', message: 'There is no download "dl_gone".' } }));
+    });
+    await connect();
+    const r = await call('get_download', { jobId: 'dl_gone', waitSeconds: 1 });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain('There is no download "dl_gone"');
+  });
+
+  it('set_download_login reads the cookie export, deletes it, and sends only bilibili.com cookies', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vd-mcp-cookies-'));
+    const file = join(dir, 'cookies-x.txt');
+    await writeFile(
+      file,
+      [
+        '# Netscape HTTP Cookie File',
+        '#HttpOnly_.bilibili.com\tTRUE\t/\tTRUE\t1893456000\tSESSDATA\tsecret-session',
+        '.bilibili.com\tTRUE\t/\tFALSE\t1893456000\tbuvid3\tdevice-id',
+        '.example.com\tTRUE\t/\tFALSE\t0\tSESSDATA\tnot-bilibili',
+      ].join('\n'),
+    );
+    let sent: unknown;
+    fake.routes.set('POST /download/providers/bilibili/session/import', (_q, body) => {
+      sent = body;
+      return { configured: true, check: { valid: true, uname: 'khanh', premium: false } };
+    });
+    await connect();
+    const r = await call('set_download_login', { cookiesFile: file });
+    expect(r.isError).toBe(false);
+    expect(r.text).toBe('Logged in to Bilibili as khanh: downloads get up to 1080p.');
+    expect(r.text).not.toContain('secret');
+    expect(sent).toEqual({
+      cookies: [
+        { domain: '.bilibili.com', name: 'SESSDATA', value: 'secret-session' },
+        { domain: '.bilibili.com', name: 'buvid3', value: 'device-id' },
+      ],
+    });
+    await expect(stat(file)).rejects.toThrow();
+
+    // Not an export: refused, and deleted all the same.
+    await writeFile(file, Buffer.alloc(70 * 1024, 65));
+    const bad = await call('set_download_login', { cookiesFile: file });
+    expect(bad.isError).toBe(true);
+    await expect(stat(file)).rejects.toThrow();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('follow_jobs_command gives a curl line for the job stream', async () => {
+    await connect();
+    const r = await call('follow_jobs_command', { downloadIds: ['dl_1', 'dl_2'], projectIds: ['proj_9'] });
+    expect(r.text).toContain('curl.exe -sN "');
+    expect(r.text).toContain('/jobs/events?downloads=dl_1%2Cdl_2&projects=proj_9&untilDone=1"');
   });
 
   it('install_engine listens before it starts the install, so a fast install is not missed', async () => {

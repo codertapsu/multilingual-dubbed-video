@@ -711,6 +711,13 @@
   </div>
 
   <!-- ============================ Updates ============================ -->
+  <!-- ===================== Logo & greeting (the brand kit) ===================== -->
+  <div class="card stack" id="brand-kit">
+    <h2>{{ 'settings.brand-kit-heading' | translate }}</h2>
+    <p class="muted">{{ 'settings.brand-kit-intro' | translate }}</p>
+    <vd-brand-kit />
+  </div>
+
   <!-- ===================== Storage (free up disk space) ===================== -->
   <div class="card stack">
     <h2>{{ 'settings.storage.heading' | translate }}</h2>
@@ -734,6 +741,28 @@
           <span class="hint">{{ 'settings.storage.free' | translate: { size: formatBytes(s.freeBytes) } }}</span>
         }
       </div>
+
+      <!-- Downloaded videos are the user's own files: listed apart, never in "delete everything". -->
+      @if (s.downloads; as dl) {
+        <div class="cred-row stack-sm">
+          <div class="setting-row">
+            <span class="cred-name">{{ 'settings.storage.downloads' | translate }}</span>
+            <span class="chip">{{ formatBytes(dl.bytes) }}</span>
+          </div>
+          <span class="hint mono">{{ dl.path }}</span>
+          <span class="hint">{{ 'settings.storage.downloads-hint' | translate }}</span>
+          <div class="cred-controls">
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              (click)="clearDownloads()"
+              [disabled]="storageClearing() || dl.bytes === 0"
+            >
+              {{ 'settings.storage.downloads-delete' | translate }}
+            </button>
+          </div>
+        </div>
+      }
 
       @if (storageMessage(); as msg) {
         <p class="hint test-ok">✓ {{ msg }}</p>

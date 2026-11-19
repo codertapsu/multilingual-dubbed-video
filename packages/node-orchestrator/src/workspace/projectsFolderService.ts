@@ -23,6 +23,11 @@ export interface ProjectsFolderDeps {
   store: ProjectStore;
   /** The projects something works on now (orchestrator.busyProjects). */
   busyProjects: () => string[];
+  /**
+   * The downloads beside the projects (`<root>\downloads`, the download
+   * queue): they move with them, after the projects, once nothing downloads.
+   */
+  downloads?: { busy(): boolean; relocate(fromDir: string, toDir: string): Promise<void> };
   logger?: { warn(message: string): void };
 }
 
@@ -93,6 +98,11 @@ export class ProjectsFolderService {
         remediation: 'Pause them (or wait for them to finish), then move the projects.',
       });
     }
+    if (this.deps.downloads?.busy()) {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'Videos are downloading into the projects folder\'s downloads.', {
+        remediation: 'Wait for the downloads to finish (or cancel them on the Download screen), then move the projects.',
+      });
+    }
     await assertWritable(toDir);
     const projects = await this.deps.store.listProjects();
     for (const p of projects) {
@@ -130,6 +140,7 @@ export class ProjectsFolderService {
       this.deps.store.setProjectsDir(toDir);
       // The old projects folder, when nothing else is left in it.
       await fsp.rmdir(fromDir).catch(() => undefined);
+      await this.moveDownloads(path.join(path.dirname(fromDir), 'downloads'), path.join(path.dirname(toDir), 'downloads'));
     } catch (err) {
       // Back to where they were: the projects stay together in one folder.
       for (const { from, to } of moved.reverse()) {
@@ -148,6 +159,31 @@ export class ProjectsFolderService {
       };
     } finally {
       this.progress = null;
+    }
+  }
+
+  /**
+   * The downloads folder follows the projects. Best effort: a download still
+   * in use where it is (a player has it open) stays there, and the list keeps
+   * pointing at it; the projects have moved either way.
+   */
+  private async moveDownloads(fromDir: string, toDir: string): Promise<void> {
+    const downloads = this.deps.downloads;
+    if (!downloads || !(await exists(fromDir)) || samePlace(fromDir, toDir)) return;
+    try {
+      if (await exists(toDir)) {
+        // Merge into a folder that is already there, file by file.
+        for (const name of await fsp.readdir(fromDir)) {
+          const target = path.join(toDir, name);
+          if (!(await exists(target))) await moveFolder(path.join(fromDir, name), target);
+        }
+        await fsp.rmdir(fromDir).catch(() => undefined);
+      } else {
+        await moveFolder(fromDir, toDir);
+      }
+      await downloads.relocate(fromDir, toDir);
+    } catch (err) {
+      this.deps.logger?.warn(`the downloads stay in ${fromDir}: ${String(err)}`);
     }
   }
 }

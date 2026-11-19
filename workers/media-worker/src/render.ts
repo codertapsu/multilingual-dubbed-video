@@ -53,7 +53,8 @@ import {
   type RunOptions,
 } from './exec.js';
 import { chooseBurnFont, resolveFontsDir, type BurnFont } from './fonts.js';
-import { probeDurationMs, probeVideoGeometry } from './probe.js';
+import { buildCardsAss, buildFilteredRenderArgs } from './overlay.js';
+import { probeDurationMs, probeVideoGeometry, type VideoGeometry } from './probe.js';
 import { buildSubtitlesFilter } from './subtitles.js';
 
 /** Inputs needed to construct the ffmpeg argv (already-validated paths). */
@@ -261,6 +262,10 @@ export async function renderFinalVideo(
   assertInputReadable(input.audioPath);
   assertOutputWritable(input.outputPath);
 
+  // A logo, a part's window or its opening and closing: the picture is
+  // re-encoded through one filtergraph (overlay.ts), whatever the subtitle mode.
+  if (input.logo || input.range || input.effects) return renderFiltered(input, runOpts, deps);
+
   // Burned-in subtitles use the libavfilter "subtitles" filter, which is only
   // present in an FFmpeg built with libass. Detect a missing filter up front so
   // we fail with a clear, actionable error instead of an opaque ffmpeg exit code.
@@ -315,15 +320,7 @@ export async function renderFinalVideo(
     return runFfmpeg(args, runOpts);
   });
 
-  // Copy sidecar subtitle next to the output for srt-file / vtt-file modes.
-  const sidecarSubtitlePaths: string[] = [];
-  const sidecarDest = sidecarDestinationPath(input.outputPath, input.subtitleExportMode);
-  if (sidecarDest && input.subtitlePath) {
-    assertInputReadable(input.subtitlePath);
-    copyFileSync(input.subtitlePath, sidecarDest);
-    sidecarSubtitlePaths.push(sidecarDest);
-  }
-
+  const sidecarSubtitlePaths = copySidecar(input);
   const durationMs = await probeDurationMs(input.outputPath);
 
   return {
@@ -331,6 +328,123 @@ export async function renderFinalVideo(
     durationMs,
     sidecarSubtitlePaths,
   };
+}
+
+/** Copy the sidecar subtitle next to the output for srt-file / vtt-file modes. */
+function copySidecar(input: RenderFinalVideoOptions): string[] {
+  const sidecarDest = sidecarDestinationPath(input.outputPath, input.subtitleExportMode);
+  if (!sidecarDest || !input.subtitlePath) return [];
+  assertInputReadable(input.subtitlePath);
+  copyFileSync(input.subtitlePath, sidecarDest);
+  return [sidecarDest];
+}
+
+/**
+ * The styled ASS script a burned-in render draws (or the subtitle itself when
+ * it already is one), on the video's pixel grid.
+ */
+function writeBurnScript(
+  input: RenderFinalVideoOptions,
+  subtitlePath: string,
+  burnFont: BurnFont,
+  geometry: Pick<VideoGeometry, 'width' | 'height'>,
+  durationMs: number,
+  scratch: string,
+): string {
+  if (isAssScript(subtitlePath)) return subtitlePath;
+  const cues = parseSubtitleCues(readFileSync(subtitlePath, 'utf8'));
+  const style = { ...input.burnSubtitleStyle, fontFamily: burnFont.family };
+  const layout = computeAssLayout(style, geometry.width, geometry.height);
+  // The band spans the whole video; a little past the container duration
+  // covers streams that run slightly long. Unknown duration: the ASS max.
+  const endMs = durationMs > 0 ? durationMs + 1000 : Number.MAX_SAFE_INTEGER;
+  const scriptPath = join(scratch, 'burn.ass');
+  writeFileSync(scriptPath, buildAssDocument(cues, layout, endMs), 'utf8');
+  return scriptPath;
+}
+
+/**
+ * A render with a logo, a part's window, or its opening and closing: one
+ * re-encode through overlay.ts's filtergraph, with the encoder (and its x264
+ * retry) burned-in renders use. Subtitles still follow the mode: burned into
+ * the picture, embedded as a soft track, or written beside the video.
+ */
+async function renderFiltered(
+  input: RenderFinalVideoOptions,
+  runOpts: RunOptions,
+  deps: RenderDeps,
+): Promise<RenderFinalVideoReport> {
+  const burning = input.subtitleExportMode === 'burned-in';
+  const cards = input.effects?.cards?.filter((c) => c.text.trim() && c.endMs > c.startMs) ?? [];
+  if ((burning || cards.length > 0) && !(await ffmpegHasFilter('subtitles', runOpts))) {
+    throw new AppErrorException({
+      code: 'FFMPEG_FILTER_MISSING',
+      message: 'Drawing text on the video requires an FFmpeg built with libass (the "subtitles" filter), which this FFmpeg lacks.',
+      remediation:
+        'Install an FFmpeg built with libass (macOS: `brew install ffmpeg-full`, then set FFMPEG_PATH/FFPROBE_PATH to it), or choose a non-burned subtitle mode.',
+      docsRef: 'docs/TROUBLESHOOTING.md#ffmpeg-filter-missing',
+    });
+  }
+  if (burning && !input.subtitlePath) throw missingSubtitle('burned-in');
+  if (input.subtitleExportMode === 'embedded-soft' && !input.subtitlePath) throw missingSubtitle('embedded-soft');
+  if (input.subtitlePath) assertInputReadable(input.subtitlePath);
+  if (input.logo) assertInputReadable(input.logo.imagePath);
+
+  const geometry = await probeVideoGeometry(input.inputVideoPath, runOpts);
+  const durationMs = input.range ? input.range.endMs - input.range.startMs : geometry.durationMs;
+  const burnFont = chooseBurnFont(resolveFontsDir(input.fontsDir), input.burnSubtitleStyle?.fontFamily);
+  const scratch = mkdtempSync(join(tmpdir(), 'vd-render-'));
+  try {
+    const burnScriptPath = burning ? writeBurnScript(input, input.subtitlePath!, burnFont, geometry, durationMs, scratch) : undefined;
+    let cardsScriptPath: string | undefined;
+    if (cards.length > 0) {
+      cardsScriptPath = join(scratch, 'cards.ass');
+      writeFileSync(cardsScriptPath, buildCardsAss(cards, geometry.width, geometry.height, burnFont.family), 'utf8');
+    }
+    const probe = wantsHardwareEncoder(input.renderQuality)
+      ? await (deps.probeHardwareEncoder ?? cachedHardwareEncoderProbe)()
+      : undefined;
+    const plan = planVideoEncode(input.renderQuality, probe, geometry);
+    const { report } = await encodeWithFallback(
+      plan,
+      (encoder) =>
+        writeAtomically(input.outputPath, (partial) =>
+          runFfmpeg(
+            buildFilteredRenderArgs({
+              inputVideoPath: input.inputVideoPath,
+              audioPath: input.audioPath,
+              outputPath: partial,
+              mode: input.subtitleExportMode,
+              ...(burnScriptPath ? { burnScriptPath } : {}),
+              ...(input.subtitleExportMode === 'embedded-soft' && input.subtitlePath ? { softSubtitlePath: input.subtitlePath } : {}),
+              ...(burnFont.fontsDir ? { fontsDir: burnFont.fontsDir } : {}),
+              width: geometry.width,
+              height: geometry.height,
+              durationMs,
+              ...(input.logo ? { logo: input.logo } : {}),
+              ...(input.range ? { range: input.range } : {}),
+              ...(input.effects ? { effects: input.effects } : {}),
+              ...(cardsScriptPath ? { cardsScriptPath } : {}),
+              videoCodec: encoder.codec,
+              videoCodecArgs: encoder.args,
+              audioArgs: AUDIO_ARGS,
+              metadataArgs: AI_SPEECH_METADATA,
+            }),
+            runOpts,
+          ),
+        ),
+      runOpts.signal,
+    );
+    return {
+      outputPath: input.outputPath,
+      durationMs: await probeDurationMs(input.outputPath),
+      sidecarSubtitlePaths: copySidecar(input),
+      videoEncoder: { ...report, ...(probe ? { probe: probe.attempts } : {}) },
+      burnFont,
+    };
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 }
 
 /** True for a subtitle that already is an ASS/SSA script (burned as-is). */
@@ -356,17 +470,7 @@ async function renderBurnedIn(
   const fontsDir = burnFont.fontsDir;
   const scratch = mkdtempSync(join(tmpdir(), 'vd-burn-'));
   try {
-    let scriptPath = subtitlePath;
-    if (!isAssScript(subtitlePath)) {
-      const cues = parseSubtitleCues(readFileSync(subtitlePath, 'utf8'));
-      const style = { ...input.burnSubtitleStyle, fontFamily: burnFont.family };
-      const layout = computeAssLayout(style, geometry.width, geometry.height);
-      // The band spans the whole video; a little past the container duration
-      // covers streams that run slightly long. Unknown duration: the ASS max.
-      const endMs = geometry.durationMs > 0 ? geometry.durationMs + 1000 : Number.MAX_SAFE_INTEGER;
-      scriptPath = join(scratch, 'burn.ass');
-      writeFileSync(scriptPath, buildAssDocument(cues, layout, endMs), 'utf8');
-    }
+    const scriptPath = writeBurnScript(input, subtitlePath, burnFont, geometry, geometry.durationMs, scratch);
 
     const probe = wantsHardwareEncoder(input.renderQuality)
       ? await (deps.probeHardwareEncoder ?? cachedHardwareEncoderProbe)()

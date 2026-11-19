@@ -9,6 +9,8 @@ import type { EngineManager } from '../../engines/engineManager.js';
 import type { EnginePackStore } from '../../engines/enginePackStore.js';
 import { DIARIZATION_EMBEDDING } from '../../engines/enginePackCatalog.js';
 import { pickInstalledPack } from '../../engines/packSelection.js';
+import fsp from 'node:fs/promises';
+
 import { postWorkerJson } from '../workerHttp.js';
 
 /** A stretch of audio said by one speaker (numbers from 0, by first appearance). */
@@ -25,6 +27,21 @@ export interface DiarizationService {
   available(): Promise<boolean>;
   /** What the turns depend on besides the audio (the model and its threshold), for caching. */
   readonly modelKey: string;
+}
+
+/** Bytes per second of the 16 kHz mono 16-bit WAV speaker detection reads. */
+const BYTES_PER_SECOND_16K_MONO = 16_000 * 2;
+
+/**
+ * How long one speaker-detection request may take: the usual worker timeout,
+ * or 0.6x the audio's length plus five minutes when that is longer. Speaker
+ * detection reads the whole file in one request and its time grows with the
+ * length, so on a multi-hour video the fixed 30-minute timeout failed a step
+ * that was working. Pure.
+ */
+export function diarizationTimeoutMs(baseMs: number, audioBytes: number): number {
+  const audioMs = (Math.max(0, audioBytes) / BYTES_PER_SECOND_16K_MONO) * 1000;
+  return Math.max(baseMs, Math.ceil(audioMs * 0.6 + 5 * 60_000));
 }
 
 export class SherpaDiarizationProvider implements DiarizationService {
@@ -44,6 +61,7 @@ export class SherpaDiarizationProvider implements DiarizationService {
     const packId = await pickInstalledPack(this.store, 'speaker-diarization');
     if (!packId) return null;
     const baseUrl = (await this.engines.ensureRunning(packId)).replace(/\/$/, '');
+    const audioBytes = await fsp.stat(audioPath).then((s) => s.size, () => 0);
     const data = await postWorkerJson<{ turns?: SpeakerTurn[] }>(
       `${baseUrl}/diarize`,
       {
@@ -51,7 +69,7 @@ export class SherpaDiarizationProvider implements DiarizationService {
         threshold: DIARIZATION_EMBEDDING.threshold,
         ...(opts.numSpeakers && opts.numSpeakers > 0 ? { numSpeakers: opts.numSpeakers } : {}),
       },
-      { timeoutMs: this.timeoutMs, workerName: 'Speaker detection engine', signal },
+      { timeoutMs: diarizationTimeoutMs(this.timeoutMs, audioBytes), workerName: 'Speaker detection engine', signal },
     );
     return (data.turns ?? []).filter(
       (t) => Number.isFinite(t.startMs) && Number.isFinite(t.endMs) && t.endMs > t.startMs && Number.isInteger(t.speaker) && t.speaker >= 0,

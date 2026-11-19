@@ -13,6 +13,8 @@ import crypto from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { sanitizeBranding } from '../branding/sanitize.js';
+import { sanitizeSeriesSettings } from '../series/seriesSanitize.js';
 import { renameReplacing } from '../fsRename.js';
 import {
   AppErrorException,
@@ -84,7 +86,10 @@ function normalizedSettings(input: ProjectSettings): ProjectSettings {
   if (!isValidLanguageCode(targetLanguage)) {
     throw new AppErrorException('INVALID_LANGUAGE', `Invalid target language code: "${input.targetLanguage}".`);
   }
-  return { ...input, sourceLanguage, targetLanguage };
+  // Logo and greeting are checked field by field; a broken choice is dropped.
+  const { branding: rawBranding, ...rest } = input;
+  const branding = sanitizeBranding(rawBranding);
+  return { ...rest, sourceLanguage, targetLanguage, ...(branding ? { branding } : {}) };
 }
 
 /**
@@ -93,12 +98,17 @@ function normalizedSettings(input: ProjectSettings): ProjectSettings {
  * video of a project (reviseProject) never leaves a half-copied one where the
  * old one was.
  */
-async function copyInputVideo(source: string, paths: WorkspacePaths): Promise<string> {
+async function copyInputVideo(source: string, paths: WorkspacePaths, opts: { link?: boolean } = {}): Promise<string> {
   const ext = path.extname(source).replace(/^\./, '') || 'mp4';
   const dest = paths.inputVideo(ext);
   const tmp = path.join(path.dirname(dest), `.original.${crypto.randomBytes(6).toString('hex')}.partial.${ext}`);
   try {
-    await fsp.copyFile(source, tmp);
+    // A download VideoDubber made itself is linked, not copied: the project's
+    // own name for the same bytes, so a batch of long videos does not take
+    // twice the space, and deleting either one leaves the other whole. Across
+    // drives (or where links are refused) it is copied as before.
+    const linked = opts.link === true && (await fsp.link(source, tmp).then(() => true, () => false));
+    if (!linked) await fsp.copyFile(source, tmp);
   } catch (err) {
     await fsp.rm(tmp, { force: true });
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -210,7 +220,7 @@ export class ProjectStore {
     await ensureWorkspaceDirs(paths);
 
     // Copy the source video into the workspace so the project is self-contained.
-    const internalInput = await copyInputVideo(input.inputVideoPath, paths);
+    const internalInput = await copyInputVideo(input.inputVideoPath, paths, { link: input.linkInputVideo === true });
 
     const now = new Date().toISOString();
     const project: Project = {
@@ -223,6 +233,11 @@ export class ProjectStore {
       status: 'created',
       createdAt: now,
       updatedAt: now,
+      ...(input.source ? { source: input.source } : {}),
+      // A long video dubbed as a series: this project analyses, its parts dub (series/).
+      ...(input.series
+        ? { series: { role: 'parent' as const, settings: sanitizeSeriesSettings(input.series, input.series.aiProviderId ?? ''), state: 'analysing' as const } }
+        : {}),
     };
 
     await this.savePipeline(createInitialPipelineState(id));

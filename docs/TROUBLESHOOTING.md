@@ -56,6 +56,24 @@ If you trust this build, add **folder** exclusions for both locations:
 In Windows Security: *Virus & threat protection* → **Manage settings** →
 *Exclusions* → **Add an exclusion** → **Folder**.
 
+### Windows: after an update, "Route GET:/voices not found" (or another missing route)
+
+The update did not finish: the new window is talking to the previous version's
+backend. Settings → Updates → Current version shows the new version while the
+backend's `http://127.0.0.1:5100/health` still reports the old one. It happened to 0.13.0
+updates made while Claude Code or Claude Desktop was open with VideoDubber
+connected: they run VideoDubber's backend program as their connection, and
+Windows does not let an installer replace a program that is running. From 0.14.0
+the installer closes that connection itself.
+
+To repair it:
+
+1. Quit Claude Code and Claude Desktop (or disconnect VideoDubber there), then
+   quit VideoDubber.
+2. Download the installer of the version you have (`VideoDubber_<version>_x64-setup.exe`
+   on the Releases page) and run it. Your projects and engines are kept.
+3. Open VideoDubber again, then Claude.
+
 ### The app opens but every service says "unavailable"
 
 Quit fully and reopen first. If it persists:

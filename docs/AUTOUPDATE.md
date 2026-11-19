@@ -45,6 +45,17 @@ VideoDubber updates itself via **GitHub Releases** using the official
 4. **Install + relaunch.** On success the plugin applies the update in place and
    the app relaunches via `tauri-plugin-process`.
 
+   On Windows nothing may hold a file the installer replaces. The app stops its
+   own backend first (`updater_with_teardown`), and since 0.14.0 the installer's
+   pre-install hook (`src-tauri/windows/installer-hooks.nsh`) also ends every
+   other VideoDubber background program, above all the `videodubber-orchestrator.exe
+   --mcp` that Claude Code and Claude Desktop run as their VideoDubber
+   connection. Before that, an update with Claude open stopped near its end: the
+   0.13.0 window came up on the 0.12.0 backend ("Route GET:/voices not found").
+   Claude reconnects to VideoDubber when it restarts. The hook uses `taskkill`,
+   not Restart Manager: Restart Manager closes a console program with a console
+   event that also reaches Claude Code, which shares the connection's console.
+
 ---
 
 ## The in-app setting (auto vs. manual)

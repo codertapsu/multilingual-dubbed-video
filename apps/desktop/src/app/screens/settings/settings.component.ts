@@ -28,6 +28,7 @@ import type {
   EnginePrerequisites,
   InstalledEnginePack,
   StorageInfo,
+  ProjectsFolderInfo,
 } from '../../core/models';
 import type {
   ArgosPair,
@@ -188,6 +189,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
     return uv.obtainable ?? uv.available;
   }
 
+  // -------- projects folder (where the projects live) --------
+  protected readonly projectsFolder = signal<ProjectsFolderInfo | null>(null);
+  protected readonly projectsFolderBusy = signal(false);
+  /** The folder typed in the browser, where there is no native folder dialog. */
+  protected readonly projectsFolderInput = signal('');
+  private projectsFolderTimer: ReturnType<typeof setTimeout> | null = null;
+
   // -------- storage (free up disk space) --------
   protected readonly storage = signal<StorageInfo | null>(null);
   protected readonly storageLoading = signal(false);
@@ -336,12 +344,101 @@ export class SettingsComponent implements OnInit, OnDestroy {
     void this.loadProcessingSetup();
     void this.loadEngines();
     void this.loadStorage();
+    void this.loadProjectsFolder();
     void this.loadArgosPackages(); // installed-only (fast); index loads on demand
   }
 
   ngOnDestroy(): void {
     this.engineEvents?.close();
     this.engineEvents = null;
+    if (this.projectsFolderTimer) clearTimeout(this.projectsFolderTimer);
+  }
+
+  // ----------------------------- projects folder -----------------------------
+  //
+  // The projects live in <folder>/projects, VideoDubber's own data folder by
+  // default; choosing another moves them all there, structure unchanged
+  // (orchestrator ProjectsFolderService), in the background with progress.
+
+  private async loadProjectsFolder(): Promise<void> {
+    try {
+      const info = await this.ipc.getProjectsFolder();
+      this.projectsFolder.set(info);
+      if (!this.projectsFolderInput()) this.projectsFolderInput.set(info.root);
+      if (info.moving) this.followProjectsMove();
+    } catch {
+      this.projectsFolder.set(null);
+    }
+  }
+
+  /** Where a finished video lands, as an example of the structure. */
+  protected projectsFolderExample(info: ProjectsFolderInfo): string {
+    const sep = info.projectsDir.includes('\\') ? '\\' : '/';
+    return [info.projectsDir, 'proj_…', 'render', 'output.mp4'].join(sep);
+  }
+
+  /** The native folder dialog (the desktop app); the browser types the folder instead. */
+  protected async chooseProjectsFolder(): Promise<void> {
+    const current = this.projectsFolder();
+    const picked = await this.ipc.pickFolder(this.translate.instant('settings.projects-folder.pick-title'), current?.root);
+    if (picked) await this.moveProjectsTo(picked);
+  }
+
+  protected async moveProjectsTo(root: string | null): Promise<void> {
+    const info = this.projectsFolder();
+    if (!info || this.projectsFolderBusy()) return;
+    const target = root?.trim() || info.defaultRoot;
+    const sep = target.includes('\\') ? '\\' : '/';
+    const ok = await this.confirmSvc.confirm({
+      title: this.translate.instant('settings.projects-folder.confirm-title'),
+      message: this.translate.instant('settings.projects-folder.confirm-body', {
+        count: info.projectCount,
+        folder: `${target.replace(/[\\/]+$/, '')}${sep}projects`,
+      }),
+      confirmLabel: this.translate.instant('settings.projects-folder.confirm-move'),
+      // A move loses nothing: not the red of a delete.
+      danger: false,
+    });
+    if (!ok) return;
+    this.projectsFolderBusy.set(true);
+    this.error.set(null);
+    try {
+      const next = await this.ipc.moveProjectsFolder(root?.trim() ? root.trim() : null);
+      this.projectsFolder.set(next);
+      if (next.moving) this.followProjectsMove();
+      else this.projectsFolderInput.set(next.root);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    } finally {
+      this.projectsFolderBusy.set(false);
+    }
+  }
+
+  /** Follow a move until it ends, then show where the projects are now. */
+  private followProjectsMove(): void {
+    if (this.projectsFolderTimer) clearTimeout(this.projectsFolderTimer);
+    this.projectsFolderTimer = setTimeout(() => {
+      this.projectsFolderTimer = null;
+      void this.ipc
+        .getProjectsFolder()
+        .then((info) => {
+          this.projectsFolder.set(info);
+          if (info.moving) this.followProjectsMove();
+          else this.projectsFolderInput.set(info.root);
+        })
+        .catch(() => this.followProjectsMove());
+    }, 700);
+  }
+
+  protected async openProjectsFolder(): Promise<void> {
+    const dir = this.projectsFolder()?.projectsDir;
+    if (!dir) return;
+    this.error.set(null);
+    try {
+      await this.ipc.openManagedFolder(dir);
+    } catch (err) {
+      this.error.set(toAppError(err));
+    }
   }
 
   // ----------------------------- engine packs -----------------------------

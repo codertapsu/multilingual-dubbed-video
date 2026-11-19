@@ -617,6 +617,99 @@
     </div>
   </div>
 
+  <!-- ===================== Projects folder (where the projects live) ===================== -->
+  <div class="card stack">
+    <h2>{{ 'settings.projects-folder.heading' | translate }}</h2>
+    <p class="muted">{{ 'settings.projects-folder.intro' | translate }}</p>
+
+    @if (projectsFolder(); as pf) {
+      <div class="setting-row">
+        <span class="cred-name">{{ 'settings.projects-folder.current' | translate }}</span>
+        <code class="mono">{{ pf.root }}</code>
+        @if (pf.isDefault) {
+          <span class="badge">{{ 'settings.projects-folder.default' | translate }}</span>
+        }
+      </div>
+      <p class="hint">
+        {{ 'settings.projects-folder.example' | translate: { count: pf.projectCount } }}
+        <code class="mono">{{ projectsFolderExample(pf) }}</code>
+      </p>
+      @if (!pf.available) {
+        <p class="hint warn-text">⚠ {{ 'settings.projects-folder.unavailable' | translate: { folder: pf.root } }}</p>
+      }
+
+      @if (pf.moving; as m) {
+        <div class="install-progress" role="status" aria-live="polite">
+          <span class="hint">{{ 'settings.projects-folder.moving' | translate: { done: m.done, total: m.total, folder: m.to } }}</span>
+          <progress [value]="m.done" [max]="m.total || 1"></progress>
+        </div>
+      } @else if (pf.lastError; as e) {
+        <p class="hint test-fail">✗ {{ e.message }} {{ e.remediation ?? '' }}</p>
+      }
+
+      @if (inTauri) {
+        <div class="cred-controls">
+          <button
+            type="button"
+            class="btn btn-sm"
+            (click)="chooseProjectsFolder()"
+            [disabled]="projectsFolderBusy() || !!pf.moving"
+          >
+            {{ 'settings.projects-folder.change' | translate }}
+          </button>
+          @if (!pf.isDefault) {
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              (click)="moveProjectsTo(null)"
+              [disabled]="projectsFolderBusy() || !!pf.moving"
+            >
+              {{ 'settings.projects-folder.use-default' | translate }}
+            </button>
+          }
+          <button type="button" class="btn btn-ghost btn-sm" (click)="openProjectsFolder()" [disabled]="!pf.available">
+            {{ openFolderLabel() }}
+          </button>
+        </div>
+      } @else {
+        <!-- The browser has no native folder dialog: the folder is typed. -->
+        <div class="cred-controls">
+          <input
+            type="text"
+            class="grow"
+            [attr.aria-label]="'settings.projects-folder.current' | translate"
+            [ngModel]="projectsFolderInput()"
+            (ngModelChange)="projectsFolderInput.set($event)"
+            name="projects-folder"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button
+            type="button"
+            class="btn btn-sm"
+            (click)="moveProjectsTo(projectsFolderInput())"
+            [disabled]="projectsFolderBusy() || !!pf.moving || !projectsFolderInput().trim() || projectsFolderInput().trim() === pf.root"
+          >
+            {{ 'settings.projects-folder.move' | translate }}
+          </button>
+          @if (!pf.isDefault) {
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              (click)="moveProjectsTo(null)"
+              [disabled]="projectsFolderBusy() || !!pf.moving"
+            >
+              {{ 'settings.projects-folder.use-default' | translate }}
+            </button>
+          }
+        </div>
+      }
+      <p class="hint">{{ 'settings.projects-folder.note' | translate }}</p>
+    } @else {
+      <p class="hint">{{ 'settings.projects-folder.unavailable-api' | translate }}</p>
+    }
+  </div>
+
   <!-- ============================ Updates ============================ -->
   <!-- ===================== Storage (free up disk space) ===================== -->
   <div class="card stack">

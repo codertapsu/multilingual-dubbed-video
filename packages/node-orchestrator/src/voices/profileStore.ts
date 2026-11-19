@@ -48,7 +48,8 @@ export function isProjectId(id: string | undefined): id is string {
 export class VoiceProfileStore {
   constructor(
     private readonly configDir: string,
-    private readonly projectsDir: string,
+    /** Where the projects are now: a function, since Settings can move them (ProjectsFolderService). */
+    private readonly projectsDir: string | (() => string),
   ) {}
 
   libraryRoot(): string {
@@ -56,7 +57,8 @@ export class VoiceProfileStore {
   }
 
   projectRoot(projectId: string): string {
-    return path.join(this.projectsDir, projectId, 'voices');
+    const dir = typeof this.projectsDir === 'function' ? this.projectsDir() : this.projectsDir;
+    return path.join(dir, projectId, 'voices');
   }
 
   newId(scope: VoiceProfile['scope']): string {

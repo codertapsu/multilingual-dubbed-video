@@ -344,6 +344,32 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /**
+   * The projects something is working on now: dubbing, waiting in the queue,
+   * rendering from Export, moving their finished files, or an editor action
+   * (re-voicing a line, separating a voice). Deleting or moving a project
+   * under any of them would pull its files from under the work.
+   */
+  busyProjects(): string[] {
+    const editing = [...this.editorLaneRefs.keys()].map((owner) => owner.replace(/^editor:/, ''));
+    return [...new Set([...this.running.keys(), ...this.queued, ...this.rendering, ...this.movingOutput, ...editing])];
+  }
+
+  /**
+   * Delete a project from the list (ProjectStore.deleteProject: its folder,
+   * and its finished files only when they are in it). Refused while anything
+   * works on it: pause the dub, or wait for the editor action, first.
+   */
+  async deleteProject(projectId: string): Promise<void> {
+    if (this.busyProjects().includes(projectId)) {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'This project is dubbing, waiting in the queue, or busy in the editor.', {
+        remediation: 'Pause it (or wait for it to finish), then delete it.',
+      });
+    }
+    await this.deps.store.deleteProject(projectId);
+    this.workloads.delete(projectId);
+  }
+
+  /**
    * New project after Back: give the project its Continue created the form as
    * it is now (ProjectStore.reviseProject). Continue used to create another
    * project every time, so fixing one choice after Start refused it left a

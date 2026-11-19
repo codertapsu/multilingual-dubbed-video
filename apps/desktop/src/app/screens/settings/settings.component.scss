@@ -258,3 +258,8 @@ hr.sep {
   margin: 4px 0;
   width: 100%;
 }
+
+/* A projects folder that cannot be reached: amber, the projects are not lost. */
+.warn-text {
+  color: var(--vd-warning);
+}

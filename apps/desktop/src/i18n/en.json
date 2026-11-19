@@ -139,7 +139,15 @@
     "models-missing-cta": "Download in Settings",
     "claude-tip-title": "Let Claude do the dubbing",
     "claude-tip-body": "Connect Claude Desktop, Claude Code or Mother Claude to VideoDubber, then just ask: \"Dub this video into Vietnamese.\"",
-    "claude-tip-open": "Show me how"
+    "claude-tip-open": "Show me how",
+    "delete": "Delete project",
+    "delete-aria": "Delete {{ name }}",
+    "delete-busy": "Pause it first: it is dubbing or waiting",
+    "delete-title": "Delete this project?",
+    "delete-body": "“{{ name }}” and its working files will be deleted from this computer. This cannot be undone.",
+    "delete-body-render": "Its finished video and subtitles are in its folder, so they are deleted too: open the project and copy them out first if you want to keep them.",
+    "delete-body-kept": "Its finished video and subtitles in {{ folder }} are kept.",
+    "delete-confirm": "Delete"
   },
   "settings": {
     "title": "Settings",
@@ -302,6 +310,24 @@
       "install": "Install",
       "installing": "Installing…",
       "downloading": "Downloading…"
+    },
+    "projects-folder": {
+      "heading": "Projects folder",
+      "intro": "Where VideoDubber keeps your projects: each one in its own folder inside “projects”, with its working files and, unless you chose another folder for it, the finished video. Choosing another folder moves every project there, with the same structure.",
+      "current": "Folder",
+      "default": "default",
+      "example": "{{ count }} projects. A finished video is saved like this:",
+      "unavailable": "{{ folder }} cannot be reached (a drive that is not connected?). Connect it again, or go back to the default folder.",
+      "moving": "Moving the projects to {{ folder }}… {{ done }} of {{ total }}",
+      "change": "Change folder…",
+      "use-default": "Back to the default folder",
+      "move": "Move here",
+      "note": "To move, every dub must be paused or finished. Engines, voice models and settings stay in VideoDubber’s own folder.",
+      "pick-title": "Choose the folder for your projects",
+      "confirm-title": "Move the projects?",
+      "confirm-body": "{{ count }} projects will move to {{ folder }}, each with all its files. Large videos can take a few minutes; until it has finished, projects cannot be changed.",
+      "confirm-move": "Move",
+      "unavailable-api": "The projects folder cannot be shown: the background service is not running."
     },
     "storage": {
       "heading": "Storage",

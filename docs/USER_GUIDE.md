@@ -359,6 +359,7 @@ button tells you whether it is still live.
 | **Claude** | Connect Claude Desktop or Claude Code so Claude can run dubs for you — see [`MCP.md`](MCP.md). |
 | **Engines** | Optional downloadable "engine packs" — see below. |
 | **Translation packs** | Offline translation language packs. Non-English pairs go through English, so e.g. Chinese → Vietnamese needs both the Chinese → English and English → Vietnamese packs. |
+| **Projects folder** | Where your projects are, and moving them all to another folder (another drive, say) with the same structure — see [Moving the projects folder](#moving-the-projects-folder). |
 | **Storage** | How much disk the downloaded models, packs and caches are using, and a button to delete all of it. Your projects are never touched. |
 | **Updates** | See [Updating](#8-updating). |
 
@@ -437,7 +438,7 @@ Inside it:
 
 | Folder / file | Contents |
 |---|---|
-| `projects/` | One folder per dubbing project: the working files, and the finished video unless you chose another folder for it ([Save to](#choosing-where-a-project-is-saved)). |
+| `projects/` | One folder per dubbing project: the working files, and the finished video unless you chose another folder for it ([Save to](#choosing-where-a-project-is-saved)). Settings → **Projects folder** can move it elsewhere ([below](#moving-the-projects-folder)). |
 | `models/` | The downloaded AI models — transcription models, translation packs, voices. This is usually the biggest folder. |
 | `engines/` | Installed engine packs. |
 | `setup.json`, `preferences.json` | Your first-run state and settings. |
@@ -445,6 +446,38 @@ Inside it:
 
 Settings → **Storage** shows the total and can delete the downloaded models and
 packs without touching your projects.
+
+<a id="moving-the-projects-folder"></a>
+
+### Moving the projects folder
+
+Settings → **Projects folder** shows where your projects are and moves them all
+somewhere else, for example to another drive with more space:
+
+1. Press **Change folder…** and choose a folder, for example `D:\claude-dubber`.
+   (In the browser version, type the folder's full path and press **Move here**.)
+2. Confirm. Every project moves into that folder's `projects` folder with the same
+   structure, so a finished video that was
+   `C:\Users\<you>\VideoDubber\projects\proj_…\render\output.mp4` becomes
+   `D:\claude-dubber\projects\proj_…\render\output.mp4`. The card shows how many
+   have moved; projects cannot be changed until it has finished.
+3. New projects are created there from then on, also after a restart.
+
+Moving needs every dub paused or finished. If one project cannot move (on
+Windows, usually a file of it is open in a player), the ones already moved go
+back and nothing changes: close the player and try again. **Back to the default
+folder** moves them back to `VideoDubber\projects`. Engine packs, models and
+settings always stay in the `VideoDubber` folder, and a folder you chose with
+**Save to** for a project's finished video is not moved.
+
+### Deleting a project
+
+The bin icon at the end of a project in the **Projects** list deletes it, after
+asking. Its folder goes, working files included, and with it the finished video
+when that is saved in the project's own folder (the default): copy the video out
+first if you want to keep it. A finished video saved to a folder you chose with
+**Save to** stays where it is. A project that is dubbing or waiting in the queue
+cannot be deleted: pause it first.
 
 ---
 

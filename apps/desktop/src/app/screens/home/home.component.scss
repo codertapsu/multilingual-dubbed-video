@@ -18,11 +18,32 @@
 }
 
 .project-card {
+  display: flex;
+  align-items: center;
   background: var(--vd-surface);
   border: 1px solid var(--vd-border);
   border-radius: var(--vd-radius);
   box-shadow: var(--vd-shadow-sm);
   overflow: hidden;
+}
+
+/* Delete, at the card's end: red only when pointed at, so it never shouts. */
+.project-delete {
+  flex: none;
+  margin: 0 var(--vd-sp-3) 0 calc(-1 * var(--vd-sp-2));
+
+  svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+.project-delete:hover:not(:disabled) {
+  color: var(--vd-danger);
+  background: var(--vd-danger-bg);
+}
+.project-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .project-open {

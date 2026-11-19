@@ -115,6 +115,21 @@
               <vd-status-badge [status]="badgeStatus(project)" />
             </div>
           </button>
+          <!-- Beside the card, never inside it: a button may not hold another. -->
+          <button
+            type="button"
+            class="icon-btn project-delete"
+            (click)="deleteProject(project)"
+            [disabled]="deleting() !== null || isBusy(project)"
+            [attr.aria-label]="'home.delete-aria' | translate: { name: project.name }"
+            [title]="(isBusy(project) ? 'home.delete-busy' : 'home.delete') | translate"
+          >
+            @if (deleting() === project.id) {
+              …
+            } @else {
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
+            }
+          </button>
         </li>
       }
     </ul>

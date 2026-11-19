@@ -75,6 +75,8 @@ export type {
   StorageInfo,
   StorageClearRequest,
   StorageClearResult,
+  ProjectsFolderInfo,
+  ProjectsFolderRequest,
 } from './models/engines.js';
 export { compareDriverVersions, outdatedNvidiaDriver, NVIDIA_GPU_RE } from './models/engines.js';
 export type { UpdateNotice } from './models/setup.js';

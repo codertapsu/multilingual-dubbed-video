@@ -139,7 +139,15 @@
     "models-missing-cta": "Tải trong Cài đặt",
     "claude-tip-title": "Để Claude lồng tiếng giúp bạn",
     "claude-tip-body": "Kết nối Claude Desktop, Claude Code hoặc Mother Claude với VideoDubber, rồi chỉ cần nhờ: \"Lồng tiếng video này sang tiếng Việt.\"",
-    "claude-tip-open": "Xem cách làm"
+    "claude-tip-open": "Xem cách làm",
+    "delete": "Xoá dự án",
+    "delete-aria": "Xoá {{ name }}",
+    "delete-busy": "Hãy tạm dừng trước: dự án đang lồng tiếng hoặc đang chờ",
+    "delete-title": "Xoá dự án này?",
+    "delete-body": "“{{ name }}” và các tệp làm việc của nó sẽ bị xoá khỏi máy này. Không thể hoàn tác.",
+    "delete-body-render": "Video hoàn chỉnh và phụ đề của nó nằm trong thư mục dự án nên cũng bị xoá: nếu muốn giữ, hãy mở dự án và chép chúng ra trước.",
+    "delete-body-kept": "Video hoàn chỉnh và phụ đề của nó trong {{ folder }} vẫn được giữ.",
+    "delete-confirm": "Xoá"
   },
   "settings": {
     "title": "Cài đặt",
@@ -302,6 +310,24 @@
       "install": "Cài đặt",
       "installing": "Đang cài…",
       "downloading": "Đang tải…"
+    },
+    "projects-folder": {
+      "heading": "Thư mục dự án",
+      "intro": "Nơi VideoDubber lưu các dự án của bạn: mỗi dự án có một thư mục riêng trong thư mục “projects”, gồm các tệp làm việc và video hoàn chỉnh (trừ khi bạn đã chọn thư mục lưu riêng cho dự án đó). Chọn thư mục khác sẽ chuyển toàn bộ dự án sang đó, giữ nguyên cấu trúc.",
+      "current": "Thư mục",
+      "default": "mặc định",
+      "example": "{{ count }} dự án. Video hoàn chỉnh được lưu như sau:",
+      "unavailable": "Không truy cập được {{ folder }} (ổ đĩa chưa được kết nối?). Hãy kết nối lại, hoặc quay về thư mục mặc định.",
+      "moving": "Đang chuyển dự án sang {{ folder }}… {{ done }}/{{ total }}",
+      "change": "Đổi thư mục…",
+      "use-default": "Về thư mục mặc định",
+      "move": "Chuyển sang đây",
+      "note": "Khi chuyển, mọi việc lồng tiếng phải đang tạm dừng hoặc đã xong. Các bộ máy, mô hình giọng và cài đặt vẫn nằm trong thư mục riêng của VideoDubber.",
+      "pick-title": "Chọn thư mục để lưu dự án",
+      "confirm-title": "Chuyển dự án?",
+      "confirm-body": "{{ count }} dự án sẽ được chuyển sang {{ folder }}, kèm toàn bộ tệp của từng dự án. Video lớn có thể mất vài phút; trong lúc chuyển, các dự án tạm thời không chỉnh sửa được.",
+      "confirm-move": "Chuyển",
+      "unavailable-api": "Không hiển thị được thư mục dự án: dịch vụ nền chưa chạy."
     },
     "storage": {
       "heading": "Dung lượng",

@@ -61,6 +61,7 @@ import type {
   StorageClearRequest,
   StorageClearResult,
   StorageInfo,
+  ProjectsFolderInfo,
   TimeRange,
   VoiceConsentStatements,
   VoiceEngineState,
@@ -134,6 +135,11 @@ export class IpcService {
    */
   reviseProject(projectId: string, input: ReviseProjectInput): Promise<Project> {
     return this.http<Project>('PUT', `/projects/${encodeURIComponent(projectId)}`, input);
+  }
+
+  /** DELETE /projects/:id — remove a project and its folder (refused while it is busy). */
+  deleteProject(projectId: string): Promise<{ ok: boolean }> {
+    return this.http<{ ok: boolean }>('DELETE', `/projects/${encodeURIComponent(projectId)}`);
   }
 
   /** open_project / get_project both return the { project, pipeline } envelope. */
@@ -906,6 +912,16 @@ export class IpcService {
   /** POST /storage/clear — delete downloaded packages/models/caches to free space. */
   clearStorage(req: StorageClearRequest = {}): Promise<StorageClearResult> {
     return this.http<StorageClearResult>('POST', '/storage/clear', req);
+  }
+
+  /** GET /storage/projects-folder — where the projects live, and a move in progress. */
+  getProjectsFolder(): Promise<ProjectsFolderInfo> {
+    return this.http<ProjectsFolderInfo>('GET', '/storage/projects-folder');
+  }
+
+  /** PUT /storage/projects-folder — move every project to `<root>/projects` (null: VideoDubber's own folder). */
+  moveProjectsFolder(root: string | null): Promise<ProjectsFolderInfo> {
+    return this.http<ProjectsFolderInfo>('PUT', '/storage/projects-folder', { root });
   }
 
   /**

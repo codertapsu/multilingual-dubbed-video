@@ -126,6 +126,70 @@ describe('PUT /projects/:id', () => {
   });
 });
 
+/** Deleting a project, and the projects folder chosen in Settings. */
+describe('DELETE /projects/:id and /storage/projects-folder', () => {
+  let tmp: string;
+  let app: FastifyInstance;
+  const config = () =>
+    loadConfig({
+      projectsDir: path.join(tmp, 'VideoDubber', 'projects'),
+      configDir: path.join(tmp, 'VideoDubber'),
+      modelsDir: path.join(tmp, 'VideoDubber', 'models'),
+    });
+
+  beforeEach(async () => {
+    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'vd-server-test-'));
+    app = await createServer({ config: config(), media: new FakeMediaService() });
+  });
+
+  afterEach(async () => {
+    await app.close();
+    await fsp.rm(tmp, { recursive: true, force: true });
+  });
+
+  async function create(name: string): Promise<{ id: string; workspaceDir: string }> {
+    const video = await writeDummyVideo(tmp);
+    const res = await app.inject({ method: 'POST', url: '/projects', payload: createProjectInput(video, { name }) });
+    return res.json() as { id: string; workspaceDir: string };
+  }
+
+  it('deletes a project and its folder; the list no longer has it', async () => {
+    const keep = await create('Keep');
+    const gone = await create('Gone');
+    const res = await app.inject({ method: 'DELETE', url: `/projects/${gone.id}` });
+    expect(res.statusCode).toBe(200);
+    expect(await fsp.stat(gone.workspaceDir).catch(() => null)).toBeNull();
+    const list = (await app.inject({ method: 'GET', url: '/projects' })).json() as { id: string }[];
+    expect(list.map((p) => p.id)).toEqual([keep.id]);
+    expect((await app.inject({ method: 'DELETE', url: `/projects/${gone.id}` })).statusCode).not.toBe(200);
+  });
+
+  it('moves the projects to another folder, and a restart keeps using it', async () => {
+    const project = await create('Clip');
+    const root = path.join(tmp, 'claude-dubber');
+    const res = await app.inject({ method: 'PUT', url: '/storage/projects-folder', payload: { root } });
+    expect(res.statusCode).toBe(202);
+    let info = res.json() as { moving?: unknown; projectsDir: string; lastError?: unknown };
+    for (let i = 0; i < 200 && info.moving; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      info = (await app.inject({ method: 'GET', url: '/storage/projects-folder' })).json() as typeof info;
+    }
+    expect(info).toMatchObject({ projectsDir: path.join(root, 'projects') });
+    expect(info.lastError).toBeUndefined();
+
+    await app.close();
+    app = await createServer({ config: config(), media: new FakeMediaService() });
+    const list = (await app.inject({ method: 'GET', url: '/projects' })).json() as { id: string; workspaceDir: string }[];
+    expect(list).toEqual([expect.objectContaining({ id: project.id, workspaceDir: path.join(root, 'projects', project.id) })]);
+  });
+
+  it('turns a folder path that is not one into a 400 that says so', async () => {
+    const res = await app.inject({ method: 'PUT', url: '/storage/projects-folder', payload: { root: 'relative/folder' } });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: { message: string } }).error.message).toContain('not a folder path');
+  });
+});
+
 /** Claude through Mother Claude: the routes Settings drives. */
 describe('Mother Claude credential routes', () => {
   let tmp: string;

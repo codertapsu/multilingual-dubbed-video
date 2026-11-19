@@ -119,7 +119,32 @@ async function copyInputVideo(source: string, paths: WorkspacePaths): Promise<st
  * it can be freely shared and is trivially mockable in tests via a temp dir.
  */
 export class ProjectStore {
-  constructor(private readonly projectsDir: string) {}
+  constructor(private dir: string) {}
+
+  /** Where the projects are (`<root>/projects`; the root is chosen in Settings). */
+  get projectsDir(): string {
+    return this.dir;
+  }
+
+  /**
+   * The projects now live in `dir` (ProjectsFolderService moved them there).
+   * Every path this store hands out is derived from it, so they all follow.
+   */
+  setProjectsDir(dir: string): void {
+    this.dir = dir;
+  }
+
+  /**
+   * Delete a project: its whole folder, working files and, when it saves to
+   * its own render/ folder, the finished video. Files it saved to a folder the
+   * user chose are left alone: they are the user's, outside VideoDubber's data.
+   * Windows may hold a file a moment longer (a preview that just stopped, a
+   * virus scan): rm retries those.
+   */
+  async deleteProject(projectId: string): Promise<void> {
+    await this.getProject(projectId);
+    await fsp.rm(this.paths(projectId).root, { recursive: true, force: true, maxRetries: 6, retryDelay: 250 });
+  }
 
   /** Serializes choosing a file name in a shared folder with saving it (withOutputName). */
   private readonly outputNames = new KeyedMutex();
@@ -163,7 +188,7 @@ export class ProjectStore {
 
   /** Resolve the workspace paths for a project id. */
   paths(projectId: string): WorkspacePaths {
-    return workspacePaths(this.projectsDir, projectId);
+    return workspacePaths(this.dir, projectId);
   }
 
   /**
@@ -297,7 +322,7 @@ export class ProjectStore {
   async listProjects(): Promise<Project[]> {
     let entries: Dirent[];
     try {
-      entries = await fsp.readdir(this.projectsDir, { withFileTypes: true });
+      entries = await fsp.readdir(this.dir, { withFileTypes: true });
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') return [];

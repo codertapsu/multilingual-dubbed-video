@@ -27,6 +27,7 @@ import {
   type CloudServiceId,
   type CreateProjectInput,
   type ReviseProjectInput,
+  type ProjectsFolderRequest,
   type PipelineStepId,
   type ProjectSettings,
   type SaveCredentialRequest,
@@ -95,6 +96,8 @@ import {
 import { samePath } from './workspace/outputFolder.js';
 import { MEDIA_SERVICE_METHODS, type PipelineMediaService } from './media.js';
 import { ProjectStore } from './workspace/projectStore.js';
+import { projectsDirOf, readProjectsRoot } from './workspace/projectsFolder.js';
+import { ProjectsFolderService } from './workspace/projectsFolderService.js';
 import { buildCatalog, findPiperVoice, translatableLanguages } from './setup/catalog.js';
 import { listVoicesForLanguage } from './setup/voicesCatalog.js';
 import { listNeuralVoicesForLanguage } from './setup/neuralVoicesCatalog.js';
@@ -245,7 +248,10 @@ function contentTypeFor(filePath: string): string {
 export async function createServer(options: CreateServerOptions = {}): Promise<FastifyInstance> {
   const config = options.config ?? loadConfig();
 
-  const store = options.store ?? new ProjectStore(config.projectsDir);
+  // The projects folder chosen in Settings wins over VIDEODUBBER_PROJECTS_DIR,
+  // which the desktop shell always sets to the default (projectsFolder.ts).
+  const chosenRoot = await readProjectsRoot(config.configDir);
+  const store = options.store ?? new ProjectStore(chosenRoot ? projectsDirOf(chosenRoot) : config.projectsDir);
   const media = options.media ?? createLazyMediaService();
   const credentials = options.credentials ?? new CredentialsStore(config.configDir);
 
@@ -304,7 +310,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const setupStore = options.setupStore ?? new SetupStore(config.configDir);
   // Voice profiles (cloning). Built before the registry: the engines that can
   // clone resolve a profile id to their voice file through the service.
-  const voiceProfileStore = new VoiceProfileStore(config.configDir, config.projectsDir);
+  const voiceProfileStore = new VoiceProfileStore(config.configDir, () => store.projectsDir);
   const referencePrep = new ReferencePrep({
     workRoot: join(config.configDir, 'voices', 'work'),
     media,
@@ -438,6 +444,15 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // `paused` rather than silently resumed. Best-effort; never blocks boot.
   void orchestrator.reconcileQueue();
 
+  // Settings → Projects folder (where the projects live, and moving them).
+  const projectsFolder = new ProjectsFolderService({
+    configDir: config.configDir,
+    defaultProjectsDir: config.projectsDir,
+    store,
+    busyProjects: () => orchestrator.busyProjects(),
+    logger: { warn: (m) => console.warn(`[projects-folder] ${m}`) },
+  });
+
   // Tracks background Ollama model pulls (lazy on-demand for the large, optional
   // local-LLM translation models). The UI polls /providers/ollama/pull-status.
   const ollamaPulls = new OllamaPullManager(OLLAMA_URL);
@@ -475,6 +490,21 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       ...(origin && allowedOrigin.test(origin) ? { 'Access-Control-Allow-Origin': origin } : {}),
     };
   };
+
+  // While the projects move to another folder, nothing may change one: a write
+  // would land in the folder they are leaving, or in one half-moved. Reading
+  // goes on (the list shows what is where).
+  app.addHook('onRequest', async (req, reply) => {
+    if (!projectsFolder.moving || req.method === 'GET' || req.method === 'OPTIONS') return;
+    if (!/^\/projects(\/|\?|$)/.test(req.url)) return;
+    return reply.status(409).send({
+      error: {
+        code: 'RUN_IN_PROGRESS',
+        message: 'VideoDubber is moving your projects to another folder.',
+        remediation: 'Try again when Settings → Projects folder shows the move has finished.',
+      },
+    });
+  });
 
   // On the way out, pause the dubs in progress first (each saves its progress
   // and continues at the next start), then stop any running engine servers
@@ -1504,6 +1534,42 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
+  // Delete a project from the list: its folder, and its finished files only
+  // when they are in it (ProjectStore.deleteProject). Refused while it is busy.
+  app.delete('/projects/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      await orchestrator.deleteProject(req.params.id);
+      return { ok: true };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // Settings → Projects folder: where the projects live, and moving them all
+  // to another folder (in the background: GET reports how far it is).
+  app.get('/storage/projects-folder', async (_req, reply) => {
+    try {
+      return await projectsFolder.info();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.put('/storage/projects-folder', async (req: FastifyRequest<{ Body: ProjectsFolderRequest }>, reply) => {
+    try {
+      const root = req.body?.root;
+      if (root !== null && typeof root !== 'string') {
+        return reply.status(400).send({ error: { code: 'UNKNOWN', message: 'Expected { root: string | null }.' } });
+      }
+      const info = await projectsFolder.move(root);
+      return reply.status(info.moving ? 202 : 200).send(info);
+    } catch (err) {
+      const { status, error } = toHttpError(err);
+      // A folder the user chose that does not work is their input, not a server fault.
+      return reply.status(error.code === 'UNKNOWN' ? 400 : status).send({ error });
+    }
+  });
+
   // New project after Back: the same project, as the form now is (only a
   // project that has never run). Continue used to create another one each time.
   app.put(
@@ -1855,7 +1921,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // projects root, or a project's configured output directory — never an
       // arbitrary filesystem path.
       const resolved = resolvePath(target);
-      const projectsRoot = resolvePath(config.projectsDir);
+      const projectsRoot = resolvePath(store.projectsDir);
       const configRoot = resolvePath(config.configDir);
       let permitted =
         resolved === projectsRoot ||
@@ -1897,7 +1963,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // Path-traversal guard: only files inside the projects directory, and a
       // project's own finished files in the folder chosen for it — exactly
       // those files, not that whole folder (it may be D:\ or Downloads).
-      const root = resolvePath(config.projectsDir);
+      const root = resolvePath(store.projectsDir);
       const resolved = resolvePath(target);
       let permitted = resolved === root || resolved.startsWith(root + sep);
       if (!permitted) {
@@ -2078,7 +2144,8 @@ export async function startServer(options: CreateServerOptions = {}): Promise<Fa
    
   console.log(`[orchestrator] listening on http://${config.host}:${config.port}`);
    
-  console.log(`[orchestrator] projects dir: ${config.projectsDir}`);
+  const chosenRoot = await readProjectsRoot(config.configDir);
+  console.log(`[orchestrator] projects dir: ${chosenRoot ? `${projectsDirOf(chosenRoot)} (chosen in Settings)` : config.projectsDir}`);
   return app;
 }
 

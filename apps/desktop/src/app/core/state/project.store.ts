@@ -61,6 +61,25 @@ export class ProjectStore {
     return loaded;
   }
 
+  /**
+   * Delete a project (DELETE /projects/:id). On success it leaves the list,
+   * and stops being the open project; a refusal (it is dubbing, say) is
+   * {@link lastError}. Resolves whether it was deleted.
+   */
+  async deleteProject(projectId: string): Promise<boolean> {
+    let deleted = false;
+    await this.guard(async () => {
+      await this.ipc.deleteProject(projectId);
+      this._projects.update((list) => list.filter((p) => p.id !== projectId));
+      if (this._current()?.id === projectId) {
+        this._current.set(null);
+        this._pipeline.set(null);
+      }
+      deleted = true;
+    });
+    return deleted;
+  }
+
   /** Replace the cached pipeline state (e.g. from a live SSE update). */
   setPipeline(pipeline: PipelineState): void {
     this._pipeline.set(pipeline);

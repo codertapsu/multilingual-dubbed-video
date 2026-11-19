@@ -128,6 +128,12 @@ folder is chosen and unique there, counting the names other projects hold before
 (`ProjectStore.withOutputName`, locked with the save); `/file` serves exactly a project's own files
 from such a folder, never the folder.
 
+**The projects folder can move** (Settings → Projects folder, `workspace/projectsFolder*.ts`):
+`<root>/projects`, the root kept in `<config>/projects-folder.json`, which wins over the
+`VIDEODUBBER_PROJECTS_DIR` the shell always passes. A move rewrites every absolute path inside each
+project's **JSON** files (`rebaseJson`), so a new artifact that names a workspace path must be JSON,
+and code must take the folder from the store (`store.projectsDir`), never `config.projectsDir`.
+
 ### The lazy media proxy
 
 `createLazyMediaService()` in `server.ts` generates its forwarders from `MEDIA_SERVICE_METHODS`,

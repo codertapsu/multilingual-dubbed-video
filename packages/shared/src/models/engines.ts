@@ -294,6 +294,33 @@ export interface StorageClearResult {
   cleared: StorageCategory[];
 }
 
+/**
+ * GET /storage/projects-folder: where the projects live. The user chooses a
+ * folder (`root`); the projects are in its `projects` folder, each with the
+ * same structure as always (`<root>/projects/<id>/render/output.mp4`).
+ */
+export interface ProjectsFolderInfo {
+  /** The chosen folder: VideoDubber's own data folder unless changed in Settings. */
+  root: string;
+  /** Where the projects are: `<root>/projects`. */
+  projectsDir: string;
+  /** VideoDubber's own data folder, where the projects live by default. */
+  defaultRoot: string;
+  isDefault: boolean;
+  /** False when the folder cannot be reached (a drive that is not connected). */
+  available: boolean;
+  projectCount: number;
+  /** A move to another folder, while it runs: how many projects have moved. */
+  moving?: { to: string; done: number; total: number };
+  /** Why the last move stopped; the projects it had moved were put back. */
+  lastError?: { code: string; message: string; remediation?: string };
+}
+
+/** PUT /storage/projects-folder: the folder to move the projects to; null for VideoDubber's own. */
+export interface ProjectsFolderRequest {
+  root: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // NVIDIA driver gate
 //

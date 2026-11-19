@@ -46,6 +46,7 @@ export type {
   StorageInfo,
   StorageClearRequest,
   StorageClearResult,
+  ProjectsFolderInfo,
   // Media
   MediaInfo,
   VideoStreamInfo,

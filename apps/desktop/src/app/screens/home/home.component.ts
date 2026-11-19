@@ -22,7 +22,8 @@ import {
 import { formatDurationCoarse } from '../../core/util/format';
 import type { Project } from '../../core/models';
 import type { QueueState } from '../../core/models/setup';
-import { TranslatePipe } from '../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 
 /** How often the capacity summary refreshes while dubs are active. */
 const QUEUE_POLL_MS = 4000;
@@ -44,6 +45,8 @@ export class HomeComponent implements OnInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly ipc = inject(IpcService);
   protected readonly store = inject(ProjectStore);
+  private readonly confirm = inject(ConfirmService);
+  private readonly translate = inject(TranslateService);
 
   protected readonly formatDuration = formatDurationCoarse;
 
@@ -130,6 +133,43 @@ export class HomeComponent implements OnInit, OnDestroy {
     void this.router.navigate(['/new']);
   }
 
+  /** The project being deleted (one at a time). */
+  protected readonly deleting = signal<string | null>(null);
+
+  /** Dubbing or waiting: it must be paused before it can go (the server refuses too). */
+  protected isBusy(project: Project): boolean {
+    const q = this.queue();
+    const scheduled = !!q && (q.running.some((r) => r.projectId === project.id) || q.entries.some((e) => e.projectId === project.id));
+    return scheduled || project.status === 'running' || project.status === 'queued';
+  }
+
+  /**
+   * Delete a project, after saying exactly what goes: its folder in
+   * VideoDubber's data, with the finished video when it is saved there. A
+   * finished video in a folder the user chose stays: it is theirs.
+   */
+  protected async deleteProject(project: Project): Promise<void> {
+    if (this.deleting() || this.isBusy(project)) return;
+    const savesInItsFolder = isInside(project.outputDir, project.workspaceDir);
+    const ok = await this.confirm.confirm({
+      title: this.translate.instant('home.delete-title'),
+      message: [
+        this.translate.instant('home.delete-body', { name: project.name }),
+        savesInItsFolder
+          ? this.translate.instant('home.delete-body-render')
+          : this.translate.instant('home.delete-body-kept', { folder: project.outputDir }),
+      ].join(' '),
+      confirmLabel: this.translate.instant('home.delete-confirm'),
+    });
+    if (!ok) return;
+    this.deleting.set(project.id);
+    try {
+      await this.store.deleteProject(project.id);
+    } finally {
+      this.deleting.set(null);
+    }
+  }
+
   protected refresh(): void {
     void this.store.refreshProjects();
   }
@@ -175,4 +215,12 @@ function readFlag(key: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** `inner` is `outer` or inside it (either slash; Windows paths compare without case). */
+function isInside(inner: string, outer: string): boolean {
+  const fold = (p: string) => p.split('\\').join('/').replace(/\/+$/, '').toLowerCase();
+  const a = fold(inner);
+  const b = fold(outer);
+  return a === b || a.startsWith(`${b}/`);
 }

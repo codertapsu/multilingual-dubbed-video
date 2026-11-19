@@ -348,7 +348,7 @@ handlers. The rest, by family:
 | Queue & preferences | `/queue`, `/projects/:id/run-next`, `/preferences` | run-queue state, the simultaneous-dub limit, per-phase defaults |
 | Providers | `/providers*`, `/projects/:id/run-preflight` | which providers a project can actually use, and why one is unavailable |
 | Credentials | `/credentials*` | cloud API keys (write-only from the UI's perspective; values are masked on read) |
-| Storage & system | `/storage*`, `/system` | disk usage, delete-downloaded-data, hardware probe |
+| Storage & system | `/storage*`, `/system` | disk usage, delete-downloaded-data, hardware probe; `/storage/projects-folder` (GET, PUT `{ root }`): where the projects live, and moving them all (in the background, project changes answer 409 meanwhile) |
 | Project extras | `/projects/:id/settings`, `/segments/:segId/refit`, `/translation-context` | per-project settings, single-segment re-fit, the character sheet / glossary |
 | Files | `/file` | static read of a project artifact, honouring HTTP byte ranges (WKWebView will not play or seek media without them) |
 | Studio editor | `/projects/:id/timeline` (GET, PATCH), `/waveform`, `/filmstrip`, `/units/:unitId/fitted` | the timeline document, batched line edits, and the preview media — see §6a |
@@ -365,6 +365,7 @@ handlers. The rest, by family:
 | GET | `/languages` | — | → translation worker languages + curated `COMMON_LANGUAGES` |
 | POST | `/projects` | `create_project` | `CreateProjectInput` → `Project` |
 | PUT | `/projects/:id` | — | `ReviseProjectInput` → `Project`: New project after Back gives the project it created the form as it is now (only a project that has never run; `INVALID_EDIT` otherwise) |
+| DELETE | `/projects/:id` | — | → `{ ok:true }`: the project's folder goes (finished files in a folder the user chose stay); `RUN_IN_PROGRESS` while it dubs, waits, renders or is busy in the editor |
 | GET | `/projects` | `list_projects` | → `Project[]` |
 | GET | `/projects/:id` | `get_project` / `open_project` | → `{ project, pipeline }` |
 | POST | `/projects/:id/probe` | `probe_video` | → `MediaInfo` (persisted) |

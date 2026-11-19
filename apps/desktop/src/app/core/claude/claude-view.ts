@@ -49,6 +49,9 @@ export function claudeConnected(status: ClaudeIntegration | null): boolean {
 /** localStorage key: Home's Claude tip was dismissed (or the guide opened). */
 export const CLAUDE_TIP_DISMISSED_KEY = 'vd.claude-tip-dismissed';
 
+/** Where Mother Claude is downloaded (the Claude guide, and Claude through Mother Claude in Settings). */
+export const MOTHER_CLAUDE_DOWNLOAD_URL = 'https://github.com/codertapsu/mother-claude/releases';
+
 /**
  * Home's one-time tip: shown until dismissed or the guide is opened, and only
  * while this build can serve Claude and nothing is connected yet. Nothing is

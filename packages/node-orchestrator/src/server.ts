@@ -38,8 +38,8 @@ import {
 } from '@videodubber/shared';
 import { buildInfo } from './buildInfo.js';
 import { loadConfig, type OrchestratorConfig } from './config.js';
-import { CredentialsStore } from './credentials/credentialsStore.js';
-import { testCloudCredential } from './credentials/testConnection.js';
+import { CredentialsStore, normalizeMotherClaudeUrl } from './credentials/credentialsStore.js';
+import { probeMotherClaude, testCloudCredential } from './credentials/testConnection.js';
 import { buildSystemResponse, getSystemProfile } from './system/systemProfile.js';
 import { EngineEventBus } from './engines/engineBus.js';
 import { EngineInstaller } from './engines/engineInstaller.js';
@@ -1449,6 +1449,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           .status(400)
           .send({ error: { code: 'UNKNOWN', message: `Unknown cloud service "${body?.service}".` } });
       }
+      // A mistyped Mother Claude address is the user's input, not a server fault.
+      if (typeof body.motherClaudeUrl === 'string' && body.motherClaudeUrl.trim()) {
+        try {
+          normalizeMotherClaudeUrl(body.motherClaudeUrl);
+        } catch (err) {
+          return reply.status(400).send({ error: toHttpError(err).error });
+        }
+      }
       await credentials.save(body);
       return { ok: true, services: await credentials.describe() };
     } catch (err) {
@@ -1472,6 +1480,17 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       }
     },
   );
+
+  // Is Mother Claude's HTTP API running at the saved address? A GET of its
+  // model list (no tokens), for the status Settings shows beside the steps.
+  app.get('/credentials/mother-claude', async (_req, reply) => {
+    try {
+      const target = await credentials.motherClaude();
+      return await probeMotherClaude(target.url, target.apiKey);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
 
   // ---- Projects -----------------------------------------------------------
 

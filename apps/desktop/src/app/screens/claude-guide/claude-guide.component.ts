@@ -1,13 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, inject, type OnInit } from '@angular/core';
 
 import { ClaudeIntegrationService } from '../../core/claude/claude-integration.service';
-import { CLAUDE_TIP_DISMISSED_KEY } from '../../core/claude/claude-view';
+import { CLAUDE_TIP_DISMISSED_KEY, MOTHER_CLAUDE_DOWNLOAD_URL } from '../../core/claude/claude-view';
 import { TranslatePipe } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { ClaudeConnectionsComponent } from '../../shared/claude-connections/claude-connections.component';
-
-/** Where Mother Claude is downloaded. */
-const MOTHER_CLAUDE_DOWNLOAD_URL = 'https://github.com/codertapsu/mother-claude/releases';
 
 /**
  * "Use VideoDubber from Claude": from an installed VideoDubber to a Claude

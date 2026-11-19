@@ -179,7 +179,9 @@
         <div class="cred-head">
           <span class="cred-name">{{ serviceMeta[svc].label }}</span>
           @if (credentialFor(svc); as cred) {
-            @if (cred.configured) {
+            @if (cred.via === 'mother-claude') {
+              <span class="badge badge-completed">{{ 'settings.keys.mc.badge' | translate }}</span>
+            } @else if (cred.configured) {
               <span class="badge badge-completed">
                 {{ cred.fromEnv ? ('settings.keys.from-env' | translate) : ('settings.keys.key-set' | translate: { masked: cred.maskedKey ?? '' }) }}
               </span>
@@ -188,47 +190,189 @@
             }
           }
         </div>
-        <div class="cred-controls">
-          <input
-            type="password"
-            class="grow"
-            [attr.aria-label]="'settings.keys.api-key-aria' | translate: { service: serviceMeta[svc].label }"
-            [placeholder]="serviceMeta[svc].keyHint | translate"
-            [ngModel]="keyInputFor(svc)"
-            (ngModelChange)="setKeyInput(svc, $event)"
-            [name]="'key-' + svc"
-            autocomplete="off"
-          />
-          <button
-            type="button"
-            class="btn btn-sm"
-            (click)="saveKey(svc)"
-            [disabled]="credBusy() !== null || keyInputFor(svc).trim().length === 0"
-          >
-            {{ 'settings.keys.save' | translate }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-sm"
-            (click)="testKey(svc)"
-            [disabled]="credBusy() !== null || !(credentialFor(svc)?.configured ?? false)"
-          >
-            {{ credBusy() === svc ? '…' : ('settings.keys.test' | translate) }}
-          </button>
-          @if (credentialFor(svc)?.configured && !credentialFor(svc)?.fromEnv) {
+        @if (svc === 'anthropic') {
+          <!-- How Claude is reached: an API key, or the user's Claude plan through Mother Claude. -->
+          <div class="radio-list" role="radiogroup" [attr.aria-label]="'settings.keys.mc.connection-aria' | translate">
+            <label class="radio-row">
+              <input
+                type="radio"
+                name="claude-connection"
+                value="api-key"
+                [checked]="claudeVia() === 'api-key'"
+                (change)="setClaudeVia('api-key')"
+                [disabled]="credBusy() !== null"
+              />
+              <span class="radio-body">
+                <span class="radio-title">{{ 'settings.keys.mc.option-key' | translate }}</span>
+                <span class="hint">{{ 'settings.keys.mc.option-key-hint' | translate }}</span>
+              </span>
+            </label>
+            <label class="radio-row">
+              <input
+                type="radio"
+                name="claude-connection"
+                value="mother-claude"
+                [checked]="claudeVia() === 'mother-claude'"
+                (change)="setClaudeVia('mother-claude')"
+                [disabled]="credBusy() !== null"
+              />
+              <span class="radio-body">
+                <span class="radio-title">{{ 'settings.keys.mc.option-mc' | translate }}</span>
+                <span class="hint">{{ 'settings.keys.mc.option-mc-hint' | translate }}</span>
+              </span>
+            </label>
+          </div>
+        }
+        @if (svc === 'anthropic' && claudeVia() === 'mother-claude') {
+          <div class="mc-panel stack-sm">
+            <div class="mc-status">
+              @if (motherClaudeStatus(); as st) {
+                @if (!st.reachable) {
+                  <span class="hint test-fail grow">✗ {{ 'settings.keys.mc.status-down' | translate: { url: st.url } }}</span>
+                  <button type="button" class="btn btn-sm" (click)="downloadMotherClaude()">
+                    {{ 'settings.keys.mc.download' | translate }}
+                  </button>
+                } @else if (st.keyRejected) {
+                  <span class="hint test-fail grow">✗ {{ 'settings.keys.mc.status-key' | translate }}</span>
+                } @else {
+                  <span class="hint test-ok grow">✓ {{ 'settings.keys.mc.status-up' | translate: { url: st.url } }}</span>
+                }
+              } @else {
+                <span class="hint grow">{{ 'settings.keys.mc.checking' | translate }}</span>
+              }
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                (click)="checkMotherClaude()"
+                [disabled]="motherClaudeChecking()"
+              >
+                {{ motherClaudeChecking() ? '…' : ('settings.keys.mc.check' | translate) }}
+              </button>
+            </div>
+
+            <p class="hint">{{ 'settings.keys.mc.steps-intro' | translate }}</p>
+            <ol class="mc-steps hint">
+              <li>{{ 'settings.keys.mc.step-install' | translate }}</li>
+              <li>{{ 'settings.keys.mc.step-open' | translate }}</li>
+              <li>{{ 'settings.keys.mc.step-start' | translate }}</li>
+              <li>{{ 'settings.keys.mc.step-test' | translate }}</li>
+            </ol>
+
+            <label class="mc-field">
+              <span>{{ 'settings.keys.mc.url' | translate }}</span>
+              <span class="cred-controls">
+                <input
+                  type="text"
+                  class="grow"
+                  [ngModel]="motherClaudeUrlInput() ?? motherClaudeUrl()"
+                  (ngModelChange)="motherClaudeUrlInput.set($event)"
+                  name="mc-url"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  (click)="saveMotherClaudeUrl()"
+                  [disabled]="credBusy() !== null || motherClaudeUrlInput() === null"
+                >
+                  {{ 'settings.keys.save' | translate }}
+                </button>
+                @if (motherClaudeUrl() !== defaultMotherClaudeUrl) {
+                  <button type="button" class="btn btn-ghost btn-sm" (click)="resetMotherClaudeUrl()" [disabled]="credBusy() !== null">
+                    {{ 'settings.keys.mc.url-default' | translate }}
+                  </button>
+                }
+              </span>
+            </label>
+            <p class="hint">{{ 'settings.keys.mc.url-hint' | translate }}</p>
+
+            <label class="mc-field">
+              <span>{{ 'settings.keys.mc.key' | translate }}</span>
+              <span class="cred-controls">
+                <input
+                  type="password"
+                  class="grow"
+                  [placeholder]="(motherClaudeKeySet() ? 'settings.keys.mc.key-saved' : 'settings.keys.mc.key-placeholder') | translate"
+                  [ngModel]="motherClaudeKeyInput()"
+                  (ngModelChange)="motherClaudeKeyInput.set($event)"
+                  name="mc-key"
+                  autocomplete="off"
+                />
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  (click)="saveMotherClaudeKey()"
+                  [disabled]="credBusy() !== null || motherClaudeKeyInput().trim().length === 0"
+                >
+                  {{ 'settings.keys.save' | translate }}
+                </button>
+                @if (motherClaudeKeySet()) {
+                  <button type="button" class="btn btn-ghost btn-sm" (click)="clearMotherClaudeKey()" [disabled]="credBusy() !== null">
+                    {{ 'settings.keys.remove' | translate }}
+                  </button>
+                }
+              </span>
+            </label>
+            <p class="hint">{{ 'settings.keys.mc.key-hint' | translate }}</p>
+
+            <div class="cred-controls">
+              <button type="button" class="btn btn-sm" (click)="testKey('anthropic')" [disabled]="credBusy() !== null">
+                {{ testing() === 'anthropic' ? '…' : ('settings.keys.test' | translate) }}
+              </button>
+              @if (testing() === 'anthropic') {
+                <span class="hint">{{ 'settings.keys.mc.testing' | translate }}</span>
+              }
+            </div>
+            @if (credentialFor('anthropic')?.maskedKey; as masked) {
+              <p class="hint">{{ 'settings.keys.mc.key-kept' | translate: { masked: masked } }}</p>
+            }
+            <p class="hint">{{ 'settings.keys.mc.privacy' | translate }}</p>
+          </div>
+        } @else {
+          <div class="cred-controls">
+            <input
+              type="password"
+              class="grow"
+              [attr.aria-label]="'settings.keys.api-key-aria' | translate: { service: serviceMeta[svc].label }"
+              [placeholder]="serviceMeta[svc].keyHint | translate"
+              [ngModel]="keyInputFor(svc)"
+              (ngModelChange)="setKeyInput(svc, $event)"
+              [name]="'key-' + svc"
+              autocomplete="off"
+            />
             <button
               type="button"
-              class="btn btn-ghost btn-sm"
-              (click)="clearKey(svc)"
-              [disabled]="credBusy() !== null"
+              class="btn btn-sm"
+              (click)="saveKey(svc)"
+              [disabled]="credBusy() !== null || keyInputFor(svc).trim().length === 0"
             >
-              {{ 'settings.keys.remove' | translate }}
+              {{ 'settings.keys.save' | translate }}
             </button>
-          }
-        </div>
+            <button
+              type="button"
+              class="btn btn-sm"
+              (click)="testKey(svc)"
+              [disabled]="credBusy() !== null || !(credentialFor(svc)?.configured ?? false)"
+            >
+              {{ credBusy() === svc ? '…' : ('settings.keys.test' | translate) }}
+            </button>
+            @if (credentialFor(svc)?.configured && !credentialFor(svc)?.fromEnv) {
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                (click)="clearKey(svc)"
+                [disabled]="credBusy() !== null"
+              >
+                {{ 'settings.keys.remove' | translate }}
+              </button>
+            }
+          </div>
+        }
         @if (testResults()[svc]; as result) {
           <p class="hint" [class.test-ok]="result.ok" [class.test-fail]="!result.ok">
-            {{ result.ok ? '✓' : '✗' }} {{ result.detail }}
+            {{ result.ok ? '✓' : '✗' }}
+            {{ result.ok && result.model ? ('settings.keys.mc.test-ok' | translate: { model: result.model }) : result.detail }}
           </p>
         }
         @if (svc === 'anthropic') {
@@ -245,7 +389,9 @@
               }
             </select>
           </label>
-          <p class="hint">{{ 'settings.keys.claude-model-hint' | translate }}</p>
+          <p class="hint">
+            {{ (claudeVia() === 'mother-claude' ? 'settings.keys.mc.model-hint' : 'settings.keys.claude-model-hint') | translate }}
+          </p>
         }
       </div>
     }

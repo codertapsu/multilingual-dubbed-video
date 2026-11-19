@@ -54,7 +54,7 @@ per project in the new-project wizard — and changed again at any time.
 | Translation | `argos-llm-repair` | **Argos draft + Gemma repair** (offline, context-aware): Argos drafts instantly, the local Gemma instruct model fixes pronouns/terms/cohesion with document context | local | runtime + chat model pack |
 | Refine (optional step) | any provider with `supportsRefinement` (the cloud LLMs, `llama-cpp-chat`) | **Review & refine**: a second pass after Translate re-reads the whole transcript with the character sheet and polishes every line for consistency/naturalness (`settings.refineProviderId`; off by default) | per provider | per provider |
 | Translation | `openai-translate` | OpenAI chat model (default `gpt-4o-mini`) | cloud | OpenAI key |
-| Translation | `anthropic-translate` | Anthropic Claude through the official SDK — default **Claude Opus 5.5**; Sonnet 5.5 and Haiku 5.5 in Settings → Cloud API keys ([Claude](#claude)) | cloud | Anthropic key |
+| Translation | `anthropic-translate` | Anthropic Claude through the official SDK — default **Claude Opus 5.5**; Sonnet 5.5 and Haiku 5.5 in Settings → Cloud API keys ([Claude](#claude)) | cloud | Anthropic key, or your Claude plan [through Mother Claude](#claude-through-mother-claude) |
 | Translation | `gemini-translate` | Google Gemini (default `gemini-3.5-flash`) | cloud | Gemini key |
 | TTS | `piper-local` | Piper → system voice → silent fallback, worker `:5103` | local | — |
 | TTS | `neural-tts` | **Vietnamese** neural voice — VieNeu-TTS v3-Turbo, 48 kHz, 10 preset voices. Vietnamese only; it is not a multilingual engine | local | engine pack |
@@ -201,7 +201,8 @@ Add keys in **Settings → Cloud API keys**. Storage rules:
 - Environment variables work as a read-only fallback for development:
   `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`.
 - Each service row has a **Test** button (`POST /credentials/test`) that makes the
-  cheapest authenticated call (model listing) to verify the key.
+  cheapest authenticated call (model listing) to verify the key. Claude through
+  Mother Claude sends one tiny real message instead ([why](#claude-through-mother-claude)).
 - A custom `baseUrl` per service is supported (e.g. an OpenAI-compatible proxy or
   a local OpenAI-compatible server), as is a `model` override.
 
@@ -231,6 +232,49 @@ first Claude request), in `providers/cloud/claudeMessages.ts`:
   for Haiku (it has none) or through a custom `baseUrl`.
 - Thinking is adaptive and shares the token budget with the answer, so requests leave
   room for both and are streamed.
+
+### Claude through Mother Claude
+
+Instead of an API key, Claude can use your Claude plan.
+[Mother Claude](https://github.com/codertapsu/mother-claude/releases)'s HTTP API speaks
+the Claude API on this computer and answers with Claude Code, signed in with your Claude
+account. Translation then counts against the plan's usage limits instead of being billed
+per use.
+
+Settings → Cloud API keys → Anthropic (Claude) → **My Claude plan, through Mother
+Claude** shows these steps and whether Mother Claude is running:
+
+1. Install Mother Claude and open it. It uses the Claude account Claude Code is signed
+   in with.
+2. In Mother Claude, open **HTTP API**. Under **Access**, set **Reachable from** to
+   **This computer**.
+3. Press **Start the API**. Tick **Start when Mother Claude opens** so it is ready every
+   time.
+4. Back in VideoDubber, press **Test**.
+
+How it works:
+
+- It is the API-key code path with another address: `claudeMessage` through the official
+  SDK, sent to Mother Claude's Base URL (default `http://127.0.0.1:5612`). The model
+  picker applies; server-side fallbacks are not requested (not the official endpoint).
+- `credentials.json` keeps `"via": "mother-claude"` beside the API key. Switching never
+  deletes or overwrites the key, and choosing **Anthropic API key** again uses it.
+  `ANTHROPIC_API_KEY` is not read while Mother Claude is chosen.
+- A Mother Claude HTTP API that listens only on this computer needs no key, and
+  VideoDubber then sends a placeholder (the SDK requires one). If you set a key there,
+  paste it into **Mother Claude key**: it is stored like an API key and `GET
+  /credentials` reports only that one is set.
+- **Test** sends one tiny real message; the first can take several seconds while Mother
+  Claude starts Claude Code. A model listing would prove nothing: Mother Claude 0.16.1
+  listed models while every message failed (503 `runtime_unavailable`). The test checks
+  the address first (`GET /credentials/mother-claude`, a model-list request that spends
+  no tokens), so a closed Mother Claude fails at once, with the steps.
+- Keep **Reachable from** on **This computer**. Opened to the local network or beyond
+  without a key, anyone who can reach the port can use your Claude plan.
+
+The transcript goes to Claude (Anthropic) as it does with an API key, and Mother Claude
+keeps the conversations in its own data folder (its HTTP API page lists them under
+Clients and conversations).
 
 ### Voice cloning: local, with consent
 
@@ -345,6 +389,8 @@ projects honestly record whether anything left the machine.
 | `CLOUD_REQUEST_FAILED` "Claude declined this request" | Claude's safety classifiers refused the batch (the category is shown) | Retry; translate those lines with a local engine; or edit the line that triggers it |
 | `CLOUD_REQUEST_FAILED` "reply was cut off" | Claude ran out of output tokens mid-batch | Retry; if it repeats, pick another Claude model in Settings → Cloud API keys |
 | `CLOUD_REQUEST_FAILED` "model is not available" | The chosen Claude model is not enabled for this key | Pick another model under the Anthropic key in Settings |
+| `CLOUD_REQUEST_FAILED` "Could not reach Mother Claude" | Claude goes [through Mother Claude](#claude-through-mother-claude), and Mother Claude is closed or its HTTP API is not started | In Mother Claude: HTTP API → **Start the API** (tick **Start when Mother Claude opens**); if you changed its port, copy its Base URL into Settings |
+| `CLOUD_REQUEST_FAILED` "Mother Claude refused the request" | Mother Claude's HTTP API has a key that is not in Settings | Paste that key into Settings → Cloud API keys → Anthropic (Claude) → **Mother Claude key** |
 | `WORKER_TIMEOUT` | The service didn't answer in time | Retry; long audio uploads need a stable connection |
 | `ENGINE_PACK_MISSING` | The phase uses an engine that isn't installed | Install the engine pack in Settings → Engines, or pick another provider |
 | `ENGINE_PACK_FAILED` | A pack download/verify/build failed | Check network + disk; retry. Corrupt downloads are discarded automatically |

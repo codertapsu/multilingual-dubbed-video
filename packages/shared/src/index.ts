@@ -119,6 +119,7 @@ export type {
   UpdateInfo,
   CloudServiceId,
   CloudCredentialInfo,
+  ClaudeConnection,
   SaveCredentialRequest,
   CredentialTestResult,
   ProviderInfo,
@@ -137,7 +138,7 @@ export type {
   LocalizedText,
   SystemProfileResponse,
 } from './models/setup.js';
-export { ALL_CLOUD_SERVICES } from './models/setup.js';
+export { ALL_CLOUD_SERVICES, MOTHER_CLAUDE_DEFAULT_URL } from './models/setup.js';
 export { QUALITY_LADDER, pickClosestHeight } from './models/download.js';
 export type { QualityTarget } from './models/download.js';
 

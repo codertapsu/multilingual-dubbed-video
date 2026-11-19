@@ -51,6 +51,8 @@ export interface ClaudeRequest {
   jsonSchema?: Record<string, unknown>;
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Claude reached through Mother Claude's HTTP API: errors then say how to fix that. */
+  via?: 'mother-claude';
 }
 
 export interface ClaudeReply {
@@ -72,7 +74,7 @@ export interface ClaudeMessageLike {
 /** Sends one request; the SDK in production, a fake in tests. */
 export type ClaudeSend = (
   params: Record<string, unknown>,
-  ctx: { apiKey: string; baseUrl?: string; timeoutMs: number; signal?: AbortSignal; beta: boolean },
+  ctx: { apiKey: string; baseUrl?: string; timeoutMs: number; signal?: AbortSignal; beta: boolean; via?: 'mother-claude' },
 ) => Promise<ClaudeMessageLike>;
 
 /**
@@ -137,6 +139,7 @@ export async function claudeMessage(req: ClaudeRequest, send: ClaudeSend = sdkSe
     timeoutMs: req.timeoutMs,
     ...(req.signal ? { signal: req.signal } : {}),
     beta,
+    ...(req.via ? { via: req.via } : {}),
   });
 
   if (message.stop_reason === 'refusal') {
@@ -193,11 +196,29 @@ export const sdkSend: ClaudeSend = async (params, ctx) => {
 function toAppError(
   err: unknown,
   sdk: typeof AnthropicSdk,
-  ctx: { timeoutMs: number; signal?: AbortSignal },
+  ctx: { timeoutMs: number; signal?: AbortSignal; baseUrl?: string; via?: 'mother-claude' },
 ): AppErrorException {
   if (err instanceof AppErrorException) return err;
   if (ctx.signal?.aborted || err instanceof sdk.APIUserAbortError) {
     return new AppErrorException('CANCELLED', 'The cloud request was cancelled.');
+  }
+  // Through Mother Claude the two usual failures are on this computer, so say
+  // what to do there, not "check your internet" or "verify the API key".
+  if (ctx.via === 'mother-claude') {
+    if (err instanceof sdk.APIConnectionError && !(err instanceof sdk.APIConnectionTimeoutError)) {
+      return new AppErrorException('CLOUD_REQUEST_FAILED', `Could not reach Mother Claude at ${ctx.baseUrl ?? 'its HTTP API'}.`, {
+        cause: err.message,
+        remediation:
+          'Open Mother Claude, go to HTTP API, set Reachable from to This computer and press Start the API, then retry the step. If its Base URL differs, copy it into Settings → Cloud API keys → Anthropic (Claude).',
+        docsRef: 'docs/PROVIDERS.md#claude-through-mother-claude',
+      });
+    }
+    if (err instanceof sdk.AuthenticationError || err instanceof sdk.PermissionDeniedError) {
+      return new AppErrorException('CLOUD_REQUEST_FAILED', `Mother Claude refused the request (HTTP ${err.status}): its HTTP API has a key.`, {
+        remediation: 'Paste the key you set on its HTTP API into Settings → Cloud API keys → Anthropic (Claude) → Mother Claude key.',
+        docsRef: 'docs/PROVIDERS.md#claude-through-mother-claude',
+      });
+    }
   }
   if (err instanceof sdk.APIConnectionTimeoutError) {
     return new AppErrorException('WORKER_TIMEOUT', `Claude did not respond within ${Math.round(ctx.timeoutMs / 1000)}s.`, {

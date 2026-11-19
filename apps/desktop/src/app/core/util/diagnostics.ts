@@ -45,6 +45,9 @@ const SECRET_PATTERNS: readonly { re: RegExp; replacement: string }[] = [
   { re: /\bBearer\s+[A-Za-z0-9._-]{8,}/gi, replacement: 'Bearer REDACTED' },
   { re: /\bAuthorization:\s*\S+/gi, replacement: 'Authorization: REDACTED' },
   { re: /\b(api[_-]?key|token)["']?\s*[:=]\s*["']?[A-Za-z0-9._-]{8,}/gi, replacement: '$1=REDACTED' },
+  // The key of Mother Claude's HTTP API (Claude through Mother Claude): a
+  // field name without "api" in it, and a header with no sk- prefix to match.
+  { re: /\b(motherClaudeKey|x-api-key)["']?\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{8,}/gi, replacement: '$1=REDACTED' },
 ];
 
 /**

@@ -275,6 +275,9 @@ previous binary. Verify the artifact (`GET /health` reports version + build stam
   accepting the exclusion.
 - Claude goes through the official `@anthropic-ai/sdk` (`providers/cloud/claudeMessages.ts`,
   loaded lazily), never raw `fetch`: `stop_reason` is checked, schemas become structured output.
+  Claude through Mother Claude (the user's Claude plan; `"via": "mother-claude"` in
+  `credentials.json`, the API key kept beside it) is the same path with Mother Claude's Base URL.
+  Its Settings Test sends a real message: Mother Claude has listed models while every message failed.
 - A cancel is the run's `AbortSignal` being aborted, never an error code. The local LLM's
   per-request timeout used to surface as `CANCELLED`, and the passes that rethrow cancels threw
   away a translation step whose lines were all done. It is `WORKER_TIMEOUT` now, the context

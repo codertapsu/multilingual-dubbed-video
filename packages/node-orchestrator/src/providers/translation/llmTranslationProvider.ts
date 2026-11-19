@@ -673,7 +673,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     const model = cred.model ?? defaults.model;
     const sys = system ?? 'You are a professional subtitle/dubbing translator.';
     return defaults.dialect === 'anthropic'
-      ? this.callAnthropic(baseUrl, cred.apiKey, model, user, signal, sys, opts)
+      ? this.callAnthropic(baseUrl, cred.apiKey, model, user, signal, sys, opts, cred.via)
       : this.callOpenAiCompatible(baseUrl, cred.apiKey, model, user, signal, sys);
   }
 
@@ -696,7 +696,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
 
     const send = (prompt: string, system?: string, opts?: ChatOptions): Promise<string> =>
       defaults.dialect === 'anthropic'
-        ? this.callAnthropic(baseUrl, cred.apiKey, model, prompt, signal, system, opts)
+        ? this.callAnthropic(baseUrl, cred.apiKey, model, prompt, signal, system, opts, cred.via)
         : this.callOpenAiCompatible(baseUrl, cred.apiKey, model, prompt, signal, system);
 
     // Document-level context: the project's character sheet (synopsis, cast,
@@ -818,6 +818,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
     signal?: AbortSignal,
     system = 'You are a professional subtitle/dubbing translator. Respond with strict JSON only.',
     opts?: ChatOptions,
+    via?: 'mother-claude',
   ): Promise<string> {
     const reply = await claudeMessage(
       {
@@ -830,6 +831,7 @@ export class LlmTranslationProvider implements CancellableTranslationProvider {
         ...(signal ? { signal } : {}),
         ...(opts?.jsonSchema ? { jsonSchema: opts.jsonSchema } : {}),
         ...(opts?.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+        ...(via ? { via } : {}),
       },
       this.claudeSend,
     );

@@ -1,4 +1,6 @@
 import fsp from 'node:fs/promises';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -57,5 +59,76 @@ describe('GET /health', () => {
     const first = (await app.inject({ method: 'GET', url: '/health' })).json() as { startedAt: string };
     const second = (await app.inject({ method: 'GET', url: '/health' })).json() as { startedAt: string };
     expect(second.startedAt).toBe(first.startedAt);
+  });
+});
+
+/** Claude through Mother Claude: the routes Settings drives. */
+describe('Mother Claude credential routes', () => {
+  let tmp: string;
+  let app: FastifyInstance;
+  let standIn: http.Server | undefined;
+
+  beforeEach(async () => {
+    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'vd-server-test-'));
+    app = await createServer({
+      config: loadConfig({
+        projectsDir: path.join(tmp, 'projects'),
+        configDir: path.join(tmp, 'config'),
+        modelsDir: path.join(tmp, 'models'),
+      }),
+      media: new FakeMediaService(),
+    });
+  });
+
+  afterEach(async () => {
+    await app.close();
+    if (standIn) {
+      standIn.closeAllConnections();
+      await new Promise<void>((r) => standIn!.close(() => r()));
+      standIn = undefined;
+    }
+    await fsp.rm(tmp, { recursive: true, force: true });
+  });
+
+  /** A local server answering GET /v1/models with `status`; returns its base URL. */
+  async function listen(status: number): Promise<string> {
+    standIn = http.createServer((_req, res) => {
+      res.writeHead(status, { 'content-type': 'application/json', connection: 'close' });
+      res.end('{}');
+    });
+    await new Promise<void>((r) => standIn!.listen(0, '127.0.0.1', () => r()));
+    return `http://127.0.0.1:${(standIn.address() as AddressInfo).port}`;
+  }
+
+  it('a mistyped address is a 400 that says what to copy, and nothing is saved', async () => {
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/credentials',
+      payload: { service: 'anthropic', via: 'mother-claude', motherClaudeUrl: 'localhost 5612' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: { message: string } }).error.message).toContain('Base URL');
+    const creds = (await app.inject({ method: 'GET', url: '/credentials' })).json() as { services: { service: string; via?: string }[] };
+    expect(creds.services.find((c) => c.service === 'anthropic')?.via).toBeUndefined();
+  });
+
+  it('reports whether its HTTP API is running at the saved address', async () => {
+    const url = await listen(200);
+    const saved = await app.inject({ method: 'PUT', url: '/credentials', payload: { service: 'anthropic', via: 'mother-claude', motherClaudeUrl: url } });
+    expect(saved.statusCode).toBe(200);
+    const up = await app.inject({ method: 'GET', url: '/credentials/mother-claude' });
+    expect(up.json()).toEqual({ url, reachable: true });
+
+    await new Promise<void>((r) => standIn!.close(() => r()));
+    standIn = undefined;
+    const down = await app.inject({ method: 'GET', url: '/credentials/mother-claude' });
+    expect(down.json()).toEqual({ url, reachable: false });
+  });
+
+  it('says when its HTTP API wants a key', async () => {
+    const url = await listen(401);
+    await app.inject({ method: 'PUT', url: '/credentials', payload: { service: 'anthropic', motherClaudeUrl: url } });
+    const res = await app.inject({ method: 'GET', url: '/credentials/mother-claude' });
+    expect(res.json()).toEqual({ url, reachable: true, keyRejected: true });
   });
 });

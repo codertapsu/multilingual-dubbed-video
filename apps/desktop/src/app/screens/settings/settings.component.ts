@@ -31,16 +31,21 @@ import type {
 } from '../../core/models';
 import type {
   ArgosPair,
+  ClaudeConnection,
   CloudCredentialInfo,
   ConcurrencyPreferences,
   CloudServiceId,
   CredentialTestResult,
+  MotherClaudeStatus,
   ProviderDefaults,
   ProviderInfo,
   ProvidersResponse,
+  SaveCredentialRequest,
   SystemProfileResponse,
   UpdateInfo,
 } from '../../core/models/setup';
+import { MOTHER_CLAUDE_DEFAULT_URL } from '../../core/models/setup';
+import { MOTHER_CLAUDE_DOWNLOAD_URL } from '../../core/claude/claude-view';
 import {
   LOCALE_LABELS,
   SUPPORTED_LOCALES,
@@ -140,6 +145,16 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected readonly credBusy = signal<CloudServiceId | null>(null);
 
   protected readonly testResults = signal<Partial<Record<CloudServiceId, CredentialTestResult>>>({});
+  /** The service whose Test is in flight (a save also sets credBusy). */
+  protected readonly testing = signal<CloudServiceId | null>(null);
+
+  // Claude through Mother Claude: its HTTP API as last checked (null = not yet).
+  protected readonly motherClaudeStatus = signal<MotherClaudeStatus | null>(null);
+  protected readonly motherClaudeChecking = signal(false);
+  /** The address being typed; null shows the saved one. */
+  protected readonly motherClaudeUrlInput = signal<string | null>(null);
+  protected readonly motherClaudeKeyInput = signal('');
+  protected readonly defaultMotherClaudeUrl = MOTHER_CLAUDE_DEFAULT_URL;
 
   // -------- engine packs --------
   protected readonly enginePacks = signal<EnginePackInfo[]>([]);
@@ -657,7 +672,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
         .catch(() => undefined),
       this.ipc
         .getCredentials()
-        .then((c) => this.credentials.set(c.services))
+        .then((c) => {
+          this.credentials.set(c.services);
+          if (this.claudeVia() === 'mother-claude') void this.checkMotherClaude();
+        })
         .catch(() => undefined),
       this.ipc
         .getAppPreferences()
@@ -791,6 +809,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   protected async testKey(service: CloudServiceId): Promise<void> {
     if (this.credBusy()) return;
     this.credBusy.set(service);
+    this.testing.set(service);
+    this.testResults.update((m) => ({ ...m, [service]: undefined }));
     try {
       const result = await this.ipc.testCredential(service);
       this.testResults.update((m) => ({ ...m, [service]: result }));
@@ -801,7 +821,96 @@ export class SettingsComponent implements OnInit, OnDestroy {
       }));
     } finally {
       this.credBusy.set(null);
+      this.testing.set(null);
     }
+    // A test through Mother Claude also tells whether its HTTP API is up.
+    if (service === 'anthropic' && this.claudeVia() === 'mother-claude') void this.checkMotherClaude();
+  }
+
+  // ----------------------- Claude through Mother Claude -----------------------
+  //
+  // The user's Claude plan instead of an API key: Mother Claude's HTTP API
+  // speaks the Claude API, so translation only changes its address. The API
+  // key is never touched by switching: choosing "API key" again uses it.
+
+  protected claudeVia(): ClaudeConnection {
+    return this.credentialFor('anthropic')?.via === 'mother-claude' ? 'mother-claude' : 'api-key';
+  }
+
+  protected motherClaudeUrl(): string {
+    return this.credentialFor('anthropic')?.motherClaude?.url ?? MOTHER_CLAUDE_DEFAULT_URL;
+  }
+
+  protected motherClaudeKeySet(): boolean {
+    return this.credentialFor('anthropic')?.motherClaude?.keySet === true;
+  }
+
+  /** Save part of Claude's settings; true when it worked (the error banner says why not). */
+  private async saveClaude(patch: Omit<SaveCredentialRequest, 'service'>): Promise<boolean> {
+    if (this.credBusy()) return false;
+    this.credBusy.set('anthropic');
+    this.error.set(null);
+    try {
+      const res = await this.ipc.saveCredential({ service: 'anthropic', ...patch });
+      this.credentials.set(res.services);
+      this.testResults.update((m) => ({ ...m, anthropic: undefined }));
+      return true;
+    } catch (err) {
+      this.error.set(toAppError(err));
+      return false;
+    } finally {
+      this.credBusy.set(null);
+    }
+  }
+
+  protected async setClaudeVia(via: ClaudeConnection): Promise<void> {
+    if (via === this.claudeVia()) return;
+    if (!(await this.saveClaude({ via }))) return;
+    // The provider pickers' "needs an API key" follows the choice.
+    this.providers.set(await this.ipc.getProviders().catch(() => this.providers()));
+    if (via === 'mother-claude') void this.checkMotherClaude();
+  }
+
+  protected async checkMotherClaude(): Promise<void> {
+    if (this.motherClaudeChecking()) return;
+    this.motherClaudeChecking.set(true);
+    try {
+      this.motherClaudeStatus.set(await this.ipc.getMotherClaudeStatus());
+    } catch {
+      this.motherClaudeStatus.set(null);
+    } finally {
+      this.motherClaudeChecking.set(false);
+    }
+  }
+
+  protected async saveMotherClaudeUrl(): Promise<void> {
+    const typed = this.motherClaudeUrlInput();
+    if (typed === null) return;
+    if (!(await this.saveClaude({ motherClaudeUrl: typed.trim() || null }))) return;
+    this.motherClaudeUrlInput.set(null);
+    void this.checkMotherClaude();
+  }
+
+  protected async resetMotherClaudeUrl(): Promise<void> {
+    if (!(await this.saveClaude({ motherClaudeUrl: null }))) return;
+    this.motherClaudeUrlInput.set(null);
+    void this.checkMotherClaude();
+  }
+
+  protected async saveMotherClaudeKey(): Promise<void> {
+    const key = this.motherClaudeKeyInput().trim();
+    if (!key || !(await this.saveClaude({ motherClaudeKey: key }))) return;
+    this.motherClaudeKeyInput.set('');
+    void this.checkMotherClaude();
+  }
+
+  protected async clearMotherClaudeKey(): Promise<void> {
+    if (!(await this.saveClaude({ motherClaudeKey: null }))) return;
+    void this.checkMotherClaude();
+  }
+
+  protected downloadMotherClaude(): void {
+    void this.ipc.openExternal(MOTHER_CLAUDE_DOWNLOAD_URL);
   }
 
   // ----------------------------- version -----------------------------

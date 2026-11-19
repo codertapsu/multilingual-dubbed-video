@@ -31,6 +31,7 @@ import type {
   CloudCredentialInfo,
   CloudServiceId,
   CredentialTestResult,
+  MotherClaudeStatus,
   PiperVoiceInfo,
   PreflightResult,
   ProvidersResponse,
@@ -913,6 +914,11 @@ export class IpcService {
   /** POST /credentials/test — live round-trip to the cloud service. */
   testCredential(service: CloudServiceId): Promise<CredentialTestResult> {
     return this.http<CredentialTestResult>('POST', '/credentials/test', { service });
+  }
+
+  /** GET /credentials/mother-claude — is Mother Claude's HTTP API running (no tokens spent)? */
+  getMotherClaudeStatus(): Promise<MotherClaudeStatus> {
+    return this.http<MotherClaudeStatus>('GET', '/credentials/mother-claude');
   }
 
   /**

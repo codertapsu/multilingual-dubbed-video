@@ -132,14 +132,26 @@ export interface UpdatePreferences {
 /** Cloud AI services the app can call directly (per-phase, opt-in). */
 export type CloudServiceId = 'openai' | 'anthropic' | 'gemini';
 
+/** How Claude is reached: the Anthropic API key, or the user's Claude plan through Mother Claude. */
+export type ClaudeConnection = 'api-key' | 'mother-claude';
+
+/** Mother Claude's HTTP API on its default port (mirrors MOTHER_CLAUDE_DEFAULT_URL in shared). */
+export const MOTHER_CLAUDE_DEFAULT_URL = 'http://127.0.0.1:5612';
+
 /** Masked, display-safe state of one cloud service's credentials. */
 export interface CloudCredentialInfo {
   service: CloudServiceId;
+  /** A key is set, or (Claude) Mother Claude is chosen. */
   configured: boolean;
+  /** The API key, masked. Still shown while Claude goes through Mother Claude. */
   maskedKey?: string;
   fromEnv?: boolean;
   baseUrl?: string;
   model?: string;
+  /** Claude goes through Mother Claude instead of the API key. */
+  via?: 'mother-claude';
+  /** Claude only: Mother Claude's address, and whether a key for its HTTP API is saved (never the key). */
+  motherClaude?: { url: string; keySet: boolean };
 }
 
 /** PUT /credentials body. */
@@ -148,6 +160,20 @@ export interface SaveCredentialRequest {
   apiKey?: string | null;
   baseUrl?: string | null;
   model?: string | null;
+  /** Claude only. Switching keeps the API key saved either way. */
+  via?: ClaudeConnection;
+  /** Claude only: Mother Claude's Base URL; null goes back to the default. */
+  motherClaudeUrl?: string | null;
+  /** Claude only: the key set on Mother Claude's HTTP API; null clears it. */
+  motherClaudeKey?: string | null;
+}
+
+/** GET /credentials/mother-claude: is its HTTP API running? */
+export interface MotherClaudeStatus {
+  url: string;
+  reachable: boolean;
+  /** It answered 401/403: its HTTP API has a key that is not (correctly) saved here. */
+  keyRejected?: boolean;
 }
 
 /** POST /credentials/test result. */
@@ -155,6 +181,8 @@ export interface CredentialTestResult {
   service: CloudServiceId;
   ok: boolean;
   detail: string;
+  /** Claude through Mother Claude: the model that answered the test message. */
+  model?: string;
 }
 
 /** Why a provider is (not) ready — mirrors the orchestrator readiness contract. */

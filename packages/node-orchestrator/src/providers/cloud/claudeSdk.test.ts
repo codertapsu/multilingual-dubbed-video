@@ -118,4 +118,46 @@ describe('the Anthropic SDK on the wire', { timeout: 30_000 }, () => {
     expect(err).toMatchObject({ code: 'CLOUD_REQUEST_FAILED', message: expect.stringContaining('rejected the API key') });
     expect(JSON.stringify(err)).not.toContain('sk-ant-secret-123');
   });
+
+  // Through Mother Claude both usual failures are on this computer: the errors
+  // say what to do in Mother Claude, not "check your internet" or "verify the key".
+  it('through Mother Claude, a closed port says how to start its HTTP API', async () => {
+    const probe = http.createServer();
+    await new Promise<void>((r) => probe.listen(0, '127.0.0.1', () => r()));
+    const port = (probe.address() as AddressInfo).port;
+    await new Promise<void>((r) => probe.close(() => r()));
+
+    const err = await claudeMessage({
+      apiKey: 'mother-claude',
+      baseUrl: `http://127.0.0.1:${port}`,
+      model: 'claude-opus-5-5',
+      system: 's',
+      user: 'u',
+      timeoutMs: 10_000,
+      via: 'mother-claude',
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      code: 'CLOUD_REQUEST_FAILED',
+      message: `Could not reach Mother Claude at http://127.0.0.1:${port}.`,
+      appError: { remediation: expect.stringContaining('Start the API') },
+    });
+  });
+
+  it("through Mother Claude, a 401 says its HTTP API has a key", async () => {
+    const { baseUrl } = await standIn(
+      401,
+      JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } }),
+      'application/json',
+    );
+    const err = await claudeMessage({
+      apiKey: 'mother-claude',
+      baseUrl,
+      model: 'claude-opus-5-5',
+      system: 's',
+      user: 'u',
+      timeoutMs: 10_000,
+      via: 'mother-claude',
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'CLOUD_REQUEST_FAILED', message: expect.stringContaining('its HTTP API has a key') });
+  });
 });

@@ -148,7 +148,9 @@ VideoDubber flips that model:
   local-LLM translation via llama.cpp, neural Vietnamese TTS. Downloaded on demand,
   run only while a project uses them, hardware-gated so an unrunnable pack is never
   offered. See [`docs/PROVIDERS.md`](docs/PROVIDERS.md#engine-packs).
-- **Opt-in cloud providers** (OpenAI / Anthropic / Gemini) per phase, per key.
+- **Opt-in cloud providers** (OpenAI / Anthropic / Gemini) per phase, per key. Claude
+  can also translate on your Claude plan, with no API key,
+  [through Mother Claude](docs/PROVIDERS.md#claude-through-mother-claude).
 - **Run queue**: dub several videos at once, bounded by what the machine can take —
   see [`docs/RUN_QUEUE.md`](docs/RUN_QUEUE.md).
 - **English + Vietnamese UI** (Settings → Language), switchable at runtime.

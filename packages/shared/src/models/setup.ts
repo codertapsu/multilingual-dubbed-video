@@ -165,13 +165,23 @@ export type CloudServiceId = 'openai' | 'anthropic' | 'gemini';
 /** All cloud service ids (for iteration in UIs and stores). */
 export const ALL_CLOUD_SERVICES: readonly CloudServiceId[] = ['openai', 'anthropic', 'gemini'];
 
+/**
+ * How VideoDubber reaches Claude: with an Anthropic API key, or with the
+ * user's Claude plan through Mother Claude's local HTTP API (the same Messages
+ * API at another base URL; Mother Claude runs it through Claude Code).
+ */
+export type ClaudeConnection = 'api-key' | 'mother-claude';
+
+/** Where Mother Claude's HTTP API listens unless its user changed the port. */
+export const MOTHER_CLAUDE_DEFAULT_URL = 'http://127.0.0.1:5612';
+
 /** Masked, safe-to-display state of one cloud service's stored credentials. */
 export interface CloudCredentialInfo {
   /** Which service this entry describes. */
   service: CloudServiceId;
-  /** True when an API key is available (stored or via environment variable). */
+  /** True when the service can be called: a key, or (Claude) Mother Claude chosen. */
   configured: boolean;
-  /** Masked key for display, e.g. "sk-…h1Q4". Never the full key. */
+  /** Masked API key for display, e.g. "sk-…h1Q4". Never the full key. Kept while Mother Claude is chosen. */
   maskedKey?: string;
   /** True when the key comes from an environment variable, not the store. */
   fromEnv?: boolean;
@@ -179,6 +189,10 @@ export interface CloudCredentialInfo {
   baseUrl?: string;
   /** Optional model override used by this service's providers. */
   model?: string;
+  /** Claude only: set when Claude is reached through Mother Claude instead of the API key. */
+  via?: 'mother-claude';
+  /** Claude only: Mother Claude's HTTP API settings (shown whichever way Claude is reached). */
+  motherClaude?: { url: string; keySet: boolean };
 }
 
 /** Body for PUT /credentials — set/replace/clear one service's credentials. */
@@ -191,6 +205,12 @@ export interface SaveCredentialRequest {
   baseUrl?: string | null;
   /** Optional model override; null clears it. */
   model?: string | null;
+  /** Claude only: switch how Claude is reached. The API key is kept either way. */
+  via?: ClaudeConnection;
+  /** Claude only: Mother Claude's base URL; null restores the default. */
+  motherClaudeUrl?: string | null;
+  /** Claude only: the key set on Mother Claude's HTTP API, if any; null clears it. */
+  motherClaudeKey?: string | null;
 }
 
 /** Result of POST /credentials/test — a live round-trip to the service. */
@@ -199,6 +219,8 @@ export interface CredentialTestResult {
   ok: boolean;
   /** Human-readable outcome (e.g. model count, or the auth error). */
   detail: string;
+  /** Claude through Mother Claude: the model that answered the test message (the UI words the success itself). */
+  model?: string;
 }
 
 // ---------------------------------------------------------------------------

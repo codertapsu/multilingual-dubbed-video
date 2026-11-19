@@ -355,7 +355,7 @@ button tells you whether it is still live.
 | **Language** | The app's own display language — English or Tiếng Việt. It changes immediately and is remembered. |
 | **This computer** | What VideoDubber measured about your machine: the transcription model it recommends, and how many dubs it will run at once. You can lower that limit or pause the queue. |
 | **Processing defaults** | Which engine each phase of a *new* project uses. You can still change them per project. |
-| **Cloud API keys** | Optional. Only needed if you choose a cloud engine for a phase. Under the Anthropic key you choose the Claude model used for translation and review: Opus (best), Sonnet (about half the cost) or Haiku (cheapest). |
+| **Cloud API keys** | Optional. Only needed if you choose a cloud engine for a phase. Under the Anthropic key you choose the Claude model used for translation and review: Opus (best), Sonnet (about half the cost) or Haiku (cheapest). Claude can also use your Claude plan instead of an API key: choose **My Claude plan, through Mother Claude** and follow the steps shown there (details in [`PROVIDERS.md`](PROVIDERS.md#claude-through-mother-claude)). |
 | **Claude** | Connect Claude Desktop or Claude Code so Claude can run dubs for you — see [`MCP.md`](MCP.md). |
 | **Engines** | Optional downloadable "engine packs" — see below. |
 | **Translation packs** | Offline translation language packs. Non-English pairs go through English, so e.g. Chinese → Vietnamese needs both the Chinese → English and English → Vietnamese packs. |

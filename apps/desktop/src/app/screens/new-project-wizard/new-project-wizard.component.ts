@@ -960,7 +960,19 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
         inputVideoPath: this.inputVideoPath().trim(),
         settings: this.settings(),
       };
-      const project = await this.createWithLastFolder(input);
+      // Back, then Continue: the same project, as the form now is. Continue
+      // created another one each time, so fixing a choice after Start refused
+      // it left a duplicate in the Projects list. The video is copied again
+      // only if it changed (a copy of a long video takes a while).
+      const existing = this.createdProjectId();
+      const project = existing
+        ? await this.ipc.reviseProject(existing, {
+            name: input.name,
+            settings: input.settings,
+            ...(input.inputVideoPath !== this.createdFromVideo ? { inputVideoPath: input.inputVideoPath } : {}),
+          })
+        : await this.createWithLastFolder(input);
+      this.createdFromVideo = input.inputVideoPath;
       this.createdProjectId.set(project.id);
       this.createdProject.set(project);
       this.store.setCurrent(project);
@@ -1000,6 +1012,9 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
       this.busy.set(false);
     }
   }
+
+  /** The video path the project Continue created holds a copy of. */
+  private createdFromVideo: string | null = null;
 
   /**
    * Create the project in the folder the last one was saved to. That folder

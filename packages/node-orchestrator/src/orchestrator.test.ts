@@ -2,8 +2,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { setStepStatus } from '@videodubber/shared';
-import { LocalJobOrchestrator, sanitizeSubtitleStyle } from './orchestrator.js';
+import { createInitialPipelineState, setStepStatus } from '@videodubber/shared';
+import { LocalJobOrchestrator, neverRun, sanitizeSubtitleStyle } from './orchestrator.js';
 import type { ProviderReadiness } from './providers/readiness.js';
 import { loadConfig } from './config.js';
 import { EventBusRegistry } from './events.js';
@@ -828,5 +828,20 @@ describe('LocalJobOrchestrator — moving a project while it is busy (review fin
     const saved = await store.getProject(project.id);
     expect(saved.outputFileName).toBe('Clip.vi');
     expect(saved.settings.ttsGainDb).toBe(4);
+  });
+});
+
+describe('neverRun (New project may still change the project)', () => {
+  const fresh = createInitialPipelineState('proj_x');
+
+  it('is a created project with every step untouched', () => {
+    expect(neverRun({ status: 'created' }, fresh)).toBe(true);
+  });
+
+  it('is not once any step moved, the dub paused, or the project left "created"', () => {
+    expect(neverRun({ status: 'created' }, setStepStatus(fresh, 'probe-video', 'running'))).toBe(false);
+    expect(neverRun({ status: 'created' }, { ...fresh, pausedAt: '2026-11-19T00:00:00Z' })).toBe(false);
+    expect(neverRun({ status: 'failed' }, fresh)).toBe(false);
+    expect(neverRun({ status: 'queued' }, fresh)).toBe(false);
   });
 });

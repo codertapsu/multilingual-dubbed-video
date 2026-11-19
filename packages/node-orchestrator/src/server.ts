@@ -26,6 +26,7 @@ import {
   type ArgosPair,
   type CloudServiceId,
   type CreateProjectInput,
+  type ReviseProjectInput,
   type PipelineStepId,
   type ProjectSettings,
   type SaveCredentialRequest,
@@ -1502,6 +1503,31 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       return sendError(reply, err);
     }
   });
+
+  // New project after Back: the same project, as the form now is (only a
+  // project that has never run). Continue used to create another one each time.
+  app.put(
+    '/projects/:id',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: ReviseProjectInput }>, reply) => {
+      try {
+        const body = req.body;
+        if (
+          !body ||
+          typeof body.name !== 'string' ||
+          !body.settings ||
+          typeof body.settings !== 'object' ||
+          (body.inputVideoPath !== undefined && typeof body.inputVideoPath !== 'string')
+        ) {
+          return reply
+            .status(400)
+            .send({ error: { code: 'UNKNOWN', message: 'Expected { name, settings, inputVideoPath? }.' } });
+        }
+        return await orchestrator.reviseProject(req.params.id, body);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
 
   // Where a project saves its finished video and subtitles: a folder, or null
   // for its own folder in the app's data. Moves already-rendered files along.

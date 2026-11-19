@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { loadConfig } from './config.js';
 import { createServer } from './server.js';
-import { FakeMediaService } from './test/fixtures.js';
+import { FakeMediaService, createProjectInput, defaultSettings, writeDummyVideo } from './test/fixtures.js';
 
 /**
  * Route-level cover for the endpoints that report on the RUNNING BUILD.
@@ -59,6 +59,70 @@ describe('GET /health', () => {
     const first = (await app.inject({ method: 'GET', url: '/health' })).json() as { startedAt: string };
     const second = (await app.inject({ method: 'GET', url: '/health' })).json() as { startedAt: string };
     expect(second.startedAt).toBe(first.startedAt);
+  });
+});
+
+/** New project after Back: PUT /projects/:id gives its project the form as it is now. */
+describe('PUT /projects/:id', () => {
+  let tmp: string;
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'vd-server-test-'));
+    app = await createServer({
+      config: loadConfig({
+        projectsDir: path.join(tmp, 'projects'),
+        configDir: path.join(tmp, 'config'),
+        modelsDir: path.join(tmp, 'models'),
+      }),
+      media: new FakeMediaService(),
+    });
+  });
+
+  afterEach(async () => {
+    await app.close();
+    await fsp.rm(tmp, { recursive: true, force: true });
+  });
+
+  async function created(): Promise<{ id: string; settings: Record<string, unknown> }> {
+    const video = await writeDummyVideo(tmp);
+    const res = await app.inject({ method: 'POST', url: '/projects', payload: createProjectInput(video, { name: 'First' }) });
+    expect(res.statusCode).toBe(201);
+    return res.json() as { id: string; settings: Record<string, unknown> };
+  }
+
+  it('changes the project Continue created instead of making a second one', async () => {
+    const project = await created();
+    const res = await app.inject({
+      method: 'PUT',
+      url: `/projects/${project.id}`,
+      payload: { name: 'Second try', settings: defaultSettings({ ttsProviderId: 'vieneu-tts', ttsVoiceId: 'vieneu38-hai-dang' }) },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: project.id, name: 'Second try', settings: { ttsVoiceId: 'vieneu38-hai-dang' } });
+    const list = (await app.inject({ method: 'GET', url: '/projects' })).json() as unknown[];
+    expect(list).toHaveLength(1);
+  });
+
+  it('refuses once the dub has started: the editor is where a started project changes', async () => {
+    const project = await created();
+    const pipelineFile = path.join(tmp, 'projects', project.id, 'pipeline.json');
+    const pipeline = JSON.parse(await fsp.readFile(pipelineFile, 'utf8')) as { steps: { status: string }[] };
+    pipeline.steps[0]!.status = 'completed';
+    await fsp.writeFile(pipelineFile, JSON.stringify(pipeline));
+
+    const res = await app.inject({ method: 'PUT', url: `/projects/${project.id}`, payload: { name: 'Late', settings: defaultSettings() } });
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as { error: { code: string; message: string } }).error).toMatchObject({
+      code: 'INVALID_EDIT',
+      message: expect.stringContaining('already started'),
+    });
+  });
+
+  it('turns away a body that is not a form', async () => {
+    const project = await created();
+    const res = await app.inject({ method: 'PUT', url: `/projects/${project.id}`, payload: { name: 'No settings' } });
+    expect(res.statusCode).toBe(400);
   });
 });
 

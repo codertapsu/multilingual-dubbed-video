@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ProjectStore } from './projectStore.js';
-import { createProjectInput, defaultSettings, writeDummyVideo } from '../test/fixtures.js';
+import { createProjectInput, defaultSettings, fakeMediaInfo, writeDummyVideo } from '../test/fixtures.js';
 
 let tmp: string;
 let store: ProjectStore;
@@ -153,6 +153,90 @@ describe('ProjectStore — names in a shared folder (review findings)', () => {
     await writeJsonFile(store.paths(project.id).projectJson, { ...project, outputDir: path.join(tmp, 'elsewhere') });
     expect((await store.getProject(project.id)).outputDir).toBe(store.paths(project.id).renderDir);
     expect((await store.listProjects())[0]!.outputDir).toBe(store.paths(project.id).renderDir);
+  });
+});
+
+// New project after Back: Continue gives the project it created the form as it
+// is now, instead of creating another one.
+describe('ProjectStore — reviseProject (New project after Back)', () => {
+  it('replaces the name and every setting: a choice turned off is off', async () => {
+    const video = await writeDummyVideo(tmp);
+    const created = await store.createProject(
+      createProjectInput(video, { settings: defaultSettings({ refineProviderId: 'llama-cpp-chat', ttsVoiceId: 'vieneu-v3-duc-tri' }) }),
+    );
+    const revised = await store.reviseProject(created, {
+      name: 'Renamed',
+      settings: defaultSettings({ ttsProviderId: 'vieneu-tts', ttsVoiceId: 'vieneu38-hai-dang', targetLanguage: 'vi-VI' }),
+    });
+
+    expect(revised.id).toBe(created.id);
+    expect(revised.name).toBe('Renamed');
+    expect(revised.settings.refineProviderId).toBeUndefined();
+    expect(revised.settings).toMatchObject({ ttsProviderId: 'vieneu-tts', ttsVoiceId: 'vieneu38-hai-dang', targetLanguage: 'vi-VN' });
+    expect(revised.inputVideoPath).toBe(created.inputVideoPath);
+    expect(revised.outputDir).toBe(created.outputDir);
+    expect((await store.getProject(created.id)).settings.refineProviderId).toBeUndefined();
+    expect(await store.listProjects()).toHaveLength(1);
+  });
+
+  it('copies a changed video in, drops the old copy and its probe, and starts the pipeline over', async () => {
+    const video = await writeDummyVideo(tmp);
+    const created = await store.createProject(createProjectInput(video));
+    const probed = await store.saveProject({ ...created, mediaInfo: fakeMediaInfo() });
+    const other = path.join(tmp, 'other.mkv');
+    await fsp.writeFile(other, 'other-video-bytes');
+
+    const revised = await store.reviseProject(probed, { name: probed.name, settings: probed.settings, inputVideoPath: other });
+
+    expect(revised.inputVideoPath).toContain(path.join('input', 'original.mkv'));
+    expect(await fsp.readFile(revised.inputVideoPath, 'utf8')).toBe('other-video-bytes');
+    expect(await fsp.stat(created.inputVideoPath).catch(() => null)).toBeNull();
+    expect(revised.mediaInfo).toBeUndefined();
+    const pipeline = await store.getPipeline(created.id);
+    expect(pipeline.steps.every((s) => s.status === 'pending')).toBe(true);
+    expect((await fsp.readdir(path.dirname(revised.inputVideoPath))).filter((f) => f.includes('partial'))).toEqual([]);
+  });
+
+  it('keeps the video and its probe when only the settings change', async () => {
+    const video = await writeDummyVideo(tmp);
+    const created = await store.saveProject({ ...(await store.createProject(createProjectInput(video))), mediaInfo: fakeMediaInfo() });
+    const revised = await store.reviseProject(created, { name: created.name, settings: defaultSettings({ maxSpeedRatio: 1.3 }) });
+    expect(revised.inputVideoPath).toBe(created.inputVideoPath);
+    expect(revised.mediaInfo).toEqual(fakeMediaInfo());
+  });
+
+  it('in a chosen folder, a new name or language gets a file name of its own there', async () => {
+    const video = await writeDummyVideo(tmp);
+    const dubs = path.join(tmp, 'Dubs');
+    await store.createProject(createProjectInput(video, { name: 'Clip', outputDir: dubs }));
+    const created = await store.createProject(createProjectInput(video, { name: 'Draft', outputDir: dubs }));
+    expect(created.outputFileName).toBe('Draft.vi');
+
+    const sameName = await store.reviseProject(created, { name: 'Draft', settings: created.settings });
+    expect(sameName.outputFileName).toBe('Draft.vi');
+
+    const renamed = await store.reviseProject(sameName, { name: 'Clip', settings: defaultSettings({ targetLanguage: 'es-ES' }) });
+    expect(renamed.outputDir).toBe(dubs);
+    expect(renamed.outputFileName).toBe('Clip.es');
+
+    const taken = await store.reviseProject(renamed, { name: 'Clip', settings: defaultSettings() });
+    expect(taken.outputFileName).toBe('Clip (2).vi');
+  });
+
+  it('changes nothing when a language or the new video is wrong', async () => {
+    const video = await writeDummyVideo(tmp);
+    const created = await store.createProject(createProjectInput(video, { name: 'Kept' }));
+
+    await expect(
+      store.reviseProject(created, { name: 'Other', settings: defaultSettings({ targetLanguage: 'not a language' }) }),
+    ).rejects.toMatchObject({ appError: { code: 'INVALID_LANGUAGE' } });
+    await expect(
+      store.reviseProject(created, { name: 'Other', settings: created.settings, inputVideoPath: path.join(tmp, 'missing.mp4') }),
+    ).rejects.toMatchObject({ appError: { code: 'UNSUPPORTED_MEDIA' } });
+
+    const after = await store.getProject(created.id);
+    expect(after.name).toBe('Kept');
+    expect(await fsp.readFile(after.inputVideoPath, 'utf8')).toBe('dummy-video-bytes');
   });
 });
 

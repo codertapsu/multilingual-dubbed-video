@@ -3,6 +3,7 @@ import { Injectable, signal } from '@angular/core';
 import { environment } from '../environment';
 import type {
   CreateProjectInput,
+  ReviseProjectInput,
   MediaInfo,
   PipelineStepId,
   Project,
@@ -124,6 +125,15 @@ export class IpcService {
 
   createProject(input: CreateProjectInput): Promise<Project> {
     return this.call<Project>('create_project', { input }, 'POST', '/projects', input);
+  }
+
+  /**
+   * PUT /projects/:id — New project after Back: the project Continue created,
+   * as the form now is (only a project that has never run). Over HTTP in both
+   * modes, like /providers: no Rust command needed.
+   */
+  reviseProject(projectId: string, input: ReviseProjectInput): Promise<Project> {
+    return this.http<Project>('PUT', `/projects/${encodeURIComponent(projectId)}`, input);
   }
 
   /** open_project / get_project both return the { project, pipeline } envelope. */

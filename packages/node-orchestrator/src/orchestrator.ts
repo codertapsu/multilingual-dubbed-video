@@ -22,6 +22,7 @@ import {
   voiceForLine,
   type AlignedSegment,
   type CreateProjectInput,
+  type ReviseProjectInput,
   type JobOrchestrator,
   type MediaInfo,
   type PipelineState,
@@ -340,6 +341,29 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   /** Create a project workspace and persist its initial state. */
   async createProject(input: CreateProjectInput): Promise<Project> {
     return this.deps.store.createProject(input);
+  }
+
+  /**
+   * New project after Back: give the project its Continue created the form as
+   * it is now (ProjectStore.reviseProject). Continue used to create another
+   * project every time, so fixing one choice after Start refused it left a
+   * duplicate in the list. Only a project that has never run: its work would
+   * not match the new choices, and the editor is where a started one changes.
+   */
+  async reviseProject(projectId: string, input: ReviseProjectInput): Promise<Project> {
+    this.assertOutputIdle(projectId);
+    const [project, pipeline] = await Promise.all([
+      this.deps.store.getProject(projectId),
+      this.deps.store.getPipeline(projectId),
+    ]);
+    if (!neverRun(project, pipeline)) {
+      throw new AppErrorException('INVALID_EDIT', `"${project.name}" has already started dubbing, so New project can no longer change it.`, {
+        remediation: 'Open it from Projects and change its settings in the editor, or create a new project.',
+      });
+    }
+    // Again after the awaits: nothing may start it while it changes.
+    this.assertOutputIdle(projectId);
+    return this.deps.store.reviseProject(project, input);
   }
 
   /**
@@ -2065,6 +2089,18 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       );
     }
   }
+}
+
+/**
+ * A project whose dub never started: created, and every step untouched. A run
+ * the gate refused at Start changes neither (assertRunReady throws first).
+ */
+export function neverRun(project: Pick<Project, 'status'>, pipeline: Pick<PipelineState, 'steps' | 'pausedAt'>): boolean {
+  return (
+    project.status === 'created' &&
+    !pipeline.pausedAt &&
+    pipeline.steps.every((s) => s.status === 'pending' && s.progressPercent === 0 && !s.startedAt)
+  );
 }
 
 /** "size:mtimeMs" of a file, or undefined when it does not exist. */

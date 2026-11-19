@@ -53,6 +53,7 @@ export type {
   // Project
   Project,
   CreateProjectInput,
+  ReviseProjectInput,
   // Transcript / segments
   TranscriptWord,
   TranscriptSegment,

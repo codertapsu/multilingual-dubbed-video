@@ -41,6 +41,7 @@ export type {
   AlignmentStatus,
   AlignedSegment,
   CreateProjectInput,
+  ReviseProjectInput,
 } from './models/domain.js';
 
 // ---- Editor timeline -------------------------------------------------------

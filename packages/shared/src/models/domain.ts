@@ -488,3 +488,14 @@ export interface CreateProjectInput {
    */
   outputDir?: string;
 }
+
+/**
+ * PUT /projects/:id: New project sends its form again after Back. Replaces
+ * the name and every setting of a project that has never run; where it saves
+ * is kept. `inputVideoPath` only when the video changed (it is copied again).
+ */
+export interface ReviseProjectInput {
+  name: string;
+  settings: ProjectSettings;
+  inputVideoPath?: string;
+}

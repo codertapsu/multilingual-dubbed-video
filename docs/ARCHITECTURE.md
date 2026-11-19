@@ -364,6 +364,7 @@ handlers. The rest, by family:
 | GET | `/workers/health` | — | → `{ stt, translation, tts, ffmpeg, ffprobe : { available, detail? } }` |
 | GET | `/languages` | — | → translation worker languages + curated `COMMON_LANGUAGES` |
 | POST | `/projects` | `create_project` | `CreateProjectInput` → `Project` |
+| PUT | `/projects/:id` | — | `ReviseProjectInput` → `Project`: New project after Back gives the project it created the form as it is now (only a project that has never run; `INVALID_EDIT` otherwise) |
 | GET | `/projects` | `list_projects` | → `Project[]` |
 | GET | `/projects/:id` | `get_project` / `open_project` | → `{ project, pipeline }` |
 | POST | `/projects/:id/probe` | `probe_video` | → `MediaInfo` (persisted) |

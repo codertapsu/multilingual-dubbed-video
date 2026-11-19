@@ -2,8 +2,9 @@
  * Project persistence.
  *
  * Owns `project.json` and `pipeline.json` for every project workspace, plus
- * project listing (by scanning the projects directory) and the one-time copy
- * of the user's input video into `input/original.<ext>` on create.
+ * project listing (by scanning the projects directory) and the copy of the
+ * user's input video into `input/original.<ext>`: on create, and again if New
+ * project changes the video before the project's first run.
  *
  * All writes are atomic (write to a temp file in the same directory, then
  * rename) so a crash mid-write can never corrupt a project file.
@@ -23,6 +24,7 @@ import {
   type PipelineState,
   type Project,
   type ProjectSettings,
+  type ReviseProjectInput,
 } from '@videodubber/shared';
 import { ensureWorkspaceDirs, fileExists, workspacePaths, type WorkspacePaths } from './paths.js';
 import { acceptOutputDir, freeOutputBaseName, samePath } from './outputFolder.js';
@@ -65,6 +67,51 @@ async function readJson<T>(filePath: string): Promise<T | undefined> {
     if (code === 'ENOENT') return undefined;
     throw err;
   }
+}
+
+/**
+ * Settings as persisted: language codes normalized and validated BEFORE
+ * anything is written (contract: "always normalize with normalizeLanguageCode
+ * before persisting"; e.g. vi-VI -> vi-VN). Invalid codes fail fast with a
+ * clear error.
+ */
+function normalizedSettings(input: ProjectSettings): ProjectSettings {
+  const sourceLanguage = normalizeLanguageCode(input.sourceLanguage);
+  const targetLanguage = normalizeLanguageCode(input.targetLanguage);
+  if (!isValidLanguageCode(sourceLanguage)) {
+    throw new AppErrorException('INVALID_LANGUAGE', `Invalid source language code: "${input.sourceLanguage}".`);
+  }
+  if (!isValidLanguageCode(targetLanguage)) {
+    throw new AppErrorException('INVALID_LANGUAGE', `Invalid target language code: "${input.targetLanguage}".`);
+  }
+  return { ...input, sourceLanguage, targetLanguage };
+}
+
+/**
+ * Copy the user's video into the workspace (`input/original.<ext>`), whole or
+ * not at all: a temp file, then a rename over the target, so replacing the
+ * video of a project (reviseProject) never leaves a half-copied one where the
+ * old one was.
+ */
+async function copyInputVideo(source: string, paths: WorkspacePaths): Promise<string> {
+  const ext = path.extname(source).replace(/^\./, '') || 'mp4';
+  const dest = paths.inputVideo(ext);
+  const tmp = path.join(path.dirname(dest), `.original.${crypto.randomBytes(6).toString('hex')}.partial.${ext}`);
+  try {
+    await fsp.copyFile(source, tmp);
+  } catch (err) {
+    await fsp.rm(tmp, { force: true });
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new AppErrorException({
+        code: 'UNSUPPORTED_MEDIA',
+        message: `Input video not found: ${source}`,
+        remediation: 'Verify the file path and that the file exists and is readable.',
+      });
+    }
+    throw err;
+  }
+  await renameReplacing(tmp, dest);
+  return dest;
 }
 
 /**
@@ -125,24 +172,8 @@ export class ProjectStore {
    * `pipeline.json`.
    */
   async createProject(input: CreateProjectInput): Promise<Project> {
-    // Normalize + validate language codes BEFORE persisting (contract:
-    // "always normalize with normalizeLanguageCode before persisting"; e.g.
-    // vi-VI -> vi-VN). Invalid codes fail fast with a clear error.
-    const sourceLanguage = normalizeLanguageCode(input.settings.sourceLanguage);
-    const targetLanguage = normalizeLanguageCode(input.settings.targetLanguage);
-    if (!isValidLanguageCode(sourceLanguage)) {
-      throw new AppErrorException(
-        'INVALID_LANGUAGE',
-        `Invalid source language code: "${input.settings.sourceLanguage}".`,
-      );
-    }
-    if (!isValidLanguageCode(targetLanguage)) {
-      throw new AppErrorException(
-        'INVALID_LANGUAGE',
-        `Invalid target language code: "${input.settings.targetLanguage}".`,
-      );
-    }
-    const settings: ProjectSettings = { ...input.settings, sourceLanguage, targetLanguage };
+    const settings = normalizedSettings(input.settings);
+    const { targetLanguage } = settings;
 
     // A folder the user chose for the finished files: checked BEFORE anything
     // is created, so a folder VideoDubber cannot write to leaves no half-made
@@ -154,21 +185,7 @@ export class ProjectStore {
     await ensureWorkspaceDirs(paths);
 
     // Copy the source video into the workspace so the project is self-contained.
-    const ext = path.extname(input.inputVideoPath).replace(/^\./, '') || 'mp4';
-    const internalInput = paths.inputVideo(ext);
-    try {
-      await fsp.copyFile(input.inputVideoPath, internalInput);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') {
-        throw new AppErrorException({
-          code: 'UNSUPPORTED_MEDIA',
-          message: `Input video not found: ${input.inputVideoPath}`,
-          remediation: 'Verify the file path and that the file exists and is readable.',
-        });
-      }
-      throw err;
-    }
+    const internalInput = await copyInputVideo(input.inputVideoPath, paths);
 
     const now = new Date().toISOString();
     const project: Project = {
@@ -189,6 +206,44 @@ export class ProjectStore {
     return this.withOutputName(chosenDir, input.name, targetLanguage, id, (outputFileName) =>
       this.saveProject({ ...project, outputFileName }),
     );
+  }
+
+  /**
+   * Give a project that has never run the name, settings and (when it
+   * changed) the video New project now holds (orchestrator.reviseProject
+   * checks "never run"). Settings are replaced whole, so a choice turned off
+   * is off: a merge of only the given values could not clear one. Where it
+   * saves is kept; in a chosen folder its file name follows a new name or
+   * language, uniquely there, as it would have at creation.
+   */
+  async reviseProject(current: Project, input: ReviseProjectInput): Promise<Project> {
+    const settings = normalizedSettings(input.settings);
+    const { targetLanguage } = settings;
+    const paths = this.paths(current.id);
+
+    let next: Project = { ...current, name: input.name, settings };
+    let staleCopy: string | undefined;
+    if (input.inputVideoPath?.trim()) {
+      const copied = await copyInputVideo(input.inputVideoPath, paths);
+      // Another extension is another file: the old copy would only take space.
+      if (!samePath(copied, current.inputVideoPath)) staleCopy = current.inputVideoPath;
+      // Its probe described the old video.
+      const { mediaInfo: _stale, ...rest } = next;
+      next = { ...rest, inputVideoPath: copied };
+    }
+
+    // Never run, so nothing of it to keep: whatever it held starts over.
+    await this.savePipeline(createInitialPipelineState(current.id));
+    const renamed = input.name !== current.name || targetLanguage !== current.settings.targetLanguage;
+    const saved =
+      current.outputFileName && renamed
+        ? await this.withOutputName(current.outputDir, input.name, targetLanguage, current.id, (outputFileName) =>
+            this.saveProject({ ...next, outputFileName }),
+          )
+        : await this.saveProject(next);
+    // Only once project.json names the new copy.
+    if (staleCopy) await fsp.rm(staleCopy, { force: true });
+    return saved;
   }
 
   /** Persist `project.json`, bumping `updatedAt`. */

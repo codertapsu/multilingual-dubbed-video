@@ -3,11 +3,13 @@ import {
   Component,
   computed,
   inject,
+  input,
   signal,
   type OnDestroy,
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 
 import { environment } from '../../core/environment';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
@@ -32,25 +34,10 @@ import {
   licenseTone,
   type VoiceFilterState,
 } from '../../shared/voice-library/voice-filter';
+import { previewSource, sampleSentence } from '../../shared/voice-library/voice-preview';
 
 /** Rows rendered before "Show more" (the library holds a few hundred). */
 const PAGE = 60;
-
-/** What an installed voice without a sample says, in its own language. */
-const SAMPLE_SENTENCES: Record<string, string> = {
-  vi: 'Xin chào, đây là giọng đọc dùng để lồng tiếng cho video của bạn.',
-  en: 'Hello, this is a voice you can use to dub your videos.',
-  ja: 'こんにちは、これはあなたの動画の吹き替えに使える声です。',
-  zh: '你好，这是可以为你的视频配音的声音。',
-  es: 'Hola, esta es una voz que puedes usar para doblar tus vídeos.',
-  fr: 'Bonjour, voici une voix que vous pouvez utiliser pour doubler vos vidéos.',
-  hi: 'नमस्ते, यह एक आवाज़ है जिससे आप अपने वीडियो डब कर सकते हैं।',
-  it: 'Ciao, questa è una voce che puoi usare per doppiare i tuoi video.',
-  pt: 'Olá, esta é uma voz que você pode usar para dublar seus vídeos.',
-  ko: '안녕하세요, 동영상 더빙에 사용할 수 있는 목소리입니다.',
-  de: 'Hallo, das ist eine Stimme, mit der du deine Videos synchronisieren kannst.',
-  ru: 'Здравствуйте, этим голосом можно озвучивать ваши видео.',
-};
 
 interface Progress {
   percent: number | null;
@@ -70,7 +57,7 @@ interface Progress {
 @Component({
   selector: 'vd-voices',
   standalone: true,
-  imports: [FormsModule, TranslatePipe, ErrorBannerComponent, VoiceCloneDialogComponent],
+  imports: [FormsModule, RouterLink, TranslatePipe, ErrorBannerComponent, VoiceCloneDialogComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './voices.component.html',
   styleUrl: './voices.component.scss',
@@ -79,6 +66,15 @@ export class VoicesComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
   private readonly i18n = inject(TranslateService);
   private readonly confirm = inject(ConfirmService);
+
+  /**
+   * `?from=new-project&language=…`: opened from the New project form. The
+   * screen then starts on the voices of that dub's language and offers the way
+   * back (the form keeps what was typed in it: NewProjectDraftService).
+   */
+  readonly from = input<string | undefined>(undefined);
+  readonly language = input<string | undefined>(undefined);
+  protected readonly fromNewProject = computed(() => this.from() === 'new-project');
 
   protected readonly library = signal<VoiceLibraryItem[]>([]);
   protected readonly engines = signal<VoiceEngineState[]>([]);
@@ -136,8 +132,15 @@ export class VoicesComponent implements OnInit, OnDestroy {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   async ngOnInit(): Promise<void> {
+    this.applyLinkFilters();
     this.followInstalls();
     await this.reload();
+  }
+
+  /** Start on the language the link names; the filters still change freely. */
+  private applyLinkFilters(): void {
+    const language = this.language();
+    if (language) this.filter.update((f) => ({ ...f, language: baseLanguage(language) }));
   }
 
   ngOnDestroy(): void {
@@ -244,7 +247,7 @@ export class VoicesComponent implements OnInit, OnDestroy {
     // default one); a voice not installed plays the catalog's sample.
     const own = this.sentence().trim();
     let url = this.ipc.voicePreviewUrl(item.id);
-    if (item.installed && item.engine !== 'openai' && (own || !item.sample)) {
+    if (previewSource(item, own) === 'speak') {
       this.speaking.set(item.id);
       try {
         url = await this.ipc.speakVoice(item.id, own || this.defaultSentence(item));
@@ -280,8 +283,7 @@ export class VoicesComponent implements OnInit, OnDestroy {
 
   /** A sentence in the voice's own language, for voices with no sample. */
   private defaultSentence(item: VoiceLibraryItem): string {
-    const lang = baseLanguage(item.languages.find((l) => l !== '*') ?? this.filter().language ?? 'vi') || 'vi';
-    return SAMPLE_SENTENCES[lang] ?? SAMPLE_SENTENCES['en']!;
+    return sampleSentence(baseLanguage(item.languages.find((l) => l !== '*') ?? this.filter().language ?? 'vi') || 'vi');
   }
 
   // ---- favourites ------------------------------------------------------------

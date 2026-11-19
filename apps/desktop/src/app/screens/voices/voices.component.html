@@ -1,4 +1,11 @@
 <section class="page stack">
+  @if (fromNewProject()) {
+    <!-- Opened from the New project form: the way back, which keeps what was typed there. -->
+    <div class="back-bar" role="navigation" [attr.aria-label]="'voices.back-to-new-project' | translate">
+      <a routerLink="/new" class="btn btn-primary btn-sm">← {{ 'voices.back-to-new-project' | translate }}</a>
+      <span class="hint">{{ 'voices.from-new-project' | translate }}</span>
+    </div>
+  }
   <header>
     <h1>{{ 'voices.title' | translate }}</h1>
     <p class="muted">{{ 'voices.subtitle' | translate }}</p>

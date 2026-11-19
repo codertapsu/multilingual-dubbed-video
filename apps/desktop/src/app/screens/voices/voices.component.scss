@@ -1,3 +1,24 @@
+/* Opened from the New project form: the way back stays in view over the long list. */
+.back-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--vd-surface);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 12%);
+
+  .hint {
+    flex: 1;
+    min-width: 14rem;
+  }
+}
+
 .engines {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));

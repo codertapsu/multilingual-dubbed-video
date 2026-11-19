@@ -113,3 +113,20 @@
 .warn-text {
   color: var(--vd-warning);
 }
+
+/* The voice list with its Listen button beside it. */
+.voice-row {
+  display: flex;
+  gap: var(--vd-sp-2);
+  align-items: center;
+
+  select {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .btn {
+    flex: none;
+    white-space: nowrap;
+  }
+}

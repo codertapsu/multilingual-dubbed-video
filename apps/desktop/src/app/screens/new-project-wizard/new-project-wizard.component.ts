@@ -13,6 +13,7 @@ import { Router, RouterLink } from '@angular/router';
 
 import { IpcService } from '../../core/ipc/ipc.service';
 import { SetupEventsService } from '../../core/ipc/setup-events.service';
+import { NewProjectDraftService, type NewProjectDraft } from '../../core/state/new-project-draft.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { DownloadProgressListComponent } from '../../shared/download-progress-list/download-progress-list.component';
@@ -40,12 +41,14 @@ import type {
   ProjectSettings,
   RenderQuality,
   SubtitleExportMode,
+  VoiceLibraryItem,
 } from '../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { environment } from '../../core/environment';
-import { describeVoice } from '../../shared/voice-library/voice-filter';
-import { libraryEngineFor, voiceOptions } from '../../shared/voice-library/voice-options';
+import { baseLanguage, describeVoice } from '../../shared/voice-library/voice-filter';
+import { keptVoice, libraryEngineFor, voiceOptions } from '../../shared/voice-library/voice-options';
+import { previewSource, sampleSentence } from '../../shared/voice-library/voice-preview';
 
 /** The speaker-detection engine pack (enginePackCatalog.ts). */
 const SPEAKER_PACK = 'diarization-sherpa';
@@ -125,6 +128,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   private readonly translate = inject(TranslateService);
   private readonly router = inject(Router);
   private readonly store = inject(ProjectStore);
+  private readonly drafts = inject(NewProjectDraftService);
   /**
    * Providers offerable in a `<select>`: available ones, PLUS whatever is
    * currently selected even if it is not available.
@@ -334,6 +338,34 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     return Boolean(id) && !this.installedVoiceIds().has(id as string);
   });
 
+  // -------- listening to the chosen voice --------
+  // Hearing a voice meant leaving for the Voices screen, which emptied this form.
+
+  /** Every voice of the library: what each one can play (a sample, or itself). */
+  private readonly libraryVoices = signal<VoiceLibraryItem[]>([]);
+  protected readonly selectedVoiceItem = computed(() => {
+    const id = this.settings().ttsVoiceId;
+    return id ? this.libraryVoices().find((v) => v.id === id) : undefined;
+  });
+  /** How the chosen voice can be heard ('speak': it says a sentence; null: no way yet). */
+  protected readonly selectedVoicePreview = computed(() => previewSource(this.selectedVoiceItem()));
+  protected readonly preview = signal<'idle' | 'loading' | 'playing'>('idle');
+  protected readonly previewFailed = signal(false);
+  private previewAudio: HTMLAudioElement | null = null;
+  private previewObjectUrl: string | null = null;
+  /** Bumped by every new preview or stop, so a slow one never plays over its successor. */
+  private previewSeq = 0;
+
+  /**
+   * The Voices screen link: it opens on the voices this dub can use (the target
+   * language) and shows the way back here. The engine is not filtered: the link
+   * promises every voice, and a voice of another engine is one engine change away.
+   */
+  protected readonly voicesLink = computed(() => ({
+    from: 'new-project',
+    language: baseLanguage(this.settings().targetLanguage),
+  }));
+
   // -------- async state --------
   protected readonly busy = signal(false);
 
@@ -369,24 +401,79 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
   });
 
   ngOnInit(): void {
+    // Back from another screen (the Voices screen, Settings…): the form as it was left.
+    const draft = this.drafts.take();
+    if (draft) this.restoreDraft(draft);
+
     // A video handed over from the downloader arrives as ?source=<path>, so the
-    // wizard opens with step 1 already filled in.
+    // wizard opens with step 1 already filled in. It is a new video: the name
+    // follows it, the rest of a kept draft stays.
     const handedOver = this.source();
-    if (handedOver) this.onPathInput(handedOver);
+    if (handedOver) {
+      this.name.set('');
+      this.onPathInput(handedOver);
+    }
 
     void this.loadLanguages();
-    void this.init();
+    void this.init(draft !== null);
   }
 
   ngOnDestroy(): void {
     // Stop listening to the global setup stream when leaving the wizard.
     this.setupEvents.disconnect();
+    this.stopPreview();
+    this.keepDraft();
   }
 
-  /** Load the provider catalog + saved defaults, then the per-language voices. */
-  private async init(): Promise<void> {
-    await this.loadProvidersAndDefaults();
-    if (this.showVoicePicker()) await this.loadVoicesForTarget();
+  /**
+   * The form as the defaults left it, to tell a form the user touched from an
+   * untouched one (only a touched one is kept). Null after restoring a draft:
+   * that form is the user's already, so it is kept again on leaving.
+   */
+  private pristine: string | null = null;
+  /** Defaults applied: before that, the form holds nothing of the user's or the app's. */
+  private initialized = false;
+
+  private formSnapshot(): string {
+    return JSON.stringify({ name: this.name(), inputVideoPath: this.inputVideoPath(), settings: this.settings() });
+  }
+
+  private restoreDraft(draft: NewProjectDraft): void {
+    this.name.set(draft.name);
+    this.autoName = draft.autoName;
+    this.inputVideoPath.set(draft.inputVideoPath);
+    this.settings.set(draft.settings);
+  }
+
+  /**
+   * Leaving step 1 with something of the user's in it: keep it for coming back.
+   * Not once Continue created the project: it is in the list, and a kept form
+   * would only make a second one.
+   */
+  private keepDraft(): void {
+    if (this.step() !== 1 || !this.initialized || this.createdProjectId() !== null) return;
+    if (this.pristine !== null && this.formSnapshot() === this.pristine) {
+      this.drafts.clear();
+      return;
+    }
+    this.drafts.save({
+      name: this.name(),
+      autoName: this.autoName,
+      inputVideoPath: this.inputVideoPath(),
+      settings: this.settings(),
+    });
+  }
+
+  /**
+   * Load the provider catalog + saved defaults, then the per-language voices.
+   * A restored draft keeps its own engines: the defaults would overwrite the
+   * choices the user made before leaving.
+   */
+  private async init(restored: boolean): Promise<void> {
+    await this.loadProvidersAndDefaults(restored);
+    await this.loadVoicesForTarget();
+    this.initialized = true;
+    if (!restored) this.pristine = this.formSnapshot();
   }
 
   private async loadLanguages(): Promise<void> {
@@ -408,7 +495,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
    * saved defaults (Settings → Processing defaults). A default provider whose
    * API key has since been removed is skipped — the local engine stays.
    */
-  private async loadProvidersAndDefaults(): Promise<void> {
+  private async loadProvidersAndDefaults(restored = false): Promise<void> {
     try {
       const s0 = this.settings();
       const [provs, prefs, engines, recommended] = await Promise.all([
@@ -419,13 +506,18 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
         // choices where usable, else the best INSTALLED engines. Before this,
         // a user who installed the recommended GPU engines still dubbed on the
         // CPU unless they also changed their Settings defaults.
-        this.ipc.getProjectDefaults(s0.sourceLanguage, s0.targetLanguage).catch(() => null),
+        restored ? Promise.resolve(null) : this.ipc.getProjectDefaults(s0.sourceLanguage, s0.targetLanguage).catch(() => null),
       ]);
       this.providers.set(provs);
       if (engines) {
         this.installedPacks.set(new Set(engines.installed.map((p) => p.id)));
         this.offeredPacks.set(new Set(engines.available.map((p) => p.id)));
         this.resetUnavailableFeatureToggles();
+      }
+      if (restored) {
+        // The user's own engines, as left; only the derived mode is refreshed.
+        this.syncProcessingMode();
+        return;
       }
       if (recommended) {
         const r = recommended.settings;
@@ -510,20 +602,23 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
 
   protected async pickVideo(): Promise<void> {
     const picked = await this.ipc.pickVideoFile();
-    if (picked) {
-      this.inputVideoPath.set(picked);
-      if (!this.name().trim()) {
-        this.name.set(deriveProjectName(picked) || this.translate.instant('misc.untitled-project'));
-      }
-    }
+    if (picked) this.onPathInput(picked);
   }
 
+  /**
+   * The name follows the video's file name until the user types one. It used
+   * to be set once, from the first keystroke of a typed path: typing
+   * D:\Videos\clip.mp4 named the project "D".
+   */
   protected onPathInput(value: string): void {
     this.inputVideoPath.set(value);
-    if (!this.name().trim() && value.trim()) {
-      this.name.set(deriveProjectName(value) || this.translate.instant('misc.untitled-project'));
-    }
+    if (this.name().trim() && this.name() !== this.autoName) return;
+    this.autoName = value.trim() ? deriveProjectName(value) || this.translate.instant('misc.untitled-project') : '';
+    this.name.set(this.autoName);
   }
+
+  /** The name the video's file gave the project ('' once none applies). */
+  private autoName = '';
 
   protected patchSettings<K extends keyof ProjectSettings>(
     key: K,
@@ -620,9 +715,13 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     const auto = (this.settings().autoSelectedPhases ?? []).filter((p) => p !== phase);
     this.patchSettings('autoSelectedPhases', auto.length > 0 ? auto : undefined);
     this.syncProcessingMode();
-    // Switching the TTS engine to Piper or a VieNeu engine reveals the per-language
-    // voice picker — populate it (with the right voice catalog) for the target.
-    if (key === 'ttsProviderId' && this.voiceEngine() !== null) {
+    // Another voice engine: its own voices, and a voice of its own. This ran
+    // only for the older engines (Piper, VieNeu v3), so switching to VieNeu-TTS
+    // 3.8 kept listing — and keeping — the VieNeu v3 voices, and the dub
+    // stopped at Start ("belongs to VieNeu v3 … the project's voice engine is
+    // VieNeu-TTS 3.8").
+    if (key === 'ttsProviderId') {
+      this.stopPreview();
       void this.loadVoicesForTarget();
     }
   }
@@ -643,50 +742,119 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     this.patchSettings('targetLanguage', code);
     // Switching to Vietnamese prefers a VieNeu engine (if its pack is installed).
     this.applyVietnameseNeuralDefault();
-    if (this.showVoicePicker()) void this.loadVoicesForTarget();
+    this.stopPreview();
+    void this.loadVoicesForTarget();
   }
 
+  /** Bumped by every load, so a slow answer for an earlier engine never fills the picker. */
+  private voiceLoadSeq = 0;
+
   /**
-   * Load the Piper voices for the current target language and reconcile the
-   * selection: keep the user's pinned voice if it's still offered, else pick the
-   * recommended (curated default), else the best-ranked, else none. Also reads
-   * which voices are already on disk so the UI can label "downloads on select".
+   * Load the voices the chosen engine has for the target language and
+   * reconcile the selection (keptVoice): the chosen voice while still offered,
+   * else the recommended one, else the first, else none. An engine with no
+   * voice picker gets no voice: one left from another engine would only stop
+   * the dub at Start. Also reads which Piper voices are already on disk (they
+   * download on select), and the library entries the Listen button plays.
    */
   private async loadVoicesForTarget(): Promise<void> {
+    const seq = ++this.voiceLoadSeq;
     const language = this.settings().targetLanguage;
     const engine = this.voiceEngine();
     const libraryEngine = this.libraryEngine();
-    if (!engine && !libraryEngine) return;
+    if (!engine && !libraryEngine) {
+      this.availableVoices.set([]);
+      this.voicesLoading.set(false);
+      if (this.settings().ttsVoiceId) this.patchSettings('ttsVoiceId', undefined);
+      return;
+    }
     this.voicesLoading.set(true);
     try {
-      const [voices, status] = await Promise.all([
-        libraryEngine
-          ? this.ipc
-              .voiceLibrary()
-              .then((lib) =>
-                voiceOptions(lib.voices, libraryEngine, language, (v) => describeVoice(v, (k) => this.translate.instant(k))),
-              )
-          : this.ipc.setupListVoices(language, engine!),
+      const [library, catalogVoices, status] = await Promise.all([
+        // Library engines list their voices from it; every engine plays from it.
+        libraryEngine ? this.ipc.voiceLibrary() : this.ipc.voiceLibrary().catch(() => null),
+        libraryEngine ? Promise.resolve<PiperVoiceInfo[]>([]) : this.ipc.setupListVoices(language, engine!),
         // Only Piper voices are tracked as individually installed.
         engine === 'piper' ? this.ipc.setupGetStatus().catch(() => null) : Promise.resolve(null),
       ]);
+      if (seq !== this.voiceLoadSeq) return;
+      if (library) this.libraryVoices.set(library.voices);
+      const voices =
+        libraryEngine && library
+          ? voiceOptions(library.voices, libraryEngine, language, (v) => describeVoice(v, (k) => this.translate.instant(k)))
+          : catalogVoices;
       this.availableVoices.set(voices);
       this.installedVoiceIds.set(new Set(status?.installed.piperVoices ?? []));
-
-      // Reconcile the pinned voice against what's actually offered.
-      const current = this.settings().ttsVoiceId;
-      const stillOffered = current && voices.some((v) => v.id === current);
-      if (!stillOffered) {
-        const pick = voices.find((v) => v.recommended) ?? voices[0];
-        this.patchSettings('ttsVoiceId', pick?.id);
-      }
+      const kept = keptVoice(this.settings().ttsVoiceId, voices);
+      if (kept !== this.settings().ttsVoiceId) this.patchSettings('ttsVoiceId', kept);
     } catch {
+      if (seq !== this.voiceLoadSeq) return;
       // Offline / backend down: leave the picker empty. The run-start readiness
       // gate + ensure-resources still cover the pinned voice.
       this.availableVoices.set([]);
     } finally {
-      this.voicesLoading.set(false);
+      if (seq === this.voiceLoadSeq) this.voicesLoading.set(false);
     }
+  }
+
+  /**
+   * Play (or stop) the chosen voice: its catalog sample, or, for an installed
+   * voice without one, the voice itself saying a sentence in the target
+   * language (the same choice as the Voices screen: previewSource).
+   */
+  protected async togglePreview(): Promise<void> {
+    if (this.preview() !== 'idle') {
+      this.stopPreview();
+      return;
+    }
+    const item = this.selectedVoiceItem();
+    const source = previewSource(item);
+    if (!item || !source) return;
+    const seq = ++this.previewSeq;
+    this.previewFailed.set(false);
+    this.preview.set('loading');
+    let url = this.ipc.voicePreviewUrl(item.id);
+    if (source === 'speak') {
+      const language = this.settings().targetLanguage;
+      try {
+        url = await this.ipc.speakVoice(item.id, sampleSentence(language), language);
+      } catch (err) {
+        if (seq === this.previewSeq) {
+          this.preview.set('idle');
+          this.error.set(toAppError(err));
+        }
+        return;
+      }
+      if (seq !== this.previewSeq) {
+        URL.revokeObjectURL(url); // stopped, or another voice chosen, while it was made
+        return;
+      }
+      this.previewObjectUrl = url;
+    }
+    const audio = new Audio(url);
+    this.previewAudio = audio;
+    audio.onplaying = () => {
+      if (seq === this.previewSeq) this.preview.set('playing');
+    };
+    audio.onended = () => {
+      if (seq === this.previewSeq) this.stopPreview();
+    };
+    const failed = () => {
+      if (seq !== this.previewSeq) return;
+      this.stopPreview();
+      this.previewFailed.set(true);
+    };
+    audio.onerror = failed;
+    void audio.play().catch(failed);
+  }
+
+  private stopPreview(): void {
+    this.previewSeq++;
+    this.previewAudio?.pause();
+    this.previewAudio = null;
+    if (this.previewObjectUrl) URL.revokeObjectURL(this.previewObjectUrl);
+    this.previewObjectUrl = null;
+    this.preview.set('idle');
   }
 
   /**
@@ -695,6 +863,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
    * skipped download here isn't fatal — the run is gated on the voice at start.
    */
   protected async onSelectVoice(voiceId: string): Promise<void> {
+    this.stopPreview();
+    this.previewFailed.set(false);
     this.patchSettings('ttsVoiceId', voiceId);
     // Neural (VieNeu) voices come with the engine pack — nothing to download per
     // voice; the run-start gate prompts to install the pack if it isn't yet.
@@ -794,6 +964,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
       this.createdProjectId.set(project.id);
       this.createdProject.set(project);
       this.store.setCurrent(project);
+      // The project holds these choices now; the next New project starts afresh.
+      this.drafts.clear();
 
       // Pre-fetch any required local models (whisper/Argos pair/Piper voice) now
       // that the languages are known. Kick off the install FIRST, then connect:

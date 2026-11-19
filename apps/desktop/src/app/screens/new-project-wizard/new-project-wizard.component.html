@@ -492,24 +492,44 @@
           } @else if (availableVoices().length > 0) {
             <div class="field">
               <label for="ttsVoice">{{ 'wizard.voice-label' | translate }}</label>
-              <select
-                id="ttsVoice"
-                name="ttsVoice"
-                [ngModel]="settings().ttsVoiceId"
-                (ngModelChange)="onSelectVoice($event)"
-                [disabled]="voiceDownloading()"
-              >
-                @for (v of availableVoices(); track v.id) {
-                  <option [value]="v.id">
-                    {{ v.label }}{{ v.recommended ? ('wizard.voice-recommended' | translate) : '' }}{{
-                      voiceEngine() !== 'piper'
-                        ? ''
-                        : ' — ' + (installedVoiceIds().has(v.id) ? ('wizard.voice-installed' | translate) : ('wizard.voice-size' | translate: { size: v.approxSizeMb }))
-                    }}
-                  </option>
-                }
-              </select>
+              <!-- The chosen voice can be heard right here: no trip to the Voices screen. -->
+              <div class="voice-row">
+                <select
+                  id="ttsVoice"
+                  name="ttsVoice"
+                  [ngModel]="settings().ttsVoiceId"
+                  (ngModelChange)="onSelectVoice($event)"
+                  [disabled]="voiceDownloading()"
+                >
+                  @for (v of availableVoices(); track v.id) {
+                    <option [value]="v.id">
+                      {{ v.label }}{{ v.recommended ? ('wizard.voice-recommended' | translate) : '' }}{{
+                        voiceEngine() !== 'piper'
+                          ? ''
+                          : ' — ' + (installedVoiceIds().has(v.id) ? ('wizard.voice-installed' | translate) : ('wizard.voice-size' | translate: { size: v.approxSizeMb }))
+                      }}
+                    </option>
+                  }
+                </select>
+                <button
+                  type="button"
+                  class="btn"
+                  (click)="togglePreview()"
+                  [disabled]="!selectedVoicePreview() || voiceDownloading()"
+                  [attr.aria-label]="(preview() === 'idle' ? 'wizard.voice-listen-aria' : 'wizard.voice-listen-stop') | translate"
+                  [attr.title]="selectedVoicePreview() ? null : ('wizard.voice-no-sample' | translate)"
+                >
+                  {{ (preview() === 'idle' ? 'wizard.voice-listen' : 'wizard.voice-listen-stop') | translate }}
+                </button>
+              </div>
             </div>
+            @if (preview() === 'loading' && selectedVoicePreview() === 'speak') {
+              <p class="hint" role="status">{{ 'wizard.voice-listen-making' | translate }}</p>
+            } @else if (previewFailed()) {
+              <p class="hint warn-text" role="status">{{ 'voices.preview-failed' | translate }}</p>
+            } @else if (settings().ttsVoiceId && selectedVoiceItem() && !selectedVoicePreview()) {
+              <p class="hint">{{ 'wizard.voice-no-sample' | translate }}</p>
+            }
             @if (voiceDownloading()) {
               <div class="badge" role="status" aria-live="polite">
                 {{ 'wizard.voice-downloading' | translate: { percent: voiceDownloadPercent() === null ? '' : voiceDownloadPercent() + '%' } }}
@@ -537,7 +557,8 @@
             </p>
           }
           <p class="hint">
-            <a routerLink="/voices">{{ 'wizard.voice-browse' | translate }}</a>
+            <!-- Opens on this dub's language, with a way back; the form is kept meanwhile. -->
+            <a routerLink="/voices" [queryParams]="voicesLink()">{{ 'wizard.voice-browse' | translate }}</a>
           </p>
         </fieldset>
       }

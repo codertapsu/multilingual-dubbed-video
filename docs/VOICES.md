@@ -28,8 +28,14 @@ Open **Giọng đọc / Voices** in the top bar.
   played).
 
 A voice is picked per project in the new-project wizard ("Voice") and in the
-editor's Project panel. The wizard's link "Listen to and compare every voice"
-opens this screen.
+editor's Project panel. The wizard lists only the voices of the chosen
+Text to speech engine for the target language, and changing the engine changes
+the list (and the chosen voice, to that engine's recommended one): a voice of
+another engine would stop the dub at Start. **Listen**, beside the list, plays
+the chosen voice there. The wizard's link "Listen to and compare every voice"
+opens this screen on the target language, with **Back to the new project** at
+the top; the form keeps everything entered in it while you are away (in memory
+until the app closes, cleared once the project is created).
 
 ### Engines
 

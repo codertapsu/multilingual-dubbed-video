@@ -24,6 +24,7 @@ import type { Project } from '../../core/models';
 import type { QueueState } from '../../core/models/setup';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
+import { groupSeries } from './project-list';
 
 /** How often the capacity summary refreshes while dubs are active. */
 const QUEUE_POLL_MS = 4000;
@@ -49,6 +50,9 @@ export class HomeComponent implements OnInit, OnDestroy {
   private readonly translate = inject(TranslateService);
 
   protected readonly formatDuration = formatDurationCoarse;
+
+  /** The list as shown: a series with its parts right under it (project-list.ts). */
+  protected readonly listed = computed(() => groupSeries(this.store.recentProjects()));
 
   /** Live scheduler state — drives the "Now dubbing" / "Up next" summary. */
   protected readonly queue = signal<QueueState | null>(null);

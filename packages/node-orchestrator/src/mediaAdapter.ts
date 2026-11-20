@@ -108,6 +108,8 @@ interface MediaWorkerModule {
   ): Promise<AudioExtractResult>;
   prepareStemInput?(input: string, output: string, run?: MediaWorkerRunOptions): Promise<AudioExtractResult>;
   mixStems?(inputs: readonly string[], output: string, run?: MediaWorkerRunOptions): Promise<AudioExtractResult>;
+  renderThumbnail?(input: string, atMs: number, output: string, run?: MediaWorkerRunOptions): Promise<{ path: string }>;
+  detectSceneChanges?(input: string, spans: readonly MediaRange[], run?: MediaWorkerRunOptions): Promise<number[]>;
 }
 
 /**
@@ -245,6 +247,16 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
       : {}),
     ...(typeof mod.mixStems === 'function'
       ? { mixStems: (i: readonly string[], o: string, signal?: AbortSignal) => mod.mixStems!(i, o, runOpts(signal)) }
+      : {}),
+    // The post's thumbnail (render step) and changes of shot near series cuts.
+    ...(typeof mod.renderThumbnail === 'function'
+      ? { renderThumbnail: (i: string, at: number, o: string, signal?: AbortSignal) => mod.renderThumbnail!(i, at, o, runOpts(signal)) }
+      : {}),
+    ...(typeof mod.detectSceneChanges === 'function'
+      ? {
+          detectSceneChanges: (i: string, spans: readonly MediaRange[], signal?: AbortSignal) =>
+            mod.detectSceneChanges!(i, spans, runOpts(signal)),
+        }
       : {}),
     // clip16kMono is optional on the interface: only expose it when the loaded
     // media-worker provides it, so the runner can detect support and otherwise

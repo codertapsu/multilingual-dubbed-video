@@ -93,8 +93,9 @@
     </div>
   } @else {
     <ul class="project-list" role="list">
-      @for (project of store.recentProjects(); track project.id) {
-        <li class="project-card">
+      @for (row of listed(); track row.project.id) {
+        @let project = row.project;
+        <li class="project-card" [class.nested]="row.nested">
           <button
             type="button"
             class="project-open"

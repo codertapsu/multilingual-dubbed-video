@@ -301,8 +301,13 @@ plugin) makes a project's transcript from them instead of speech-to-text; a seri
 its own stretch. Batch dubs can split the long ones (`POST /downloads/dub` `series`: only those
 longer than 1.5 × the longest part; the Download screen and `dub_downloads` both offer it).
 
-Not built: scene-change scoring for cuts (pauses and chapters only), a thumbnail per output in
-`get_outputs`.
+**Rest, done (2026-11-20, 0.16.1).** The thumbnail: every render saves `<name>.jpg` beside the
+video (`media-worker/frames.ts`), taken in the longest pause between 15 % and 60 % of the video
+(`pipeline/thumbnailMoment.ts`: no subtitle, no part's card), listed by `get_outputs` and moved with
+the video. Changes of shot: measured with ffmpeg's scene score only in 3 s around each window's 16
+best pauses (`detectSceneChanges`), then the pauses are ranked again (checked with real ffmpeg:
+changes found at exactly 3.000 and 6.000 s, none inside a shot). Home shows a series as one entry
+with its parts under it, and the forms start from the AI used last time.
 
 **Phase 5 (Mother Claude), done in its session.** The cookie export file, uploads over 5 MiB by
 path, and the `bilibili-to-facebook` skill (D:\development\bilibili-to-facebook) over the tools

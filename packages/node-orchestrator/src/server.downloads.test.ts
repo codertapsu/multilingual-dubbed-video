@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
-import type { DownloadItem, Project } from '@videodubber/shared';
+import { projectOutputThumbnailPath, type DownloadItem, type Project } from '@videodubber/shared';
 
 import { loadConfig } from './config.js';
 import { createServer } from './server.js';
@@ -103,6 +103,12 @@ describe('downloads, presets and batch dubs', () => {
 
     const outputs = (await app.inject({ method: 'GET', url: `/projects/${made!.projectId}/outputs` })).json() as Record<string, unknown>;
     expect(outputs).toMatchObject({ finished: false, files: [], source: { ownerName: 'UP主' }, published: [] });
+    // The thumbnail the render leaves beside the video is one of its files.
+    const thumb = projectOutputThumbnailPath(project.project);
+    await fsp.mkdir(path.dirname(thumb), { recursive: true });
+    await fsp.writeFile(thumb, Buffer.alloc(2048, 1));
+    const withThumb = (await app.inject({ method: 'GET', url: `/projects/${made!.projectId}/outputs` })).json() as { files: unknown[] };
+    expect(withThumb.files).toEqual([{ kind: 'thumbnail', path: thumb, sizeBytes: 2048 }]);
 
     expect((await app.inject({ method: 'POST', url: `/projects/${made!.projectId}/published`, payload: { url: 'nope' } })).statusCode).toBe(400);
     const pub = await app.inject({ method: 'POST', url: `/projects/${made!.projectId}/published`, payload: { url: 'https://facebook.com/p/1', part: 2 } });

@@ -122,3 +122,10 @@
 .claude-tip a.btn:hover {
   text-decoration: none;
 }
+
+/* A series' parts sit under its card, indented, so a series reads as one
+   entry instead of n + 1 scattered ones. */
+.project-card.nested {
+  margin-left: var(--vd-sp-6);
+  border-left: 3px solid var(--vd-border);
+}

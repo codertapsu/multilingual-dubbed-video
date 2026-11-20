@@ -174,6 +174,17 @@ export {
 export { referenceClip, buildReferenceClipArgs, REFERENCE_MAX_MS, type ReferenceClipOptions } from './reference.js';
 export { prepareLogo, prepareGreeting, buildPrepareLogoArgs, buildPrepareGreetingArgs, MAX_GREETING_MS } from './brand.js';
 export { buildCardsAss, buildFilteredRenderArgs, buildLogoFilter, logoPlacement } from './overlay.js';
+export {
+  renderThumbnail,
+  detectSceneChanges,
+  buildThumbnailArgs,
+  buildSceneArgs,
+  parseSceneTimes,
+  mergeSpans,
+  THUMBNAIL_MAX_WIDTH,
+  SCENE_THRESHOLD,
+  type FrameSpan,
+} from './frames.js';
 export { windowArgs, type MediaWindow } from './extract.js';
 export { prepareStemInput, mixStems, buildStemInputArgs, buildStemMixArgs } from './stems.js';
 

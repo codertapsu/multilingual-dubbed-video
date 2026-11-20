@@ -386,7 +386,7 @@ handlers. The rest, by family:
 | GET · POST · PUT · DELETE | `/presets`, `/presets/:id` | — | Dub presets (`workspace/presetStore.ts`, `<config>/dub-presets.json`) |
 | POST | `/download/providers/:id/session/import` | — | `{ cookies: [{ name, value, domain }] }` from the user's browser (the plugin's `set_download_login`) → masked status + check |
 | GET | `/jobs/events?downloads=&projects=&since=&untilDone=1` | — | NDJSON, one line per change of the named jobs (`jobFeed.ts`); ends once all have stopped |
-| GET | `/projects/:id/outputs` · POST `/projects/:id/published` | — | A finished dub's files (size, sha256), source and posts; record a post |
+| GET | `/projects/:id/outputs` · POST `/projects/:id/published` | — | A finished dub's files (size, sha256; the render's thumbnail `<name>.jpg`, `pipeline/thumbnailMoment.ts`), source and posts; record a post |
 | POST | `/projects/:id/render` | `render_final_video` | `{ subtitleExportMode?, burnSubtitleStyle? }` → 202 `{ started, queued, position?, fromStep }`: Export's "Render again", a run from `audio-mix` when the mix is out of date (`audio/final_mix.inputs.json`, `pipeline/mixFingerprint.ts`), else from `render` |
 | POST | `/open` | `open_output_folder` / `open_path` | `{ path }` → `{ ok:true }` |
 | GET | `/projects/:id/events` | — | SSE stream (see §8) |

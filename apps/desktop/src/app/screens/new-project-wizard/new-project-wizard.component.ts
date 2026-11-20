@@ -12,6 +12,7 @@ import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 
 import { IpcService } from '../../core/ipc/ipc.service';
+import { defaultSeriesAi, rememberSeriesAi } from '../../shared/series-ai';
 import { SetupEventsService } from '../../core/ipc/setup-events.service';
 import { NewProjectDraftService, type NewProjectDraft } from '../../core/state/new-project-draft.service';
 import { ProjectStore, toAppError } from '../../core/state/project.store';
@@ -445,9 +446,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     try {
       const options = await this.ipc.seriesAiOptions();
       this.seriesAiOptions.set(options);
-      // Claude first (through Mother Claude when that is how it is set up), then the rest.
-      const ready = options.filter((o) => o.ready);
-      this.seriesAi.set((ready.find((o) => o.viaMotherClaude) ?? ready[0])?.id ?? '');
+      // The AI used last time, else Claude through Mother Claude, else the first set up.
+      this.seriesAi.set(defaultSeriesAi(options));
     } catch {
       /* no AI: the option says how to set one up */
     }
@@ -1080,6 +1080,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy {
     this.error.set(null);
     try {
       const series = this.seriesRequest();
+      if (series?.aiProviderId) rememberSeriesAi(series.aiProviderId);
       const input: CreateProjectInput = {
         name:
           this.name().trim() ||

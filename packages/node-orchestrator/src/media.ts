@@ -198,6 +198,13 @@ export interface PipelineMediaService extends MediaService {
   prepareLogo?(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<{ width: number; height: number }>;
   /** Brand kit: any audio/video → a trimmed, levelled 48 kHz stereo WAV; its length. */
   prepareGreeting?(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<{ durationMs: number }>;
+  /** A finished video's thumbnail: one JPEG at `atMs`, written atomically. */
+  renderThumbnail?(inputPath: string, atMs: number, outputPath: string, signal?: AbortSignal): Promise<{ path: string }>;
+  /**
+   * Changes of shot (ms, sorted) inside the given spans of a video: series/
+   * ranks a pause with one higher as a place to cut. Only the spans are decoded.
+   */
+  detectSceneChanges?(inputPath: string, spans: readonly MediaRange[], signal?: AbortSignal): Promise<number[]>;
   /**
    * Trim and tempo-fit one dub clip exactly as the timeline mix will (atrim,
    * atempo), for the editor's WebAudio preview — which can only resample, i.e.
@@ -288,6 +295,8 @@ const MEDIA_SERVICE_METHOD_TABLE: Record<keyof PipelineMediaService, true> = {
   referenceClip: true,
   prepareStemInput: true,
   mixStems: true,
+  renderThumbnail: true,
+  detectSceneChanges: true,
 };
 
 /** A method name of {@link PipelineMediaService}. */

@@ -44,6 +44,7 @@ import {
   pipelineStepIndex,
   pipelineStepLabel,
   projectOutputVideoPath,
+  projectOutputThumbnailPath,
   type AlignedSegment,
   type PipelineState,
   type PipelineStepId,
@@ -117,6 +118,7 @@ import { partEffects } from '../series/seriesPlanner.js';
 import { rangedMediaInfo } from '../series/seriesRange.js';
 import { reuseRecapTranslations } from '../series/recap.js';
 import { siteTranscript } from '../providers/download/siteSubtitles.js';
+import { thumbnailMomentMs } from './thumbnailMoment.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
 import { describeStretch } from '../media.js';
@@ -2688,6 +2690,21 @@ export class PipelineRunner {
       this.deps.logger.info(
         `Subtitles drawn in ${result.burnFont.family}${result.burnFont.fontsDir ? '' : ' (a system font: the bundled one was not found)'}.`,
       );
+    }
+    // The post's thumbnail, beside the video (get_outputs): a frame where no
+    // line is spoken, so no subtitle is across it. A finished video never
+    // fails for want of a picture.
+    if (this.deps.media.renderThumbnail) {
+      try {
+        const aligned = await this.readAligned(paths.translatedAlignedJson).catch(() => [] as AlignedSegment[]);
+        const atMs = thumbnailMomentMs(
+          result.durationMs || videoMs,
+          aligned.map((a) => ({ startMs: a.startMs, endMs: Math.max(a.endMs, a.startMs + (a.placedDurationMs ?? 0)) })),
+        );
+        await this.deps.media.renderThumbnail(outputPath, atMs, projectOutputThumbnailPath(project), signal);
+      } catch (err) {
+        this.deps.logger.warn(`No thumbnail for the post (${toAppError(err).message}); the video itself is finished.`);
+      }
     }
   }
 

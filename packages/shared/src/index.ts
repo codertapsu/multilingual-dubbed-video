@@ -266,6 +266,7 @@ export {
   projectOutputBaseName,
   projectOutputFiles,
   projectOutputVideoPath,
+  projectOutputThumbnailPath,
   safeFileStem,
 } from './pipeline/output.js';
 export {

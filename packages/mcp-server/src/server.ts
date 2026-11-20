@@ -1119,7 +1119,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'A finished dub, for posting it',
       description:
-        'A project\'s finished files (video with size and sha256, subtitles), its length, the source it was downloaded from (title, uploader, link: for the caption and its credit line) and where it has been posted (mark_published).',
+        'A project\'s finished files (video with size and sha256, subtitles, a thumbnail JPG for the post: a frame with no subtitle on it), its length, the source it was downloaded from (title, uploader, link: for the caption and its credit line) and where it has been posted (mark_published).',
       inputSchema: z.object({ projectId: z.string() }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },

@@ -1448,6 +1448,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         return undefined;
       }
     },
+    // Changes of shot near the candidate cuts (the media worker's scene score).
+    sceneChanges: (video, spans) => (media.detectSceneChanges ? media.detectSceneChanges(video, spans) : Promise.resolve([])),
     logger: { info: (m) => console.info(`[series] ${m}`), warn: (m) => console.warn(`[series] ${m}`) },
   });
 
@@ -1808,7 +1810,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       for (const file of projectOutputFiles(project)) {
         const s = await stat(file).catch(() => undefined);
         if (!s || s.size === 0) continue;
-        const kind = file.toLowerCase().endsWith('.mp4') ? 'video' : file.toLowerCase().endsWith('.vtt') ? 'vtt' : 'srt';
+        const lower = file.toLowerCase();
+        const kind = lower.endsWith('.mp4') ? 'video' : lower.endsWith('.vtt') ? 'vtt' : lower.endsWith('.jpg') ? 'thumbnail' : 'srt';
         files.push({
           kind,
           path: file,

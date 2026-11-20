@@ -12,6 +12,7 @@ import { Router } from '@angular/router';
 
 import { DownloadEventsService } from '../../core/ipc/download-events.service';
 import { IpcService } from '../../core/ipc/ipc.service';
+import { defaultSeriesAi, rememberSeriesAi } from '../../shared/series-ai';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { QUALITY_LADDER, pickClosestHeight } from '@videodubber/shared';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
@@ -154,7 +155,7 @@ export class DownloadComponent implements OnInit, OnDestroy {
     try {
       const ready = (await this.ipc.seriesAiOptions()).filter((o) => o.ready);
       this.seriesAiReady.set(ready);
-      if (!ready.some((o) => o.id === this.dubSplitAi())) this.dubSplitAi.set((ready.find((o) => o.viaMotherClaude) ?? ready[0])?.id ?? '');
+      if (!ready.some((o) => o.id === this.dubSplitAi())) this.dubSplitAi.set(defaultSeriesAi(ready));
     } catch {
       /* the option says it needs an AI */
     }
@@ -400,6 +401,7 @@ export class DownloadComponent implements OnInit, OnDestroy {
     this.notice.set(null);
     try {
       const split = this.dubSplit() && this.dubSplitAi();
+      if (split) rememberSeriesAi(this.dubSplitAi());
       const [min, max] = this.dubSplitLength().split('-').map(Number);
       const { results } = await this.ipc.dubDownloads({
         downloadIds: ids,

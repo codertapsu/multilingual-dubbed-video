@@ -2,7 +2,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TranscriptSegment } from '@videodubber/shared';
+import { projectOutputThumbnailPath, type TranscriptSegment } from '@videodubber/shared';
 
 import { loadConfig } from '../config.js';
 import { EventBusRegistry } from '../events.js';
@@ -126,6 +126,8 @@ describe('a long video dubbed as a series', () => {
     expect(render.effects!.cards![2]!.text).toBe('Hết');
     const first = media.renderInputs.find((r) => r.outputPath.includes(p1!))!;
     expect(first.effects!.cards!.at(-1)!.text).toBe('Còn tiếp · Phần 2');
+    // Each finished part has its thumbnail for the post, beside the video.
+    expect(media.thumbnails.some((t) => t.startsWith(`${projectOutputThumbnailPath(second)}@`))).toBe(true);
     expect((await series.view(p2!)).parts.every((p) => p.status === 'completed')).toBe(true);
   });
 
@@ -149,10 +151,49 @@ describe('a long video dubbed as a series', () => {
     await vi.waitFor(async () => expect((await store.getProject(parent.id)).series).toMatchObject({ state: 'parts' }), { timeout: 15_000 });
     const view = await series.view(parent.id);
     expect(view.plan!.parts[1]!.cutBy).toBe('pause');
+    // The long pause nearest the 20-minute target (the transcript is put together from 10-minute chunks).
+    expect(view.plan!.parts[1]!.startMs).toBe(1_149_500);
     expect(view.plan!.notes[0]).toMatch(/not available/);
     // autoStart: the parts were made and started.
     await vi.waitFor(async () => expect((await series.view(parent.id)).parts.every((p) => p.status === 'completed')).toBe(true), {
       timeout: 20_000,
+    });
+  });
+
+  it('cuts on a change of shot next to a good pause, decoding only seconds around the candidates', async () => {
+    const media = new FakeMediaService({ mediaInfo: fakeMediaInfo(40 * MIN) });
+    // A change of shot 0.7 s before the long pause at 18:23.5; the one at 30:00 is near no candidate.
+    media.sceneTimes = [1_102_800, 30 * MIN];
+    const orchestrator = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media,
+      registry: fakeRegistry(new FakeSttProvider(talk()), new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+      seriesAnalysed: (id) => series.analysed(id),
+    });
+    const series = new SeriesService({
+      store,
+      projects: orchestrator,
+      start: (id) => orchestrator.runPipeline(id),
+      chatFor: () => undefined,
+      sceneChanges: (video, spans) => media.detectSceneChanges(video, spans),
+    });
+    const video = await writeDummyVideo(tmp);
+    const parent = await orchestrator.createProject({
+      ...createProjectInput(video, { name: 'Y' }),
+      series: { minMinutes: 15, maxMinutes: 20, aiProviderId: 'gone', recapSec: 4, autoStart: false },
+    });
+    await orchestrator.runPipeline(parent.id);
+    await vi.waitFor(async () => expect((await store.getProject(parent.id)).series).toMatchObject({ state: 'review' }), { timeout: 15_000 });
+    const view = await series.view(parent.id);
+    // Without it the nearer long pause (19:09.5, the test above) wins; with it, 18:23.5 does.
+    expect(view.plan!.parts[1]!.startMs).toBe(1_103_500);
+    expect(media.sceneSpans.length).toBeGreaterThan(0);
+    expect(media.sceneSpans.every((s) => s.endMs - s.startMs <= 3000)).toBe(true);
+    // The parent's own run ends after the plan: let it, before its folder goes.
+    await vi.waitFor(async () => expect(['completed', 'failed', 'paused']).toContain((await store.getProject(parent.id)).status), {
+      timeout: 15_000,
     });
   });
 });

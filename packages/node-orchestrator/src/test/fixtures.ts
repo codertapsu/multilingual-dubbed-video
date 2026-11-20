@@ -246,6 +246,26 @@ export class FakeMediaService implements PipelineMediaService {
   public speech = new Map<string, Awaited<ReturnType<NonNullable<PipelineMediaService['measureSpeech']>>>>();
   public speechCalls = 0;
 
+  /** Thumbnails asked for (`<path>@<ms>`). */
+  public thumbnails: string[] = [];
+
+  async renderThumbnail(inputPath: string, atMs: number, outputPath: string): Promise<{ path: string }> {
+    this.calls.push(`renderThumbnail:${outputPath}`);
+    this.thumbnails.push(`${outputPath}@${atMs}`);
+    await fsp.mkdir(path.dirname(outputPath), { recursive: true });
+    await fsp.writeFile(outputPath, 'fake-jpeg');
+    return { path: outputPath };
+  }
+
+  /** Changes of shot a test wants found (ms of the whole video), and the spans asked about. */
+  public sceneTimes: number[] = [];
+  public sceneSpans: { startMs: number; endMs: number }[] = [];
+
+  async detectSceneChanges(_inputPath: string, spans: readonly { startMs: number; endMs: number }[]): Promise<number[]> {
+    this.sceneSpans.push(...spans);
+    return this.sceneTimes.filter((t) => spans.some((s) => t >= s.startMs && t <= s.endMs));
+  }
+
   /** Brand kit: the picture kept as it is, with a logo's proportions. */
   async prepareLogo(inputPath: string, outputPath: string): Promise<{ width: number; height: number }> {
     await fsp.mkdir(path.dirname(outputPath), { recursive: true });

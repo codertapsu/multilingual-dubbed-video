@@ -270,6 +270,10 @@ first, otherwise only the video is made again. It runs like a dub, on the
 progress screen: you can pause it, it waits its turn in the queue, and it uses
 the project's render quality.
 
+Every render also saves a picture from the video beside it (`output.jpg`, or
+`My video.vi.jpg` in a folder you chose), taken where nobody speaks, so no
+subtitle is across it: a ready thumbnail for a post.
+
 <a id="logo-and-greeting"></a>
 
 ### Your logo and a spoken greeting
@@ -336,13 +340,15 @@ Claude comes first when it is set up.
 
 What happens: the whole video is transcribed once (the Processing screen says
 so). The AI then picks each cut in a pause between lines, never in the middle of
-a sentence, and gives each part a title and a one-sentence summary. The
+a sentence (a pause where the picture changes shot, or a chapter mark from
+Bilibili, counts for more: the part then ends like a scene), and gives each
+part a title and a one-sentence summary. The
 **series screen** (open the project from Projects) shows the plan: change a
 part's start time (m:ss) or its title, then **Make the parts and start
 dubbing**. **Plan again** asks the AI again.
 
-Each part is a project of its own (*My video - Part 01*, *Part 02*…), marked in
-Projects, with its own progress, editor and Export screen. The parts share one
+Each part is a project of its own (*My video - Part 01*, *Part 02*…), listed
+under its series in Projects, with its own progress, editor and Export screen. The parts share one
 character sheet, so names and forms of address stay the same from part to part,
 and the seconds a part repeats keep the translation the part before used. In the
 finished video, each part fades in with the series name and *Part 2/5* with its
@@ -361,7 +367,7 @@ new-project wizard, in the studio's project panel and on the Export screen.
   own folder in VideoDubber's data (see [Where your files live](#7-where-your-files-live)).
 - **Choose folder…** picks any other folder, for example `D:\Dubs` or a folder
   in Movies. There the files are named after the project and its language,
-  `My video.vi.mp4` (and `My video.vi.srt` / `.vtt` beside it), so several
+  `My video.vi.mp4` (and `My video.vi.srt` / `.vtt` / `.jpg` beside it), so several
   projects can share one folder without overwriting each other: a second
   project with the same name becomes `My video (2).vi.mp4`.
 - **Different projects can use different folders.** New projects start in the

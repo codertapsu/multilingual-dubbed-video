@@ -35,7 +35,17 @@ import { languageName } from '../providers/translation/llmTranslationProvider.js
 import { generateCharacterSheet, type AnalysisChat } from '../providers/translation/translationContext.js';
 import { writeJsonAtomic, type ProjectStore } from '../workspace/projectStore.js';
 import { aiChooseCut, aiTitlePart, type SeriesChat } from './seriesAi.js';
-import { candidateCuts, cardWords, cutWindows, fallbackCut, partCount, partsFromCuts, partTranscript, validateCuts } from './seriesPlanner.js';
+import {
+  candidateCuts,
+  cardWords,
+  cutWindows,
+  fallbackCut,
+  partCount,
+  partsFromCuts,
+  partTranscript,
+  validateCuts,
+  type CutWindow,
+} from './seriesPlanner.js';
 import { rangedMediaInfo } from './seriesRange.js';
 import { sanitizeSeriesSettings } from './seriesSanitize.js';
 
@@ -51,6 +61,11 @@ export interface SeriesServiceDeps {
   start: (projectId: string) => Promise<RunScheduleResult | { waiting: true }>;
   /** The chat of an AI provider id, when it can follow instructions here. */
   chatFor: (providerId: string) => (SeriesChat & AnalysisChat) | undefined;
+  /**
+   * Changes of shot (ms) inside the given spans of a video. Optional: without
+   * it the cuts are ranked by pauses and chapters only.
+   */
+  sceneChanges?: (videoPath: string, spans: { startMs: number; endMs: number }[]) => Promise<number[]>;
   logger?: { info(message: string): void; warn(message: string): void };
 }
 
@@ -127,10 +142,18 @@ export class SeriesService {
     const settings = parent.series.settings;
     const durationMs = parent.mediaInfo?.durationMs || lines.at(-1)?.endMs || 0;
     const chapters = (parent.source?.chapters ?? []).map((c) => c.startMs);
-    const candidates = candidateCuts(lines, { chapters });
-    const windows = cutWindows(durationMs, partCount(durationMs, settings.minMinutes, settings.maxMinutes), settings, candidates);
-    const chat = this.deps.chatFor(settings.aiProviderId);
     const notes: string[] = [];
+    const count = partCount(durationMs, settings.minMinutes, settings.maxMinutes);
+    let candidates = candidateCuts(lines, { chapters });
+    let windows = cutWindows(durationMs, count, settings, candidates);
+    // A cut on a change of shot reads as a chapter, inside one shot as an
+    // interruption: measured around the best pauses only, then ranked again.
+    const scenes = await this.sceneChangesNear(parent, windows, candidates, notes);
+    if (scenes.length > 0) {
+      candidates = candidateCuts(lines, { chapters, scenes });
+      windows = cutWindows(durationMs, count, settings, candidates);
+    }
+    const chat = this.deps.chatFor(settings.aiProviderId);
     if (!chat) notes.push(`The AI "${settings.aiProviderId}" is not available here: the longest pauses near each target were used.`);
     const seriesName = parent.name;
     const sourceLanguageName = languageName(parent.settings.sourceLanguage || 'auto');
@@ -160,6 +183,39 @@ export class SeriesService {
       }
     }
     return { aiProviderId: settings.aiProviderId, parts, candidates, createdAt: new Date().toISOString(), notes };
+  }
+
+  /** How many of each window's best pauses are looked at for a change of shot. */
+  private static readonly SCENE_CANDIDATES_PER_CUT = 16;
+
+  /**
+   * Changes of shot within 1.5 s of each window's best pauses (a few seconds
+   * of video each, not the film); none when the measure is missing or fails.
+   */
+  private async sceneChangesNear(
+    parent: Project,
+    windows: readonly CutWindow[],
+    candidates: readonly { ms: number; score: number }[],
+    notes: string[],
+  ): Promise<number[]> {
+    const measure = this.deps.sceneChanges;
+    if (!measure || windows.length === 0) return [];
+    const spans = windows.flatMap((w) =>
+      candidates
+        .filter((c) => c.ms >= w.fromMs && c.ms <= w.toMs)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, SeriesService.SCENE_CANDIDATES_PER_CUT)
+        .map((c) => ({ startMs: Math.max(0, c.ms - 1500), endMs: c.ms + 1500 })),
+    );
+    if (spans.length === 0) return [];
+    try {
+      const found = await measure(parent.inputVideoPath, spans);
+      this.deps.logger?.info(`series ${parent.id}: ${found.length} change(s) of shot near ${spans.length} candidate pause(s).`);
+      return found;
+    } catch (err) {
+      notes.push(`Changes of shot were not measured (${toAppError(err).message}): pauses and chapters only.`);
+      return [];
+    }
   }
 
   /** One character sheet from the whole transcript, shared by every part. */

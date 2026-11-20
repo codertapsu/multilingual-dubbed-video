@@ -3,6 +3,7 @@ import {
   chosenOutputBaseName,
   projectOutputBaseName,
   projectOutputFiles,
+  projectOutputThumbnailPath,
   projectOutputVideoPath,
   safeFileStem,
 } from './output.js';
@@ -14,13 +15,16 @@ describe('where a project saves its finished files', () => {
     expect(projectOutputVideoPath(project)).toBe('/home/me/VideoDubber/projects/p1/render/output.mp4');
   });
 
-  it('is named after the project in a chosen folder, video first then subtitles', () => {
+  it('is named after the project in a chosen folder, video first then subtitles and the thumbnail', () => {
     const project = { outputDir: '/Users/me/Dubs/', outputFileName: 'My video.vi' };
     expect(projectOutputFiles(project)).toEqual([
       '/Users/me/Dubs/My video.vi.mp4',
       '/Users/me/Dubs/My video.vi.srt',
       '/Users/me/Dubs/My video.vi.vtt',
+      '/Users/me/Dubs/My video.vi.jpg',
     ]);
+    expect(projectOutputThumbnailPath(project)).toBe('/Users/me/Dubs/My video.vi.jpg');
+    expect(projectOutputThumbnailPath({ outputDir: String.raw`D:\P\render` })).toBe(String.raw`D:\P\render\output.jpg`);
   });
 
   it('keeps a Windows folder path in its own separators (the UI shows it as the user knows it)', () => {

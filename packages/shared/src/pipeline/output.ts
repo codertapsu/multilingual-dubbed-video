@@ -13,8 +13,12 @@
  */
 import type { Project } from '../models/domain.js';
 
-/** The video, then the subtitle sidecars the render step may write beside it. */
-export const PROJECT_OUTPUT_EXTENSIONS = ['.mp4', '.srt', '.vtt'] as const;
+/**
+ * The video, then the subtitle sidecars the render step may write beside it,
+ * and the post's thumbnail. Every one of them moves with the video when the
+ * folder changes, and counts when a name is checked for being taken there.
+ */
+export const PROJECT_OUTPUT_EXTENSIONS = ['.mp4', '.srt', '.vtt', '.jpg'] as const;
 
 /** The base name of the finished files: the chosen-folder name, else "output". */
 export function projectOutputBaseName(project: Pick<Project, 'outputFileName'>): string {
@@ -30,6 +34,11 @@ function joinPath(dir: string, name: string): string {
 /** The finished video of a project. */
 export function projectOutputVideoPath(project: Pick<Project, 'outputDir' | 'outputFileName'>): string {
   return joinPath(project.outputDir, `${projectOutputBaseName(project)}.mp4`);
+}
+
+/** The finished video's thumbnail: a picture for a post (get_outputs), beside the video. */
+export function projectOutputThumbnailPath(project: Pick<Project, 'outputDir' | 'outputFileName'>): string {
+  return joinPath(project.outputDir, `${projectOutputBaseName(project)}.jpg`);
 }
 
 /** Every file a render of this project may write in its output folder (video first). */

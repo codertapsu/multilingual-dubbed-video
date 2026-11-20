@@ -120,9 +120,13 @@ the first warning Facebook shows.
 
 **One-time setup** (Mother Claude 0.16.4 or later, with its browser extension 0.1.5 or later):
 
-1. Update Mother Claude and its browser extension.
-2. In the extension, grant it **Debugger** access and turn on **Allow access to file URLs**: an
-   upload reads the video from your disk.
+1. Update Mother Claude: **Settings → Software updates → Check for updates**. Then the browser
+   extension: download `mother-claude-chrome-0.1.5.zip` (or newer) from
+   [Mother Claude's releases](https://github.com/codertapsu/mother-claude/releases), unzip it into
+   the extension's folder (replacing the old files), and press the reload button on the extension
+   in `chrome://extensions`.
+2. In the extension, grant it **Debugger** access, and under **Details** turn on **Allow access to
+   file URLs**: an upload over 5 MB reads the video straight from your disk.
 3. In Mother Claude's **Browser** settings, set `bilibili.com` to **Read** and `facebook.com` to
    **Act** (and `business.facebook.com` too, to post as a Page).
 4. Add VideoDubber's projects folder, or the save folder of the preset you dub with, to Mother

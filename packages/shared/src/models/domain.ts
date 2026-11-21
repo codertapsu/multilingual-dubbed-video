@@ -247,6 +247,11 @@ export interface ProjectSettings {
   diarizeSpeakers?: number;
   /** Per-speaker TTS voice assignments (used when diarization is on). */
   speakerVoices?: SpeakerVoiceAssignment[];
+  /** Each detected speaker's gender (speaker detection writes it), for the default voices below. */
+  speakerGenders?: Record<string, 'female' | 'male'>;
+  /** The voice of a man / a woman with no voice of their own (cast_voices sets them). */
+  defaultMaleVoiceId?: string;
+  defaultFemaleVoiceId?: string;
   /**
    * Phases whose engine the APP picked for this project (an installed GPU
    * engine, recommendProjectSettings) rather than the user. Speech-to-text and

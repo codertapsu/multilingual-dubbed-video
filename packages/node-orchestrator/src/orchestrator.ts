@@ -21,6 +21,7 @@ import {
   projectOutputFiles,
   projectOutputVideoPath,
   sanitizeSpeakerVoices,
+  sanitizeSpeakerGenders,
   voiceForLine,
   type AlignedSegment,
   type CreateProjectInput,
@@ -583,6 +584,25 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       const voices = sanitizeSpeakerVoices(patch.speakerVoices);
       if (voices) next.speakerVoices = voices;
       else delete next.speakerVoices;
+    }
+    // Default voices per gender, and the genders they follow (cast_voices).
+    if (patch.speakerGenders !== undefined) {
+      const genders = sanitizeSpeakerGenders(patch.speakerGenders);
+      if (genders) next.speakerGenders = genders;
+      else delete next.speakerGenders;
+    }
+    for (const key of ['defaultMaleVoiceId', 'defaultFemaleVoiceId'] as const) {
+      const value = patch[key];
+      if (value === undefined) continue;
+      if (typeof value === 'string' && value.trim() && value.length <= 200) next[key] = value.trim();
+      else delete next[key];
+    }
+    if (
+      patch.speakerVoices !== undefined ||
+      patch.speakerGenders !== undefined ||
+      patch.defaultMaleVoiceId !== undefined ||
+      patch.defaultFemaleVoiceId !== undefined
+    ) {
       await this.markLinesWhoseVoiceMoved(projectId, project.settings, next);
     }
     const saved = await this.deps.store.saveProject({

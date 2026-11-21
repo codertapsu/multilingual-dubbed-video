@@ -38,19 +38,46 @@ export function nextSpeakerId(taken: Iterable<string>): string {
 export interface LineVoiceSettings {
   ttsVoiceId?: string;
   speakerVoices?: readonly { speakerId: string; voiceId: string }[];
+  /** Each detected speaker's gender (speaker detection writes it), for the defaults below. */
+  speakerGenders?: Readonly<Record<string, 'female' | 'male'>>;
+  /**
+   * The voice of a man or a woman with no voice of their own: a long series
+   * had 349 speakers for a table of 100, and every unmapped line fell back to
+   * the one project voice, whatever its speaker's gender (field report B7).
+   */
+  defaultMaleVoiceId?: string;
+  defaultFemaleVoiceId?: string;
 }
 
 /**
  * The voice that speaks a line: its own (set in the editor), else its
- * speaker's, else the project's.
+ * speaker's, else the default voice of its speaker's gender, else the
+ * project's.
  */
 export function voiceForLine(line: { voiceId?: string; speakerId?: string }, settings: LineVoiceSettings): string | undefined {
   if (line.voiceId) return line.voiceId;
   if (line.speakerId) {
     const assigned = settings.speakerVoices?.find((v) => v.speakerId === line.speakerId)?.voiceId;
     if (assigned) return assigned;
+    const gender = settings.speakerGenders?.[line.speakerId];
+    if (gender === 'male' && settings.defaultMaleVoiceId) return settings.defaultMaleVoiceId;
+    if (gender === 'female' && settings.defaultFemaleVoiceId) return settings.defaultFemaleVoiceId;
   }
   return settings.ttsVoiceId;
+}
+
+/** Speaker genders a client may set: valid ids, male or female, at most 1000. Undefined when none. */
+export function sanitizeSpeakerGenders(input: unknown): Record<string, 'female' | 'male'> | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const out: Record<string, 'female' | 'male'> = {};
+  let n = 0;
+  for (const [id, g] of Object.entries(input as Record<string, unknown>)) {
+    if (n >= 1000) break;
+    if (!isSpeakerId(id) || (g !== 'male' && g !== 'female')) continue;
+    out[id] = g;
+    n++;
+  }
+  return n > 0 ? out : undefined;
 }
 
 /**

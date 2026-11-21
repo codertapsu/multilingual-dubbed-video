@@ -314,6 +314,7 @@ export {
   SPEAKER_ID_RE,
   isSpeakerId,
   nextSpeakerId,
+  sanitizeSpeakerGenders,
   sanitizeSpeakerVoices,
   speakerNumber,
   summarizeSpeakers,

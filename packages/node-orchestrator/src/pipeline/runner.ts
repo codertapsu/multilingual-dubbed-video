@@ -130,7 +130,7 @@ import { describeStretch } from '../media.js';
 import type { PipelineMediaService, SeparationService, TimelineSegmentInput } from '../media.js';
 import type { AlignmentService } from '../providers/alignment/whisperxProvider.js';
 import type { DiarizationService } from '../providers/diarization/sherpaDiarizationProvider.js';
-import { detectLineSpeakers, speakerDetectionProgress } from './diarization.js';
+import { detectLineSpeakers, readSpeakerProfiles, speakerDetectionProgress } from './diarization.js';
 import { hasSpeakableText, writeSilentClip } from './speakable.js';
 import { findLoopRanges, repairLoops, type RepairedRange } from './loopRepair.js';
 import { expectedSpeechMs } from '../alignment/clipSpeech.js';
@@ -1026,6 +1026,7 @@ export class PipelineRunner {
     // splits keeps its speaker (pipeline/diarization.ts).
     if (project.settings.diarize) {
       segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal, onProgress);
+      await this.recordSpeakerGenders(project.id, paths);
     }
 
     segments = await this.anchorToSpeech(
@@ -1246,6 +1247,27 @@ export class PipelineRunner {
         message: `Speaker detection failed (${cause}): the dub uses one voice. Re-detect speakers in the editor, or with detect_speakers.`,
       });
       return segments;
+    }
+  }
+
+  /**
+   * Save each detected speaker's gender in the project (settings.speakerGenders),
+   * so the default voice of their gender speaks a speaker with no voice of
+   * their own, in the dub and in the editor alike (voiceForLine). Best effort.
+   */
+  private async recordSpeakerGenders(projectId: string, paths: WorkspacePaths): Promise<void> {
+    try {
+      const profiles = await readSpeakerProfiles(paths.diarizationJson);
+      const genders: Record<string, 'female' | 'male'> = {};
+      for (const p of profiles) if (p.gender === 'male' || p.gender === 'female') genders[p.speakerId] = p.gender;
+      const fresh = await this.deps.store.getProject(projectId);
+      const { speakerGenders: _old, ...rest } = fresh.settings;
+      await this.deps.store.saveProject({
+        ...fresh,
+        settings: Object.keys(genders).length > 0 ? { ...rest, speakerGenders: genders } : rest,
+      });
+    } catch (err) {
+      this.deps.logger.warn(`Could not record the speakers' genders (${toAppError(err).message}).`);
     }
   }
 

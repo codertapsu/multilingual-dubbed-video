@@ -286,6 +286,9 @@ export interface SynthesisGroupsArtifact {
 export interface VoiceSettings {
   ttsVoiceId?: string;
   speakerVoices?: { speakerId: string; voiceId: string }[];
+  speakerGenders?: Record<string, 'female' | 'male'>;
+  defaultMaleVoiceId?: string;
+  defaultFemaleVoiceId?: string;
 }
 
 /**

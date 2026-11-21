@@ -60,6 +60,7 @@ export type {
   EngineKind,
   EnginePackKind,
   EngineAccel,
+  EngineFamilyId,
   EnginePackArtifact,
   EnginePackInfo,
   InstalledEnginePack,

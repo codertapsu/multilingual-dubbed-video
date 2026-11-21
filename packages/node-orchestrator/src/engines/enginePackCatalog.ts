@@ -109,6 +109,8 @@ function whisperCppModelPack(
       'whisper.cpp transcribes with the model each project picks, so it needs this one for projects set to ' +
       `${size}. Downloaded once; offline afterwards. Installs the whisper.cpp engine with it if that is missing.`,
     providerId: 'whisper-cpp-model',
+    family: 'whisper',
+    variantLabel: size,
     version: 'ggml-f16',
     // Offered exactly where a whisper.cpp runtime is, and today that is the
     // CUDA build alone. `cuda` hides these on machines without an NVIDIA GPU,
@@ -263,6 +265,12 @@ export const DIARIZATION_EMBEDDING = {
  *   tts:         VieNeu neural TTS python env (v2 + v3-Turbo).
  *   separation:  audio-separator python env (Demucs / MDX / RoFormer).
  *   alignment:   WhisperX python env (forced alignment + diarization).
+ *
+ * Every pack names its Settings card (`family`) and its short name on it
+ * (`variantLabel`): Settings → Engines & models groups whisper.cpp with its
+ * Whisper models, the TranslateGemma sizes, the VieNeu engines and their builds
+ * from these two fields, never from the ids. engines.test.ts holds every pack
+ * to it.
  */
 export const ENGINE_PACKS: readonly EnginePackInfo[] = [
   // --- whisper.cpp (STT acceleration) --------------------------------------
@@ -279,6 +287,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Accelerated Whisper for NVIDIA GPUs on Windows (cuBLAS). Large speedups over CPU for big models.',
     providerId: 'whisper-cpp',
+    family: 'whisper',
+    variantLabel: 'whisper.cpp',
     version: WHISPER_CPP,
     platforms: ['win32'],
     arch: ['x64'],
@@ -329,6 +339,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Local LLM runtime for high-quality offline translation (TranslateGemma / Qwen3 / Gemma). OpenAI-compatible server; Metal-accelerated on Apple Silicon.',
     providerId: 'local-llm',
+    family: 'llama-cpp',
+    variantLabel: 'llama.cpp',
     version: LLAMA_CPP,
     platforms: ['darwin'],
     arch: ['arm64'],
@@ -357,6 +369,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Local LLM runtime for offline translation on NVIDIA GPUs (Windows). OpenAI-compatible server.',
     providerId: 'local-llm',
+    family: 'llama-cpp',
+    variantLabel: 'llama.cpp',
     version: LLAMA_CPP,
     platforms: ['win32'],
     arch: ['x64'],
@@ -408,6 +422,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Local LLM runtime for offline translation via Vulkan (AMD/Intel GPU) on Windows. OpenAI-compatible server.',
     providerId: 'local-llm',
+    family: 'llama-cpp',
+    variantLabel: 'llama.cpp',
     version: LLAMA_CPP,
     platforms: ['win32'],
     arch: ['x64'],
@@ -434,6 +450,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Local LLM runtime for offline translation on Linux (Vulkan GPU, CPU fallback). OpenAI-compatible server.',
     providerId: 'local-llm',
+    family: 'llama-cpp',
+    variantLabel: 'llama.cpp',
     version: LLAMA_CPP,
     platforms: ['linux'],
     arch: ['x64'],
@@ -468,6 +486,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Google’s open translation model (Gemma 3 based, 55 languages incl. Vietnamese), Q4_K_M GGUF — a large quality jump over Argos for offline MT. The 4B is the CPU-friendly size (~2.5 GB, runs on 8 GB RAM). Needs a llama.cpp runtime pack (installed automatically alongside).',
     providerId: 'local-llm-model',
+    family: 'translategemma',
+    variantLabel: '4B',
     version: 'Q4_K_M',
     accel: 'cpu',
     tier: 'balanced',
@@ -492,6 +512,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'The 12B TranslateGemma (Q4_K_M GGUF, ~7.3 GB) — the quality sweet spot, best on a GPU or Apple Silicon (16 GB+). Usable but slow on CPU-only machines; prefer the 4B there. Needs a llama.cpp runtime pack.',
     providerId: 'local-llm-model',
+    family: 'translategemma',
+    variantLabel: '12B',
     version: 'Q4_K_M',
     accel: 'cpu',
     tier: 'performance',
@@ -516,6 +538,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'The 27B TranslateGemma (Q4_K_M GGUF, ~16.5 GB) — maximum local quality, for workstation-class machines (32 GB+ / strong GPU). Impractical CPU-only. Needs a llama.cpp runtime pack.',
     providerId: 'local-llm-model',
+    family: 'translategemma',
+    variantLabel: '27B',
     version: 'Q4_K_M',
     accel: 'cpu',
     tier: 'workstation',
@@ -547,6 +571,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Google’s Gemma 3 4B instruct (Q4_K_M GGUF, ~2.5 GB) — powers the CONTEXT-AWARE offline translation modes: it builds and follows the project character sheet (cast, glossary, Vietnamese xưng hô/pronoun plan) so pronouns and terminology stay consistent across the whole video. CPU-friendly (8 GB RAM). Needs a llama.cpp runtime pack (installed automatically alongside).',
     providerId: 'local-llm-chat-model',
+    family: 'gemma-chat',
+    variantLabel: 'Gemma 3 4B',
     version: 'Q4_K_M',
     accel: 'cpu',
     tier: 'balanced',
@@ -571,6 +597,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'The 12B Gemma 3 instruct (Q4_K_M GGUF, ~7.3 GB) — higher-quality context-aware translation (better pronoun/register judgement), best on a GPU or Apple Silicon (16 GB+). Prefer the 4B on CPU-only machines. Needs a llama.cpp runtime pack.',
     providerId: 'local-llm-chat-model',
+    family: 'gemma-chat',
+    variantLabel: 'Gemma 3 12B',
     version: 'Q4_K_M',
     accel: 'cpu',
     tier: 'performance',
@@ -602,6 +630,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Google’s newest-generation Gemma 4 12B instruct (Q4_0 GGUF, ~7.2 GB) — a large multilingual quality jump over Gemma 3 for the CONTEXT-AWARE offline translation modes (character sheet, glossary, Vietnamese xưng hô/pronoun plan). Apache 2.0 licensed. Best on a GPU or Apple Silicon (16 GB+). Needs a llama.cpp runtime pack.',
     providerId: 'local-llm-chat-model',
+    family: 'gemma-chat',
+    variantLabel: 'Gemma 4 12B',
     version: 'Q4_0',
     accel: 'cpu',
     tier: 'performance',
@@ -626,6 +656,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Gemma 4’s mixture-of-experts flagship for local use (Q4_0 GGUF, ~14.6 GB): 26B-class translation quality with only ~4B parameters active per token, so it generates at near-12B speed. The highest-quality context-aware offline option. Apache 2.0 licensed. Needs 24 GB+ RAM and a llama.cpp runtime pack.',
     providerId: 'local-llm-chat-model',
+    family: 'gemma-chat',
+    variantLabel: 'Gemma 4 26B-A4B',
     version: 'Q4_0',
     accel: 'cpu',
     tier: 'workstation',
@@ -655,6 +687,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'A far more natural Vietnamese voice than Piper, via VieNeu-TTS v2 (24 kHz): a GGUF speech model + NeuCodec run on CPU through the `vieneu` SDK. Ships 7 reference voices (North/South, male/female); the model (~0.3–0.7 GB) downloads on first use. Optional and CPU-only — Piper stays the fast default.',
     providerId: 'neural-tts-v2',
+    family: 'vieneu',
+    variantLabel: 'VieNeu Neural TTS v2',
     accel: 'cpu',
     tier: 'performance',
     minRamMb: 4096,
@@ -682,6 +716,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'The same VieNeu v3 voices, generated on your NVIDIA graphics card, many lines at a time: on an RTX 3050 it voiced a 21-minute video (593 s of speech) in 2 min 24 s, about 4× faster than the CPU pack. If the card cannot be used (an old driver, say) it keeps working on the CPU. Needs an NVIDIA GPU from the GTX 900 series or newer; downloads PyTorch with CUDA (~2.5 GB, the right build for your card is picked automatically; 3.4–4.5 GB on disk) and the model (~340 MB) on first use.',
     providerId: 'neural-tts',
+    family: 'vieneu',
+    variantLabel: 'VieNeu Neural TTS v3',
     // Bump with the pins in uvRequirements['tts-neural-cuda'] so installed
     // copies are offered the update.
     version: `3.0.5+torch${TORCH_GPU_VERSION}`,
@@ -725,6 +761,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'A far more natural Vietnamese voice than Piper, via VieNeu-TTS v3-Turbo: a 48 kHz speech model that runs torch-free on CPU through ONNX (the `vieneu` SDK). Ships 10 preset Vietnamese voices; the model (~0.5–1 GB) downloads on first use. Optional and CPU-only — Piper stays the fast default.',
     providerId: 'neural-tts',
+    family: 'vieneu',
+    variantLabel: 'VieNeu Neural TTS v3',
     version: '3.0.5',
     accel: 'cpu',
     tier: 'performance',
@@ -762,6 +800,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'The newest VieNeu voices (25 presets across Northern, Central and Southern accents) and voice cloning from a short recording, generated on your NVIDIA graphics card many lines at a time. If the card cannot be used it keeps working on the CPU. Downloads PyTorch with CUDA (~2.5 GB, the right build for your card is picked automatically) and the model (~600 MB) on first use.',
     providerId: 'vieneu-tts',
+    family: 'vieneu',
+    variantLabel: 'VieNeu-TTS 3.8',
     version: `3.8.4+torch${TORCH_GPU_VERSION}`,
     platforms: ['win32'],
     arch: ['x64'],
@@ -783,6 +823,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'The newest VieNeu voices: 25 natural Vietnamese presets across Northern, Central and Southern accents, and voice cloning from a 3–8 second recording, all on the CPU without PyTorch. About three times faster than real time on a recent Windows desktop processor (one with VNNI, which gets the faster int8 model) and eight times on Apple Silicon. The model (~320 MB with int8, ~640 MB otherwise) downloads on first use at a pinned revision. Installs beside the VieNeu v3 pack, whose ten voices stay available.',
     providerId: 'vieneu-tts',
+    family: 'vieneu',
+    variantLabel: 'VieNeu-TTS 3.8',
     version: '3.8.4',
     accel: 'cpu',
     tier: 'performance',
@@ -808,6 +850,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Eight more natural Vietnamese voices (young, middle-aged and older; storytelling, news and commentary styles), on the CPU without PyTorch: the most accurate Vietnamese reader measured. About seven times faster than real time on Apple Silicon and two and a half times on a Windows desktop processor. The model (~900 MB) downloads on first use, then a faster copy of it is built once (about a minute).',
     providerId: 'zerotts',
+    family: 'zerotts',
+    variantLabel: 'ZeroTTS',
     // zerotts 0.1.5, speaking from int8 graphs built at first load.
     version: '0.1.5+int8',
     accel: 'cpu',
@@ -827,6 +871,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'A small, fast neural voice model with 54 voices in nine languages (no Vietnamese), on the CPU, with a native speaking rate. Three (Windows desktop) to seven (Apple Silicon) times faster than real time. The model (~350 MB) downloads on first use.',
     providerId: 'kokoro',
+    family: 'kokoro',
+    variantLabel: 'Kokoro',
     // kokoro-onnx 0.6.1, with misaki 0.9.4 phonemizing Japanese and Chinese.
     version: '0.6.1+misaki-0.9.4',
     accel: 'cpu',
@@ -845,6 +891,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Ten voices that each speak 31 languages, including Vietnamese, Korean, Japanese, Arabic and most European languages (no Chinese), on the CPU, with a native speaking rate. Clear in English and Korean; it reads Vietnamese slowly (lines come out about twice as long), so for Vietnamese VieNeu or ZeroTTS fit the timing better. Its maker has archived it: it works as it is, without updates. The model (~400 MB) downloads on first use.',
     providerId: 'supertonic',
+    family: 'supertonic',
+    variantLabel: 'Supertonic 3',
     version: '3',
     accel: 'cpu',
     tier: 'balanced',
@@ -868,6 +916,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'A massively multilingual neural voice — OmniVoice (k2-fsa), 600+ languages — running the full PyTorch model on the Apple Silicon Metal (MPS) backend (the same pipeline as the official demo, for faithful audio quality). Far broader language coverage than Piper, with “designed” voices (gender + age + pitch attributes). 24 kHz; the model (~3 GB) downloads on first use. Generates around real-time (RTF ~1) on an M-series chip. Optional and Apple-Silicon-only — Piper stays the fast default.',
     providerId: 'omnivoice',
+    family: 'omnivoice',
+    variantLabel: 'OmniVoice',
     platforms: ['darwin'],
     arch: ['arm64'],
     accel: 'metal',
@@ -910,6 +960,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       "Works out who says each line, so every person in the video can get their own voice and the translator knows who is talking to whom. Runs on the processor in about a tenth of the video's length; the models are small (~50 MB).",
     providerId: 'speaker-diarization',
+    family: 'speaker-detection',
+    variantLabel: 'sherpa-onnx',
     // sherpa-onnx 2.0.1 with the ERes2Net embedding (DIARIZATION_EMBEDDING).
     version: '2.0.1+eres2net',
     accel: 'cpu',
@@ -952,6 +1004,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Runs audio models, such as music and voice separation, on the graphics card (NVIDIA, AMD or Intel) through Vulkan. Installed together with the models that need it.',
     providerId: 'audio-cpp',
+    family: 'separation',
+    variantLabel: 'audio.cpp',
     version: AUDIOCPP,
     platforms: ['win32'],
     arch: ['x64'],
@@ -977,6 +1031,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Runs audio models, such as music and voice separation, on the processor, for computers without a usable graphics card. Installed together with the models that need it, also beside the graphics-card build as its fallback (that build cannot run on the processor itself).',
     providerId: 'audio-cpp',
+    family: 'separation',
+    variantLabel: 'audio.cpp',
     version: AUDIOCPP,
     platforms: ['win32'],
     arch: ['x64'],
@@ -1002,6 +1058,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Runs audio models, such as music and voice separation, on Apple Silicon through Metal. Installed together with the models that need it.',
     providerId: 'audio-cpp',
+    family: 'separation',
+    variantLabel: 'audio.cpp',
     version: AUDIOCPP,
     platforms: ['darwin'],
     arch: ['arm64'],
@@ -1027,6 +1085,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       "Splits the original soundtrack into the voices and everything else, so “Replace the voices, keep the music” keeps the score and sound effects at full volume under the dub instead of turning them down, and a voice copied from the video is taken from the speech without the music under it. Takes about a tenth of the video's length on a graphics card or Apple Silicon, about the video's length on a processor alone.",
     providerId: 'audio-cpp-separation-model',
+    family: 'separation',
+    variantLabel: 'HTDemucs',
     version: 'htdemucs-q8_0@7a103b33',
     accel: 'cpu',
     tier: 'balanced',
@@ -1052,6 +1112,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Separates the original into vocals + music/effects so the dub can replace only the voices and keep the original score. Cleaner transcripts on noisy audio, too.',
     providerId: 'audio-separator',
+    family: 'separation',
+    variantLabel: 'audio-separator',
     accel: 'cpu',
     tier: 'performance',
     minRamMb: 8192,
@@ -1069,6 +1131,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       'Word-accurate timestamps (±50 ms vs ±500 ms) for tighter dub sync, plus speaker diarization to assign a distinct voice per speaker.',
     providerId: 'whisperx',
+    family: 'alignment',
+    variantLabel: 'WhisperX',
     accel: 'cpu',
     tier: 'workstation',
     minRamMb: 16384,
@@ -1087,6 +1151,8 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
     description:
       "A self-hosted LibreTranslate API server for offline translation. Its engine IS Argos Translate, so quality matches the built-in Argos provider — it reuses the language packs you've already installed (Settings → Translation packs / onboarding), so no extra model download. Optional; Argos stays the default.",
     providerId: 'libretranslate',
+    family: 'libretranslate',
+    variantLabel: 'LibreTranslate',
     version: '1.6.0',
     accel: 'cpu',
     // Light: it's Argos + a Flask server (CTranslate2 on CPU), so it runs on

@@ -95,6 +95,33 @@ describe('engine pack catalog', () => {
     }
   });
 
+  it('every pack names its Settings family and its short name there, consistently per engine', () => {
+    // Settings → Engines & models groups packs by these two fields alone. A pack
+    // without them falls out of its family onto a card of its own, which is the
+    // flat list the field report of 2026-11-21 asked to be rid of.
+    const familyOf = new Map<string, string>();
+    const labelOf = new Map<string, string>();
+    for (const p of ENGINE_PACKS) {
+      expect(p.family, `${p.id} family`).toBeTruthy();
+      expect(p.variantLabel?.trim(), `${p.id} variantLabel`).toBeTruthy();
+      // One provider, one family: a model line never straddles two cards.
+      const family = familyOf.get(p.providerId);
+      if (family !== undefined) expect(p.family, `${p.id} family vs its provider's`).toBe(family);
+      else familyOf.set(p.providerId, p.family!);
+      // The builds of one engine (CPU, CUDA, Vulkan, Metal) share its name and
+      // differ by accel; model packs are one model each.
+      if (p.packKind === 'model') continue;
+      const label = labelOf.get(p.providerId);
+      if (label !== undefined) expect(p.variantLabel, `${p.id} vs the other builds`).toBe(label);
+      else labelOf.set(p.providerId, p.variantLabel!);
+    }
+    // The three families the report named, as it named them.
+    const variants = (family: string) => ENGINE_PACKS.filter((p) => p.family === family).map((p) => p.variantLabel);
+    expect(variants('whisper')).toEqual(expect.arrayContaining(['whisper.cpp', 'large-v3', 'large-v3-turbo']));
+    expect(variants('translategemma')).toEqual(['4B', '12B', '27B']);
+    expect(new Set(variants('vieneu'))).toEqual(new Set(['VieNeu-TTS 3.8', 'VieNeu Neural TTS v3', 'VieNeu Neural TTS v2']));
+  });
+
   it('OmniVoice TTS pack is Apple-Silicon-only (metal) with the omnivoice provider', () => {
     const p = findPack('tts-omnivoice')!;
     expect(p.providerId).toBe('omnivoice');

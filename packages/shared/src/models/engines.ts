@@ -34,6 +34,32 @@ export type EnginePackKind = 'binary' | 'python-uv' | 'model';
 /** Hardware acceleration a pack build targets. */
 export type EngineAccel = 'cpu' | 'metal' | 'coreml' | 'cuda' | 'vulkan' | 'mps';
 
+/**
+ * The card Settings → Engines & models shows a pack on: one model line with its
+ * runtime and builds. whisper.cpp and the Whisper models it runs are one family,
+ * the three TranslateGemma sizes another, VieNeu-TTS 3.8 and VieNeu Neural TTS
+ * v3 (each with a processor and an NVIDIA build) a third. Settings listed the
+ * packs flat, twenty-odd rows in catalog order, and the field report of
+ * 2026-11-21 asked for exactly this grouping.
+ *
+ * The UI must still show a family it does not know (a newer backend) as a card
+ * of its own, so it reads this as a plain string at runtime.
+ */
+export type EngineFamilyId =
+  | 'whisper'
+  | 'llama-cpp'
+  | 'translategemma'
+  | 'gemma-chat'
+  | 'libretranslate'
+  | 'vieneu'
+  | 'zerotts'
+  | 'kokoro'
+  | 'supertonic'
+  | 'omnivoice'
+  | 'speaker-detection'
+  | 'separation'
+  | 'alignment';
+
 /** A single downloadable file within a pack (archive or loose file). */
 export interface EnginePackArtifact {
   /** Download URL. */
@@ -66,6 +92,15 @@ export interface EnginePackInfo {
   description: string;
   /** Provider id this pack enables (matches the provider registry). */
   providerId: string;
+  /** The Settings card this pack belongs to (see {@link EngineFamilyId}). Absent: a card of its own. */
+  family?: EngineFamilyId;
+  /**
+   * The pack's short name inside its family, the same in every language: the
+   * model for a model pack ("large-v3", "12B", "Gemma 4 12B"), the engine for a
+   * runtime ("whisper.cpp", "VieNeu-TTS 3.8"). The builds of one engine share
+   * it and differ by {@link accel}, which the UI names in the user's language.
+   */
+  variantLabel?: string;
   /**
    * Version of the artifacts this pack ships (upstream release tag, pinned SDK
    * version, or model revision). Recorded at install time; when the catalog's

@@ -1136,7 +1136,7 @@ export class PipelineRunner {
       } finally {
         await fsp.rm(clipPath, { force: true }).catch(() => undefined);
         done += 1;
-        await onProgress(1, { key: 'step-detail.loops', params: { done, total: ranges.length }, text: `Checking transcription loops ${done}/${ranges.length}` });
+        await onProgress(0.97, { key: 'step-detail.loops', params: { done, total: ranges.length }, text: `Checking transcription loops ${done}/${ranges.length}` });
       }
     };
     const outcome = await repairLoops(segments, ranges, { redecode, expectedSpeechMs }, signal);

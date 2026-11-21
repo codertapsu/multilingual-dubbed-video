@@ -40,10 +40,14 @@ export interface LoopRange {
   phrase?: string;
 }
 
-/** Credit lines Whisper writes over music, never said in a video. */
-const STRONG_PHRASES = ['请不吝', 'amara', '优优独播', 'yoyo', '明镜', '中文字幕', '字幕by', '字幕組', '字幕组', 'subtitlesby'];
+/**
+ * Credit lines Whisper writes over music, never said in a video. Whole credit
+ * phrases only: "请不吝" alone is real dialogue ("请不吝赐教"), and so is "明镜"
+ * ("心如明镜").
+ */
+const STRONG_PHRASES = ['请不吝点赞', 'amaraorg', '优优独播', '中文字幕', '字幕by', '字幕組', '字幕组', 'subtitlesby'];
 /** Words a drama can say for real: they count twice in a line, or where nobody speaks. */
-const WEAK_PHRASES = ['点赞', '订阅', '转发', '打赏', '字幕', '感谢观看', '谢谢观看'];
+const WEAK_PHRASES = ['点赞', '订阅', '转发', '打赏', '字幕', '感谢观看', '谢谢观看', '明镜', 'yoyo', 'amara'];
 
 /** A line's text for comparing: lower case, without punctuation, symbols or spaces. Pure. */
 export function normalizeLine(text: string): string {

@@ -57,6 +57,14 @@ describe('findLoopRanges', () => {
     ]);
   });
 
+  it('keeps real dialogue that shares words with the credits', () => {
+    const t = lines([
+      [0, 2000, '请不吝赐教'],
+      [3000, 5000, '大人心如明镜'],
+    ]);
+    expect(findLoopRanges(t)).toEqual([]);
+  });
+
   it('normalizes punctuation, symbols and zero-width characters away', () => {
     expect(normalizeLine('  好！ 好？​')).toBe('好好');
     expect(creditPhrase('字幕')).toBeUndefined();

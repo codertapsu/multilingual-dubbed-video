@@ -50,6 +50,14 @@ export interface ActivityTask {
   updatedAt: number;
 }
 
+/**
+ * An engine pack's or a model's task, as {@link ActivityService.engine} and
+ * {@link ActivityService.setupItem} return it. These only run, finish or fail:
+ * waiting is for dubs and downloads in a queue. The narrower type keeps the
+ * rows that read them (Settings' install-state.ts) exhaustive over three states.
+ */
+export type InstallTask = ActivityTask & { kind: 'engine' | 'model'; state: 'running' | 'done' | 'failed' };
+
 /** A short notice in the corner: a download finished, or failed. */
 export interface Toast {
   id: number;
@@ -143,13 +151,13 @@ export class ActivityService {
   }
 
   /** An engine pack's install, when one is in progress (or just ended). */
-  engine(packId: string): ActivityTask | undefined {
-    return this._tasks().get(`engine:${packId}`);
+  engine(packId: string): InstallTask | undefined {
+    return asInstallTask(this._tasks().get(`engine:${packId}`));
   }
 
   /** A model download (`whisper:large-v3`…), when one is in progress (or just ended). */
-  setupItem(item: string): ActivityTask | undefined {
-    return this._tasks().get(`setup:${item}`);
+  setupItem(item: string): InstallTask | undefined {
+    return asInstallTask(this._tasks().get(`setup:${item}`));
   }
 
   /**
@@ -706,4 +714,10 @@ export class ActivityService {
       if (t && t.state === 'done' && Date.now() - t.updatedAt >= DONE_TTL_MS - 50) this.dismiss(id);
     }, DONE_TTL_MS);
   }
+}
+
+/** An `engine:`/`setup:` task as the install it is (they are only ever written that way). */
+function asInstallTask(task: ActivityTask | undefined): InstallTask | undefined {
+  if (!task || task.state === 'waiting' || (task.kind !== 'engine' && task.kind !== 'model')) return undefined;
+  return task as InstallTask;
 }

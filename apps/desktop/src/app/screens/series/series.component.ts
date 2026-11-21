@@ -1,14 +1,16 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
-import type { SeriesView } from '@videodubber/shared';
+import type { SeriesAiOption, SeriesView } from '@videodubber/shared';
 
 import { IpcService } from '../../core/ipc/ipc.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { toAppError } from '../../core/state/project.store';
 import type { AppError } from '../../core/models';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
+import { StatusBadgeComponent } from '../../shared/status-badge/status-badge.component';
 import { formatClock, parseClock } from '../../shared/branding/branding-form.component';
+import { partBadge, partStarts, seriesAiName, startReport, type StartReportLine } from './series-view';
 
 interface Row {
   index: number;
@@ -30,7 +32,7 @@ interface Row {
 @Component({
   selector: 'vd-series',
   standalone: true,
-  imports: [FormsModule, RouterLink, TranslatePipe, ErrorBannerComponent],
+  imports: [FormsModule, RouterLink, TranslatePipe, ErrorBannerComponent, StatusBadgeComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="page stack">
@@ -38,7 +40,7 @@ interface Row {
         <h1>{{ view()?.name ?? '…' }}</h1>
         <p class="muted">{{ 'series.subtitle' | translate }}</p>
       </div>
-      <vd-error-banner [error]="error()" (dismiss)="error.set(null)" />
+      <vd-error-banner [error]="error() ?? loadError()" (dismiss)="dismissError()" />
 
       @if (view(); as v) {
         <div class="card stack">
@@ -57,12 +59,16 @@ interface Row {
               <p>{{ 'series.planning' | translate }}</p>
             }
             @case ('failed') {
-              <p class="test-fail">{{ v.error?.message }}</p>
-              <button type="button" class="btn" (click)="replan()" [disabled]="busy()">{{ 'series.try-again' | translate }}</button>
+              <!-- The AI could not plan the cuts: the shared banner says why and how to fix it. -->
+              <p>{{ 'series.plan-failed' | translate }}</p>
+              <vd-error-banner [error]="planErrorHidden() ? null : planError()" (dismiss)="planErrorHidden.set(true)" />
+              <div>
+                <button type="button" class="btn" (click)="replan()" [disabled]="busy()">{{ 'series.try-again' | translate }}</button>
+              </div>
             }
             @default {
               <p class="muted">
-                {{ 'series.settings-line' | translate: { min: v.settings.minMinutes, max: v.settings.maxMinutes, ai: v.settings.aiProviderId, recap: v.settings.recapSec } }}
+                {{ 'series.settings-line' | translate: { min: v.settings.minMinutes, max: v.settings.maxMinutes, ai: aiName(), recap: v.settings.recapSec } }}
               </p>
             }
           }
@@ -100,10 +106,11 @@ interface Row {
                       <span class="muted">{{ r.startText }}</span>
                     }
                     <span class="muted">– {{ clock(r.endMs) }}</span>
-                    @if (r.status) {
-                      <span class="badge" [class.badge-completed]="r.status === 'completed'" [class.badge-failed]="r.status === 'failed'">
-                        {{ r.status }} @if (r.status === 'running') { {{ r.progressPercent }}% }
-                      </span>
+                    @if (badge(r.status); as b) {
+                      <vd-status-badge [status]="b" />
+                      @if (b === 'running' && r.progressPercent !== undefined) {
+                        <span class="mono muted">{{ r.progressPercent }}%</span>
+                      }
                     }
                   </div>
                   @if (v.state === 'review') {
@@ -134,6 +141,19 @@ interface Row {
                 <button type="button" class="btn" (click)="pauseAll()" [disabled]="busy() || !anyActive()">{{ 'series.pause-all' | translate }}</button>
               </div>
               <p class="hint muted">{{ 'series.all-parts-hint' | translate }}</p>
+              <!-- What Start did to each part: one that could not start says why, and opens. -->
+              @if (startLines().length > 0) {
+                <ul class="stack-sm report">
+                  @for (line of startLines(); track line.projectId) {
+                    <li [class.failed]="line.failed">
+                      {{ line.key | translate: line.params }}
+                      @if (line.failed) {
+                        <a [routerLink]="['/project', line.projectId, 'processing']">{{ 'series.start-open' | translate }}</a>
+                      }
+                    </li>
+                  }
+                </ul>
+              }
             }
           </div>
 
@@ -203,6 +223,21 @@ interface Row {
         padding-left: var(--vd-sp-5);
         font-size: 0.85rem;
       }
+      .report li.failed {
+        color: var(--vd-danger);
+      }
+      /* Why a series asked to start by itself stopped for review. */
+      .banner-warning {
+        color: var(--vd-warning);
+        background: var(--vd-warning-bg);
+        border: 1px solid var(--vd-warning);
+        border-radius: var(--vd-radius-sm);
+        padding: var(--vd-sp-3) var(--vd-sp-4);
+      }
+      /* What the plan could not do as asked (the AI did not answer for a cut). */
+      .warn-text {
+        color: var(--vd-warning);
+      }
     `,
   ],
 })
@@ -213,11 +248,28 @@ export class SeriesComponent implements OnInit, OnDestroy {
   protected readonly view = signal<SeriesView | null>(null);
   protected readonly rows = signal<Row[]>([]);
   protected readonly busy = signal(false);
+  /** What an action got back. */
   protected readonly error = signal<AppError | null>(null);
+  /** The page's own reads failing; gone once a later read works (it reads every 3 s). */
+  protected readonly loadError = signal<AppError | null>(null);
+  /** Why the AI could not plan the cuts, as the server keeps it. */
+  protected readonly planError = signal<AppError | null>(null);
+  protected readonly planErrorHidden = signal(false);
   protected readonly allDone = computed(() => this.rows().every((r) => r.status === 'completed'));
   protected readonly anyActive = computed(() => this.rows().some((r) => r.status === 'running' || r.status === 'queued'));
   /** What the last series-wide action did, part by part. */
   protected readonly report = signal<string[]>([]);
+  /** What "Start every part" did, part by part (series-view.ts). */
+  protected readonly startLines = signal<StartReportLine[]>([]);
+  /** The AIs that can choose cuts, for their names (null until they load). */
+  private readonly aiOptions = signal<SeriesAiOption[] | null>(null);
+  private aiOptionsLoading = false;
+  /** The AI the series uses, by name rather than id. */
+  protected readonly aiName = computed(() => {
+    const v = this.view();
+    return v ? seriesAiName(v.settings.aiProviderId, this.aiOptions() ?? []) : '';
+  });
+  protected readonly badge = partBadge;
   protected rebuildForce = false;
   private readonly translate = inject(TranslateService);
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -246,8 +298,13 @@ export class SeriesComponent implements OnInit, OnDestroy {
   private async load(resetRows: boolean): Promise<void> {
     try {
       const v = await this.ipc.getSeries(this.id());
+      this.loadError.set(null);
       const changedState = this.view()?.state !== v.state;
       this.view.set(v);
+      // The same failure arrives with every read: the banner keeps the one it shows.
+      const planError = v.state === 'failed' ? (v.error ?? null) : null;
+      if (!sameError(planError, this.planError())) this.planError.set(planError);
+      if (this.aiOptions() === null) void this.loadAiOptions();
       // While reviewing, keep what the user is typing; otherwise follow the server.
       if (resetRows || changedState || v.state !== 'review') {
         this.rows.set(
@@ -267,8 +324,28 @@ export class SeriesComponent implements OnInit, OnDestroy {
         );
       }
     } catch (err) {
-      this.error.set(toAppError(err));
+      // Read every 3 s: a failure that persists is not announced again each time.
+      const e = toAppError(err);
+      if (!sameError(e, this.loadError())) this.loadError.set(e);
     }
+  }
+
+  /** Best-effort: until the names load, the settings line shows the AI's id. */
+  private async loadAiOptions(): Promise<void> {
+    if (this.aiOptionsLoading) return;
+    this.aiOptionsLoading = true;
+    try {
+      this.aiOptions.set(await this.ipc.seriesAiOptions());
+    } catch {
+      /* the next read tries again */
+    } finally {
+      this.aiOptionsLoading = false;
+    }
+  }
+
+  protected dismissError(): void {
+    this.error.set(null);
+    this.loadError.set(null);
   }
 
   private edits(): { cuts: number[]; titles: { title: string; summary: string }[] } {
@@ -288,22 +365,25 @@ export class SeriesComponent implements OnInit, OnDestroy {
 
   protected async makeAndStart(): Promise<void> {
     if (!(await this.save())) return;
-    await this.run(async () => {
-      await this.ipc.startSeries(this.id());
-      await this.load(true);
-    });
+    await this.startAll();
   }
 
+  /** Start (or continue) every part, then say what happened to each. */
   protected startAll(): Promise<boolean> {
     return this.run(async () => {
-      await this.ipc.startSeries(this.id());
+      this.startLines.set([]);
+      const answer = await this.ipc.startSeries(this.id());
+      // Reloaded first: parts made just now get their numbers from the view.
       await this.load(true);
+      const parts = this.view()?.parts ?? [];
+      this.startLines.set(startReport(partStarts(answer), (id) => parts.find((p) => p.projectId === id)?.index));
     });
   }
 
   /** Pause every part that is dubbing or waiting, in order (they continue in that order). */
   protected pauseAll(): Promise<boolean> {
     return this.run(async () => {
+      this.startLines.set([]);
       await this.ipc.pausePipeline(this.view()?.parentId ?? this.id());
       await this.load(true);
     });
@@ -343,6 +423,7 @@ export class SeriesComponent implements OnInit, OnDestroy {
 
   protected replan(): Promise<boolean> {
     return this.run(async () => {
+      this.planErrorHidden.set(false);
       await this.ipc.replanSeries(this.id());
       await this.load(true);
     });
@@ -362,4 +443,9 @@ export class SeriesComponent implements OnInit, OnDestroy {
       this.busy.set(false);
     }
   }
+}
+
+/** Two errors that say the same thing (null for none). */
+function sameError(a: AppError | null, b: AppError | null): boolean {
+  return a?.code === b?.code && a?.message === b?.message;
 }

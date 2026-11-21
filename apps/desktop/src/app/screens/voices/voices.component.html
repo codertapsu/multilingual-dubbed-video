@@ -72,9 +72,15 @@
                   <option value="female">{{ 'voices.female' | translate }}</option>
                 </select>
                 @if (!p.gender?.confirmed) {
-                  <span class="chip chip-warn" [title]="'voices.my-gender-unconfirmed-help' | translate">{{ 'voices.my-gender-unconfirmed' | translate }}</span>
+                  <span class="chip chip-warn" [title]="'voices.my-gender-unconfirmed-help' | translate">
+                    {{ (p.gender ? 'voices.my-gender-suggested' : 'voices.my-gender-unconfirmed') | translate }}
+                  </span>
                   @if (p.gender) {
                     <button type="button" class="btn btn-ghost btn-sm" (click)="setGender(p, p.gender.value)">{{ 'voices.my-gender-confirm' | translate }}</button>
+                  } @else {
+                    <button type="button" class="btn btn-ghost btn-sm" (click)="suggestGender(p)" [disabled]="suggesting() === p.id" [title]="'voices.my-gender-suggest-help' | translate">
+                      {{ (suggesting() === p.id ? 'voices.my-gender-suggesting' : 'voices.my-gender-suggest') | translate }}
+                    </button>
                   }
                 }
               </label>

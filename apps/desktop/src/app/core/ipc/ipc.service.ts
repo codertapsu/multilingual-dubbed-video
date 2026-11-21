@@ -621,8 +621,43 @@ export class IpcService {
    * POST /projects/:id/speakers/detect — detect who says each line again, on
    * the lines as they are (no new transcript). `numSpeakers` when known.
    */
-  detectSpeakers(projectId: string, numSpeakers?: number): Promise<TimelineDocument> {
+  detectSpeakers(projectId: string, numSpeakers?: number): Promise<{ started: boolean; running?: boolean }> {
     return this.http('POST', `/projects/${encodeURIComponent(projectId)}/speakers/detect`, numSpeakers ? { numSpeakers } : {});
+  }
+
+  /** GET /projects/:id/speakers — who speaks (talk time, pitch, gender, voice) and the detection job's state. */
+  getSpeakers(projectId: string): Promise<{
+    speakers: {
+      speakerId: string;
+      minutes: number;
+      lines: number;
+      f0Hz?: number;
+      gender?: 'female' | 'male' | 'unknown';
+      genderConfidence?: number;
+      samples: { id: string; text: string }[];
+      voiceId?: string;
+    }[];
+    job?: { state: 'running' | 'done' | 'failed'; done: number; total: number; error?: string; speakers?: number; lowConfidence?: number };
+    defaults?: { male?: string; female?: string };
+  }> {
+    return this.http('GET', `/projects/${encodeURIComponent(projectId)}/speakers`);
+  }
+
+  /** POST /projects/:id/speakers/cast — voices for the speakers by gender (a proposal, or saved with `apply`). */
+  castVoices(
+    projectId: string,
+    body: { apply?: boolean; allowWithoutClones?: boolean; swaps?: { speakerId: string; voiceId: string }[] },
+  ): Promise<{
+    assignments: { speakerId: string; voiceId: string; voiceName: string; by: string }[];
+    defaults: { male?: string; female?: string };
+    unassigned: string[];
+    unconfirmed: { voiceId: string; name: string }[];
+    notes: string[];
+    applied?: boolean;
+    refused?: boolean;
+    message?: string;
+  }> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/speakers/cast`, body);
   }
 
   /**
@@ -665,6 +700,11 @@ export class IpcService {
     gender?: 'female' | 'male';
   }): Promise<VoiceProfile> {
     return this.http('POST', '/voice-profiles', { engine: 'vieneu', ...body });
+  }
+
+  /** POST /voice-profiles/:id/suggest-gender — a suggestion from voice prints, saved unconfirmed. */
+  suggestVoiceGender(id: string): Promise<{ suggested?: 'female' | 'male' | null; confidence?: number; reason?: string; confirmed?: boolean }> {
+    return this.http('POST', `/voice-profiles/${encodeURIComponent(id)}/suggest-gender`, {});
   }
 
   renameVoiceProfile(id: string, patch: { name?: string; note?: string; gender?: 'female' | 'male' }): Promise<VoiceProfile> {

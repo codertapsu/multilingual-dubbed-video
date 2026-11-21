@@ -48,7 +48,7 @@ import {
   type TtsSegment,
 } from '@videodubber/shared';
 import { alignSegments, type AlignSettings } from './alignment/align.js';
-import { assignSpeakers, cachedSpeakerTurns } from './pipeline/diarization.js';
+import { copySpeakerLabels, redetectSpeakers, remapSpeakerVoices } from './pipeline/diarization.js';
 import { measureClip, type ClipTiming } from './alignment/clipSpeech.js';
 import {
   rateForGroup,
@@ -183,6 +183,21 @@ const FALLBACK_PROFILE: SystemProfile = {
 /** How long to wait before retrying a dispatch blocked by a booting worker. */
 const QUEUE_RETRY_MS = 2000;
 
+/** A speaker detection job outside a run (the editor's Detect, MCP detect_speakers). */
+export interface SpeakerJob {
+  state: 'running' | 'done' | 'failed';
+  /** Parts of the audio done, of the total (one part under 20 minutes). */
+  done: number;
+  total: number;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+  speakers?: number;
+  lowConfidence?: number;
+  remapped?: number;
+  abort: AbortController;
+}
+
 /** A tracked, in-flight pipeline run. */
 interface RunningJob {
   projectId: string;
@@ -314,6 +329,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   /** Pending re-pump for a transient dispatch failure (worker still booting). */
   private queueRetryTimer: ReturnType<typeof setTimeout> | undefined;
   /** In-flight editor actions per owner id, so the LAST one frees the lane. */
+  /** Speaker detection jobs outside runs (startSpeakerDetection), by project. */
+  private readonly speakerJobs = new Map<string, SpeakerJob>();
   /** Jobs in progress per lane owner outside a run (`editor:<id>`, `preview:<voice>`). */
   private readonly laneRefs = new Map<string, number>();
   /**
@@ -381,7 +398,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    */
   busyProjects(): string[] {
     const editing = [...this.laneRefs.keys()].filter((owner) => owner.startsWith('editor:')).map((owner) => owner.slice('editor:'.length));
-    return [...new Set([...this.running.keys(), ...this.queued, ...this.movingOutput, ...editing])];
+    const detecting = [...this.speakerJobs].filter(([, j]) => j.state === 'running').map(([id]) => id);
+    return [...new Set([...this.running.keys(), ...this.queued, ...this.movingOutput, ...editing, ...detecting])];
   }
 
   /**
@@ -429,6 +447,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    */
   async runPipeline(projectId: string): Promise<RunScheduleResult> {
     this.assertNotMoving(projectId);
+    if (this.speakerJobs.get(projectId)?.state === 'running') {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'Speakers are being detected in this project: start the dub when that is done.');
+    }
     if (this.running.has(projectId)) return { started: true, queued: false };
     if (this.queued.has(projectId)) return { started: false, queued: true, position: this.queuePosition(projectId) };
     const project = await this.deps.store.getProject(projectId);
@@ -616,48 +637,124 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
   /**
    * Detect who says each line again, on the lines as they are: no new
-   * transcript, no timing change (lines are only labelled), translations kept.
-   * The speaker count is remembered (and detection switched on) for later
-   * re-dubs. Lines whose voice moves with their new speaker are marked for
+   * transcript, no timing change (lines are only labelled), translations
+   * kept. A JOB: it returns at once and runs in the background (hours of
+   * audio take an hour or more: 10-minute parts, resumable), followed with
+   * {@link speakerJob} (GET /projects/:id/speakers, the editor, get_speakers).
+   * Each line's own voice is kept; voices chosen per speaker follow their
+   * people to the new ids (matched by voice print); the speakers' genders are
+   * recorded for the default voices; lines whose voice moves are marked for
    * re-voicing. Throws ENGINE_PACK_MISSING without the engine.
    */
-  async redetectSpeakers(projectId: string, opts: { numSpeakers?: number } = {}): Promise<TimelineDocument> {
+  async startSpeakerDetection(projectId: string, opts: { numSpeakers?: number } = {}): Promise<{ started: boolean; running?: boolean }> {
     this.assertNotRunning(projectId, 'detect speakers');
+    if (this.queued.has(projectId)) {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'This project is waiting in the dubbing queue: take it out of the queue first.');
+    }
+    if (this.speakerJobs.get(projectId)?.state === 'running') return { started: false, running: true };
     const service = this.deps.diarization;
     if (!service || !(await service.available().catch(() => false))) {
       throw new AppErrorException('ENGINE_PACK_MISSING', 'Speaker detection is not installed.', {
         remediation: 'Install "Speaker detection" in Settings → Engines (about 135 MB), then try again.',
       });
     }
-    const n = Number(opts.numSpeakers);
-    const numSpeakers = Number.isInteger(n) && n >= 2 && n <= 20 ? n : undefined;
-    const project = await this.deps.store.getProject(projectId);
     const paths = this.deps.store.paths(projectId);
-    const turns = await cachedSpeakerTurns(service, paths.original16kMonoWav, paths.diarizationJson, numSpeakers ? { numSpeakers } : {});
-    if (!turns) throw new AppErrorException('ENGINE_PACK_MISSING', 'Speaker detection is not installed.');
+    if (!(await this.tryReadSegments(paths.sourceJson))) {
+      throw new AppErrorException('INVALID_EDIT', 'This project has no transcript yet: speakers are detected over its lines.');
+    }
+    const n = Number(opts.numSpeakers);
+    const numSpeakers = Number.isInteger(n) && n >= 2 && n <= 50 ? n : undefined;
+    const job: SpeakerJob = { state: 'running', done: 0, total: 0, startedAt: new Date().toISOString(), abort: new AbortController() };
+    this.speakerJobs.set(projectId, job);
+    void this.runSpeakerDetection(projectId, numSpeakers, job)
+      .then((outcome) => {
+        Object.assign(job, { state: 'done', finishedAt: new Date().toISOString(), ...outcome });
+      })
+      .catch((err: unknown) => {
+        Object.assign(job, { state: 'failed', finishedAt: new Date().toISOString(), error: toAppError(err).message });
+        this.deps.bus.get(projectId).emit({ type: 'log', level: 'warn', message: `Speaker detection failed: ${toAppError(err).message}`, ts: new Date().toISOString() });
+      });
+    return { started: true };
+  }
+
+  /** Where a speaker detection job is (undefined: none since the app started). */
+  speakerJob(projectId: string): Omit<SpeakerJob, 'abort'> | undefined {
+    const job = this.speakerJobs.get(projectId);
+    if (!job) return undefined;
+    const { abort: _abort, ...rest } = job;
+    return rest;
+  }
+
+  private async runSpeakerDetection(
+    projectId: string,
+    numSpeakers: number | undefined,
+    job: SpeakerJob,
+  ): Promise<{ speakers: number; lowConfidence: number; remapped: number }> {
+    const service = this.deps.diarization!;
+    const paths = this.deps.store.paths(projectId);
+    const source = (await this.tryReadSegments(paths.sourceJson)) ?? [];
+    const found = await redetectSpeakers({
+      service,
+      audioPath: paths.original16kMonoWav,
+      cachePath: paths.diarizationJson,
+      checkpointDir: paths.diarizationChunksDir,
+      segments: source,
+      ...(numSpeakers ? { numSpeakers } : {}),
+      onProgress: (done, total) => {
+        job.done = done;
+        job.total = total;
+      },
+      signal: job.abort.signal,
+    });
+    if (!found) throw new AppErrorException('ENGINE_PACK_MISSING', 'Speaker detection is not installed.');
+    const project = await this.deps.store.getProject(projectId);
+    const genders: Record<string, 'female' | 'male'> = {};
+    for (const sp of found.speakers) if (sp.gender === 'male' || sp.gender === 'female') genders[sp.speakerId] = sp.gender;
+    // Voices follow their people to the new ids. A voice set for an id no
+    // line carried yet (set ahead over MCP) stays on that id.
+    const remapped = remapSpeakerVoices(project.settings.speakerVoices, found.remap);
+    const hadLines = new Set(source.map((l) => l.speakerId).filter(Boolean));
+    const ahead = (project.settings.speakerVoices ?? []).filter(
+      (v) => !hadLines.has(v.speakerId) && !(v.speakerId in found.remap) && !remapped.some((r) => r.speakerId === v.speakerId),
+    );
+    const voices = [...remapped, ...ahead].sort((x, y) => x.speakerId.localeCompare(y.speakerId));
+    const { speakerGenders: _g, speakerVoices: _v, diarizeSpeakers: _n, ...rest } = project.settings;
+    const settings: ProjectSettings = {
+      ...rest,
+      diarize: true,
+      ...(numSpeakers ? { diarizeSpeakers: numSpeakers } : {}),
+      ...(voices.length > 0 ? { speakerVoices: voices } : {}),
+      ...(Object.keys(genders).length > 0 ? { speakerGenders: genders } : {}),
+    };
     await this.artifactLock.run(projectId, async () => {
-      const source = await this.tryReadSegments(paths.sourceJson);
-      if (!source) throw new AppErrorException('INVALID_EDIT', 'This project has no transcript yet.');
-      const labelled = assignSpeakers(source, turns);
-      await writeJsonAtomic(paths.sourceJson, { segments: labelled });
+      await writeJsonAtomic(paths.sourceJson, { segments: found.segments });
+      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(found.segments)));
       const translated = await this.tryReadSegments(paths.translatedJson);
       if (translated) {
-        const byId = new Map(labelled.map((s) => [s.id, s.speakerId]));
         const voiced = (await this.deps.store.getPipeline(projectId)).steps.find((s) => s.id === 'tts')?.status === 'completed';
+        const relabelled = copySpeakerLabels(translated, found.segments);
         await writeJsonAtomic(paths.translatedJson, {
-          segments: translated.map((s) => {
-            const { speakerId: _old, ...rest } = s;
-            const speakerId = byId.get(s.id);
-            const next: TranscriptSegment = { ...rest, ...(speakerId ? { speakerId } : {}) };
-            return voiced && voiceForLine(next, project.settings) !== voiceForLine(s, project.settings) ? { ...next, ttsStale: true } : next;
-          }),
+          segments: relabelled.map((s, i) =>
+            voiced && voiceForLine(s, settings) !== voiceForLine(translated[i]!, project.settings) ? { ...s, ttsStale: true } : s,
+          ),
         });
       }
     });
-    const settings: ProjectSettings = { ...project.settings, diarize: true };
-    if (numSpeakers) settings.diarizeSpeakers = numSpeakers;
-    else delete settings.diarizeSpeakers;
-    await this.deps.store.saveProject({ ...project, settings, updatedAt: new Date().toISOString() });
+    await this.deps.store.saveProject({ ...(await this.deps.store.getProject(projectId)), settings, updatedAt: new Date().toISOString() });
+    return { speakers: found.speakers.length, lowConfidence: found.lowConfidence, remapped: Object.keys(found.remap).length };
+  }
+
+  /**
+   * Detect the speakers again and wait for it (the editor's old flow, kept
+   * for callers that need the relabelled timeline back).
+   */
+  async redetectSpeakers(projectId: string, opts: { numSpeakers?: number } = {}): Promise<TimelineDocument> {
+    const started = await this.startSpeakerDetection(projectId, opts);
+    const job = this.speakerJobs.get(projectId);
+    if (!started.started && !job) throw new AppErrorException('UNKNOWN', 'Speaker detection did not start.');
+    while (this.speakerJobs.get(projectId)?.state === 'running') await new Promise((r) => setTimeout(r, 200));
+    const done = this.speakerJobs.get(projectId);
+    if (done?.state === 'failed') throw new AppErrorException('UNKNOWN', `Speaker detection failed: ${done.error ?? 'unknown error'}`);
     return this.getTimeline(projectId);
   }
 

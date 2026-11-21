@@ -1017,7 +1017,16 @@
     "speaker-merge": "Gộp vào…",
     "speaker-merge-label": "Gộp Người nói {{ n }} vào người khác",
     "loop-suspect": "Có thể lặp do chép lời",
-    "loop-suspect-title": "Bộ chuyển giọng nói thành chữ có thể đã lặp lại một câu không hề được nói ở đây (lỗi quen thuộc của Whisper khi có nhạc nền). Ứng dụng đã thử sửa nhưng không được: hãy nghe bản gốc rồi sửa hoặc xoá câu này."
+    "loop-suspect-title": "Bộ chuyển giọng nói thành chữ có thể đã lặp lại một câu không hề được nói ở đây (lỗi quen thuộc của Whisper khi có nhạc nền). Ứng dụng đã thử sửa nhưng không được: hãy nghe bản gốc rồi sửa hoặc xoá câu này.",
+    "speaker-guess": "Chưa chắc người nói",
+    "speaker-guess-title": "Việc nhận diện người nói chỉ đoán được người nói của câu này (có nhạc, nhiều người nói cùng lúc, hoặc không rõ lượt). Hãy kiểm tra ai nói câu này và chọn lại người nói nếu sai.",
+    "cast-propose": "Chọn giọng theo giới tính",
+    "cast-hint": "Giao cho mỗi người nói một giọng cùng giới tính: ưu tiên giọng nhân bản của bạn, rồi đến giọng có sẵn, giọng trầm hơn cho người nói giọng trầm hơn. Bạn xem trước lựa chọn trước khi có gì thay đổi.",
+    "cast-unconfirmed": "{{n}} giọng nhân bản của bạn bị bỏ qua vì chưa xác nhận giới tính: {{names}}. Hãy xác nhận ở Giọng đọc → Giọng của tôi rồi chọn lại, hoặc áp dụng mà không có chúng.",
+    "cast-refused": "Chưa áp dụng: một số giọng nhân bản của bạn sẽ bị bỏ qua. Đánh dấu ô bên dưới để áp dụng mà không có chúng.",
+    "cast-without-clones": "Áp dụng mà không có các giọng bị bỏ qua",
+    "cast-apply": "Áp dụng các giọng này",
+    "cast-close": "Đóng"
   },
   "studio": {
     "back": "Quay lại danh sách dự án",
@@ -1722,7 +1731,12 @@
     "my-gender-unset": "chọn…",
     "my-gender-unconfirmed": "chưa xác nhận",
     "my-gender-unconfirmed-help": "Thông tin này được dùng khi chọn giọng cho người nói trong video theo giới tính. Hãy chọn một lần: ứng dụng không bao giờ đoán giới tính từ độ cao của giọng.",
-    "my-gender-confirm": "Xác nhận"
+    "my-gender-confirm": "Xác nhận",
+    "my-gender-suggested": "gợi ý, chưa xác nhận",
+    "my-gender-suggest": "Gợi ý",
+    "my-gender-suggesting": "Đang nghe…",
+    "my-gender-suggest-help": "So sánh giọng này với các giọng có sẵn đã biết giới tính. Đây chỉ là gợi ý: bạn là người xác nhận.",
+    "my-gender-no-suggestion": "Không có gợi ý: giọng này khó phân biệt, hoặc không có giọng có sẵn nào để so sánh. Hãy tự chọn giới tính."
   },
   "voice-clone": {
     "title": "Tạo giọng nhân bản",

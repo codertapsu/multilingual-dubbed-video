@@ -235,7 +235,13 @@ export class StudioStore {
         stale: seg.ttsStale === true,
         locked: seg.locked === true,
         problem:
-          untranslated || quality.length > 0 || long || status === 'timing-conflict' || status === 'needs-review' || seg.loopSuspect === true,
+          untranslated ||
+          quality.length > 0 ||
+          long ||
+          status === 'timing-conflict' ||
+          status === 'needs-review' ||
+          seg.loopSuspect === true ||
+          seg.speakerLowConfidence === true,
       };
     });
   });
@@ -491,17 +497,31 @@ export class StudioStore {
 
   /** Speaker detection is running (the Speakers section shows it). */
   readonly detectingSpeakers = signal(false);
+  /** Its parts done, of the total (long audio is detected in 10-minute parts). */
+  readonly detectProgress = signal<{ done: number; total: number } | null>(null);
 
   /**
    * Detect who says each line again (no new transcript, timing untouched):
-   * the lines are relabelled, those whose voice moves are marked for re-voicing.
+   * the lines are relabelled, those whose voice moves are marked for
+   * re-voicing. A background job on the server (hours of audio take an hour
+   * or more): followed here until it ends, then the timeline is read again.
    */
   async detectSpeakers(numSpeakers?: number): Promise<boolean> {
     if (this.detectingSpeakers()) return false;
     this.detectingSpeakers.set(true);
+    this.detectProgress.set(null);
     try {
       if (!(await this.flushNow())) return false;
-      this.adopt(await this.ipc.detectSpeakers(this.projectId(), numSpeakers));
+      await this.ipc.detectSpeakers(this.projectId(), numSpeakers);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const { job } = await this.ipc.getSpeakers(this.projectId());
+        if (job?.total) this.detectProgress.set({ done: job.done, total: job.total });
+        if (!job || job.state === 'running') continue;
+        if (job.state === 'failed') throw new Error(job.error ?? 'Speaker detection failed.');
+        break;
+      }
+      this.adopt(await this.ipc.getTimeline(this.projectId()));
       const { project } = await this.ipc.getProject(this.projectId());
       this.project.set(project);
       return true;
@@ -510,6 +530,7 @@ export class StudioStore {
       return false;
     } finally {
       this.detectingSpeakers.set(false);
+      this.detectProgress.set(null);
     }
   }
 

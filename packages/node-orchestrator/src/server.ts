@@ -27,6 +27,9 @@ import {
   VOICE_ENGINE_PROVIDER,
   voiceEngineOfId,
   type AlignedSegment,
+  type TranscriptSegment,
+  type VoiceEngineId,
+  type VoiceLibraryItem,
   type ArgosPair,
   type CloudServiceId,
   type CreateProjectInput,
@@ -129,10 +132,15 @@ import { listOmnivoiceForLanguage } from './setup/omnivoicesCatalog.js';
 import { VoicePreviewCache } from './voices/previewCache.js';
 import { registerProfileRoutes } from './voices/profileRoutes.js';
 import { VoiceProfileService } from './voices/profileService.js';
-import { VoiceProfileStore } from './voices/profileStore.js';
+import { PROFILE_FILES, VoiceProfileStore } from './voices/profileStore.js';
+import { castCandidates, castSettings, proposeCast, speakerRows, VoiceMeasureCache, withSwaps, type CastResult, type VoiceMeasure } from './voices/speakerCast.js';
+import { suggestGender } from './voices/casting.js';
+import { libraryItems } from './voices/voiceLibrary.js';
+import { readSpeakerProfiles } from './pipeline/diarization.js';
+import { baseLanguage } from './providers/download/siteSubtitles.js';
 import { ReferencePrep } from './voices/referencePrep.js';
 import { VoiceFavorites } from './voices/voicePreferences.js';
-import { VOICE_ENGINES } from './voices/voiceCatalog.js';
+import { allCatalogVoices, VOICE_ENGINES } from './voices/voiceCatalog.js';
 import { registerVoiceRoutes, speakCacheKey } from './voices/voiceRoutes.js';
 import { runPreflight } from './setup/preflight.js';
 import { SetupEventBus } from './setup/setupBus.js';
@@ -954,21 +962,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     for (const c of companions) if (!engineInstaller.isInstalling(c)) void engineInstaller.install(c);
     return [packId, ...companions];
   };
+  /** What decides which voices are installed and usable here (the voice library's state). */
+  const voiceLibraryState = async () => {
+    const [status, installedPacks, openai] = await Promise.all([
+      setupStore.getStatus(),
+      usablePackIds(),
+      credentials.get('openai').catch(() => undefined),
+    ]);
+    return {
+      installedPiper: new Set(status.installed.piperVoices),
+      installedPacks,
+      availablePacks: new Set(availablePacks().map((p) => p.id)),
+      cloudServices: new Set(openai?.apiKey ? ['openai'] : []),
+    };
+  };
+  const voiceFavorites = new VoiceFavorites(config.configDir);
   registerVoiceRoutes(app, {
-    libraryState: async () => {
-      const [status, installedPacks, openai] = await Promise.all([
-        setupStore.getStatus(),
-        usablePackIds(),
-        credentials.get('openai').catch(() => undefined),
-      ]);
-      return {
-        installedPiper: new Set(status.installed.piperVoices),
-        installedPacks,
-        availablePacks: new Set(availablePacks().map((p) => p.id)),
-        cloudServices: new Set(openai?.apiKey ? ['openai'] : []),
-      };
-    },
-    favorites: new VoiceFavorites(config.configDir),
+    libraryState: voiceLibraryState,
+    favorites: voiceFavorites,
     previews: new VoicePreviewCache(config.configDir),
     profiles: (projectId) => voiceProfileStore.list(projectId),
     packStates: async (packIds) => {
@@ -2938,13 +2949,191 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
   );
 
+  // ---- Speakers and their voices (voices/speakerCast.ts) -----------------------
+
+  /** The lines speakers are counted on: the translation when there is one, else the transcript. */
+  async function readSpeakerLines(paths: { translatedJson: string; sourceJson: string }): Promise<TranscriptSegment[]> {
+    for (const file of [paths.translatedJson, paths.sourceJson]) {
+      const raw = await readFile(file, 'utf8').catch(() => undefined);
+      if (!raw) continue;
+      const doc = JSON.parse(raw) as { segments?: TranscriptSegment[] } | TranscriptSegment[];
+      return Array.isArray(doc) ? doc : (doc.segments ?? []);
+    }
+    return [];
+  }
+
+  /** The voices a cast of this project can use: its engine's, installed, speaking its language (clones speak any). */
+  async function castableVoices(project: Project): Promise<VoiceLibraryItem[]> {
+    const engine = (Object.keys(VOICE_ENGINE_PROVIDER) as VoiceEngineId[]).find((e) => VOICE_ENGINE_PROVIDER[e] === project.settings.ttsProviderId);
+    if (!engine) return [];
+    const [base, favorites, profiles] = await Promise.all([voiceLibraryState(), voiceFavorites.list(), voiceProfileStore.list(project.id).catch(() => [])]);
+    const lang = baseLanguage(project.settings.targetLanguage);
+    return libraryItems(allCatalogVoices(), VOICE_ENGINES, { ...base, favorites, profiles }).filter(
+      (v) => v.engine === engine && v.installed && (v.kind === 'profile' || v.languages.some((l) => baseLanguage(l) === lang)),
+    );
+  }
+
+  /** A sentence to measure a built-in voice's pitch and print with. */
+  const MEASURE_SENTENCE: Record<string, string> = {
+    vi: 'Xin chào, đây là một câu đọc mẫu để đo độ cao và âm sắc của giọng nói này.',
+    en: 'Hello, this is a sample sentence to measure the pitch and the colour of this voice.',
+  };
+  const voiceMeasures = new VoiceMeasureCache(join(config.configDir, 'voices', 'measures.json'));
+
+  /**
+   * A voice's pitch and print, measured once: a clone's from its preview
+   * (kept on the profile), a built-in's from a sentence it speaks (kept in
+   * voices/measures.json). Undefined without the speaker detection engine.
+   */
+  async function measureVoice(v: VoiceLibraryItem): Promise<VoiceMeasure | undefined> {
+    if (v.kind === 'profile') {
+      const p = await voiceProfileStore.require(v.id);
+      if (p.voicePrint?.print?.length) return { print: p.voicePrint.print, ...(p.voicePrint.f0Hz ? { f0Hz: p.voicePrint.f0Hz } : {}) };
+      const e = await diarization.embed(voiceProfileStore.fileOf(p.id, PROFILE_FILES.preview));
+      if (!e || e.print.length === 0) return undefined;
+      await voiceProfileStore.save({ ...p, voicePrint: { print: e.print, ...(e.f0Hz ? { f0Hz: e.f0Hz } : {}), model: diarization.modelKey } });
+      return { print: e.print, ...(e.f0Hz ? { f0Hz: e.f0Hz } : {}) };
+    }
+    const cached = await voiceMeasures.get(v.id);
+    if (cached) return cached;
+    const language = v.languages[0] ?? 'vi-VN';
+    const wav = await speakWith(v.id, MEASURE_SENTENCE[baseLanguage(language)] ?? MEASURE_SENTENCE['en']!, language);
+    const e = await diarization.embed(wav);
+    if (!e || e.print.length === 0) return undefined;
+    const m: VoiceMeasure = { print: e.print, ...(e.f0Hz ? { f0Hz: e.f0Hz } : {}) };
+    await voiceMeasures.set(v.id, m);
+    return m;
+  }
+
+  // A cloned voice's likely gender, from its print against built-in voices of
+  // its engine whose gender is known (voices/casting.ts suggestGender). Saved
+  // as a suggestion, never confirmed: the user confirms it in My voices.
+  app.post('/voice-profiles/:id/suggest-gender', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      const profile = await voiceProfileStore.require(req.params.id);
+      if (profile.gender?.confirmed) return { gender: profile.gender.value, confirmed: true };
+      const items = libraryItems(allCatalogVoices(), VOICE_ENGINES, { ...(await voiceLibraryState()), favorites: new Set<string>(), profiles: [] });
+      const item = { id: profile.id, kind: 'profile', engine: profile.engine, name: profile.name, languages: [] } as unknown as VoiceLibraryItem;
+      const mine = await measureVoice(item);
+      if (!mine?.print?.length) {
+        return reply.status(409).send({
+          error: { code: 'ENGINE_PACK_MISSING', message: 'A suggestion needs the speaker detection engine (Settings → Engines) to measure the voice.' },
+        });
+      }
+      const refs: { gender: 'female' | 'male'; print: number[] }[] = [];
+      for (const gender of ['male', 'female'] as const) {
+        const presets = items.filter((v) => v.kind === 'preset' && v.engine === profile.engine && v.installed && v.gender === gender).slice(0, 4);
+        for (const v of presets) {
+          const m = await measureVoice(v).catch(() => undefined);
+          if (m?.print?.length) refs.push({ gender, print: m.print });
+        }
+      }
+      const suggestion = suggestGender(mine.print, refs);
+      if (!suggestion) return { suggested: null, reason: refs.length === 0 ? 'no built-in voice of this engine to compare with' : 'too close to call' };
+      await voiceProfileStore.save({
+        ...profile,
+        gender: { value: suggestion.gender, confirmed: false, confidence: Math.round(suggestion.confidence * 100) / 100 },
+      });
+      return { suggested: suggestion.gender, confidence: suggestion.confidence };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
   // Detect who says each line again, on the lines as they are (no new
   // transcript): the editor's Speakers section. Returns the timeline.
   app.post(
     '/projects/:id/speakers/detect',
-    async (req: FastifyRequest<{ Params: { id: string }; Body: { numSpeakers?: number } }>, reply) => {
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { numSpeakers?: number; wait?: boolean } }>, reply) => {
       try {
-        return await orchestrator.redetectSpeakers(req.params.id, { numSpeakers: req.body?.numSpeakers });
+        // A job by default (hours of audio take an hour or more): follow it on
+        // GET /projects/:id/speakers. `wait` keeps the old answer, the timeline.
+        if (req.body?.wait === true) return await orchestrator.redetectSpeakers(req.params.id, { numSpeakers: req.body?.numSpeakers });
+        const started = await orchestrator.startSpeakerDetection(req.params.id, { numSpeakers: req.body?.numSpeakers });
+        return reply.status(202).send(started);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // Who speaks in a project: per speaker talk time, lines, pitch, gender,
+  // samples and voice; the detection job's state (get_speakers, the editor).
+  app.get('/projects/:id/speakers', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      const project = await store.getProject(req.params.id);
+      const paths = store.paths(req.params.id);
+      const lines = await readSpeakerLines(paths);
+      const detected = await readSpeakerProfiles(paths.diarizationJson);
+      const detectedAt = await stat(paths.diarizationJson).then((s) => s.mtime.toISOString(), () => undefined);
+      const job = orchestrator.speakerJob(req.params.id);
+      return {
+        speakers: speakerRows(lines, detected, project.settings),
+        ...(detectedAt ? { detected: { at: detectedAt } } : {}),
+        ...(job ? { job } : {}),
+        defaults: {
+          ...(project.settings.defaultMaleVoiceId ? { male: project.settings.defaultMaleVoiceId } : {}),
+          ...(project.settings.defaultFemaleVoiceId ? { female: project.settings.defaultFemaleVoiceId } : {}),
+        },
+      };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // Cast a voice for every speaker by gender (voices/casting.ts): a proposal,
+  // or saved with `apply`. While a clone of the user's is left out for an
+  // unconfirmed gender, applying needs `allowWithoutClones` (the user's rule
+  // is their clones first: claude-dubber, 2026-11-21).
+  app.post(
+    '/projects/:id/speakers/cast',
+    async (
+      req: FastifyRequest<{
+        Params: { id: string };
+        Body: { apply?: boolean; applyToParts?: boolean; allowWithoutClones?: boolean; swaps?: { speakerId: string; voiceId: string }[] };
+      }>,
+      reply,
+    ) => {
+      try {
+        const body = req.body ?? {};
+        const project = await store.getProject(req.params.id);
+        const paths = store.paths(req.params.id);
+        const lines = await readSpeakerLines(paths);
+        const detected = await readSpeakerProfiles(paths.diarizationJson);
+        const rows = speakerRows(lines, detected, project.settings);
+        if (rows.length === 0) {
+          return reply.status(400).send({
+            error: { code: 'INVALID_EDIT', message: 'This project has no detected speakers: detect speakers first (detect_speakers, or the editor).' },
+          });
+        }
+        const prints = new Map(detected.map((d) => [d.speakerId, d.print]));
+        const speakers = rows.map((r) => ({
+          speakerId: r.speakerId,
+          minutes: r.minutes,
+          ...(r.gender ? { gender: r.gender } : {}),
+          ...(r.f0Hz ? { f0Hz: r.f0Hz } : {}),
+          ...(prints.get(r.speakerId)?.length ? { print: prints.get(r.speakerId)! } : {}),
+        }));
+        const items = await castableVoices(project);
+        const voices = await castCandidates(items, speakers, { measure: measureVoice });
+        const proposal = withSwaps(proposeCast(speakers, voices), body.swaps, voices);
+        const result: CastResult = { ...proposal };
+        if (body.apply === true) {
+          if (proposal.unconfirmed.length > 0 && body.allowWithoutClones !== true) {
+            return {
+              ...result,
+              refused: true,
+              message: `${proposal.unconfirmed.length} cloned voice(s) would be left out (gender not confirmed): confirm them in Voices → My voices, or apply with allowWithoutClones.`,
+            };
+          }
+          const patch = castSettings(proposal, speakers);
+          await orchestrator.updateProjectSettings(req.params.id, patch);
+          result.applied = true;
+          if (body.applyToParts === true) {
+            (result as CastResult & { parts?: unknown }).parts = await forEachPart(req.params.id, (id) => orchestrator.updateProjectSettings(id, patch));
+          }
+        }
+        return result;
       } catch (err) {
         return sendError(reply, err);
       }

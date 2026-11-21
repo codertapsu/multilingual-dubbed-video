@@ -470,6 +470,25 @@ export class VoicesComponent implements OnInit, OnDestroy {
     }
   }
 
+  /** The profile a gender suggestion is being measured for. */
+  protected readonly suggesting = signal<string | null>(null);
+
+  /** A suggestion from voice prints (saved unconfirmed: the user still confirms it). */
+  protected async suggestGender(p: VoiceProfile): Promise<void> {
+    this.suggesting.set(p.id);
+    try {
+      const res = await this.ipc.suggestVoiceGender(p.id);
+      if (!res.suggested && !res.confirmed) {
+        this.error.set({ code: 'UNKNOWN', message: this.i18n.instant('voices.my-gender-no-suggestion') } as AppError);
+      }
+      await this.reload();
+    } catch (err) {
+      this.error.set(err as AppError);
+    } finally {
+      this.suggesting.set(null);
+    }
+  }
+
   /** The user says whose voice it is (confirmed: casting uses it). */
   protected async setGender(p: VoiceProfile, value: string): Promise<void> {
     if (value !== 'male' && value !== 'female') return;

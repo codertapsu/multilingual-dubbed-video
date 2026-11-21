@@ -60,6 +60,10 @@
       @if (l.seg.loopSuspect) {
         <span class="badge badge-failed" [title]="'editor.loop-suspect-title' | translate">{{ 'editor.loop-suspect' | translate }}</span>
       }
+      <!-- Speaker detection gave this line only a best guess (diarization.ts). -->
+      @if (l.seg.speakerLowConfidence) {
+        <span class="badge badge-warning" [title]="'editor.speaker-guess-title' | translate">{{ 'editor.speaker-guess' | translate }}</span>
+      }
     </div>
   </section>
 

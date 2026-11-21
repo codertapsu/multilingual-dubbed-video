@@ -1017,7 +1017,16 @@
     "speaker-merge": "Merge into…",
     "speaker-merge-label": "Merge Speaker {{ n }} into another speaker",
     "loop-suspect": "Possible transcription loop",
-    "loop-suspect-title": "Speech-to-text may have repeated a phrase here that was not said (a known Whisper fault over music). The app tried to repair it and could not: listen to the original and fix or remove the line."
+    "loop-suspect-title": "Speech-to-text may have repeated a phrase here that was not said (a known Whisper fault over music). The app tried to repair it and could not: listen to the original and fix or remove the line.",
+    "speaker-guess": "Speaker uncertain",
+    "speaker-guess-title": "Speaker detection gave this line only a best guess (music, voices at once, or no clear turn). Check who says it, and set the speaker if it is wrong.",
+    "cast-propose": "Choose voices by gender",
+    "cast-hint": "Gives every speaker a voice of their gender: your cloned voices first, then the built-in ones, the deeper voices to the deeper speakers. You see the choice before anything changes.",
+    "cast-unconfirmed": "{{n}} of your cloned voices were left out because their gender is not confirmed: {{names}}. Confirm them in Voices → My voices and choose again, or apply without them.",
+    "cast-refused": "Not applied: some of your cloned voices would be left out. Tick the box below to apply without them.",
+    "cast-without-clones": "Apply without the voices left out",
+    "cast-apply": "Apply these voices",
+    "cast-close": "Close"
   },
   "studio": {
     "back": "Back to projects",
@@ -1722,7 +1731,12 @@
     "my-gender-unset": "choose…",
     "my-gender-unconfirmed": "not confirmed",
     "my-gender-unconfirmed-help": "Choosing voices for the speakers of a video by gender uses this. Pick it once: it is never guessed from how high the voice is.",
-    "my-gender-confirm": "Confirm"
+    "my-gender-confirm": "Confirm",
+    "my-gender-suggested": "suggested, not confirmed",
+    "my-gender-suggest": "Suggest",
+    "my-gender-suggesting": "Listening…",
+    "my-gender-suggest-help": "Compares this voice with the built-in voices whose gender is known. It is only a suggestion: you confirm it.",
+    "my-gender-no-suggestion": "No suggestion: the voice is too close to call, or there is no built-in voice to compare it with. Choose its gender yourself."
   },
   "voice-clone": {
     "title": "Make a cloned voice",

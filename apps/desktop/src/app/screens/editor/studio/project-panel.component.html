@@ -404,10 +404,52 @@
             </select>
           </label>
           <button type="button" class="btn btn-sm" (click)="detectSpeakers()" [disabled]="store.detectingSpeakers() || redubbing()">
-            {{ (store.detectingSpeakers() ? 'editor.speakers-detecting' : 'editor.speakers-detect') | translate }}
+            @if (store.detectProgress(); as p) {
+              {{ 'step-detail.speakers' | translate: { done: p.done, total: p.total } }}
+            } @else {
+              {{ (store.detectingSpeakers() ? 'editor.speakers-detecting' : 'editor.speakers-detect') | translate }}
+            }
           </button>
         </div>
         <p class="hint">{{ 'editor.speakers-detect-hint' | translate }}</p>
+      }
+      @if (store.speakers().length > 1) {
+        <div class="stack-sm">
+          <button type="button" class="btn btn-sm" (click)="proposeCast()" [disabled]="casting() || store.detectingSpeakers()">
+            {{ 'editor.cast-propose' | translate }}
+          </button>
+          <p class="hint">{{ 'editor.cast-hint' | translate }}</p>
+          @if (cast(); as c) {
+            <div class="cast stack-sm" role="status">
+              @if (c.unconfirmed.length > 0) {
+                <p class="warn-text small">{{ 'editor.cast-unconfirmed' | translate: { n: c.unconfirmed.length, names: unconfirmedNames(c) } }}</p>
+              }
+              <ul class="small">
+                @for (a of c.assignments; track a.speakerId) {
+                  <li>{{ 'studio.speaker-n' | translate: { n: speakerN(a.speakerId) } }} → {{ a.voiceName }}</li>
+                }
+              </ul>
+              @for (n of c.notes; track $index) {
+                <p class="hint">{{ n }}</p>
+              }
+              @if (c.refused) {
+                <p class="warn-text small">{{ 'editor.cast-refused' | translate }}</p>
+              }
+              @if (c.unconfirmed.length > 0) {
+                <label class="row small">
+                  <input type="checkbox" [checked]="castWithoutClones()" (change)="castWithoutClones.set(!castWithoutClones())" />
+                  {{ 'editor.cast-without-clones' | translate }}
+                </label>
+              }
+              <div class="row">
+                <button type="button" class="btn btn-primary btn-sm" (click)="applyCast()" [disabled]="casting() || (c.unconfirmed.length > 0 && !castWithoutClones())">
+                  {{ 'editor.cast-apply' | translate }}
+                </button>
+                <button type="button" class="btn btn-ghost btn-sm" (click)="cast.set(null)">{{ 'editor.cast-close' | translate }}</button>
+              </div>
+            </div>
+          }
+        </div>
       }
       @if (store.speakers().length === 0) {
         <p class="muted small">{{ 'editor.speakers-none' | translate }}</p>

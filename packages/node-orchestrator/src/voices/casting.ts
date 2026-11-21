@@ -149,3 +149,29 @@ export function proposeCast(speakers: readonly CastSpeaker[], voices: readonly C
   if (unassigned.length > 0) notes.push(`${unassigned.length} speaker(s) of unknown gender keep the project voice (set them in the editor).`);
   return { assignments, defaults, unassigned, unconfirmed, notes };
 }
+
+/**
+ * A cloned voice's likely gender, from its print against built-in voices
+ * whose gender is known: the mean of the best two similarities per gender.
+ * Undefined when either gender has no reference or the two are too close to
+ * call. Only a suggestion: the user confirms it (pitch alone misleads). Pure.
+ */
+export function suggestGender(
+  print: readonly number[],
+  refs: readonly { gender: CastGender; print: readonly number[] }[],
+): { gender: CastGender; confidence: number } | undefined {
+  const score = (g: CastGender): number | undefined => {
+    const sims = refs
+      .filter((r) => r.gender === g && r.print.length === print.length)
+      .map((r) => cosine(print, r.print))
+      .sort((a, b) => b - a)
+      .slice(0, 2);
+    return sims.length > 0 ? sims.reduce((a, b) => a + b, 0) / sims.length : undefined;
+  };
+  const m = score('male');
+  const f = score('female');
+  if (m === undefined || f === undefined) return undefined;
+  const margin = Math.abs(m - f);
+  if (margin < 0.03) return undefined;
+  return { gender: f > m ? 'female' : 'male', confidence: Math.min(1, margin * 5) };
+}

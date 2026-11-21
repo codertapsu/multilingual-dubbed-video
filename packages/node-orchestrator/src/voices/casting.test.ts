@@ -81,3 +81,19 @@ describe('proposeCast', () => {
     expect(cosine(undefined, [1])).toBe(0);
   });
 });
+
+describe('suggestGender', () => {
+  it('suggests the gender whose built-in voices the clone sounds closest to, and abstains when unsure', async () => {
+    const { suggestGender } = await import('./casting.js');
+    const refs = [
+      { gender: 'male' as const, print: [1, 0, 0] },
+      { gender: 'male' as const, print: [0.9, 0.1, 0] },
+      { gender: 'female' as const, print: [0, 1, 0] },
+      { gender: 'female' as const, print: [0.1, 0.9, 0] },
+    ];
+    expect(suggestGender([0.95, 0.05, 0], refs)?.gender).toBe('male');
+    expect(suggestGender([0.05, 0.95, 0], refs)?.gender).toBe('female');
+    expect(suggestGender([0.7, 0.7, 0], refs)).toBeUndefined();
+    expect(suggestGender([1, 0, 0], refs.filter((r) => r.gender === 'male'))).toBeUndefined();
+  });
+});

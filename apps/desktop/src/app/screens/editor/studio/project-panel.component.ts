@@ -144,6 +144,49 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     await this.store.detectSpeakers(n >= 2 ? n : undefined);
   }
 
+  /**
+   * Voices for every speaker by gender, the user's clones first (POST
+   * /projects/:id/speakers/cast): shown first, saved on "Apply". Clones whose
+   * gender the user has not confirmed are named and left out; applying
+   * without them takes an explicit tick.
+   */
+  protected unconfirmedNames(c: { unconfirmed: { name: string }[] }): string {
+    return c.unconfirmed.map((v) => v.name).join(', ');
+  }
+
+  protected readonly cast = signal<Awaited<ReturnType<IpcService['castVoices']>> | null>(null);
+  protected readonly casting = signal(false);
+  protected readonly castWithoutClones = signal(false);
+
+  protected async proposeCast(): Promise<void> {
+    await this.castCall({});
+  }
+
+  protected async applyCast(): Promise<void> {
+    const done = await this.castCall({ apply: true, allowWithoutClones: this.castWithoutClones() });
+    if (done?.applied) {
+      this.cast.set(null);
+      // The speakers' voices changed (project settings), and lines were marked for re-voicing (the timeline).
+      const { project } = await this.ipc.getProject(this.store.projectId());
+      this.store.project.set(project);
+      await this.store.reload();
+    }
+  }
+
+  private async castCall(body: { apply?: boolean; allowWithoutClones?: boolean }): Promise<Awaited<ReturnType<IpcService['castVoices']>> | null> {
+    this.casting.set(true);
+    try {
+      const res = await this.ipc.castVoices(this.store.projectId(), body);
+      this.cast.set(res);
+      return res;
+    } catch (err) {
+      this.store.error.set(toAppError(err));
+      return null;
+    } finally {
+      this.casting.set(false);
+    }
+  }
+
   /** "Merge into…": every line of `from` goes to the chosen speaker (undoable). */
   protected onMerge(from: string, select: HTMLSelectElement): void {
     const into = select.value;

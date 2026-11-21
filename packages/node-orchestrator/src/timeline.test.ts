@@ -314,7 +314,8 @@ describe('PATCH /timeline (patchSegments)', () => {
       [1200, 'vi two'],
       [5000, 'vi three'],
     ]);
-    expect(diarize).toHaveBeenCalledWith(paths.original16kMonoWav, { numSpeakers: 2 }, undefined);
+    // A job now: resumable parts, progress, and a signal to stop it.
+    expect(diarize).toHaveBeenCalledWith(paths.original16kMonoWav, expect.objectContaining({ numSpeakers: 2 }), expect.any(AbortSignal));
     const saved = await store.getProject(id);
     expect(saved.settings).toMatchObject({ diarize: true, diarizeSpeakers: 2 });
     const source = await readJson<{ segments: TranscriptSegment[] }>(paths.sourceJson);

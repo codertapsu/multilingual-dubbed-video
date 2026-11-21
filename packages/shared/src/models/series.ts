@@ -44,6 +44,19 @@ export interface SeriesParentInfo {
   /** The part projects, in order, once made. */
   partIds?: string[];
   error?: AppError;
+  /**
+   * Why a series asked to start by itself stopped at review instead: its
+   * analysis was not clean (speaker detection failed, transcription loops were
+   * left). The field report's series made and dubbed 17 parts from a
+   * transcript with one speaker and 56 loop ranges (B3, 2026-11-21).
+   */
+  reviewReasons?: SeriesReviewReason[];
+}
+
+/** Why a series stopped at review (the code is for the UI's words, the message for agents). */
+export interface SeriesReviewReason {
+  code: 'speakers-failed' | 'loops-left';
+  message: string;
 }
 
 /** On each part project. */
@@ -117,6 +130,8 @@ export interface SeriesView {
   parentStatus?: string;
   settings: SeriesSettings;
   plan?: SeriesPlan;
+  /** Why it stopped at review although asked to start by itself (SeriesParentInfo.reviewReasons). */
+  reviewReasons?: SeriesReviewReason[];
   parts: {
     index: number;
     projectId?: string;

@@ -875,6 +875,22 @@ export class IpcService {
     return this.http('POST', `/projects/${encodeURIComponent(projectId)}/series/replan`, {});
   }
 
+  /** Make the parts' transcripts again from the fixed series transcript (seriesService.rebuildParts). */
+  rebuildSeriesParts(
+    projectId: string,
+    force = false,
+  ): Promise<{ parts: { projectId: string; index: number; rebuilt: boolean; skipped?: string; oldLines?: number; newLines?: number; speakers?: number }[] }> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/series/rebuild-parts`, { force });
+  }
+
+  /** The same settings change on a series and every part not being dubbed (`?applyToParts=true`). */
+  updateSeriesSettings(
+    projectId: string,
+    patch: Partial<ProjectSettings>,
+  ): Promise<ProjectWithPipeline & { parts?: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[] }> {
+    return this.http('PUT', `/projects/${encodeURIComponent(projectId)}/settings?applyToParts=true`, patch);
+  }
+
   // ----- Logo & greeting (the brand kit, branding/brandKit.ts) -----
 
   listBrandKit(): Promise<BrandAsset[]> {

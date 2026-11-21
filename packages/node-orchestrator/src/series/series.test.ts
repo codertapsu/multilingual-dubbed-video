@@ -76,7 +76,7 @@ describe('a long video dubbed as a series', () => {
     const video = await writeDummyVideo(tmp);
     const parent = await orchestrator.createProject({
       ...createProjectInput(video, { name: 'Tây Du Ký' }),
-      series: { minMinutes: 15, maxMinutes: 20, aiProviderId: 'fake-ai', recapSec: 4, autoStart: false },
+      series: { minMinutes: 15, maxMinutes: 25, aiProviderId: 'fake-ai', recapSec: 4, autoStart: false },
     });
     expect(parent.series).toMatchObject({ role: 'parent', state: 'analysing' });
 
@@ -145,7 +145,7 @@ describe('a long video dubbed as a series', () => {
     const video = await writeDummyVideo(tmp);
     const parent = await orchestrator.createProject({
       ...createProjectInput(video, { name: 'X' }),
-      series: { minMinutes: 15, maxMinutes: 20, aiProviderId: 'gone', recapSec: 4, autoStart: true },
+      series: { minMinutes: 15, maxMinutes: 25, aiProviderId: 'gone', recapSec: 4, autoStart: true },
     });
     await orchestrator.runPipeline(parent.id);
     await vi.waitFor(async () => expect((await store.getProject(parent.id)).series).toMatchObject({ state: 'parts' }), { timeout: 15_000 });
@@ -182,7 +182,7 @@ describe('a long video dubbed as a series', () => {
     const video = await writeDummyVideo(tmp);
     const parent = await orchestrator.createProject({
       ...createProjectInput(video, { name: 'Y' }),
-      series: { minMinutes: 15, maxMinutes: 20, aiProviderId: 'gone', recapSec: 4, autoStart: false },
+      series: { minMinutes: 15, maxMinutes: 25, aiProviderId: 'gone', recapSec: 4, autoStart: false },
     });
     await orchestrator.runPipeline(parent.id);
     await vi.waitFor(async () => expect((await store.getProject(parent.id)).series).toMatchObject({ state: 'review' }), { timeout: 15_000 });
@@ -195,5 +195,89 @@ describe('a long video dubbed as a series', () => {
     await vi.waitFor(async () => expect(['completed', 'failed', 'paused']).toContain((await store.getProject(parent.id)).status), {
       timeout: 15_000,
     });
+  });
+});
+
+describe('a series that should not start by itself, and parts made again', () => {
+  async function analysedParent(opts: { autoStart: boolean; minMinutes?: number; maxMinutes?: number; warnings?: string[]; diarize?: boolean }) {
+    const media = new FakeMediaService({ mediaInfo: fakeMediaInfo(40 * MIN) });
+    const orchestrator = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media,
+      registry: fakeRegistry(new FakeSttProvider(talk()), new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+    });
+    const started: string[] = [];
+    const series = new SeriesService({
+      store,
+      projects: orchestrator,
+      start: async (id) => {
+        started.push(id);
+        return { started: true, queued: false };
+      },
+      chatFor: () => undefined,
+    });
+    const video = await writeDummyVideo(tmp);
+    const parent = await orchestrator.createProject({
+      ...createProjectInput(video, { name: 'Z' }),
+      series: { minMinutes: opts.minMinutes ?? 15, maxMinutes: opts.maxMinutes ?? 20, aiProviderId: 'gone', recapSec: 4, autoStart: opts.autoStart },
+    });
+    await store.saveProject({ ...(await store.getProject(parent.id)), settings: { ...parent.settings, diarize: opts.diarize ?? true }, mediaInfo: fakeMediaInfo(40 * MIN) });
+    await fsp.mkdir(path.dirname(store.paths(parent.id).sourceJson), { recursive: true });
+    await fsp.writeFile(store.paths(parent.id).sourceJson, JSON.stringify({ segments: talk() }), 'utf8');
+    const pipeline = await store.getPipeline(parent.id);
+    await store.savePipeline({
+      ...pipeline,
+      warnings: (opts.warnings ?? []).map((code) => ({ code: code as never, step: 'stt' as const, at: new Date().toISOString(), key: `warning.${code}`, message: code })),
+    });
+    await series.analysed(parent.id);
+    return { series, parent, started };
+  }
+
+  it('stops at review, and says why, when speaker detection failed or loops were left', async () => {
+    const { series, parent, started } = await analysedParent({ autoStart: true, warnings: ['speakers-failed', 'loops-left'] });
+    const view = await series.view(parent.id);
+    expect(view.state).toBe('review');
+    expect(view.reviewReasons).toHaveLength(2);
+    expect(started).toEqual([]);
+  });
+
+  it('starts by itself from a clean analysis, and keeps every part within the bounds or says why', async () => {
+    const { series, parent, started } = await analysedParent({ autoStart: true });
+    const view = await series.view(parent.id);
+    expect(view.state).toBe('parts');
+    expect(view.reviewReasons).toBeUndefined();
+    expect(started).toHaveLength(view.parts.length);
+    // 40 minutes in parts of 15-20: two parts of about 20 minutes, never 19 and 21.
+    for (const p of view.plan!.parts) {
+      const minutes = (p.endMs - p.startMs) / MIN;
+      const inside = minutes >= 14.99 && minutes <= 20.01; // cuts land on pauses, not on the millisecond
+      expect(inside || view.plan!.notes.some((n) => n.startsWith(`Part ${p.index} is`))).toBe(true);
+      expect(Math.abs(minutes - 20)).toBeLessThan(1);
+    }
+  });
+
+  it('remakes the parts from the fixed series transcript, leaving translated ones alone unless forced', async () => {
+    const { series, parent } = await analysedParent({ autoStart: false });
+    const ids = await series.createParts(parent.id);
+    // The series transcript is fixed: every line now has a speaker.
+    const fixed = talk().map((l, i) => ({ ...l, speakerId: `SPEAKER_0${i % 2}` }));
+    await fsp.writeFile(store.paths(parent.id).sourceJson, JSON.stringify({ segments: fixed }), 'utf8');
+    // Part 2 is already translated.
+    await fsp.writeFile(store.paths(ids[1]!).translatedJson, JSON.stringify({ segments: [{ id: 'seg_0001' }] }), 'utf8');
+    await fsp.writeFile(store.paths(ids[0]!).translationCheckpointJson, '{}', 'utf8');
+
+    const report = await series.rebuildParts(parent.id);
+    expect(report[0]).toMatchObject({ rebuilt: true, speakers: 2 });
+    expect(report[1]).toMatchObject({ rebuilt: false, skipped: 'translated' });
+    const part1 = JSON.parse(await fsp.readFile(store.paths(ids[0]!).sourceJson, 'utf8')) as { segments: TranscriptSegment[] };
+    expect(part1.segments.every((l) => l.speakerId)).toBe(true);
+    // The stale checkpoint was moved aside, not left to be found.
+    await expect(fsp.stat(store.paths(ids[0]!).translationCheckpointJson)).rejects.toThrow();
+
+    const forced = await series.rebuildParts(parent.id, { force: true });
+    expect(forced[1]).toMatchObject({ rebuilt: true });
+    await expect(fsp.stat(store.paths(ids[1]!).translatedJson)).rejects.toThrow();
   });
 });

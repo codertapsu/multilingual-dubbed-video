@@ -91,6 +91,52 @@ export function cutWindows(
   return out;
 }
 
+/**
+ * Where the k-th cut (1-based) may go so every part stays within
+ * [minMs, maxMs]: after the previous cut, and leaving the rest of the video
+ * splittable into the parts still to come. Undefined when no cut can. The even
+ * split alone let a part run 6 minutes over (field report B3). Pure.
+ */
+export function admissibleWindow(
+  prevCutMs: number,
+  k: number,
+  parts: number,
+  durationMs: number,
+  minMs: number,
+  maxMs: number,
+): { fromMs: number; toMs: number } | undefined {
+  const after = parts - k;
+  const fromMs = Math.max(prevCutMs + minMs, durationMs - after * maxMs);
+  const toMs = Math.min(prevCutMs + maxMs, durationMs - after * minMs);
+  return fromMs <= toMs ? { fromMs: Math.round(fromMs), toMs: Math.round(toMs) } : undefined;
+}
+
+/** A cut window narrowed to `bounds`, with its best pauses there. Pure. */
+export function boundedWindow(
+  w: CutWindow,
+  bounds: { fromMs: number; toMs: number },
+  candidates: readonly SeriesCandidate[],
+): CutWindow {
+  const targetMs = Math.min(bounds.toMs, Math.max(bounds.fromMs, w.targetMs));
+  const inside = candidates
+    .filter((c) => c.ms >= bounds.fromMs && c.ms <= bounds.toMs)
+    .sort((a, b) => b.score - a.score || Math.abs(a.ms - targetMs) - Math.abs(b.ms - targetMs))
+    .slice(0, CANDIDATES_PER_CUT);
+  return { ...w, targetMs, fromMs: bounds.fromMs, toMs: bounds.toMs, candidates: inside };
+}
+
+/** Parts whose own length (recap excluded) is outside [min, max] minutes. Pure. */
+export function partsOutsideBounds(
+  parts: readonly Pick<SeriesPlanPart, 'index' | 'startMs' | 'endMs'>[],
+  minMinutes: number,
+  maxMinutes: number,
+): { index: number; minutes: number }[] {
+  // Half a second of slack: cuts land on pauses, not on the millisecond.
+  return parts
+    .map((p) => ({ index: p.index, minutes: (p.endMs - p.startMs) / 60_000 }))
+    .filter((p) => p.minutes < minMinutes - 0.01 || p.minutes > maxMinutes + 0.01);
+}
+
 /** The cut the window would take without the AI: a long pause near the target. */
 export function fallbackCut(w: CutWindow): number {
   const spread = Math.max(1, (w.toMs - w.fromMs) / 2);

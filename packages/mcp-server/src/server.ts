@@ -1037,6 +1037,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           : `- ${r.downloadId}: not made: ${r.error?.message ?? 'unknown error'}`,
       );
       const ids = res.results.flatMap((r) => (r.projectId ? [r.projectId] : []));
+      if (res.results.some((r) => r.series)) lines.push(seriesGateNote(series?.autoStart ?? true));
       if (ids.length > 0) lines.push(`Project ids: ${JSON.stringify(ids)}`);
       return text(lines.join('\n'));
     }),
@@ -1130,6 +1131,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     state: string;
     settings: { minMinutes: number; maxMinutes: number; aiProviderId: string; recapSec: number };
     plan?: { parts: { index: number; startMs: number; endMs: number; title: string; summary: string; cutBy: string }[]; notes: string[] };
+    reviewReasons?: { code: string; message: string }[];
     parts: { index: number; projectId?: string; title: string; startMs: number; endMs: number; status?: string; progressPercent?: number }[];
     error?: { message?: string };
   };
@@ -1138,6 +1140,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     const lines = [
       `Series "${v.name}" (${v.parentId}): ${v.state}${v.error?.message ? ` — ${v.error.message}` : ''}`,
       `Parts of ${v.settings.minMinutes}-${v.settings.maxMinutes} min, cuts by ${v.settings.aiProviderId}, ${v.settings.recapSec} s recap.`,
+      // Asked to start by itself, it stopped at review: the analysis was not clean.
+      ...(v.reviewReasons ?? []).map((r) => `STOPPED AT REVIEW: ${r.message}`),
       ...(v.plan?.notes ?? []).map((n) => `Note: ${n}`),
       ...v.parts.map((p) => {
         const planned = v.plan?.parts.find((x) => x.index === p.index);
@@ -1145,8 +1149,38 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       }),
     ];
     if (v.state === 'review') lines.push('Next: set_split_plan to change cuts or titles, or start_series to make and dub the parts.');
+    if (v.state === 'parts') {
+      lines.push('The series acts as a whole: pause_dubbing / start_dubbing on its id pause or continue every part in order; rebuild_parts remakes the parts\' transcripts after the series transcript was fixed.');
+    }
     return lines.join('\n');
   };
+
+  server.registerTool(
+    'rebuild_parts',
+    {
+      title: 'Remake the parts from the fixed series transcript',
+      description:
+        'After the series transcript was fixed (speakers re-detected, loops repaired, lines replaced on the parent): make each part\'s transcript again from it, copy the series\' character sheet to every part again, and move stale translation checkpoints aside. Parts already translated are left alone unless force=true (their translation is then discarded, kept beside as a file); a part being dubbed is never touched. Reports old and new line counts and speakers per part.',
+      inputSchema: z.object({ projectId: z.string().describe('The series (parent) or any part.'), force: z.boolean().default(false) }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, force }, ctx) => {
+      type P = { projectId: string; index: number; rebuilt: boolean; skipped?: string; oldLines?: number; newLines?: number; speakers?: number };
+      const res = await api.post<{ parts: P[] }>(`/projects/${encodeURIComponent(projectId)}/series/rebuild-parts`, { force }, { signal: ctx.mcpReq.signal, timeoutMs: 300_000 });
+      const why = (s?: string): string =>
+        s === 'translated' ? 'already translated (force=true discards it)' : s === 'running' ? 'being dubbed: pause it first' : 'not found';
+      return text(
+        [
+          ...res.parts.map((p) =>
+            p.rebuilt
+              ? `- part ${p.index} (${p.projectId}): ${p.oldLines ?? '?'} -> ${p.newLines ?? '?'} lines, ${p.speakers ?? 0} speaker(s)`
+              : `- part ${p.index} (${p.projectId}): left as it was, ${why(p.skipped)}`,
+          ),
+          'Rebuilt parts translate from their new transcript on their next run (start_dubbing on the series continues them in order).',
+        ].join('\n'),
+      );
+    }),
+  );
 
   server.registerTool(
     'get_series',
@@ -1443,17 +1477,37 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       ];
       const downloading = [...(ensured.installing ? ['language models'] : []), ...(ensured.enginePacks ?? [])];
       if (downloading.length > 0) lines.push(`Downloading in the background: ${downloading.join(', ')}. start_dubbing waits for them.`);
+      if (series) lines.push(seriesGateNote(series.autoStart));
       if (start) lines.push(await startRun(project.id, undefined, signal));
       else lines.push('Next: start_dubbing.');
       return text(lines.join('\n'));
     }),
   );
 
+  /**
+   * What a series will do after its analysis (the review gate, Phase 4.1):
+   * said where it is made, so an agent never assumes parts that never started.
+   */
+  function seriesGateNote(autoStart: boolean): string {
+    return autoStart
+      ? 'Series: autoStart=true. Its parts are made and dubbed by themselves only if the analysis is clean (speakers detected when asked for, no transcription loops left); otherwise it stops at review and get_series says why.'
+      : 'Series: autoStart=false. It stops at review after its analysis: check the cuts with get_series, then start_series.';
+  }
+
   async function startRun(projectId: string, fromStep: PipelineStepId | undefined, signal: AbortSignal): Promise<string> {
     const id = encodeURIComponent(projectId);
     const res = fromStep
       ? await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/retry`, { stepId: fromStep }, { signal })
       : await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/run`, {}, { signal });
+    const parts = (res as { parts?: { projectId: string; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; error?: string }[] }).parts;
+    if (parts) {
+      // A series parent continues as a whole: its parts, in order.
+      return [
+        'The series continues: its parts, in order.',
+        ...parts.map((p, i) => `- part ${i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`),
+        'Follow them with get_series or get_queue.',
+      ].join('\n');
+    }
     if (res.queued) return `Queued behind other dubs (position ${res.position ?? '?'}). Follow it with get_project(waitSeconds=50).`;
     return `Dubbing${fromStep ? ` from "${fromStep}"` : ''} started. Follow it with get_project(waitSeconds=50).`;
   }
@@ -1486,7 +1540,14 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     },
     guarded(async ({ projectId }, ctx) => {
       const signal = ctx.mcpReq.signal;
-      await api.post(`/projects/${encodeURIComponent(projectId)}/pause`, {}, { signal });
+      const res = await api.post<{ pausedParts?: string[] }>(`/projects/${encodeURIComponent(projectId)}/pause`, {}, { signal });
+      if (res?.pausedParts) {
+        return text(
+          res.pausedParts.length > 0
+            ? `Paused the series: ${res.pausedParts.length} part(s) (${res.pausedParts.join(', ')}). Everything done is kept; start_dubbing on the series continues them in order.`
+            : 'No part of this series was dubbing or waiting.',
+        );
+      }
       const { pipeline } = await getProject(projectId, signal);
       const where = pipeline.status === 'paused' && pipeline.pausedStep ? ` at "${pipeline.pausedStep}"` : '';
       return text(`Paused${where}. Everything done so far is kept; start_dubbing continues from there.`);
@@ -1513,24 +1574,30 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Change project settings',
       description:
-        'Change engines, voice, language, subtitles or mix settings of a project that is not running. Returns the step to redo from so the change takes effect (pass it to start_dubbing as fromStep).',
-      inputSchema: z.object({ projectId: z.string(), settings: editableSettings }),
+        'Change engines, voice, language, subtitles or mix settings of a project that is not running. Returns the step to redo from so the change takes effect (pass it to start_dubbing as fromStep). On a series, applyToParts=true makes the same change on every part (speaker voices included) and reports each part; a part being dubbed is skipped with the reason.',
+      inputSchema: z.object({ projectId: z.string(), settings: editableSettings, applyToParts: z.boolean().default(false) }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    guarded(async ({ projectId, settings }, ctx) => {
+    guarded(async ({ projectId, settings, applyToParts }, ctx) => {
       const changed = Object.keys(settings) as (keyof EditableSettings)[];
       if (changed.length === 0) return text('Nothing to change.');
-      const { project } = await api.put<{ project: Project }>(
-        `/projects/${encodeURIComponent(projectId)}/settings`,
+      const res = await api.put<{ project: Project; parts?: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[] }>(
+        `/projects/${encodeURIComponent(projectId)}/settings${applyToParts ? '?applyToParts=true' : ''}`,
         settings,
         { signal: ctx.mcpReq.signal },
       );
       const steps = changed.map((k) => SETTING_STEP[k]).filter((s): s is PipelineStepId => s !== undefined);
       const earliest = STEP_IDS.find((s) => steps.includes(s));
+      const partLines = (res.parts ?? []).map(
+        (p) => `- part ${p.index} (${p.projectId}): ${p.ok ? 'changed' : p.skipped ? `skipped, ${p.skipped}` : `failed: ${p.error ?? '?'}`}`,
+      );
       return text(
-        `Saved. Now: ${settingsSummary(project.settings)}\n` +
+        `Saved. Now: ${settingsSummary(res.project.settings)}\n` +
+          (partLines.length > 0 ? `${partLines.join('\n')}\n` : applyToParts ? 'No parts to change (not a series, or its parts are not made yet).\n' : '') +
           (earliest
-            ? `To apply, call start_dubbing with fromStep="${earliest}".`
+            ? partLines.length > 0
+              ? `To apply, redo each changed part from "${earliest}" (start_dubbing projectId=<part> fromStep="${earliest}").`
+              : `To apply, call start_dubbing with fromStep="${earliest}".`
             : 'This takes effect on the next run.'),
       );
     }),
@@ -1808,23 +1875,39 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Write the character sheet',
       description:
-        'Set the synopsis, cast, glossary and/or forms-of-address plan. Given fields replace the old ones; omitted fields are kept. Does not re-translate by itself: redo from the translation step (start_dubbing fromStep="translation") to apply it to the app\'s own translator.',
+        'Set the synopsis, cast, glossary, forms-of-address plan and/or source corrections. Given fields replace the old ones; omitted fields are kept. Map each detected speaker to its character with cast[].speakerId ("SPEAKER_03"): the speaker ids decide the forms of address in the translation. corrections fix what speech-to-text mishears before translating ({heard:"枪人", is:"羌人"}). Does not re-translate by itself: redo from the translation step (start_dubbing fromStep="translation"). On a series, applyToParts=true saves it on every part too.',
       inputSchema: z.object({
         projectId: z.string(),
         synopsis: z.string().optional(),
-        cast: z.array(z.object({ name: z.string(), role: z.string().optional() })).optional(),
+        cast: z.array(z.object({ name: z.string(), role: z.string().optional(), speakerId: z.string().optional().describe('The detected speaker this character is, e.g. "SPEAKER_03".') })).optional(),
         glossary: z.array(z.object({ source: z.string(), target: z.string() })).optional(),
         pronounGuide: z.string().optional().describe('Who calls whom what, e.g. "Ngộ Không xưng ta, gọi Bát Giới là ngươi".'),
+        corrections: z.array(z.object({ heard: z.string(), is: z.string() })).optional().describe('Source text fixes applied before translating: what was heard -> what is said.'),
+        applyToParts: z.boolean().default(false),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    guarded(async ({ projectId, ...fields }, ctx) => {
+    guarded(async ({ projectId, applyToParts, ...fields }, ctx) => {
       const signal = ctx.mcpReq.signal;
       const url = `/projects/${encodeURIComponent(projectId)}/translation-context`;
       const { context } = await api.get<{ context: TranslationDocContext | null }>(url, { signal });
       const next: TranslationDocContext = { ...(context ?? {}) };
       for (const [k, v] of Object.entries(fields)) if (v !== undefined) (next as Record<string, unknown>)[k] = v;
-      await api.put(url, { context: next }, { signal });
+      const res = await api.put<{ parts?: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[] }>(
+        `${url}${applyToParts ? '?applyToParts=true' : ''}`,
+        { context: next },
+        { signal },
+      );
+      if (res?.parts) {
+        const changed = res.parts.filter((p) => p.ok);
+        return text(
+          [
+            `Saved the character sheet on the series and ${changed.length} of ${res.parts.length} part(s).`,
+            ...res.parts.filter((p) => !p.ok).map((p) => `- part ${p.index} (${p.projectId}): ${p.skipped ? `skipped, ${p.skipped}` : `failed: ${p.error ?? '?'}`}`),
+            'Parts not translated yet use it when they translate. To apply it to a translated part, redo that part from "translation" (start_dubbing projectId=<part> fromStep="translation").',
+          ].join('\n'),
+        );
+      }
       return text('Saved the character sheet.');
     }),
   );

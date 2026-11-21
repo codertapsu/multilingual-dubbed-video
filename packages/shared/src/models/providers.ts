@@ -188,8 +188,17 @@ export interface TranslationSegmentInput {
 export interface TranslationDocContext {
   /** One/two-sentence summary of what the video is about. */
   synopsis?: string;
-  /** Speakers/characters inferred from (or corrected by) the user. */
-  cast?: { name: string; role?: string }[];
+  /**
+   * Speakers/characters inferred from (or corrected by) the user. `speakerId`
+   * ties a character to a detected speaker (SPEAKER_03), so the translation
+   * knows who says a line: the ids decide the Vietnamese forms of address.
+   */
+  cast?: { name: string; role?: string; speakerId?: string }[];
+  /**
+   * What speech-to-text mishears, fixed in the source text before translating:
+   * "枪人" heard where "羌人" is said. Applied to whole matches, in order.
+   */
+  corrections?: { heard: string; is: string }[];
   /** Terms/names that must be translated the same way everywhere. */
   glossary?: { source: string; target: string }[];
   /** Target-language pronoun/address plan (per speaker pair where known). */

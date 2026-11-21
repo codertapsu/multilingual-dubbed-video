@@ -618,6 +618,23 @@ export async function generateCharacterSheet(
   return glossary ? { analysis: glossary, attempts } : { attempts };
 }
 
+/**
+ * The character sheet's "heard as → is" fixes applied to a line's source text
+ * before it is translated: speech-to-text heard 枪人 where 羌人 is said, and
+ * every line with it translated the wrong word (field report B4). Whole
+ * matches, in order; empty or identical pairs are ignored. Pure.
+ */
+export function applySourceCorrections(text: string, corrections: readonly { heard: string; is: string }[] | undefined): string {
+  if (!corrections || corrections.length === 0) return text;
+  let out = text;
+  for (const c of corrections) {
+    const heard = c.heard?.trim();
+    if (!heard || heard === c.is) continue;
+    out = out.split(heard).join(c.is ?? '');
+  }
+  return out;
+}
+
 /** An already-translated source→target pair carried forward for continuity. */
 export interface RollingPair {
   source: string;
@@ -638,7 +655,13 @@ export function buildContextHeader(args: {
   const a = args.analysis;
   if (a?.synopsis) parts.push(`Synopsis: ${a.synopsis}`);
   if (a?.cast && a.cast.length > 0) {
-    parts.push(`Cast: ${a.cast.map((c) => (c.role ? `${c.name} (${c.role})` : c.name)).join('; ')}`);
+    // A character tied to a detected speaker says who a [SPEAKER_03] line is:
+    // the forms of address follow from it (field report B7).
+    parts.push(
+      `Cast: ${a.cast
+        .map((c) => `${c.name}${c.role ? ` (${c.role})` : ''}${c.speakerId ? ` = ${c.speakerId}` : ''}`)
+        .join('; ')}`,
+    );
   }
   if (a?.glossary && a.glossary.length > 0) {
     parts.push(

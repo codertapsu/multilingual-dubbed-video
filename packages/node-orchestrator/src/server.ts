@@ -1721,8 +1721,48 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
     // Changes of shot near the candidate cuts (the media worker's scene score).
     sceneChanges: (video, spans) => (media.detectSceneChanges ? media.detectSceneChanges(video, spans) : Promise.resolve([])),
+    pause: (id) => orchestrator.pauseJob(id),
+    isBusy: (id) => orchestrator.busyProjects().includes(id),
     logger: { info: (m) => console.info(`[series] ${m}`), warn: (m) => console.warn(`[series] ${m}`) },
   });
+
+  /**
+   * Apply one change to every part of a series (`applyToParts`): each part
+   * reports what happened; a part being dubbed is skipped with the reason,
+   * never changed under the run (Phase 4.4).
+   */
+  async function forEachPart(
+    projectId: string,
+    apply: (partId: string) => Promise<unknown>,
+  ): Promise<{ projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[]> {
+    const ids = await series.partIdsOf(projectId);
+    const out: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[] = [];
+    for (const [i, id] of ids.entries()) {
+      if (orchestrator.busyProjects().includes(id)) {
+        out.push({ projectId: id, index: i + 1, ok: false, skipped: 'dubbing now: pause it (or the series), then apply again' });
+        continue;
+      }
+      try {
+        await apply(id);
+        out.push({ projectId: id, index: i + 1, ok: true });
+      } catch (err) {
+        out.push({ projectId: id, index: i + 1, ok: false, error: toAppError(err).message });
+      }
+    }
+    return out;
+  }
+
+  // Make the parts' transcripts again from the series transcript (series/seriesService.ts rebuildParts).
+  app.post(
+    '/projects/:id/series/rebuild-parts',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { force?: boolean } }>, reply) => {
+      try {
+        return { parts: await series.rebuildParts(req.params.id, { force: req.body?.force === true }) };
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
 
   app.get('/series/ai-options', async (_req, reply) => {
     try {
@@ -2653,6 +2693,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   app.post('/projects/:id/run', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     try {
+      // A series whose parts are made continues as a whole: its parts, in order.
+      if ((await series.partIdsOf(req.params.id).catch(() => [])).length > 0) {
+        return reply.status(202).send({ started: true, queued: false, parts: await series.startParts(req.params.id) });
+      }
       const result = await orchestrator.runPipeline(req.params.id);
       return reply.status(202).send(result);
     } catch (err) {
@@ -2674,6 +2718,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // the paused state is saved.
   app.post('/projects/:id/pause', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     try {
+      // A series parent pauses all its parts too (in order, so they resume in order).
+      const parts = await series.partIdsOf(req.params.id).catch(() => [] as string[]);
+      if (parts.length > 0) {
+        if (orchestrator.busyProjects().includes(req.params.id)) await orchestrator.pauseJob(req.params.id);
+        return { ok: true, pausedParts: await series.pauseParts(req.params.id) };
+      }
       await orchestrator.pauseJob(req.params.id);
       return { ok: true };
     } catch (err) {
@@ -2718,11 +2768,17 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   app.put(
     '/projects/:id/settings',
     async (
-      req: FastifyRequest<{ Params: { id: string }; Body: Partial<ProjectSettings> } >,
+      req: FastifyRequest<{ Params: { id: string }; Body: Partial<ProjectSettings>; Querystring: { applyToParts?: string } } >,
       reply,
     ) => {
       try {
-        return await orchestrator.updateProjectSettings(req.params.id, req.body ?? {});
+        const updated = await orchestrator.updateProjectSettings(req.params.id, req.body ?? {});
+        // `?applyToParts=true` on a series: the same change on every part (speaker voices included).
+        if (req.query?.applyToParts === 'true' || req.query?.applyToParts === '1') {
+          const body = req.body ?? {};
+          return { ...updated, parts: await forEachPart(req.params.id, (id) => orchestrator.updateProjectSettings(id, body)) };
+        }
+        return updated;
       } catch (err) {
         return sendError(reply, err);
       }
@@ -2897,11 +2953,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   app.put(
     '/projects/:id/translation-context',
     async (
-      req: FastifyRequest<{ Params: { id: string }; Body: { context?: TranslationDocContext } }>,
+      req: FastifyRequest<{ Params: { id: string }; Body: { context?: TranslationDocContext }; Querystring: { applyToParts?: string } }>,
       reply,
     ) => {
       try {
         const saved = await orchestrator.saveTranslationContext(req.params.id, req.body?.context ?? {});
+        if (req.query?.applyToParts === 'true' || req.query?.applyToParts === '1') {
+          return { context: saved, parts: await forEachPart(req.params.id, (id) => orchestrator.saveTranslationContext(id, saved)) };
+        }
         return { context: saved };
       } catch (err) {
         return sendError(reply, err);

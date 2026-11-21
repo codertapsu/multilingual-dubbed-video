@@ -91,13 +91,17 @@ export async function aiTitlePart(
   part: Pick<SeriesPlanPart, 'index' | 'startMs' | 'endMs'>,
   count: number,
   lines: readonly PlannerLine[],
-  context: { seriesName: string; sourceLanguageName: string; targetLanguageName: string },
+  context: { seriesName: string; sourceLanguageName: string; targetLanguageName: string; names?: readonly string[] },
   signal?: AbortSignal,
 ): Promise<{ title: string; summary: string } | undefined> {
   const transcript = transcriptExcerpt(lines, part.startMs, part.endMs, 3500);
   if (!transcript) return undefined;
+  // The series' own names (the shared character sheet), so a title says
+  // "Lý Vân", as the dub does, not a fresh transliteration of 李云.
+  const names = (context.names ?? []).filter((n) => n.trim()).slice(0, 40);
   const user =
     `Video: "${context.seriesName}", part ${part.index} of ${count}. What is said in this part (${context.sourceLanguageName}):\n${transcript}\n\n` +
+    (names.length > 0 ? `Write names exactly as the dub does: ${names.join('; ')}.\n` : '') +
     `Write in ${context.targetLanguageName}: a short title for this part (at most 60 characters, no part number) and a one-sentence summary for a post caption. ` +
     'Reply {"title":"...","summary":"..."}.';
   const reply = await chat.chatComplete(TITLE_SYSTEM, user, signal, {

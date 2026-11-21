@@ -4,7 +4,7 @@ import { RouterLink } from '@angular/router';
 import type { SeriesView } from '@videodubber/shared';
 
 import { IpcService } from '../../core/ipc/ipc.service';
-import { TranslatePipe } from '../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { toAppError } from '../../core/state/project.store';
 import type { AppError } from '../../core/models';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
@@ -66,6 +66,15 @@ interface Row {
               </p>
             }
           }
+          <!-- Asked to start by itself, it stopped: the analysis was not clean (seriesService.seriesReviewReasons). -->
+          @if (v.reviewReasons?.length) {
+            <div class="banner-warning stack-sm" role="status">
+              <strong>{{ 'series.stopped-heading' | translate }}</strong>
+              @for (r of v.reviewReasons; track $index) {
+                <span>{{ reasonText(r) }}</span>
+              }
+            </div>
+          }
           @for (note of v.plan?.notes ?? []; track $index) {
             <p class="hint warn-text">{{ note }}</p>
           }
@@ -122,9 +131,40 @@ interface Row {
             @if (v.state === 'parts') {
               <div class="row">
                 <button type="button" class="btn btn-primary" (click)="startAll()" [disabled]="busy() || allDone()">{{ 'series.start-all' | translate }}</button>
+                <button type="button" class="btn" (click)="pauseAll()" [disabled]="busy() || !anyActive()">{{ 'series.pause-all' | translate }}</button>
               </div>
+              <p class="hint muted">{{ 'series.all-parts-hint' | translate }}</p>
             }
           </div>
+
+          @if (v.state === 'parts') {
+            <div class="card stack">
+              <h2>{{ 'series.tools-heading' | translate }}</h2>
+              <div class="stack-sm">
+                <div class="row">
+                  <button type="button" class="btn" (click)="applySettings()" [disabled]="busy()">{{ 'series.apply-settings' | translate }}</button>
+                </div>
+                <p class="hint muted">{{ 'series.apply-settings-hint' | translate }}</p>
+              </div>
+              <div class="stack-sm">
+                <div class="row">
+                  <button type="button" class="btn" (click)="rebuild()" [disabled]="busy()">{{ 'series.rebuild' | translate }}</button>
+                  <label class="row inline">
+                    <input type="checkbox" [(ngModel)]="rebuildForce" />
+                    <span>{{ 'series.rebuild-force' | translate }}</span>
+                  </label>
+                </div>
+                <p class="hint muted">{{ 'series.rebuild-hint' | translate }}</p>
+              </div>
+              @if (report().length > 0) {
+                <ul class="stack-sm report">
+                  @for (line of report(); track $index) {
+                    <li>{{ line }}</li>
+                  }
+                </ul>
+              }
+            </div>
+          }
         }
       }
     </section>
@@ -158,6 +198,11 @@ interface Row {
         font-size: 0.8rem;
         margin: 0;
       }
+      .report {
+        margin: 0;
+        padding-left: var(--vd-sp-5);
+        font-size: 0.85rem;
+      }
     `,
   ],
 })
@@ -170,6 +215,11 @@ export class SeriesComponent implements OnInit, OnDestroy {
   protected readonly busy = signal(false);
   protected readonly error = signal<AppError | null>(null);
   protected readonly allDone = computed(() => this.rows().every((r) => r.status === 'completed'));
+  protected readonly anyActive = computed(() => this.rows().some((r) => r.status === 'running' || r.status === 'queued'));
+  /** What the last series-wide action did, part by part. */
+  protected readonly report = signal<string[]>([]);
+  protected rebuildForce = false;
+  private readonly translate = inject(TranslateService);
   private timer: ReturnType<typeof setInterval> | undefined;
 
   ngOnInit(): void {
@@ -180,6 +230,13 @@ export class SeriesComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     clearInterval(this.timer);
+  }
+
+  /** A review reason in the UI's language (the server's English for a code this build does not know). */
+  protected reasonText(r: { code: string; message: string }): string {
+    const key = `series.reason-${r.code}`;
+    const t = this.translate.instant(key);
+    return t === key ? r.message : t;
   }
 
   protected clock(ms: number): string {
@@ -240,6 +297,46 @@ export class SeriesComponent implements OnInit, OnDestroy {
   protected startAll(): Promise<boolean> {
     return this.run(async () => {
       await this.ipc.startSeries(this.id());
+      await this.load(true);
+    });
+  }
+
+  /** Pause every part that is dubbing or waiting, in order (they continue in that order). */
+  protected pauseAll(): Promise<boolean> {
+    return this.run(async () => {
+      await this.ipc.pausePipeline(this.view()?.parentId ?? this.id());
+      await this.load(true);
+    });
+  }
+
+  /** The series' own settings (voices per speaker included) on every part not being dubbed. */
+  protected applySettings(): Promise<boolean> {
+    return this.run(async () => {
+      const parentId = this.view()?.parentId ?? this.id();
+      const { project } = await this.ipc.getProject(parentId);
+      const res = await this.ipc.updateSeriesSettings(parentId, project.settings);
+      this.report.set(
+        (res.parts ?? []).map((p) =>
+          this.translate.instant(p.ok ? 'series.report-applied' : 'series.report-skipped', {
+            n: p.index,
+            why: p.skipped ?? p.error ?? '',
+          }),
+        ),
+      );
+    });
+  }
+
+  /** Make the parts' transcripts again from the series transcript (after it was fixed). */
+  protected rebuild(): Promise<boolean> {
+    return this.run(async () => {
+      const res = await this.ipc.rebuildSeriesParts(this.view()?.parentId ?? this.id(), this.rebuildForce);
+      this.report.set(
+        res.parts.map((p) =>
+          p.rebuilt
+            ? this.translate.instant('series.report-rebuilt', { n: p.index, old: p.oldLines ?? 0, lines: p.newLines ?? 0, speakers: p.speakers ?? 0 })
+            : this.translate.instant(`series.report-kept-${p.skipped ?? 'missing'}`, { n: p.index }),
+        ),
+      );
       await this.load(true);
     });
   }

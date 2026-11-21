@@ -74,6 +74,7 @@ import {
   type ShortenOutcome,
 } from '../providers/translation/dubPasses.js';
 import {
+  applySourceCorrections,
   generateCharacterSheet,
   MIN_SEGMENTS_FOR_ANALYSIS,
   translationContextEnabled,
@@ -1325,9 +1326,11 @@ export class PipelineRunner {
     // auto-fit records described other lines, and its "failed" character
     // sheet made the refine step skip building one.
     await writeJsonAtomic(reportPath, {});
+    // "Heard as → is" fixes from the character sheet, before anything reads the text.
+    const corrections = (await readDocContext(paths.translationContextJson))?.corrections;
     const promptSegments: PromptSegment[] = sourceSegments.map((s) => ({
       id: s.id,
-      sourceText: s.sourceText,
+      sourceText: applySourceCorrections(s.sourceText, corrections),
       startMs: s.startMs,
       endMs: s.endMs,
       // Carry diarized speaker ids into the prompt: who is speaking is what
@@ -1608,7 +1611,7 @@ export class PipelineRunner {
     );
     const promptSegments: PromptSegment[] = segments.map((s) => ({
       id: s.id,
-      sourceText: s.sourceText,
+      sourceText: applySourceCorrections(s.sourceText, documentContext?.corrections),
       startMs: s.startMs,
       endMs: s.endMs,
       ...(s.speakerId ? { speakerId: s.speakerId } : {}),

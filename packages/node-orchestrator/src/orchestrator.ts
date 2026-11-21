@@ -1407,7 +1407,21 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         ? {
             cast: ctx.cast
               .filter((c) => typeof c?.name === 'string' && c.name.trim().length > 0)
-              .map((c) => ({ name: c.name.trim(), ...(c.role?.trim() ? { role: c.role.trim() } : {}) })),
+              .map((c) => ({
+                name: c.name.trim(),
+                ...(c.role?.trim() ? { role: c.role.trim() } : {}),
+                // Which detected speaker this character is (SPEAKER_03).
+                ...(typeof c.speakerId === 'string' && /^SPEAKER_\d+$/.test(c.speakerId.trim()) ? { speakerId: c.speakerId.trim() } : {}),
+              })),
+          }
+        : {}),
+      // "Heard as → is": what speech-to-text mishears, fixed before translating.
+      ...(Array.isArray(ctx.corrections)
+        ? {
+            corrections: ctx.corrections
+              .filter((c) => typeof c?.heard === 'string' && c.heard.trim().length > 0 && typeof c?.is === 'string' && c.heard.trim() !== c.is)
+              .slice(0, 200)
+              .map((c) => ({ heard: c.heard.trim(), is: c.is.trim() })),
           }
         : {}),
       ...(Array.isArray(ctx.glossary)

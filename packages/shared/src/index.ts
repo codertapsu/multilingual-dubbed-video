@@ -176,6 +176,7 @@ export type {
   SeriesPartInfo,
   SeriesPlan,
   SeriesPlanPart,
+  SeriesReviewReason,
   SeriesSettings,
   SeriesState,
   SeriesView,

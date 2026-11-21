@@ -130,7 +130,7 @@ import { describeStretch } from '../media.js';
 import type { PipelineMediaService, SeparationService, TimelineSegmentInput } from '../media.js';
 import type { AlignmentService } from '../providers/alignment/whisperxProvider.js';
 import type { DiarizationService } from '../providers/diarization/sherpaDiarizationProvider.js';
-import { assignSpeakers, cachedSpeakerTurns } from './diarization.js';
+import { detectLineSpeakers, speakerDetectionProgress } from './diarization.js';
 import { hasSpeakableText, writeSilentClip } from './speakable.js';
 import { findLoopRanges, repairLoops, type RepairedRange } from './loopRepair.js';
 import { expectedSpeechMs } from '../alignment/clipSpeech.js';
@@ -1024,7 +1024,9 @@ export class PipelineRunner {
 
     // Speaker detection: who says each line, before anchoring so a line it
     // splits keeps its speaker (pipeline/diarization.ts).
-    if (project.settings.diarize) segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal);
+    if (project.settings.diarize) {
+      segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal, onProgress);
+    }
 
     segments = await this.anchorToSpeech(
       paths,
@@ -1183,13 +1185,17 @@ export class PipelineRunner {
   /**
    * Who says each line (speaker detection, pipeline/diarization.ts). Best
    * effort, and said: without the engine, or when it fails, the lines keep no
-   * speaker and the dub goes on in the project voice. A pause still stops.
+   * speaker and the dub goes on in the project voice. A failure is a project
+   * warning, not only a log line: the field report's 10-hour drama lost its
+   * speakers to an HTTP 500 that only the log mentioned, and a whole series
+   * was dubbed in one voice. A pause still stops.
    */
   private async detectSpeakers(
     paths: WorkspacePaths,
     segments: TranscriptSegment[],
     knownCount: number | undefined,
     signal: AbortSignal,
+    onProgress: StepProgress,
   ): Promise<TranscriptSegment[]> {
     const service = this.deps.diarization;
     if (!service || !(await service.available().catch(() => false))) {
@@ -1200,26 +1206,45 @@ export class PipelineRunner {
     }
     throwIfCancelled(signal);
     this.deps.logger.info('Detecting who says each line...');
+    const warn = (w: Omit<ProjectWarning, 'at' | 'step'>): void =>
+      onProgress.warn ? onProgress.warn(w) : this.deps.logger.warn(w.message);
     try {
       const numSpeakers = knownCount && knownCount >= 2 ? knownCount : undefined;
-      const turns = await cachedSpeakerTurns(
+      const found = await detectLineSpeakers({
         service,
-        paths.original16kMonoWav,
-        paths.diarizationJson,
-        numSpeakers ? { numSpeakers } : {},
+        audioPath: paths.original16kMonoWav,
+        cachePath: paths.diarizationJson,
+        checkpointDir: paths.diarizationChunksDir,
+        segments,
+        ...(numSpeakers ? { numSpeakers } : {}),
+        onProgress: speakerDetectionProgress(onProgress, (m) => this.deps.logger.info(m)),
         signal,
-      );
-      if (!turns) return segments;
-      const out = assignSpeakers(segments, turns);
+      });
+      if (!found) return segments;
+      const out = found.segments;
       const speakers = new Set(out.map((s) => s.speakerId).filter(Boolean)).size;
       const nobody = out.filter((s) => !s.speakerId).length;
       this.deps.logger.info(
         `Found ${speakers} speaker(s)${nobody > 0 ? `; ${nobody} line(s) could not be given one (set them in the editor)` : ''}.`,
       );
+      if (found.lowConfidence > 0) {
+        warn({
+          code: 'speakers-low-confidence',
+          key: 'warning.speakers-low-confidence',
+          params: { count: found.lowConfidence },
+          message: `${found.lowConfidence} line(s) got only a best-guess speaker (music, voices at once, or no clear turn): check them in the editor's Issues.`,
+        });
+      }
       return out;
     } catch (err) {
       throwIfCancelled(signal);
-      this.deps.logger.warn(`Speaker detection failed (${String(err)}): the lines keep no speaker.`);
+      const cause = toAppError(err).message;
+      warn({
+        code: 'speakers-failed',
+        key: 'warning.speakers-failed',
+        params: { cause },
+        message: `Speaker detection failed (${cause}): the dub uses one voice. Re-detect speakers in the editor, or with detect_speakers.`,
+      });
       return segments;
     }
   }

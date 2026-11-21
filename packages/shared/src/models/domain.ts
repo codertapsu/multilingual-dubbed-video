@@ -363,6 +363,15 @@ export interface TranscriptSegment {
   translatedText?: string;
   /** Optional diarization speaker id. */
   speakerId?: string;
+  /**
+   * The speaker is only speaker detection's best guess: the line failed the
+   * strict rule (enough of it inside one speaker's turns), so it took the
+   * speaker it overlaps most, the nearest turn, or its nearest neighbour's.
+   * Until 0.17 such lines kept no speaker: on the field report's 10-hour
+   * drama that was one line in twelve, dubbed in the project voice. Shown in
+   * the editor's Issues; cleared when someone sets the line's speaker by hand.
+   */
+  speakerLowConfidence?: true;
   /** Optional segment-level confidence in 0..1. */
   confidence?: number;
   /** Optional per-word timings. */

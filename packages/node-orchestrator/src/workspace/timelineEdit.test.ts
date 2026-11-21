@@ -106,6 +106,19 @@ describe('applySegmentPatches', () => {
     expectInvalid(() => applySegmentPatches(base, [{ id: 'seg_0001', speakerId: 'Anna' }]), /SPEAKER_00/);
   });
 
+  it("takes a speaker set by hand as no guess, even detection's own", () => {
+    const guessed = base.map((s, i) => (i === 0 ? { ...s, speakerId: 'SPEAKER_01', speakerLowConfidence: true as const } : s));
+    // Confirming the guessed speaker is a change (it reaches source.json), not a new voice.
+    const confirmed = applySegmentPatches(guessed, [{ id: 'seg_0001', speakerId: 'SPEAKER_01' }]);
+    expect(confirmed.segments[0]).toMatchObject({ speakerId: 'SPEAKER_01' });
+    expect(confirmed.segments[0]!.speakerLowConfidence).toBeUndefined();
+    expect(confirmed.segments[0]!.ttsStale).toBeUndefined();
+    expect([...confirmed.speakerChanged]).toEqual(['seg_0001']);
+    expect(applySegmentPatches(guessed, [{ id: 'seg_0001', speakerId: 'SPEAKER_00' }]).segments[0]!.speakerLowConfidence).toBeUndefined();
+    // Other edits leave the mark alone.
+    expect(applySegmentPatches(guessed, [{ id: 'seg_0001', voiceId: 'own' }]).segments[0]!.speakerLowConfidence).toBe(true);
+  });
+
   it('stores a 1× rate as "no override" so the line still groups with its neighbours', () => {
     const fast = applySegmentPatches(base, [{ id: 'seg_0002', speakingRate: 1.25 }]);
     expect(fast.segments[1]!.speakingRate).toBe(1.25);

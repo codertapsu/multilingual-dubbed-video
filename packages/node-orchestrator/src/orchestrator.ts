@@ -1106,7 +1106,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
               next = { ...rest, ...(n.words ? { words: n.words } : {}) };
             }
             if (outcome.speakerChanged.has(s.id)) {
-              const { speakerId: _old, ...rest } = next;
+              const { speakerId: _old, speakerLowConfidence: _guess, ...rest } = next;
               next = { ...rest, ...(n.speakerId ? { speakerId: n.speakerId } : {}) };
             }
             return next;

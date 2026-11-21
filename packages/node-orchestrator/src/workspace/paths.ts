@@ -47,6 +47,12 @@ export interface WorkspacePaths {
   readonly diarizationJson: string;
   /** What the loop check found in the transcript and did (pipeline/loopRepair.ts). */
   readonly loopRangesJson: string;
+  /**
+   * Speaker detection's finished 10-minute parts of long audio, one JSON each,
+   * so a pause or a retry resumes at the first missing part
+   * (providers/diarization/sherpaDiarizationProvider.ts).
+   */
+  readonly diarizationChunksDir: string;
 
   /** Scratch dir for chunked-STT clips + per-chunk transcript checkpoints. */
   readonly sttChunksDir: string;
@@ -145,6 +151,7 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     speechRegionsJson: path.join(audioDir, 'speech_regions.json'),
     diarizationJson: path.join(audioDir, 'diarization.json'),
     loopRangesJson: path.join(audioDir, 'loop_ranges.json'),
+    diarizationChunksDir: path.join(audioDir, 'diarization-chunks'),
 
     sttChunksDir,
     sttChunkWav: (index: number) => path.join(sttChunksDir, `chunk_${padSegmentIndex(index)}.wav`),

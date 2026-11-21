@@ -1184,6 +1184,66 @@ describe('PipelineRunner — speech-to-text timing and fallback', () => {
     expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toContain('Speaker detection is on, but its engine is not installed');
   });
 
+  it('dubs on in one voice when speaker detection fails, and keeps that as a warning', async () => {
+    const { provider } = sttEngine('faster-whisper', makeSegments([[1000, 3000, '你好']]));
+    const { project, paths, deps } = await build({
+      engines: [provider],
+      settings: { diarize: true },
+      diarization: {
+        diarize: async () => {
+          throw new AppErrorException('UNKNOWN', 'Speaker detection engine returned HTTP 500.');
+        },
+        available: async () => true,
+        modelKey: 'test-model',
+      },
+    });
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    expect((await readSource(paths.sourceJson))[0]!.speakerId).toBeUndefined();
+    const state = await store.getPipeline(project.id);
+    expect(state.steps.find((s) => s.id === 'stt')!.status).toBe('completed');
+    expect(state.warnings).toEqual([
+      expect.objectContaining({
+        code: 'speakers-failed',
+        step: 'stt',
+        key: 'warning.speakers-failed',
+        params: { cause: 'Speaker detection engine returned HTTP 500.' },
+        message: expect.stringContaining('the dub uses one voice'),
+      }),
+    ]);
+  });
+
+  it('shows which part of the audio speaker detection is on, and warns of lines it only guessed', async () => {
+    const lines = makeSegments([
+      [1000, 3000, '你好'],
+      [20_000, 21_000, '音乐'], // no turn near it: a guess
+    ]);
+    const { provider } = sttEngine('faster-whisper', lines);
+    const { project, deps } = await build({
+      engines: [provider],
+      settings: { diarize: true },
+      diarization: {
+        diarize: async (_audio, opts) => {
+          opts.onProgress?.(0, 2);
+          opts.onProgress?.(1, 2);
+          opts.onProgress?.(2, 2);
+          return { turns: [{ startMs: 900, endMs: 3100, speaker: 0 }], speakers: [] };
+        },
+        available: async () => true,
+        modelKey: 'test-model',
+      },
+    });
+    const details: string[] = [];
+    deps.bus.subscribe((e) => {
+      if (e.type === 'step' && e.step.id === 'stt' && e.step.detail) details.push(e.step.detail.text);
+    });
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    expect(details).toEqual(['Detecting speakers 0/2', 'Detecting speakers 1/2', 'Detecting speakers 2/2']);
+    const state = await store.getPipeline(project.id);
+    expect(state.warnings).toEqual([
+      expect.objectContaining({ code: 'speakers-low-confidence', step: 'stt', key: 'warning.speakers-low-confidence', params: { count: 1 } }),
+    ]);
+  });
+
   const readSource = async (p: string) =>
     (JSON.parse(await fsp.readFile(p, 'utf8')) as { segments: TranscriptSegment[] }).segments;
 

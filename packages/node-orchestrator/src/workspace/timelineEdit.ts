@@ -46,7 +46,7 @@ export interface PatchOutcome {
   voiceChanged: Set<string>;
   rateChanged: Set<string>;
   lockChanged: Set<string>;
-  /** Lines given to another speaker (or to none). */
+  /** Lines given to another speaker (or to none), or whose guessed speaker was confirmed. */
   speakerChanged: Set<string>;
 }
 
@@ -179,7 +179,11 @@ export function applySegmentPatches(
         invalid(`Line ${patch.id}: a speaker is "SPEAKER_00", "SPEAKER_01"…`);
       }
       const speakerId = patch.speakerId ?? undefined;
-      if (speakerId !== before.speakerId) {
+      // A speaker set by hand is no guess, even the one detection guessed:
+      // the line leaves the editor's Issues.
+      const wasGuess = before.speakerLowConfidence === true;
+      if (wasGuess) delete seg.speakerLowConfidence;
+      if (speakerId !== before.speakerId || wasGuess) {
         if (speakerId === undefined) delete seg.speakerId;
         else seg.speakerId = speakerId;
         outcome.speakerChanged.add(patch.id);

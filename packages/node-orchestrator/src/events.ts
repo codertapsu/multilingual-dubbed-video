@@ -81,6 +81,11 @@ export class ProjectEventBus {
   emit(event: PipelineEvent): void {
     if (event.type === 'state') {
       this.lastState = event;
+      // A new run: the last one's ending no longer applies. Replayed to a page
+      // opened later, an old failure sat over a retry that was running fine,
+      // and an old "done" offered Export during a re-render (and after a
+      // pause, the stale error could not be told from a real one at all).
+      if (event.pipeline.status === 'running') this.terminal = null;
     } else if (event.type === 'done' || event.type === 'error') {
       this.terminal = event;
     }

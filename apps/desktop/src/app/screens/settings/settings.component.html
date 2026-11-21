@@ -712,6 +712,29 @@
 
   <!-- ============================ Updates ============================ -->
   <!-- ===================== Logo & greeting (the brand kit) ===================== -->
+  <!-- Downloads while dubbing (providers/download/downloadGate.ts): dubbing comes first. -->
+  <div class="card stack" id="downloads">
+    <h2>{{ 'settings.downloads.heading' | translate }}</h2>
+    <p class="muted">{{ 'settings.downloads.intro' | translate }}</p>
+    <label class="stack-sm">
+      <span class="label">{{ 'settings.downloads.while-dubbing' | translate }}</span>
+      <select class="input" [ngModel]="downloadsChoice()" (ngModelChange)="setDownloadsChoice($event)" [disabled]="prefSaving()">
+        <option value="auto">{{ 'settings.downloads.opt-auto' | translate }}</option>
+        <option value="pause-heavy">{{ 'settings.downloads.opt-pause-heavy' | translate }}</option>
+        <option value="one-task">{{ 'settings.downloads.opt-one-task' | translate }}</option>
+        <option value="no-limit">{{ 'settings.downloads.opt-no-limit' | translate }}</option>
+      </select>
+    </label>
+    <p class="hint">
+      @switch (downloadsEffective()) {
+        @case ('pause-heavy') { {{ 'settings.downloads.now-pause-heavy' | translate }} }
+        @case ('one-task') { {{ 'settings.downloads.now-one-task' | translate }} }
+        @case ('no-limit') { {{ 'settings.downloads.now-no-limit' | translate }} }
+      }
+    </p>
+    <p class="hint muted">{{ 'settings.downloads.login-hint' | translate }}</p>
+  </div>
+
   <div class="card stack" id="brand-kit">
     <h2>{{ 'settings.brand-kit-heading' | translate }}</h2>
     <p class="muted">{{ 'settings.brand-kit-intro' | translate }}</p>

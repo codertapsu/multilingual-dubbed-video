@@ -132,7 +132,7 @@ fn rotate(path: &Path) {
 /// to stay small, and this is the only place a wall-clock string is needed.
 /// Uses Howard Hinnant's `civil_from_days` algorithm, which is exact for every
 /// date this app will ever see.
-fn iso8601_utc(t: SystemTime) -> String {
+pub(crate) fn iso8601_utc(t: SystemTime) -> String {
     let secs = t
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())

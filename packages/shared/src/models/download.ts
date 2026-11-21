@@ -132,6 +132,12 @@ export interface DownloadItem {
   error?: AppError;
   /** A rate-limited download waits for this time before it tries again (`queued`). */
   retryAt?: string;
+  /**
+   * Waiting for a dub (`queued`, its bytes kept): `gpu-heavy` while a dub's
+   * heavy step runs, `dubbing` while any dub runs (one task at a time),
+   * `pressure` while the app is short of memory or responsiveness.
+   */
+  heldBy?: 'gpu-heavy' | 'dubbing' | 'pressure';
   /** Tries so far, including automatic ones after a rate limit. */
   attempts: number;
   createdAt: string;

@@ -401,6 +401,20 @@ export interface UpdatePreferences {
   concurrency?: ConcurrencyPreferences;
   /** Which installed local model to use, when the user picked one (Settings → Engines). */
   localModels?: LocalModelPreferences;
+  /** What downloads do while a dub runs (Settings → Downloads). */
+  downloads?: DownloadPreferences;
+}
+
+/**
+ * What downloads do while a dub runs. `auto` decides by the hardware: a
+ * powerful machine (a graphics card with 12 GB or more, or an Apple Silicon Mac
+ * with 32 GB, and room for two dubs) downloads alongside, pausing during the
+ * dub's heavy steps; any other machine does one thing at a time.
+ */
+export type DownloadsWhileDubbing = 'auto' | 'pause-heavy' | 'one-task' | 'no-limit';
+
+export interface DownloadPreferences {
+  whileDubbing?: DownloadsWhileDubbing;
 }
 
 /**

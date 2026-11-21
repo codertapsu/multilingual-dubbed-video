@@ -37,7 +37,13 @@
     "backend-down-help": "Get help",
     "theme-system": "Theme: follow the system (click to switch)",
     "theme-light": "Theme: light (click to switch)",
-    "theme-dark": "Theme: dark (click to switch)"
+    "theme-dark": "Theme: dark (click to switch)",
+    "backend-crashed-title": "The backend stopped unexpectedly",
+    "backend-restarting": "at {{time}} (code {{code}}). VideoDubber is starting it again by itself; dubs that were running continue where they were.",
+    "backend-failed-title": "The backend keeps stopping",
+    "backend-failed-body": "It stopped several times in a few minutes, so it is not started again. Restart the app; if it happens again, open Help and export a support bundle.",
+    "backend-failed-start": "The built-in backend could not be started. Reinstall VideoDubber; Help has the details.",
+    "backend-not-responding": "The backend is running but not answering; it may be busy with a heavy step. Wait a minute; if it stays like this, restart the app."
   },
   "update": {
     "installing-title": "Updating to {{ version }}…",
@@ -153,7 +159,10 @@
     "select-all-done": "Tick all finished",
     "select": "Tick to dub",
     "list-heading": "Videos in this list",
-    "list-count": "{{n}} videos shown (the list has {{total}}). Untick the ones you do not want."
+    "list-count": "{{n}} videos shown (the list has {{total}}). Untick the ones you do not want.",
+    "held-gpu-heavy": "Paused while a dub is in a heavy step (dubbing comes first); it continues from where it stopped.",
+    "held-dubbing": "Waiting until the dub finishes: on this computer one task runs at a time (Settings → Downloads).",
+    "held-pressure": "Paused while the computer is short of memory; it continues by itself."
   },
   "home": {
     "title": "Projects",
@@ -406,7 +415,20 @@
       "body": "A local, offline-first video dubbing app. Transcription, translation, and voice synthesis all run on your machine. Only the language models are downloaded on first run."
     },
     "brand-kit-heading": "Logo & greeting",
-    "brand-kit-intro": "Your logos and spoken greetings, made once and chosen per project (New project, the editor, Export). A project keeps its own copy, so changing this list never changes a finished project."
+    "brand-kit-intro": "Your logos and spoken greetings, made once and chosen per project (New project, the editor, Export). A project keeps its own copy, so changing this list never changes a finished project.",
+    "downloads": {
+      "heading": "Downloads",
+      "intro": "Downloading uses the network, the disk and the processor. This decides what downloads do while a dub runs; dubbing always comes first.",
+      "while-dubbing": "While a dub runs",
+      "opt-auto": "Automatic (by this computer)",
+      "opt-pause-heavy": "Download alongside, pausing during the dub's heavy steps",
+      "opt-one-task": "One task at a time: downloads wait until the dub finishes",
+      "opt-no-limit": "No limit: download alongside, two at a time",
+      "now-pause-heavy": "Now: downloads run alongside dubs and pause during their heavy steps (a graphics card with 12 GB or more and room for two dubs counts as powerful). A paused download goes on from where it stopped.",
+      "now-one-task": "Now: one task at a time. With less than 12 GB of graphics memory, or room for only one dub, a dub uses the whole computer, so downloads wait until it finishes and then go one at a time.",
+      "now-no-limit": "Now: downloads run alongside dubs without pausing, two at a time. Dubs may be slower.",
+      "login-hint": "Signing in to a site for better quality is on the Download screen (Source account)."
+    }
   },
   "support": {
     "title": "Support VideoDubber",

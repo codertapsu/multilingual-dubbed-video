@@ -123,6 +123,8 @@ export interface UpdatePreferences {
   concurrency?: ConcurrencyPreferences;
   /** Installed local model packs the user picked per job ('' = back to automatic). */
   localModels?: { translation?: string; chat?: string };
+  /** What downloads do while a dub runs (Settings → Downloads). */
+  downloads?: { whileDubbing?: 'auto' | 'pause-heavy' | 'one-task' | 'no-limit' };
 }
 
 // ---------------------------------------------------------------------------

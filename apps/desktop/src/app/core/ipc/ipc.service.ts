@@ -47,7 +47,7 @@ import type {
   UpdateInfo,
   UpdatePreferences,
 } from '../models/setup';
-import type { BrandAsset, GreetingPlacement, GreetingPlan, SeriesAiOption, SeriesView } from '@videodubber/shared';
+import type { BrandAsset, GreetingPlacement, GreetingPlan, SeriesAiOption, SeriesView, DownloadsWhileDubbing } from '@videodubber/shared';
 import type {
   AddDownloadsResult,
   DownloadItem,
@@ -112,6 +112,18 @@ type InvokeFn = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
  * EventSource to the orchestrator from {@link PipelineEventsService}, in both
  * Tauri and browser modes.
  */
+/** The desktop shell's view of the backend (watchdog.rs `BackendState`). */
+export interface BackendShellState {
+  state: 'unmanaged' | 'running' | 'restarting' | 'failed';
+  startedAt?: string;
+  lastExitCode?: number;
+  lastExitHex?: string;
+  lastExitMeaning?: string;
+  lastExitAt?: string;
+  restarts: number;
+  failure?: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class IpcService {
   private readonly baseUrl = environment.orchestratorUrl;
@@ -687,6 +699,11 @@ export class IpcService {
   // Preferences + auto-update                                           //
   // ------------------------------------------------------------------ //
 
+  /** GET /downloads/policy — what downloads do while a dub runs, here (Settings → Downloads). */
+  downloadsPolicy(): Promise<{ choice: DownloadsWhileDubbing; effective: Exclude<DownloadsWhileDubbing, 'auto'>; powerful: boolean }> {
+    return this.http('GET', '/downloads/policy');
+  }
+
   /** GET /preferences — the persisted update preference. */
   getPreferences(): Promise<UpdatePreferences> {
     return this.call<UpdatePreferences>('get_preferences', {}, 'GET', '/preferences');
@@ -694,9 +711,10 @@ export class IpcService {
 
   /** PUT /preferences — persist the update preference. */
   setPreferences(body: UpdatePreferences): Promise<{ ok: boolean }> {
+    // The Rust command's parameter is `prefs` (commands.rs): Tauri matches by name.
     return this.call<{ ok: boolean }>(
       'set_preferences',
-      { preferences: body },
+      { prefs: body },
       'PUT',
       '/preferences',
       body,
@@ -1246,6 +1264,42 @@ export class IpcService {
   readonly backendDown = this._backendDown.asReadonly();
 
   /**
+   * What the desktop shell's watchdog says about the backend (watchdog.rs):
+   * running, restarting after a crash (with its exit code), or failed after
+   * it kept stopping. Null in a browser session or before the shell answered.
+   */
+  /** Whether the backend answered at least once in this session (then "not answering" is the right word). */
+  backendSeenOnce(): boolean {
+    return this.backendSeen;
+  }
+
+  private readonly _backendState = signal<BackendShellState | null>(null);
+  readonly backendState = this._backendState.asReadonly();
+  private backendStateWatched = false;
+
+  /** Follow the shell's `backend-state` event (desktop only). */
+  async watchBackendState(): Promise<void> {
+    if (!this.tauri || this.backendStateWatched) return;
+    this.backendStateWatched = true;
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      await listen<BackendShellState>('backend-state', (e) => this._backendState.set(e.payload));
+    } catch {
+      /* an older shell without the event: the read below still works */
+    }
+    await this.refreshBackendState();
+  }
+
+  private async refreshBackendState(): Promise<void> {
+    if (!this.tauri) return;
+    try {
+      this._backendState.set(await this.invoke<BackendShellState>('backend_state'));
+    } catch {
+      /* an older shell without the command */
+    }
+  }
+
+  /**
    * Relaunch the desktop app (`restart_app`). Restarting is the reliable cure
    * for a backend that lost the startup race: the sidecar binary is warm the
    * second time, so it comes up quickly. No-op outside the desktop shell.
@@ -1283,14 +1337,45 @@ export class IpcService {
       } catch (cause) {
         // An aborted request is the caller's own timeout, not a boot race.
         if (init.signal?.aborted || Date.now() >= deadline) {
-          // Out of patience: surface it once, app-wide.
-          if (!init.signal?.aborted) this._backendDown.set(true);
+          // Out of patience: surface it once, app-wide, with what the shell
+          // knows (crashed and restarting, or keeps stopping).
+          if (!init.signal?.aborted) {
+            this._backendDown.set(true);
+            void this.refreshBackendState();
+          }
           throw cause;
         }
         await new Promise((r) => setTimeout(r, delay));
         delay = Math.min(delay * 2, 1_500);
       }
     }
+  }
+
+  /**
+   * Why the backend is unreachable, as the shell knows it: "did not start" was
+   * the only answer, also for a backend that crashed after 18 hours (2026-11-21).
+   */
+  private unreachableAdvice(): string {
+    const s = this._backendState();
+    if (s?.state === 'restarting') {
+      return (
+        `The backend stopped unexpectedly${s.lastExitAt ? ` at ${new Date(s.lastExitAt).toLocaleTimeString()}` : ''}` +
+        `${s.lastExitHex ? ` (${s.lastExitHex})` : ''} and is restarting by itself. Try again in a moment; running dubs continue where they were.`
+      );
+    }
+    if (s?.state === 'failed') {
+      return s.failure
+        ? `The built-in backend could not be started: ${s.failure}. Reinstall VideoDubber.`
+        : 'The backend keeps stopping, so it is not restarted again. Quit and reopen VideoDubber; if it happens again, export a support bundle from Help and report it.';
+    }
+    if (s?.state === 'running' && this.backendSeen) {
+      return 'The backend is running but not answering: it may be busy with a heavy step. Wait a minute and try again; if it stays like this, quit and reopen VideoDubber.';
+    }
+    return (
+      'The built-in backend did not start. Quit and reopen VideoDubber; if it keeps happening, ' +
+      'reinstall the app, and check that no other program is using port 5100 ' +
+      '(some antivirus and VPN tools block local ports).'
+    );
   }
 
   /** HTTP fallback. Parses the worker/orchestrator JSON error envelope. */
@@ -1322,9 +1407,7 @@ export class IpcService {
         // The dev advice is actively wrong inside the packaged app, where the
         // shell owns the backend and the user has no scripts/ directory.
         remediation: this.inTauri
-          ? 'The built-in backend did not start. Quit and reopen VideoDubber; if it keeps happening, ' +
-            'reinstall the app, and check that no other program is using port 5100 ' +
-            '(some antivirus and VPN tools block local ports).'
+          ? this.unreachableAdvice()
           : 'Start the local services (run scripts/dev.sh or scripts/dev.ps1) and ensure port 5100 is free.',
         docsRef: this.inTauri ? 'docs/TROUBLESHOOTING.md' : 'docs/LOCAL_SETUP.md',
       };

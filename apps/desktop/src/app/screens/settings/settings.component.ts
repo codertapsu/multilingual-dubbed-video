@@ -1,3 +1,4 @@
+import type { DownloadsWhileDubbing } from '@videodubber/shared';
 import { BrandKitComponent } from '../../shared/branding/brand-kit.component';
 import type { OnDestroy, OnInit } from '@angular/core';
 import {
@@ -347,6 +348,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     void this.loadEngines();
     void this.loadStorage();
     void this.loadProjectsFolder();
+    void this.loadDownloadsPolicy();
     void this.loadArgosPackages(); // installed-only (fast); index loads on demand
   }
 
@@ -1106,6 +1108,38 @@ export class SettingsComponent implements OnInit, OnDestroy {
       await this.ipc.setUpdatePreference({ autoUpdate: this.autoUpdate(), concurrency });
     } catch (err) {
       rollback();
+      this.error.set(toAppError(err));
+    } finally {
+      this.prefSaving.set(false);
+    }
+  }
+
+  // ---- Downloads while dubbing (Settings → Downloads) ----------------------
+  protected readonly downloadsChoice = signal<DownloadsWhileDubbing>('auto');
+  protected readonly downloadsEffective = signal<Exclude<DownloadsWhileDubbing, 'auto'> | null>(null);
+
+  private async loadDownloadsPolicy(): Promise<void> {
+    try {
+      const p = await this.ipc.downloadsPolicy();
+      this.downloadsChoice.set(p.choice);
+      this.downloadsEffective.set(p.effective);
+    } catch {
+      /* an older backend: the card shows the choice only */
+    }
+  }
+
+  protected async setDownloadsChoice(value: DownloadsWhileDubbing): Promise<void> {
+    if (this.prefSaving()) return;
+    const previous = this.downloadsChoice();
+    this.downloadsChoice.set(value);
+    this.prefSaving.set(true);
+    this.error.set(null);
+    try {
+      // autoUpdate too: the Tauri command mirrors the whole object.
+      await this.ipc.setUpdatePreference({ autoUpdate: this.autoUpdate(), downloads: { whileDubbing: value } });
+      await this.loadDownloadsPolicy();
+    } catch (err) {
+      this.downloadsChoice.set(previous);
       this.error.set(toAppError(err));
     } finally {
       this.prefSaving.set(false);

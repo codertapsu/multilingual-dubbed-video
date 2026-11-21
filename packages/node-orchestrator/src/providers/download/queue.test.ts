@@ -50,12 +50,12 @@ function fakeProvider(opts: { title?: (id: string) => string; prepare?: (id: str
   };
 }
 
-type Handler = (url: string, init: { headers?: Record<string, string> }) => Response | Promise<Response>;
+type Handler = (url: string, init: { headers?: Record<string, string>; signal?: AbortSignal }) => Response | Promise<Response>;
 
 /** Serve each video's bytes, honouring Range, unless a test overrides a call. */
 function media(overrides: Handler[] = []): { fetchImpl: typeof fetch; calls: { url: string; range?: string }[] } {
   const calls: { url: string; range?: string }[] = [];
-  const fetchImpl = (async (url: string, init: { headers?: Record<string, string> } = {}) => {
+  const fetchImpl = (async (url: string, init: { headers?: Record<string, string>; signal?: AbortSignal } = {}) => {
     const range = init.headers?.['Range'];
     calls.push({ url, ...(range ? { range } : {}) });
     const special = overrides.shift();
@@ -231,6 +231,41 @@ describe('DownloadQueue', () => {
 
     q.retry(item.id);
     expect(await fsp.readFile((await settled(q, item.id)).filePath!)).toEqual(bodyOf('a'));
+  });
+
+  it('pauses a download while a dub needs the machine, keeping its bytes, and goes on from them', async () => {
+    let open = true;
+    const stalls: Handler = (url, init) => {
+      const body = bodyOf(url.split('/')[3]!);
+      // 1200 bytes, then nothing until the download is stopped (as fetch does, the abort ends the body).
+      const stream = new ReadableStream<Uint8Array>({
+        start: (c) => {
+          c.enqueue(new Uint8Array(body.subarray(0, 1200)));
+          init.signal?.addEventListener('abort', () => c.error(new Error('aborted')), { once: true });
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'content-length': String(body.length) } });
+    };
+    const { fetchImpl, calls } = media([stalls]);
+    const provider = fakeProvider();
+    const q = queueWith(provider, fetchImpl, { gate: () => (open ? { limit: 2 } : { limit: 0, reason: 'gpu-heavy' }) });
+    const item = (await q.add([{ input: 'fake:a' }])).added[0]!;
+    const part = path.join(dir, 'downloads', `.${item.id}.video.part`);
+    await vi.waitFor(async () => expect((await fsp.stat(part)).size).toBe(1200));
+
+    open = false;
+    q.reconsider();
+    await vi.waitFor(() => expect(q.get(item.id)).toMatchObject({ state: 'queued', heldBy: 'gpu-heavy' }));
+    expect((await fsp.stat(part)).size).toBe(1200);
+
+    open = true;
+    q.reconsider();
+    const done = await settled(q, item.id);
+    expect(done.heldBy).toBeUndefined();
+    // Fresh links first (they are signed and expire), then the rest of the bytes.
+    expect(provider.prepared).toEqual(['a:1', 'a:1']);
+    expect(calls.at(-1)?.range).toBe('bytes=1200-');
+    expect(await fsp.readFile(done.filePath!)).toEqual(bodyOf('a'));
   });
 
   it('continues an interrupted download after a restart, from the bytes on disk', async () => {

@@ -69,7 +69,11 @@ export class ProjectEventBus {
   private lastState: StateEvent | null = null;
   private terminal: DoneEvent | ErrorEvent | null = null;
 
-  constructor(public readonly projectId: string) {
+  constructor(
+    public readonly projectId: string,
+    /** Every event of this project, to the registry's observers (see {@link EventBusRegistry.observe}). */
+    private readonly onAny?: (event: PipelineEvent) => void,
+  ) {
     this.emitter.setMaxListeners(64);
   }
 
@@ -81,6 +85,7 @@ export class ProjectEventBus {
       this.terminal = event;
     }
     this.emitter.emit(EVENT_NAME, event);
+    this.onAny?.(event);
   }
 
   /**
@@ -108,15 +113,33 @@ export class ProjectEventBus {
  */
 export class EventBusRegistry {
   private readonly buses = new Map<string, ProjectEventBus>();
+  private readonly observers = new Set<(projectId: string, event: PipelineEvent) => void>();
 
   /** Get (or lazily create) the bus for a project id. */
   get(projectId: string): ProjectEventBus {
     let bus = this.buses.get(projectId);
     if (!bus) {
-      bus = new ProjectEventBus(projectId);
+      bus = new ProjectEventBus(projectId, (event) => {
+        for (const o of this.observers) {
+          try {
+            o(projectId, event);
+          } catch {
+            /* an observer must never break a run */
+          }
+        }
+      });
       this.buses.set(projectId, bus);
     }
     return bus;
+  }
+
+  /**
+   * Every project's events, as they happen (no replay): what the download
+   * gate needs to know which step each running dub is in.
+   */
+  observe(listener: (projectId: string, event: PipelineEvent) => void): () => void {
+    this.observers.add(listener);
+    return () => this.observers.delete(listener);
   }
 
   /** Drop the bus for a project (e.g. on delete). */

@@ -44,8 +44,21 @@ import {
   type SubtitleStyle,
   type TranslationDocContext,
   type UpdatePreferences,
+  type BackendCrash,
+  type BackendHealth,
+  type DownloadPreferences,
 } from '@videodubber/shared';
 import { buildInfo } from './buildInfo.js';
+import { HealthMonitor, installNativeCrashEvidence, takeRecoveredCrash } from './diagnostics/health.js';
+import { RunActivity } from './diagnostics/runActivity.js';
+import {
+  downloadGate,
+  effectiveDownloadPolicy,
+  powerfulForParallel,
+  type DownloadGate,
+  type DownloadPolicy,
+} from './providers/download/downloadGate.js';
+import { recommendCapacity } from './system/capacity.js';
 import { loadConfig, type OrchestratorConfig } from './config.js';
 import { CredentialsStore, normalizeMotherClaudeUrl } from './credentials/credentialsStore.js';
 import { probeMotherClaude, testCloudCredential } from './credentials/testConnection.js';
@@ -150,6 +163,10 @@ const OLLAMA_URL = process.env.OLLAMA_URL?.trim() || 'http://127.0.0.1:11434/v1'
 /** Dependencies that can be overridden when embedding/testing the server. */
 export interface CreateServerOptions {
   config?: OrchestratorConfig;
+  /** The backend's health monitor (tests inject one; startServer makes the real one). */
+  health?: HealthMonitor;
+  /** The crash the shell restarted this backend after: interrupted dubs continue. */
+  recoveredCrash?: BackendCrash;
   /** Injected media service (defaults to the lazily-loaded ffmpeg-backed one). */
   media?: PipelineMediaService;
   /** Injected provider registry (defaults to the local providers + cloud stubs). */
@@ -261,6 +278,12 @@ function contentTypeFor(filePath: string): string {
 }
 
 /** Build (but do not start) the Fastify server with all routes wired. */
+/** The "downloads while dubbing" choice as stored: one of the known values, else automatic. */
+function sanitizeDownloadPrefs(raw: Partial<DownloadPreferences> | undefined): DownloadPreferences {
+  const v = raw?.whileDubbing;
+  return v === 'pause-heavy' || v === 'one-task' || v === 'no-limit' ? { whileDubbing: v } : { whileDubbing: 'auto' };
+}
+
 export async function createServer(options: CreateServerOptions = {}): Promise<FastifyInstance> {
   const config = options.config ?? loadConfig();
 
@@ -356,6 +379,55 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // very first download already runs at the user's real quality ceiling.
   const downloadProviders = createProviders(config.configDir);
   void loadProviderSessions(downloadProviders);
+
+  // The backend's own health (diagnostics/health.ts): memory and event-loop
+  // delay every minute, kept for Settings → Diagnostics and get_diagnostics,
+  // and the pressure the download gate reads.
+  const runActivity = new RunActivity();
+  const health =
+    options.health ??
+    new HealthMonitor({
+      logger: { info: (m) => console.info(m), warn: (m) => console.warn(m) },
+      busy: () => runActivity.anyRunning(),
+    });
+  health.start();
+  // Which step each dub is in (the download gate pauses downloads in heavy ones).
+  bus.observe((projectId, event) => {
+    runActivity.onEvent(projectId, event);
+    if (event.type === 'step' || event.type === 'done' || event.type === 'error') downloads.reconsider();
+  });
+  // Downloads while dubbing (providers/download/downloadGate.ts): the user's
+  // choice in Settings → Downloads, or by the hardware. Re-read every few
+  // seconds, with the pressure and the GPU lane.
+  // Until the hardware is known, one thing at a time (the safe side).
+  let downloadPolicy: DownloadPolicy = 'one-task';
+  // The hardware as probed once at start (registryProfile; absent when a test
+  // injects its own registry, which then counts as not powerful).
+  const isPowerfulMachine = async (): Promise<boolean> =>
+    registryProfile ? powerfulForParallel(registryProfile, recommendCapacity(registryProfile).maxProjects) : false;
+  const refreshDownloadPolicy = async (): Promise<void> => {
+    const prefs = await setupStore.getPreferences().catch(() => undefined);
+    const choice = prefs?.downloads?.whileDubbing;
+    // An explicit choice needs no hardware probe.
+    downloadPolicy = effectiveDownloadPolicy(choice, choice && choice !== 'auto' ? false : await isPowerfulMachine());
+  };
+  const downloadGateNow = (): DownloadGate => {
+    const steps = runActivity.steps();
+    const runs = [...steps].map(([projectId, step]) => ({ projectId, step, heavy: orchestrator.heavyStepsOf(projectId).includes(step) }));
+    const lane = engineManager.heavyLaneOwner();
+    return downloadGate({
+      policy: downloadPolicy,
+      runs,
+      externalHeavy: lane !== undefined && !steps.has(lane),
+      pressure: health.pressure(),
+      concurrency: 2,
+    });
+  };
+  void refreshDownloadPolicy().then(() => downloads.reconsider());
+  const gateTimer = setInterval(() => {
+    void refreshDownloadPolicy().then(() => downloads.reconsider());
+  }, 5000);
+  gateTimer.unref?.();
   // Source-video downloads: a queue kept on disk (queue.ts), two at a time,
   // into `<projects root>\downloads` (it follows a moved projects folder).
   // What an app exit interrupted continues now, from its partial files.
@@ -366,6 +438,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     ffmpegPath: config.ffmpegPath ?? 'ffmpeg',
     ffprobePath: config.ffprobePath ?? 'ffprobe',
     logger: { info: (m) => console.info(`[downloads] ${m}`), warn: (m) => console.warn(`[downloads] ${m}`) },
+    gate: () => downloadGateNow(),
   });
   // Read before serving: a request must never see an empty list that is merely not loaded yet.
   await downloads.load();
@@ -472,7 +545,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // Re-establish the dubbing queue from disk: projects left `queued` re-enter in
   // their original order, and any project the app died on mid-run is demoted to
   // `paused` rather than silently resumed. Best-effort; never blocks boot.
-  void orchestrator.reconcileQueue();
+  // After a crash the shell restarted the backend for, the dubs it interrupted
+  // continue by themselves (the user's call, 2026-11-21); after a quit they wait.
+  void orchestrator.reconcileQueue({ resumeInterrupted: options.recoveredCrash !== undefined });
 
   // Settings → Projects folder (where the projects live, and moving them).
   const projectsFolder = new ProjectsFolderService({
@@ -489,6 +564,40 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const ollamaPulls = new OllamaPullManager(OLLAMA_URL);
 
   const app = Fastify({ logger: false });
+
+  app.addHook('onClose', async () => {
+    clearInterval(gateTimer);
+    health.stop();
+  });
+
+  // What downloads do while a dub runs, here: the user's choice and what it
+  // comes to on this computer (Settings → Downloads shows both).
+  app.get('/downloads/policy', async () => {
+    const prefs = await setupStore.getPreferences().catch(() => undefined);
+    return {
+      choice: prefs?.downloads?.whileDubbing ?? 'auto',
+      effective: downloadPolicy,
+      powerful: await isPowerfulMachine(),
+      gate: downloadGateNow(),
+    };
+  });
+
+  // The backend's own health: uptime, memory and event-loop delay over the last
+  // hour, and the crash it was restarted after (Settings → Diagnostics).
+  app.get('/diagnostics/health', async (): Promise<BackendHealth> => {
+    const build = buildInfo();
+    return {
+      version: build.version,
+      ...(build.commit ? { commit: build.commit } : {}),
+      startedAt: health.startedAt.toISOString(),
+      uptimeSec: Math.round(process.uptime()),
+      heapLimitMb: health.heapLimitMb,
+      ...(health.latest() ? { latest: health.latest()! } : {}),
+      peak: health.peak(),
+      samples: health.samples(),
+      ...(options.recoveredCrash ? { recoveredFrom: options.recoveredCrash } : {}),
+    };
+  });
 
   // CORS restricted to the app's own origins: localhost dev servers and the
   // Tauri webview (tauri://localhost on macOS/Linux, http://tauri.localhost on
@@ -1219,7 +1328,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         ...(body.localModels !== undefined || current.localModels !== undefined
           ? { localModels: { ...current.localModels, ...(body.localModels ?? {}) } }
           : {}),
+        ...(body.downloads !== undefined || current.downloads !== undefined
+          ? { downloads: sanitizeDownloadPrefs({ ...current.downloads, ...(body.downloads ?? {}) }) }
+          : {}),
       });
+      // Downloads follow a changed "while dubbing" choice at once.
+      await refreshDownloadPolicy();
+      downloads.reconsider();
       // A limit change (or un-pausing) may let queued dubs start immediately.
       void orchestrator.pumpQueue();
       return { ok: true };
@@ -2887,7 +3002,18 @@ export async function startServer(options: CreateServerOptions = {}): Promise<Fa
   // so those dirs, and the install folder with them, were left behind. Every
   // Python this process starts (engines, uv, the GPU probe) inherits this.
   process.env.PYTHONPYCACHEPREFIX ??= join(config.configDir, 'cache', 'pycache');
-  const app = await createServer({ ...options, config });
+  // Evidence for the day it dies (diagnostics/health.ts), and the crash the
+  // shell restarted it after, if that is why it is starting.
+  const logsDir = join(config.configDir, 'logs');
+  installNativeCrashEvidence(logsDir, (m) => console.log(m));
+  const recoveredCrash = options.recoveredCrash ?? takeRecoveredCrash(logsDir);
+  if (recoveredCrash) {
+    console.warn(
+      `[orchestrator] restarted after the previous backend ended at ${recoveredCrash.at}` +
+        `${recoveredCrash.codeHex ? ` (${recoveredCrash.codeHex}${recoveredCrash.meaning ? `: ${recoveredCrash.meaning}` : ''})` : ''}; interrupted dubs continue.`,
+    );
+  }
+  const app = await createServer({ ...options, config, ...(recoveredCrash ? { recoveredCrash } : {}) });
   await app.listen({ host: config.host, port: config.port });
   installProcessLifecycle(app, config);
   const build = buildInfo();

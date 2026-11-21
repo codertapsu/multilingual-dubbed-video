@@ -47,7 +47,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use tauri::{AppHandle, Manager};
 
@@ -130,6 +130,9 @@ impl SidecarManager {
     ///
     /// Called on app exit (`RunEvent::Exit`) and before an update installs.
     pub fn shutdown(&self) {
+        // From here on an orchestrator exit is expected: the watchdog must not
+        // start it again (watchdog.rs).
+        crate::watchdog::set_shutting_down();
         // Production sidecars first — each is an independent process.
         let mut had_prod = false;
         if let Ok(mut guard) = self.prod_children.lock() {
@@ -450,10 +453,73 @@ fn spawn_bundled_sidecars(app: &AppHandle) -> Result<(), String> {
         } else {
             log_info("bundled Python runtime not found; uv will download CPython on first engine-pack install (needs network).");
         }
-        spawn_one(app, "videodubber-orchestrator", &env);
+        // Kept so the watchdog can start it again after a crash (watchdog.rs).
+        crate::watchdog::remember_env(&env);
+        spawn_one(app, ORCHESTRATOR, &env);
     }
 
     Ok(())
+}
+
+/// The orchestrator's externalBin name (the watchdog follows this one).
+const ORCHESTRATOR: &str = "videodubber-orchestrator";
+
+/// Tell the webview what happened to the backend (`backend-state`).
+fn emit_backend_state(app: &AppHandle) {
+    use tauri::Emitter;
+    let _ = app.emit("backend-state", crate::watchdog::snapshot());
+}
+
+/// The orchestrator ended. Unless the app is quitting: log what the exit code
+/// means, leave the crash marker for the next backend, and start it again after
+/// the watchdog's wait (watchdog.rs), or give up after it kept stopping.
+fn orchestrator_exited(code: Option<i32>) {
+    use crate::watchdog::ExitDecision;
+    let (decision, uptime) = crate::watchdog::on_exit(code, Instant::now(), SystemTime::now());
+    if decision == ExitDecision::Ignore {
+        return;
+    }
+    let (hex, meaning) = crate::watchdog::exit_meaning(code);
+    log_info(&format!(
+        "the backend ended unexpectedly ({}: {meaning}) after {} s.",
+        hex.unwrap_or_else(|| "no code".into()),
+        uptime.unwrap_or(0)
+    ));
+    let app = APP_FOR_TEARDOWN.get().cloned();
+    match decision {
+        ExitDecision::Restart(delay) => {
+            if let Some(dir) = crate::logging::log_dir() {
+                crate::watchdog::write_crash_marker(&dir, code, uptime, SystemTime::now());
+            }
+            log_info(&format!("restarting the backend in {} s; interrupted dubs will continue.", delay.as_secs()));
+            if let Some(app) = &app {
+                emit_backend_state(app);
+            }
+            std::thread::spawn(move || {
+                std::thread::sleep(delay);
+                if crate::watchdog::shutting_down() {
+                    return;
+                }
+                if let Some(app) = app {
+                    let env = crate::watchdog::env();
+                    let refs: Vec<(&str, String)> = env.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+                    spawn_one(&app, ORCHESTRATOR, &refs);
+                }
+            });
+        }
+        ExitDecision::GiveUp => {
+            // A dub that keeps crashing the backend must not restart by itself
+            // when the user reopens the app: no marker, so it stays paused.
+            if let Some(dir) = crate::logging::log_dir() {
+                let _ = std::fs::remove_file(dir.join("backend-crash.json"));
+            }
+            log_info("the backend stopped 4 times in 10 minutes; it is not restarted again. Quit and reopen VideoDubber.");
+            if let Some(app) = &app {
+                emit_backend_state(app);
+            }
+        }
+        ExitDecision::Ignore => {}
+    }
 }
 
 /// Spawn a single externalBin sidecar with the given environment.
@@ -474,6 +540,10 @@ fn spawn_one(app: &AppHandle, name: &str, env: &[(&str, String)]) {
             log_info(&format!(
                 "could not resolve sidecar '{name}': {e} (the UI will show it as unavailable)."
             ));
+            if name == ORCHESTRATOR {
+                crate::watchdog::launch_failed(&format!("the backend program could not be found: {e}"));
+                emit_backend_state(app);
+            }
             return;
         }
     };
@@ -528,10 +598,20 @@ fn spawn_one(app: &AppHandle, name: &str, env: &[(&str, String)]) {
             // builder, which would tangle lifetimes with the `Command`).
             app.state::<SidecarManager>().track_sidecar(child);
             log_info(&format!("launched sidecar '{name}'."));
+            if name == ORCHESTRATOR {
+                crate::watchdog::launched(SystemTime::now());
+                emit_backend_state(app);
+            }
         }
-        Err(e) => log_info(&format!(
-            "failed to launch sidecar '{name}': {e} (the UI will show it as unavailable)."
-        )),
+        Err(e) => {
+            log_info(&format!(
+                "failed to launch sidecar '{name}': {e} (the UI will show it as unavailable)."
+            ));
+            if name == ORCHESTRATOR {
+                crate::watchdog::launch_failed(&format!("the backend could not be started: {e}"));
+                emit_backend_state(app);
+            }
+        }
     }
 }
 
@@ -1482,10 +1562,19 @@ fn pipe_command_events_to_log(
                     format!("[err] {}", String::from_utf8_lossy(&bytes))
                 }
                 CommandEvent::Error(e) => format!("[shell] error: {e}"),
-                CommandEvent::Terminated(payload) => format!(
-                    "[shell] '{name}' terminated (code={:?}, signal={:?})",
-                    payload.code, payload.signal
-                ),
+                CommandEvent::Terminated(payload) => {
+                    let line = format!(
+                        "[shell] '{name}' terminated (code={:?}, signal={:?})",
+                        payload.code, payload.signal
+                    );
+                    if let Ok(mut sink) = sink.lock() {
+                        sink.write_line(&line);
+                    }
+                    if name == ORCHESTRATOR {
+                        orchestrator_exited(payload.code);
+                    }
+                    continue;
+                }
                 _ => continue,
             };
             if let Ok(mut sink) = sink.lock() {

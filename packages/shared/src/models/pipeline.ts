@@ -3,6 +3,7 @@
  * orchestrator persists (pipeline.json) and streams to the UI over SSE.
  */
 
+import type { ProjectWarning, StepDetail } from './diagnostics.js';
 import type { PipelineStepId } from './domain.js';
 
 /** Status of a single pipeline step. */
@@ -29,6 +30,8 @@ export interface PipelineStepState {
   finishedAt?: string;
   /** Error message for a failed step. */
   error?: string;
+  /** Where a long step is inside itself ("Detecting speakers 12/60"); cleared when it ends. */
+  detail?: StepDetail;
 }
 
 /** Overall status of the pipeline run. */
@@ -65,6 +68,12 @@ export interface PipelineState {
    */
   pausedAt?: string;
   pausedStep?: PipelineStepId;
+  /**
+   * What went worse than asked (speaker detection failed, a CPU fallback,
+   * loops left in the transcript…). A step's warnings are replaced when the
+   * step runs again.
+   */
+  warnings?: ProjectWarning[];
   /** ISO-8601 last-updated timestamp. */
   updatedAt: string;
 }

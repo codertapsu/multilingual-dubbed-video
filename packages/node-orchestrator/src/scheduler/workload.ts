@@ -31,6 +31,12 @@ export interface RunWorkload {
   points: number;
   /** Engine family that forces the heavy lane (for the UI's explanation). */
   heavyFamily?: string;
+  /**
+   * The steps of this run that use a heavy engine (a GPU or a big local
+   * model): downloads pause during them on a machine that downloads alongside
+   * dubbing (providers/download/downloadGate.ts).
+   */
+  heavySteps: PipelineStepId[];
 }
 
 /** The provider traits the classifier reads (registry instances satisfy this). */
@@ -135,6 +141,38 @@ export function classifyWorkload(
   }
 
   const needsHeavyEngine = heavyFamily !== undefined;
+
+  // Step by step: which ones start a heavy engine for this run.
+  const heavySteps: PipelineStepId[] = [];
+  const ctxHeavy = heavy(opts.contextEngine?.requiresEnginePack);
+  const ttsHeavy = heavy((registry.getTts(settings.ttsProviderId) as Traits).requiresEnginePack);
+  if (
+    willRun(PHASE_STEP.stt) &&
+    (heavy((registry.getStt(settings.sttProviderId) as Traits).requiresEnginePack) ||
+      (settings.forcedAlignment === true && opts.alignmentAvailable !== false))
+  ) {
+    heavySteps.push('stt');
+  }
+  if (willRun(PHASE_STEP.translation) && (heavy((registry.getTranslation(settings.translationProviderId) as Traits).requiresEnginePack) || ctxHeavy)) {
+    heavySteps.push('translation');
+  }
+  if (
+    settings.refineProviderId &&
+    settings.refineProviderId !== 'none' &&
+    willRun(PHASE_STEP.refine) &&
+    heavy((registry.getTranslation(settings.refineProviderId) as Traits).requiresEnginePack)
+  ) {
+    heavySteps.push('refine');
+  }
+  if (willRun(PHASE_STEP.tts) && ttsHeavy) heavySteps.push('tts');
+  if (willRun('alignment') && settings.autoFitOverflow !== false && (ctxHeavy || ttsHeavy)) heavySteps.push('alignment');
+  if (
+    willRun(PHASE_STEP.separation) &&
+    settings.originalAudioMode === 'replace-vocals' &&
+    opts.separationAvailable !== false
+  ) {
+    heavySteps.push('audio-mix');
+  }
   // Cloud-only means every phase that will run is remote AND no local engine
   // pack is pulled in by the mix/alignment options. A run with NO remaining
   // provider phases (e.g. retry-from-render) is local work (ffmpeg).
@@ -146,6 +184,7 @@ export function classifyWorkload(
     cloudOnly,
     points: cloudOnly ? POINTS_PER_CLOUD_RUN : POINTS_PER_LOCAL_RUN,
     ...(heavyFamily ? { heavyFamily } : {}),
+    heavySteps,
   };
 }
 

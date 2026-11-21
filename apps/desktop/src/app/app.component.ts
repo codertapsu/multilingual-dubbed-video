@@ -70,7 +70,29 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
 
     <vd-update-notice />
 
-    @if (ipc.backendDown()) {
+    @if (ipc.backendState()?.state === 'restarting') {
+      <!-- The backend crashed and the shell is starting it again (watchdog.rs);
+           running dubs continue by themselves, so there is nothing to press. -->
+      <div class="backend-down" role="alert" aria-live="assertive">
+        <div>
+          <strong>{{ 'shell.backend-crashed-title' | translate }}</strong>
+          <span>{{ 'shell.backend-restarting' | translate: { time: exitTime(), code: ipc.backendState()?.lastExitHex ?? '?' } }}</span>
+        </div>
+      </div>
+    } @else if (ipc.backendState()?.state === 'failed') {
+      <div class="backend-down" role="alert" aria-live="assertive">
+        <div>
+          <strong>{{ 'shell.backend-failed-title' | translate }}</strong>
+          <span>{{ (ipc.backendState()?.failure ? 'shell.backend-failed-start' : 'shell.backend-failed-body') | translate }}</span>
+        </div>
+        <div class="row">
+          <a routerLink="/help" class="btn">{{ 'shell.backend-down-help' | translate }}</a>
+          <button type="button" class="btn" (click)="restart()" [disabled]="restarting()">
+            {{ (restarting() ? 'shell.restarting' : 'shell.restart') | translate }}
+          </button>
+        </div>
+      </div>
+    } @else if (ipc.backendDown()) {
       <!--
         The backend never came up. Requests already wait ~60s for it (the
         sidecar has to start a ~100 MB binary, which antivirus scans on the
@@ -82,11 +104,15 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
         <div>
           <strong>{{ 'shell.backend-down-title' | translate }}</strong>
           <span>
-            {{ 'shell.backend-down-body' | translate }}
-            @if (ipc.inTauri) {
-              {{ 'shell.backend-down-tauri' | translate }}
+            @if (ipc.backendState()?.state === 'running' && ipc.backendSeenOnce()) {
+              {{ 'shell.backend-not-responding' | translate }}
             } @else {
-              {{ 'shell.backend-down-dev' | translate }}
+              {{ 'shell.backend-down-body' | translate }}
+              @if (ipc.inTauri) {
+                {{ 'shell.backend-down-tauri' | translate }}
+              } @else {
+                {{ 'shell.backend-down-dev' | translate }}
+              }
             }
           </span>
         </div>
@@ -201,6 +227,17 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
 })
 export class AppComponent {
   protected readonly restarting = signal(false);
+
+  constructor() {
+    // The shell's watchdog says when the backend crashed and is restarting.
+    void this.ipc.watchBackendState();
+  }
+
+  /** When the backend last stopped, as a clock time. */
+  protected exitTime(): string {
+    const at = this.ipc.backendState()?.lastExitAt;
+    return at ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '?';
+  }
 
   /** Relaunch the app so the backend gets a second, warm start. */
   protected async restart(): Promise<void> {

@@ -22,6 +22,7 @@ import {
 } from '@videodubber/shared';
 
 import { writeJsonAtomic } from '../../workspace/projectStore.js';
+import type { DownloadGate } from './downloadGate.js';
 import {
   downloadMediaJob,
   MediaLinkExpiredError,
@@ -62,6 +63,11 @@ export interface DownloadQueueDeps {
   ffprobePath?: string;
   /** Downloads at once. */
   concurrency?: number;
+  /**
+   * How many may run right now, and why fewer (downloadGate.ts: dubbing comes
+   * first). Asked at every start; {@link DownloadQueue.reconsider} asks again.
+   */
+  gate?: () => DownloadGate;
   /** Least time between two downloads starting on the same site. */
   pacingMs?: number;
   /** Waits after a rate limit, then the download fails as rate-limited. */
@@ -114,6 +120,8 @@ export class DownloadQueue {
   private readonly lastStartAt = new Map<string, number>();
   private readonly lastProgressAt = new Map<string, number>();
   private readonly cancelling = new Set<string>();
+  /** Downloads being paused for a dub (bytes kept, back in line), and why. */
+  private readonly holding = new Map<string, NonNullable<DownloadGate['reason']>>();
   /** File names being chosen right now, by download (two of one title must not pick the same). */
   private readonly reserved = new Map<string, string>();
   private pumpTimer: ReturnType<typeof setTimeout> | undefined;
@@ -337,6 +345,14 @@ export class DownloadQueue {
     await this.persist();
   }
 
+  /**
+   * Look at the gate again (a dub started or finished a step): pause the
+   * downloads it no longer allows, start the ones it does.
+   */
+  reconsider(): void {
+    this.pump();
+  }
+
   /** The app is closing: stop every download where it is; each continues at the next start. */
   async stop(): Promise<void> {
     this.closing = true;
@@ -376,7 +392,22 @@ export class DownloadQueue {
       clearTimeout(this.pumpTimer);
       this.pumpTimer = undefined;
     }
-    const limit = this.deps.concurrency ?? 2;
+    const gate = this.deps.gate?.();
+    const limit = Math.min(this.deps.concurrency ?? 2, gate ? gate.limit : Infinity);
+    // Fewer allowed than running: the newest pause first (their bytes stay; each
+    // continues from them, after asking the site for fresh links).
+    if (this.running.size > limit) {
+      for (const id of [...this.running.keys()].slice(limit).reverse()) {
+        if (this.holding.has(id) || this.cancelling.has(id)) continue;
+        this.holding.set(id, gate?.reason ?? 'dubbing');
+        this.running.get(id)?.abort();
+      }
+    }
+    // Say why the waiting ones wait (once, not at every look).
+    const why = limit === 0 ? gate?.reason : undefined;
+    for (const r of this.items.values()) {
+      if (r.state === 'queued' && !this.running.has(r.id) && r.heldBy !== why) this.update(r.id, { heldBy: why }, { save: false });
+    }
     let soonest: number | undefined;
     // Oldest first.
     for (const r of this.items.values()) {
@@ -412,7 +443,7 @@ export class DownloadQueue {
     const signal = ctrl.signal;
     try {
       const provider = requireProviderFor(this.deps.providers, start.input);
-      this.update(id, { state: 'resolving', attempts: start.attempts + 1, error: undefined, retryAtMs: undefined });
+      this.update(id, { state: 'resolving', attempts: start.attempts + 1, error: undefined, retryAtMs: undefined, heldBy: undefined });
       await this.pace(provider.id, signal);
       if (signal.aborted) throw new AppErrorException('CANCELLED', 'The download was stopped.');
       let prepared = await provider.prepare(start.input, start.page, start.targetHeightPx);
@@ -575,8 +606,16 @@ export class DownloadQueue {
     if (!r) return;
     if (signal.aborted) {
       if (this.cancelling.delete(id)) {
+        this.holding.delete(id);
         await this.removePartials(r);
         this.update(id, { state: 'cancelled', percent: null, phase: undefined });
+        return;
+      }
+      const held = this.holding.get(id);
+      if (held) {
+        // Paused for a dub: back in line with its bytes; the gate starts it again.
+        this.holding.delete(id);
+        this.update(id, { state: 'queued', phase: undefined, heldBy: held });
         return;
       }
       // The app is closing: back in line for the next start, partials kept.

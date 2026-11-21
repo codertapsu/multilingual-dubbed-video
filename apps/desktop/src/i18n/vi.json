@@ -37,7 +37,13 @@
     "backend-down-help": "Nhận trợ giúp",
     "theme-system": "Giao diện: theo hệ thống (nhấn để đổi)",
     "theme-light": "Giao diện: sáng (nhấn để đổi)",
-    "theme-dark": "Giao diện: tối (nhấn để đổi)"
+    "theme-dark": "Giao diện: tối (nhấn để đổi)",
+    "backend-crashed-title": "Phần nền của ứng dụng vừa dừng đột ngột",
+    "backend-restarting": "lúc {{time}} (mã {{code}}). VideoDubber đang tự khởi động lại phần nền; các bản lồng tiếng đang chạy sẽ tiếp tục từ chỗ đã dừng.",
+    "backend-failed-title": "Phần nền liên tục dừng",
+    "backend-failed-body": "Phần nền đã dừng nhiều lần trong vài phút nên ứng dụng không tự khởi động lại nữa. Hãy khởi động lại ứng dụng; nếu vẫn xảy ra, mở Trợ giúp và xuất gói hỗ trợ.",
+    "backend-failed-start": "Không khởi động được phần nền tích hợp. Hãy cài lại VideoDubber; mục Trợ giúp có thông tin chi tiết.",
+    "backend-not-responding": "Phần nền vẫn chạy nhưng không phản hồi, có thể vì đang bận một bước nặng. Hãy đợi một phút; nếu vẫn vậy, hãy khởi động lại ứng dụng."
   },
   "update": {
     "installing-title": "Đang cập nhật lên {{ version }}…",
@@ -153,7 +159,10 @@
     "select-all-done": "Chọn tất cả video đã tải xong",
     "select": "Chọn để lồng tiếng",
     "list-heading": "Các video trong danh sách",
-    "list-count": "Hiển thị {{n}} video (danh sách có {{total}} video). Bỏ chọn những video bạn không muốn tải."
+    "list-count": "Hiển thị {{n}} video (danh sách có {{total}} video). Bỏ chọn những video bạn không muốn tải.",
+    "held-gpu-heavy": "Tạm dừng trong lúc bản lồng tiếng chạy một bước nặng (ưu tiên lồng tiếng); sau đó sẽ tải tiếp từ chỗ đã dừng.",
+    "held-dubbing": "Đang chờ bản lồng tiếng xong: trên máy này mỗi lần chỉ chạy một việc (Cài đặt → Tải video).",
+    "held-pressure": "Tạm dừng vì máy đang thiếu bộ nhớ; sẽ tự tải tiếp."
   },
   "home": {
     "title": "Dự án",
@@ -406,7 +415,20 @@
       "body": "Ứng dụng lồng tiếng video chạy cục bộ, ưu tiên ngoại tuyến. Nhận dạng, dịch thuật và tổng hợp giọng nói đều chạy trên máy của bạn. Chỉ các mô hình ngôn ngữ được tải trong lần chạy đầu tiên."
     },
     "brand-kit-heading": "Logo & lời chào",
-    "brand-kit-intro": "Logo và lời chào của bạn, tạo một lần rồi chọn cho từng dự án (Dự án mới, trình chỉnh sửa, Xuất video). Mỗi dự án giữ bản sao của riêng nó nên việc sửa danh sách này không làm thay đổi dự án đã xong."
+    "brand-kit-intro": "Logo và lời chào của bạn, tạo một lần rồi chọn cho từng dự án (Dự án mới, trình chỉnh sửa, Xuất video). Mỗi dự án giữ bản sao của riêng nó nên việc sửa danh sách này không làm thay đổi dự án đã xong.",
+    "downloads": {
+      "heading": "Tải video",
+      "intro": "Tải video dùng mạng, ổ đĩa và bộ xử lý. Mục này quyết định việc tải video khi đang lồng tiếng; lồng tiếng luôn được ưu tiên.",
+      "while-dubbing": "Khi đang lồng tiếng",
+      "opt-auto": "Tự động (theo cấu hình máy này)",
+      "opt-pause-heavy": "Tải song song, tạm dừng khi bản lồng tiếng chạy bước nặng",
+      "opt-one-task": "Mỗi lần một việc: chờ lồng tiếng xong rồi mới tải",
+      "opt-no-limit": "Không giới hạn: tải song song, mỗi lần hai video",
+      "now-pause-heavy": "Hiện tại: tải song song với lồng tiếng và tạm dừng khi bản lồng tiếng chạy bước nặng (máy có card đồ hoạ từ 12 GB và đủ sức chạy hai bản lồng tiếng được xem là mạnh). Video đang tải dở sẽ tải tiếp từ chỗ đã dừng.",
+      "now-one-task": "Hiện tại: mỗi lần một việc. Máy có bộ nhớ đồ hoạ dưới 12 GB, hoặc chỉ đủ sức chạy một bản lồng tiếng, nên lồng tiếng dùng toàn bộ máy; video sẽ chờ lồng tiếng xong rồi tải lần lượt từng video.",
+      "now-no-limit": "Hiện tại: tải song song với lồng tiếng, không tạm dừng, mỗi lần hai video. Lồng tiếng có thể chậm hơn.",
+      "login-hint": "Đăng nhập trang web để tải chất lượng cao hơn nằm ở màn hình Tải video (mục Tài khoản nguồn)."
+    }
   },
   "support": {
     "title": "Ủng hộ VideoDubber",

@@ -248,6 +248,14 @@ pub async fn pick_video_file(app: AppHandle) -> Result<Value, String> {
     Ok(json!({ "path": picked }))
 }
 
+/// `backend_state` — what happened to the backend: running, restarting after
+/// a crash (with the exit code and its meaning), or failed (watchdog.rs). The
+/// UI reads it to tell "starting" from "crashed" from "not responding".
+#[tauri::command]
+pub fn backend_state() -> crate::watchdog::BackendState {
+    crate::watchdog::snapshot()
+}
+
 /// `pick_media_file` opens a native open-file picker for the brand kit: a
 /// picture (`kind` = "image", a logo) or a sound (`kind` = "audio": audio
 /// files, and videos whose sound is used; a greeting). `title` comes from the

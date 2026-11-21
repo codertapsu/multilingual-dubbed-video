@@ -20,6 +20,7 @@ mod commands;
 mod logging;
 mod orchestrator_client;
 mod sidecar;
+mod watchdog;
 
 use std::time::Duration;
 
@@ -131,6 +132,7 @@ pub fn run() {
             commands::open_external,
             commands::pick_video_file,
             commands::pick_media_file,
+            commands::backend_state,
             commands::pick_folder,
             // convenience proxies
             commands::get_workers_health,

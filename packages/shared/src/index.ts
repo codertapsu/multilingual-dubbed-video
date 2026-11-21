@@ -119,6 +119,8 @@ export type {
   SetupInstallRequest,
   SetupEvent,
   UpdatePreferences,
+  DownloadPreferences,
+  DownloadsWhileDubbing,
   ProviderDefaults,
   UpdateInfo,
   CloudServiceId,
@@ -179,6 +181,14 @@ export type {
   SeriesView,
 } from './models/series.js';
 export { DEFAULT_SERIES_SETTINGS } from './models/series.js';
+export type {
+  BackendCrash,
+  BackendHealth,
+  HealthSample,
+  ProjectWarning,
+  ProjectWarningCode,
+  StepDetail,
+} from './models/diagnostics.js';
 
 // ---- Provider / service contracts -----------------------------------------
 export type {

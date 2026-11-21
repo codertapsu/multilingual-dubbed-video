@@ -214,6 +214,16 @@
             @if (item.state === 'queued' && item.retryAt) {
               <span class="hint">{{ 'source-video.retry-at' | translate: { time: timeOf(item.retryAt) } }}</span>
             }
+            <!-- Literal keys per reason: the i18n checker can only verify keys it can see. -->
+            @if (item.state === 'queued' && item.heldBy) {
+              <span class="hint">
+                @switch (item.heldBy) {
+                  @case ('gpu-heavy') { {{ 'source-video.held-gpu-heavy' | translate }} }
+                  @case ('dubbing') { {{ 'source-video.held-dubbing' | translate }} }
+                  @case ('pressure') { {{ 'source-video.held-pressure' | translate }} }
+                }
+              </span>
+            }
             @if (item.state === 'failed' && item.error) {
               <span class="test-fail small">{{ item.error.message }}</span>
               @if (item.error.remediation) {

@@ -1783,7 +1783,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     return undefined;
   }
 
-  async reconcileQueue(): Promise<void> {
+  /** The steps of a queued or running dub that use a heavy engine (the download gate). */
+  heavyStepsOf(projectId: string): readonly PipelineStepId[] {
+    return this.workloads.get(projectId)?.heavySteps ?? [];
+  }
+
+  async reconcileQueue(opts: { resumeInterrupted?: boolean } = {}): Promise<void> {
     let projects: Project[];
     try {
       projects = await this.deps.store.listProjects();
@@ -1810,11 +1815,22 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       this.queue.push(p.id);
       this.queued.add(p.id);
     }
-    // A dub the app died on (closed, crashed, the computer turned off) is
-    // paused, not silently resumed.
+    // A dub the app died on (closed, the computer turned off) is paused, not
+    // silently resumed. After a backend crash the shell restarted us for, the
+    // dubs it interrupted continue by themselves, in the order they started
+    // (the user's call, 2026-11-21): nobody asked them to stop.
+    const interrupted: Project[] = [];
     for (const p of projects) {
       if (this.running.has(p.id) || this.queued.has(p.id)) continue;
-      await this.settleStaleRun(p);
+      if (await this.settleStaleRun(p)) interrupted.push(p);
+    }
+    if (opts.resumeInterrupted) {
+      interrupted.sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : 1));
+      for (const p of interrupted) {
+        void this.runPipeline(p.id).catch((err: unknown) =>
+          this.deps.bus.get(p.id).emit({ type: 'error', error: toAppError(err) }),
+        );
+      }
     }
     if (this.queue.length > 0) void this.pump();
   }
@@ -1825,7 +1841,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * the processing screen showed as a dub in progress with no way to continue
    * it. Best-effort; never throws.
    */
-  private async settleStaleRun(project: Project): Promise<void> {
+  private async settleStaleRun(project: Project): Promise<boolean> {
     const pipeline = await this.deps.store.getPipeline(project.id).catch(() => undefined);
     const stale = pipeline !== undefined && (pipeline.status === 'running' || pipeline.steps.some((s) => s.status === 'running'));
     if (stale) {
@@ -1834,9 +1850,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       // A screen already open on it shows the live state over the saved one.
       this.deps.bus.get(project.id).emit({ type: 'state', pipeline: paused });
     }
-    if (project.status === 'running' || (stale && project.status !== 'paused')) {
+    const wasRunning = project.status === 'running' || (stale && project.status !== 'paused');
+    if (wasRunning) {
       await this.deps.store.saveProject({ ...project, status: 'paused' }).catch(() => undefined);
     }
+    return wasRunning;
   }
 
   /** Live scheduler state for the UI (GET /queue). */

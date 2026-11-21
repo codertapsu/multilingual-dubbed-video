@@ -2335,8 +2335,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         if (!from || !to) {
           throw new AppErrorException('INVALID_LANGUAGE', 'Both "from" and "to" are required.');
         }
-        // Synchronous (download held open) so the Settings UI just shows a
-        // per-row spinner; onboarding's bulk install still uses /setup/install.
+        // Synchronous (the download held open). The app no longer calls it:
+        // Settings installs a pack through /setup/install like onboarding, so
+        // its progress survives leaving the page (a request held open here
+        // died with the page, 0.17.0). Kept for scripts and older clients.
         const data = await postWorkerJson<{ ok?: boolean; installed?: boolean }>(
           `${trWorker()}/packages/ensure`,
           { from, to },

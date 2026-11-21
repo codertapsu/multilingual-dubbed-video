@@ -1501,9 +1501,13 @@ export class IpcService {
     } catch (cause) {
       // Network-level failure: the orchestrator isn't listening (and, after
       // fetchWaitingForBackend, isn't going to be within the boot window).
+      // The banner leads with its own translated words for the code
+      // (shared/error-banner/error-view.ts); these English ones are its
+      // technical details, so they name the URL for support but not the
+      // "orchestrator", a word users read as the error itself.
       throw {
         code: 'WORKER_UNAVAILABLE',
-        message: `Could not reach the orchestrator at ${this.baseUrl}.`,
+        message: `VideoDubber's background service did not answer at ${this.baseUrl}.`,
         cause: String(cause),
         // The dev advice is actively wrong inside the packaged app, where the
         // shell owns the backend and the user has no scripts/ directory.

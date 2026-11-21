@@ -96,7 +96,141 @@
     "dismiss-aria": "Bỏ qua lỗi",
     "why": "Nguyên nhân:",
     "how-to-fix": "Cách khắc phục:",
-    "docs": "Tài liệu:"
+    "docs": "Tài liệu:",
+    "details": "Chi tiết kỹ thuật",
+    "code-label": "Mã lỗi:",
+    "message-label": "Thông báo:",
+    "docs-open": "Mở hướng dẫn (trên web)",
+    "codes": {
+      "ffmpeg-not-found": {
+        "title": "Thiếu công cụ xử lý video FFmpeg",
+        "fix": "VideoDubber đọc và ghi video bằng FFmpeg, vốn đi kèm ứng dụng. Hãy cài lại VideoDubber để khôi phục."
+      },
+      "ffprobe-not-found": {
+        "title": "Thiếu công cụ đọc thông tin video ffprobe",
+        "fix": "VideoDubber đọc thông tin video bằng ffprobe, vốn đi kèm ứng dụng. Hãy cài lại VideoDubber để khôi phục."
+      },
+      "ffmpeg-filter-missing": {
+        "title": "Không ghi được phụ đề thẳng lên hình",
+        "fix": "Bản FFmpeg này không vẽ được phụ đề lên video. Hãy chọn cách xuất phụ đề khác (file .srt hoặc .vtt rời, hoặc phụ đề mềm nhúng trong video), hoặc cài lại VideoDubber."
+      },
+      "python-not-found": {
+        "title": "Thiếu một thành phần của VideoDubber (Python)",
+        "fix": "Nhận dạng giọng nói, dịch và giọng đọc chạy bằng Python đi kèm ứng dụng. Hãy cài lại VideoDubber; nếu vẫn không được, hãy mở Trợ giúp và xuất gói hỗ trợ."
+      },
+      "stt-model-missing": {
+        "title": "Chưa tải mô hình nhận dạng giọng nói",
+        "fix": "Hãy tải một mô hình trong Cài đặt → Nhận dạng giọng nói, rồi thử lại."
+      },
+      "translation-package-missing": {
+        "title": "Chưa cài gói dịch cho cặp ngôn ngữ này",
+        "fix": "Hãy cài gói dịch cho cặp ngôn ngữ này trong Cài đặt → Dịch thuật, hoặc chọn bộ máy dịch khác."
+      },
+      "piper-missing": {
+        "title": "Chưa thiết lập giọng đọc Piper",
+        "fix": "Hãy cài một giọng Piper trong mục Giọng đọc, hoặc chọn bộ máy giọng đọc khác cho dự án này."
+      },
+      "tts-voice-missing": {
+        "title": "Giọng đọc đã chọn chưa được cài",
+        "fix": "Hãy cài giọng này trong mục Giọng đọc, hoặc chọn giọng khác."
+      },
+      "unsupported-media": {
+        "title": "Không hỗ trợ định dạng video này",
+        "fix": "Hãy dùng định dạng phổ biến như MP4 (hình H.264, tiếng AAC), hoặc chuyển đổi tệp bằng một phần mềm chuyển định dạng video trước."
+      },
+      "no-audio-stream": {
+        "title": "Video này không có âm thanh",
+        "fix": "Video không có kênh âm thanh nào để lấy lời thoại. Hãy chọn một video có tiếng nói."
+      },
+      "invalid-language": {
+        "title": "Ngôn ngữ không hợp lệ",
+        "fix": "Hãy chọn lại ngôn ngữ trong danh sách."
+      },
+      "invalid-video-link": {
+        "title": "Liên kết này không phải video có thể tải",
+        "fix": "Hãy dán đầy đủ địa chỉ trên thanh địa chỉ của trình duyệt, ví dụ trang một video Bilibili hoặc Douyin."
+      },
+      "source-rate-limited": {
+        "title": "Trang video đang tạm giới hạn lượt tải",
+        "fix": "Hãy đợi vài phút rồi thử lại. Video đã tải xong vẫn được giữ, video đang tải dở sẽ tải tiếp từ chỗ đã dừng."
+      },
+      "source-login-required": {
+        "title": "Video này cần đăng nhập tài khoản",
+        "fix": "Video chỉ dành cho thành viên, phải trả phí hoặc giới hạn độ tuổi. Hãy đăng nhập trang đó trên trình duyệt, rồi thêm cookie của trang ở màn hình Tải video."
+      },
+      "source-unavailable": {
+        "title": "Trang web không cung cấp video này",
+        "fix": "Video đã bị gỡ, đang để riêng tư hoặc không xem được ở khu vực của bạn. Hãy mở liên kết trên trình duyệt để kiểm tra video có phát được không."
+      },
+      "disk-full": {
+        "title": "Ổ đĩa đã đầy",
+        "fix": "Hãy giải phóng bớt dung lượng (Cài đặt → Dung lượng có thể xoá video đã tải và bộ nhớ đệm), hoặc chuyển thư mục dự án sang ổ lớn hơn, rồi thử lại."
+      },
+      "output-not-writable": {
+        "title": "VideoDubber không lưu được vào thư mục này",
+        "fix": "Hãy kiểm tra thư mục vẫn còn và bạn có quyền ghi vào đó (không phải thư mục hệ thống hay ổ đĩa đã rút ra), hoặc chọn thư mục khác."
+      },
+      "worker-unavailable": {
+        "title": "Dịch vụ nền của VideoDubber không phản hồi",
+        "fix": "Có thể dịch vụ đang khởi động, hoặc đang tự khởi động lại sau sự cố. Hãy đợi một lát rồi thử lại; nếu vẫn không được, hãy thoát và mở lại VideoDubber."
+      },
+      "worker-timeout": {
+        "title": "Việc này chạy quá thời gian cho phép",
+        "fix": "Hãy thử lại: phần việc đã xong vẫn được giữ. Nếu vẫn không được, hướng dẫn khắc phục (trong phần Chi tiết kỹ thuật) có ghi cách điều chỉnh cho từng bước."
+      },
+      "cloud-credentials-missing": {
+        "title": "Thiếu khoá API",
+        "fix": "Bước này dùng một dịch vụ trực tuyến nhưng chưa có khoá API cho dịch vụ đó. Hãy thêm khoá trong Cài đặt → Dịch vụ đám mây & khoá API, hoặc chuyển bước này về bộ máy chạy trên máy tính."
+      },
+      "cloud-request-failed": {
+        "title": "Dịch vụ trực tuyến từ chối yêu cầu",
+        "fix": "Hãy kiểm tra khoá API còn hiệu lực và còn hạn mức, rồi thử lại; hoặc chuyển bước này sang bộ máy chạy trên máy tính."
+      },
+      "engine-pack-missing": {
+        "title": "Chưa cài bộ máy mà bước này cần",
+        "fix": "Hãy cài bộ máy đó trong Cài đặt → Engine & mô hình, hoặc chọn bộ máy khác cho bước này."
+      },
+      "engine-pack-failed": {
+        "title": "Không tải hoặc kiểm tra được bộ máy",
+        "fix": "Hãy kiểm tra kết nối mạng và dung lượng trống, rồi cài lại. Bản tải bị hỏng sẽ tự được xoá bỏ."
+      },
+      "engine-unavailable": {
+        "title": "Một bộ máy không khởi động được",
+        "fix": "Hãy chạy lại bước đó. Nếu vẫn không được, hãy cài lại bộ máy trong Cài đặt → Engine & mô hình, hoặc chọn bộ máy chạy bằng bộ xử lý (CPU)."
+      },
+      "engine-busy": {
+        "title": "Bộ máy đang bận với một bản lồng tiếng khác",
+        "fix": "Các bộ máy này dùng gần hết sức máy nên mỗi lúc chỉ phục vụ một dự án. Hãy đợi bản lồng tiếng kia xong (hoặc tạm dừng nó), rồi thử lại."
+      },
+      "cancelled": {
+        "title": "Đã dừng trước khi xong",
+        "fix": "Phần đã làm xong không bị mất. Hãy chạy lại khi bạn sẵn sàng."
+      },
+      "run-in-progress": {
+        "title": "Vẫn còn việc đang chạy",
+        "fix": "Hãy đợi việc đó xong, hoặc tạm dừng nó, rồi thử lại. Phần Chi tiết kỹ thuật có ghi việc nào đang chạy."
+      },
+      "invalid-edit": {
+        "title": "Không áp dụng được thay đổi này",
+        "fix": "Mỗi dòng phải bắt đầu trước khi kết thúc, nằm trong thời lượng video và giữ đúng vị trí giữa hai dòng bên cạnh. Hãy hoàn tác thay đổi vừa rồi hoặc chỉnh lại, rồi thử lại."
+      },
+      "voice-consent-required": {
+        "title": "Cần bạn xác nhận để lưu giọng này",
+        "fix": "Giọng nhân bản chỉ được lưu khi bạn xác nhận đây là giọng của chính bạn, hoặc chủ giọng đã đồng ý. Hãy đánh dấu ô xác nhận trong hộp thoại, rồi lưu lại."
+      },
+      "voice-reference-rejected": {
+        "title": "Bản ghi này không tạo được giọng",
+        "fix": "Cần ít nhất 3 giây một người nói rõ ràng. Hãy ghi âm lại gần micro hơn, hoặc chọn đoạn khác trong tệp."
+      },
+      "voice-engine-cannot-clone": {
+        "title": "Bộ máy giọng đọc này không đọc được giọng nhân bản",
+        "fix": "Bộ máy này chỉ có các giọng có sẵn của nó. Hãy dùng VieNeu-TTS 3.8 (đọc được giọng nhân bản), hoặc chọn một giọng có sẵn cho các dòng này."
+      },
+      "unknown": {
+        "title": "Đã xảy ra lỗi",
+        "fix": "Hãy thử lại. Nếu vẫn không được, hãy mở Trợ giúp và sao chép thông tin chẩn đoán để báo lỗi."
+      }
+    }
   },
   "download": {
     "done": "Xong",
@@ -2359,8 +2493,8 @@
     "loops": "Đang kiểm tra các đoạn lặp do chép lời {{done}}/{{total}}"
   },
   "activity": {
-    "heading": "Đang tải và cài đặt",
-    "hint": "Việc tải vẫn tiếp tục khi bạn dùng các phần khác của ứng dụng. Bạn có thể đóng danh sách này.",
+    "heading": "Việc đang chạy",
+    "hint": "Các việc này vẫn tiếp tục khi bạn dùng các phần khác của ứng dụng. Bạn có thể đóng danh sách này.",
     "starting": "Đang bắt đầu…",
     "working": "Đang xử lý…",
     "installed": "Đã cài đặt",
@@ -2375,6 +2509,33 @@
     "clear": "Xoá mục đã xong",
     "label-whisper": "Mô hình giọng nói {{model}}",
     "label-argos": "Gói dịch {{from}} → {{to}}",
-    "label-piper": "Giọng đọc {{voice}}"
+    "label-piper": "Giọng đọc {{voice}}",
+    "waiting": "Đang chờ",
+    "finished": "Đã xong",
+    "dub-done-title": "Đã lồng tiếng xong “{{name}}”",
+    "render-done-title": "Đã xuất xong video “{{name}}”",
+    "dub-failed-title": "Lồng tiếng “{{name}}” gặp lỗi",
+    "render-failed-title": "Xuất video “{{name}}” gặp lỗi",
+    "failed-at-step": "Bị dừng ở bước “{{step}}”.",
+    "review-title": "“{{name}}” đã sẵn sàng để bạn duyệt",
+    "review-body": "Bản dịch nháp đã xong. Hãy đọc và sửa lại rồi chạy tiếp: giọng đọc chỉ được tạo sau bước này.",
+    "series-done-title": "Đã phân tích xong “{{name}}”",
+    "series-done-body": "Video đã được chia thành các phần.",
+    "series-failed-title": "Không phân tích được “{{name}}”",
+    "dubs-waiting": "Đang chờ trong hàng đợi: {{n}}",
+    "queue-paused": "Hàng đợi lồng tiếng đang tạm dừng",
+    "queue-paused-waiting": "Đang chờ: {{n}}. Chưa bản nào bắt đầu cho tới khi bạn cho hàng đợi chạy tiếp.",
+    "queue-paused-empty": "Các bản lồng tiếng mới sẽ chờ cho tới khi bạn cho hàng đợi chạy tiếp.",
+    "resume": "Cho chạy tiếp trong Cài đặt",
+    "downloads-waiting": "Video đang chờ tải: {{n}}",
+    "video-done-title": "Đã tải xong video “{{name}}”",
+    "video-failed-title": "Không tải được video “{{name}}”",
+    "move-label": "Chuyển thư mục dự án",
+    "move-progress": "Đã chuyển {{done}}/{{total}} dự án",
+    "move-done-title": "Đã chuyển xong thư mục dự án",
+    "move-done-body": "Các dự án của bạn giờ nằm trong {{folder}}.",
+    "move-failed-title": "Không chuyển được thư mục dự án",
+    "move-failed-body": "Các dự án vẫn ở chỗ cũ, không mất gì.",
+    "label-update": "Bản cập nhật VideoDubber {{ version }}"
   }
 }

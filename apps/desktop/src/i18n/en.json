@@ -96,7 +96,141 @@
     "dismiss-aria": "Dismiss error",
     "why": "Why:",
     "how-to-fix": "How to fix:",
-    "docs": "Docs:"
+    "docs": "Docs:",
+    "details": "Technical details",
+    "code-label": "Error code:",
+    "message-label": "Message:",
+    "docs-open": "Open the guide (online)",
+    "codes": {
+      "ffmpeg-not-found": {
+        "title": "The video tool FFmpeg is missing",
+        "fix": "VideoDubber reads and writes video with FFmpeg, which comes with the app. Reinstall VideoDubber to bring it back."
+      },
+      "ffprobe-not-found": {
+        "title": "The video tool ffprobe is missing",
+        "fix": "VideoDubber reads a video's details with ffprobe, which comes with the app. Reinstall VideoDubber to bring it back."
+      },
+      "ffmpeg-filter-missing": {
+        "title": "Subtitles cannot be burned into the picture",
+        "fix": "This copy of FFmpeg cannot draw subtitles on the video. Choose another subtitle option (a separate .srt or .vtt file, or soft subtitles inside the video), or reinstall VideoDubber."
+      },
+      "python-not-found": {
+        "title": "A part of VideoDubber is missing (Python)",
+        "fix": "Speech recognition, translation and voices run on the Python that comes with the app. Reinstall VideoDubber; if it happens again, export a support bundle from Help."
+      },
+      "stt-model-missing": {
+        "title": "The speech recognition model is not downloaded",
+        "fix": "Download a model in Settings → Speech-to-text, then try again."
+      },
+      "translation-package-missing": {
+        "title": "The translation pack for these languages is not installed",
+        "fix": "Install the pack for this language pair in Settings → Translation, or choose another translation engine."
+      },
+      "piper-missing": {
+        "title": "The Piper voices are not set up",
+        "fix": "Install a Piper voice in Voices, or choose another voice engine for this project."
+      },
+      "tts-voice-missing": {
+        "title": "The chosen voice is not installed",
+        "fix": "Install it in Voices, or choose another voice."
+      },
+      "unsupported-media": {
+        "title": "This video format is not supported",
+        "fix": "Use a common format such as MP4 (H.264 video with AAC sound), or convert the file with a video converter first."
+      },
+      "no-audio-stream": {
+        "title": "This video has no sound",
+        "fix": "There is no audio track to take the speech from. Choose a video with speech in it."
+      },
+      "invalid-language": {
+        "title": "Unknown language",
+        "fix": "Choose the language again from the list."
+      },
+      "invalid-video-link": {
+        "title": "This link is not a video VideoDubber can download",
+        "fix": "Paste the full address from your browser's address bar, for example a Bilibili or Douyin video page."
+      },
+      "source-rate-limited": {
+        "title": "The video site is limiting downloads for now",
+        "fix": "Wait a few minutes and try again. Finished downloads are kept, and an interrupted one continues where it stopped."
+      },
+      "source-login-required": {
+        "title": "This video needs a signed-in account",
+        "fix": "It is for members only, paid or age-restricted. Sign in to the site in your browser, then add its cookie on the Download screen."
+      },
+      "source-unavailable": {
+        "title": "The site does not offer this video",
+        "fix": "It was removed, is private, or cannot be watched in your region. Open the link in a browser to check that it plays there."
+      },
+      "disk-full": {
+        "title": "The disk is full",
+        "fix": "Free some space (Settings → Storage can clear finished downloads and caches), or move the projects folder to a larger drive, then try again."
+      },
+      "output-not-writable": {
+        "title": "VideoDubber cannot save in this folder",
+        "fix": "Check that the folder still exists and that you may write in it (not a system folder or a disconnected drive), or choose another folder."
+      },
+      "worker-unavailable": {
+        "title": "VideoDubber's background service is not answering",
+        "fix": "It may still be starting, or restarting after a problem. Wait a moment and try again; if it keeps happening, quit and reopen VideoDubber."
+      },
+      "worker-timeout": {
+        "title": "This took longer than its time limit",
+        "fix": "Try again: work already finished is kept. If it keeps happening, the troubleshooting guide (under Technical details) says what to change for each step."
+      },
+      "cloud-credentials-missing": {
+        "title": "An API key is missing",
+        "fix": "This step uses an online service, but no key is saved for it. Add the key in Settings → Cloud services & keys, or switch the step back to an engine on this computer."
+      },
+      "cloud-request-failed": {
+        "title": "The online service refused the request",
+        "fix": "Check that the API key is valid and has quota left, then try again; or switch the step to an engine on this computer."
+      },
+      "engine-pack-missing": {
+        "title": "An engine this step needs is not installed",
+        "fix": "Install it in Settings → Engines & models, or choose another engine for this step."
+      },
+      "engine-pack-failed": {
+        "title": "The engine could not be downloaded or checked",
+        "fix": "Check your internet connection and free disk space, then install it again. A damaged download is thrown away by itself."
+      },
+      "engine-unavailable": {
+        "title": "An engine did not start",
+        "fix": "Try the step again. If it keeps happening, reinstall the engine in Settings → Engines & models, or choose one that runs on the processor."
+      },
+      "engine-busy": {
+        "title": "This engine is busy with another dub",
+        "fix": "These engines take most of the computer and serve one project at a time. Wait for that dub to finish (or pause it), then try again."
+      },
+      "cancelled": {
+        "title": "Stopped before it finished",
+        "fix": "Nothing finished so far is lost. Start it again when you are ready."
+      },
+      "run-in-progress": {
+        "title": "Something is still running",
+        "fix": "Wait for it to finish, or pause it, then try again. Technical details say what is running."
+      },
+      "invalid-edit": {
+        "title": "That edit cannot be applied",
+        "fix": "A line must start before it ends, stay inside the video and keep its place between its neighbours. Undo the last change or adjust it, then try again."
+      },
+      "voice-consent-required": {
+        "title": "Your confirmation is needed to save this voice",
+        "fix": "A cloned voice is saved only with your statement that it is your own voice or that its owner allowed it. Tick the statement in the dialog, then save again."
+      },
+      "voice-reference-rejected": {
+        "title": "This recording cannot make a voice",
+        "fix": "It needs at least 3 seconds of one person speaking clearly. Record again closer to the microphone, or pick another part of the file."
+      },
+      "voice-engine-cannot-clone": {
+        "title": "This voice engine cannot speak cloned voices",
+        "fix": "It only has its own preset voices. Use VieNeu-TTS 3.8, which speaks cloned voices, or pick a preset voice for these lines."
+      },
+      "unknown": {
+        "title": "Something went wrong",
+        "fix": "Try again. If it keeps happening, open Help and copy the diagnostics to report it."
+      }
+    }
   },
   "download": {
     "done": "Done",
@@ -2359,8 +2493,8 @@
     "loops": "Checking transcription loops {{done}}/{{total}}"
   },
   "activity": {
-    "heading": "Downloads and installs",
-    "hint": "They keep going while you use the rest of the app. You can close this list.",
+    "heading": "Background work",
+    "hint": "These keep going while you use the rest of the app. You can close this list.",
     "starting": "Starting…",
     "working": "Working…",
     "installed": "Installed",
@@ -2375,6 +2509,33 @@
     "clear": "Clear finished",
     "label-whisper": "Speech model {{model}}",
     "label-argos": "Translation pack {{from}} → {{to}}",
-    "label-piper": "Voice {{voice}}"
+    "label-piper": "Voice {{voice}}",
+    "waiting": "Waiting",
+    "finished": "Finished",
+    "dub-done-title": "“{{name}}” is dubbed",
+    "render-done-title": "“{{name}}” is rendered",
+    "dub-failed-title": "Dubbing “{{name}}” stopped with an error",
+    "render-failed-title": "Rendering “{{name}}” stopped with an error",
+    "failed-at-step": "It stopped at the step “{{step}}”.",
+    "review-title": "“{{name}}” is ready for your review",
+    "review-body": "The draft translation is done. Read and correct it, then continue: no voice is made before that.",
+    "series-done-title": "“{{name}}” is analysed",
+    "series-done-body": "Its parts are planned.",
+    "series-failed-title": "“{{name}}” could not be analysed",
+    "dubs-waiting": "Waiting in the queue: {{n}}",
+    "queue-paused": "The dubbing queue is paused",
+    "queue-paused-waiting": "Waiting: {{n}}. Nothing new starts until you resume the queue.",
+    "queue-paused-empty": "New dubs wait until you resume the queue.",
+    "resume": "Resume in Settings",
+    "downloads-waiting": "Videos waiting to download: {{n}}",
+    "video-done-title": "“{{name}}” is downloaded",
+    "video-failed-title": "“{{name}}” could not be downloaded",
+    "move-label": "Moving the projects folder",
+    "move-progress": "{{done}} of {{total}} projects moved",
+    "move-done-title": "The projects folder has moved",
+    "move-done-body": "Your projects are now in {{folder}}.",
+    "move-failed-title": "The projects folder could not be moved",
+    "move-failed-body": "Your projects are still where they were; nothing was lost.",
+    "label-update": "VideoDubber {{ version }} update"
   }
 }

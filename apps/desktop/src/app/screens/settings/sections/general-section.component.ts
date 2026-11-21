@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { ActivityService } from '../../../core/activity/activity.service';
 import { LOCALE_LABELS, SUPPORTED_LOCALES, TranslatePipe, TranslateService, type SupportedLocale } from '../../../core/i18n';
 import { IpcService } from '../../../core/ipc/ipc.service';
 import type { ProjectsFolderInfo } from '../../../core/models';
@@ -31,6 +32,7 @@ type CheckOutcome = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error';
 export class GeneralSectionComponent implements OnInit, OnDestroy {
   protected readonly store = inject(SettingsStore);
   private readonly ipc = inject(IpcService);
+  private readonly activity = inject(ActivityService);
   private readonly translate = inject(TranslateService);
   private readonly confirmSvc = inject(ConfirmService);
   protected readonly theme = inject(ThemeService);
@@ -89,7 +91,12 @@ export class GeneralSectionComponent implements OnInit, OnDestroy {
       const info = await this.ipc.getProjectsFolder();
       this.projectsFolder.set(info);
       if (!this.projectsFolderInput()) this.projectsFolderInput.set(info.root);
-      if (info.moving) this.followProjectsMove();
+      if (info.moving) {
+        // Also in the top-bar list, which says when the move ended after the
+        // user has left this page (this page's own poll stops with it).
+        this.activity.followProjectsMove(info);
+        this.followProjectsMove();
+      }
     } catch {
       this.projectsFolder.set(null);
     }
@@ -129,7 +136,10 @@ export class GeneralSectionComponent implements OnInit, OnDestroy {
     try {
       const next = await this.ipc.moveProjectsFolder(root?.trim() ? root.trim() : null);
       this.projectsFolder.set(next);
-      if (next.moving) this.followProjectsMove();
+      if (next.moving) {
+        this.activity.followProjectsMove(next);
+        this.followProjectsMove();
+      }
       else this.projectsFolderInput.set(next.root);
     } catch (err) {
       this.store.error.set(toAppError(err));

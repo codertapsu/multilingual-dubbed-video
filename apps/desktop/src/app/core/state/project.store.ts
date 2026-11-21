@@ -2,6 +2,7 @@ import { Injectable, computed, inject, signal, type Signal } from '@angular/core
 
 import { IpcService } from '../ipc/ipc.service';
 import type { AppError, PipelineState, Project } from '../models';
+import { GENERIC_ERROR_MESSAGE } from '../../shared/error-banner/error-view';
 
 /**
  * ProjectStore — signal-based store for:
@@ -127,12 +128,15 @@ export function toAppError(err: unknown): AppError {
 function normalizeAppError(err: unknown): AppError {
   if (isAppError(err)) return err;
   if (err instanceof Error) {
-    return { code: 'UNKNOWN', message: err.message, cause: err.stack };
+    // The message only. The stack used to ride along as `cause`, and the
+    // banner printed it under "Why:" to users (UX audit, 2026-11-21); it is
+    // for the developer console, where the browser already shows it.
+    return { code: 'UNKNOWN', message: err.message || err.name };
   }
   if (typeof err === 'string') {
     return { code: 'UNKNOWN', message: err };
   }
-  return { code: 'UNKNOWN', message: 'An unexpected error occurred.' };
+  return { code: 'UNKNOWN', message: GENERIC_ERROR_MESSAGE };
 }
 
 /** How many past failures the Help screen's diagnostics bundle can report. */

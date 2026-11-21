@@ -14,10 +14,46 @@
   border-radius: var(--vd-radius-sm);
 }
 
-.preview-note {
-  align-self: flex-start;
-  white-space: normal;
-  line-height: 1.4;
+.file-line {
+  margin: 0;
+
+  .mono {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* No video yet, or one the in-app player cannot play: a calm note, not an error. */
+.soft-note {
+  margin: 0;
+  padding: var(--vd-sp-3) var(--vd-sp-4);
+  border: 1px dashed var(--vd-border-strong);
+  border-radius: var(--vd-radius-sm);
+  background: var(--vd-surface-2);
+
+  p {
+    margin: 0;
+  }
+}
+
+/* Why Render again is off while a dub runs, and the pause that frees it. */
+.busy-note {
+  padding: var(--vd-sp-3) var(--vd-sp-4);
+  border: 1px solid var(--vd-warning);
+  border-radius: var(--vd-radius-sm);
+  background: var(--vd-warning-bg);
+
+  p {
+    margin: 0;
+  }
+}
+
+/* The project could not be loaded (the backend is down, the project is gone). */
+.load-failed {
+  border-color: var(--vd-danger);
+
+  p {
+    margin: var(--vd-sp-1) 0 0;
+  }
 }
 
 .field {

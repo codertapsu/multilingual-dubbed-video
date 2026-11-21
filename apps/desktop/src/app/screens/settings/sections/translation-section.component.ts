@@ -4,6 +4,7 @@ import { TranslatePipe } from '../../../core/i18n';
 import { ArgosPacksComponent } from '../components/argos-packs.component';
 import { DefaultEngineComponent } from '../components/default-engine.component';
 import { EngineFamilyCardComponent } from '../components/engine-family-card.component';
+import { EnginesLoadErrorComponent } from '../components/engines-load-error.component';
 import { ProviderRowComponent } from '../components/provider-row.component';
 import { familiesForPage, familyOfProvider } from '../engine-families';
 import { SettingsStore } from '../settings.store';
@@ -18,7 +19,14 @@ import { SettingsStore } from '../settings.store';
 @Component({
   selector: 'vd-settings-translation',
   standalone: true,
-  imports: [TranslatePipe, DefaultEngineComponent, EngineFamilyCardComponent, ProviderRowComponent, ArgosPacksComponent],
+  imports: [
+    TranslatePipe,
+    DefaultEngineComponent,
+    EngineFamilyCardComponent,
+    EnginesLoadErrorComponent,
+    ProviderRowComponent,
+    ArgosPacksComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrls: ['../settings-shared.scss', './engine-page.scss'],
   template: `
@@ -35,11 +43,12 @@ import { SettingsStore } from '../settings.store';
         <p class="hint">{{ 'settings.fn.review-now' | translate: { name: store.providerLabel(refine) } }}</p>
       }
       @if (store.defaultsSaved()) {
-        <p class="hint test-ok saved" role="status">{{ 'settings.defaults.saved' | translate }}</p>
+        <p class="hint test-ok saved" role="status" animate.leave="fade-out">{{ 'settings.defaults.saved' | translate }}</p>
       }
     </div>
 
     <!-- ===================== Families (TranslateGemma, Gemma, llama.cpp…) ===================== -->
+    <vd-engines-load-error />
     @for (family of families(); track family.id) {
       <vd-engine-family-card [familyId]="family.id" [family]="family" />
     }

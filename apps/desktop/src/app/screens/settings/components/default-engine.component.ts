@@ -50,8 +50,10 @@ import { SettingsStore, type DefaultPhase } from '../settings.store';
             }
           </p>
         }
+      } @else if (store.processingSetupLoaded()) {
+        <p class="hint warn-text">{{ 'settings.defaults.unavailable' | translate }}</p>
       } @else {
-        <p class="hint">{{ 'settings.defaults.unavailable' | translate }}</p>
+        <p class="hint">{{ 'common.loading' | translate }}</p>
       }
     </div>
   `,

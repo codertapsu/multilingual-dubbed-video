@@ -16,6 +16,7 @@ import { ActivityService } from '../../core/activity/activity.service';
 import { IpcService } from '../../core/ipc/ipc.service';
 import type { AppError, EnginePackInfo, EnginePackRecommendation } from '../../core/models';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../error-banner/error-banner.component';
 
 /** One recommendation, joined with its catalog entry for the name and size. */
@@ -259,7 +260,9 @@ export class RecommendedEnginesComponent implements OnInit, OnDestroy {
     try {
       await this.ipc.installEngine(packId);
     } catch (err) {
-      this.activity.markFailed('engine', packId, err as AppError);
+      // Normalized: a network failure is no AppError, and `as` showed it as an
+      // empty error badge with no message.
+      this.activity.markFailed('engine', packId, toAppError(err));
     }
   }
 }

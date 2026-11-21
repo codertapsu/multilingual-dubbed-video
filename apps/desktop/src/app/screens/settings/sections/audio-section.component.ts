@@ -3,6 +3,7 @@ import { RouterLink } from '@angular/router';
 
 import { TranslatePipe } from '../../../core/i18n';
 import { EngineFamilyCardComponent } from '../components/engine-family-card.component';
+import { EnginesLoadErrorComponent } from '../components/engines-load-error.component';
 import { familiesForPage } from '../engine-families';
 import { SettingsStore } from '../settings.store';
 
@@ -16,7 +17,7 @@ import { SettingsStore } from '../settings.store';
 @Component({
   selector: 'vd-settings-audio',
   standalone: true,
-  imports: [RouterLink, TranslatePipe, EngineFamilyCardComponent],
+  imports: [RouterLink, TranslatePipe, EngineFamilyCardComponent, EnginesLoadErrorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrls: ['../settings-shared.scss', './engine-page.scss'],
   template: `
@@ -27,10 +28,12 @@ import { SettingsStore } from '../settings.store';
       </div>
     </div>
 
+    <vd-engines-load-error />
     @for (family of families(); track family.id) {
       <vd-engine-family-card [familyId]="family.id" [family]="family" />
     } @empty {
-      @if (store.enginesLoaded()) {
+      <!-- "None for this computer" only when the list did load: a failed load says so above. -->
+      @if (store.enginesLoaded() && !store.enginesError()) {
         <div class="card">
           <p class="hint">{{ 'settings.engines.none' | translate }}</p>
         </div>

@@ -1,7 +1,9 @@
-import { ChangeDetectionStrategy, Component, inject, input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input } from '@angular/core';
 
+import { ActivityService } from '../../../core/activity/activity.service';
 import { TranslatePipe } from '../../../core/i18n';
 import type { EnginePackInfo } from '../../../core/models';
+import { ErrorBannerComponent } from '../../../shared/error-banner/error-banner.component';
 import { SettingsStore } from '../settings.store';
 
 /**
@@ -15,7 +17,7 @@ import { SettingsStore } from '../settings.store';
 @Component({
   selector: 'vd-pack-row',
   standalone: true,
-  imports: [TranslatePipe],
+  imports: [TranslatePipe, ErrorBannerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrl: '../settings-shared.scss',
   styles: `
@@ -101,39 +103,68 @@ import { SettingsStore } from '../settings.store';
         }
       </div>
     } @else {
+      @if (failure(); as err) {
+        <vd-error-banner [error]="err" (dismiss)="dismissFailure()" />
+      }
       <div class="row-actions">
-        @if (store.isEngineInstalled(p.id)) {
-          @if (store.isEngineUpdatable(p.id)) {
-            <button type="button" class="btn btn-sm" (click)="store.installEngine(p.id)" [title]="'settings.engines.update-title' | translate">
-              {{ 'settings.engines.update' | translate }}
-            </button>
-          } @else {
-            <button type="button" class="btn btn-ghost btn-sm" (click)="store.installEngine(p.id)" [title]="'settings.engines.reinstall-title' | translate">
-              {{ 'settings.engines.reinstall' | translate }}
-            </button>
-          }
-          <button type="button" class="btn btn-ghost btn-sm" (click)="store.uninstallEngine(p.id)">{{ 'settings.engines.remove' | translate }}</button>
-          @if (store.isChoosableModel(p)) {
-            @if (store.isEngineShadowed(p)) {
-              <button type="button" class="btn btn-sm" (click)="store.chooseModel(p, true)" [title]="'settings.engines.use-this-title' | translate">
-                {{ 'settings.engines.use-this' | translate }}
-              </button>
-            } @else if (store.isEngineActive(p) && store.isModelChosenByUser(p)) {
-              <span class="hint">{{ 'settings.engines.chosen-by-you' | translate }}</span>
-              <button type="button" class="btn btn-ghost btn-sm" (click)="store.chooseModel(p, false)">
-                {{ 'settings.engines.use-automatic' | translate }}
-              </button>
-            }
-          }
-        } @else if (store.installBlocked(p)) {
+        @if (!store.isEngineInstalled(p.id) && store.installBlocked(p)) {
           <button type="button" class="btn btn-sm" disabled [title]="'settings.engines.needs-uv-title' | translate">
             {{ 'settings.engines.install' | translate }}
           </button>
           <span class="hint test-fail">{{ 'settings.engines.uv-missing' | translate }}</span>
+        } @else if (failure()) {
+          <button type="button" class="btn btn-sm btn-primary" (click)="store.installEngine(p.id)" [disabled]="!!busy()">
+            {{ 'settings.engines.retry-size' | translate: { size: store.sizeLabel(p.approxSizeMb) } }}
+          </button>
+        } @else if (store.isEngineInstalled(p.id)) {
+          @if (store.isEngineUpdatable(p.id)) {
+            <button
+              type="button"
+              class="btn btn-sm"
+              (click)="store.installEngine(p.id)"
+              [disabled]="!!busy()"
+              [title]="'settings.engines.update-title' | translate"
+            >
+              {{ 'settings.engines.update' | translate }}
+            </button>
+          } @else {
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              (click)="store.reinstallEngine(p.id)"
+              [disabled]="!!busy()"
+              [title]="'settings.engines.reinstall-title' | translate"
+            >
+              {{ 'settings.engines.reinstall' | translate }}
+            </button>
+          }
         } @else {
           <button type="button" class="btn btn-sm" [class.btn-primary]="store.isEngineRecommended(p.id)" (click)="store.installEngine(p.id)">
             {{ 'settings.variant.install' | translate: { size: store.sizeLabel(p.approxSizeMb) } }}
           </button>
+        }
+        @if (store.isEngineInstalled(p.id)) {
+          <button type="button" class="btn btn-ghost btn-sm" (click)="store.uninstallEngine(p.id)" [disabled]="!!busy()">
+            {{ (busy() === 'remove' ? 'settings.engines.removing' : 'settings.engines.remove') | translate }}
+          </button>
+          @if (store.isChoosableModel(p)) {
+            @if (store.isEngineShadowed(p)) {
+              <button
+                type="button"
+                class="btn btn-sm"
+                (click)="store.chooseModel(p, true)"
+                [disabled]="!!busy()"
+                [title]="'settings.engines.use-this-title' | translate"
+              >
+                {{ (busy() === 'use' ? 'settings.engines.switching' : 'settings.engines.use-this') | translate }}
+              </button>
+            } @else if (store.isEngineActive(p) && store.isModelChosenByUser(p)) {
+              <span class="hint">{{ 'settings.engines.chosen-by-you' | translate }}</span>
+              <button type="button" class="btn btn-ghost btn-sm" (click)="store.chooseModel(p, false)" [disabled]="!!busy()">
+                {{ (busy() === 'auto' ? 'settings.engines.switching' : 'settings.engines.use-automatic') | translate }}
+              </button>
+            }
+          }
         }
       </div>
     }
@@ -150,8 +181,29 @@ import { SettingsStore } from '../settings.store';
 })
 export class PackRowComponent {
   protected readonly store = inject(SettingsStore);
+  private readonly activity = inject(ActivityService);
 
   readonly pack = input.required<EnginePackInfo>();
   /** What the row is called on its card: the build ("NVIDIA graphics card") or the model ("12B"). */
   readonly label = input.required<string>();
+
+  /** Removing, or switching the model in use: the buttons wait and say which. */
+  protected readonly busy = computed(() => this.store.packBusyFor(this.pack().id));
+
+  /**
+   * The last install of this pack failed, here or on another screen (the
+   * Voices screen, the recommendations, the first-run wizard). The row went
+   * back to "Install" with only a corner notice saying why, which was gone by
+   * the time the user looked; the reason stays on the row now, with Try again.
+   */
+  protected readonly failure = computed(() => {
+    const task = this.activity.engine(this.pack().id);
+    return task?.state === 'failed' ? (task.error ?? null) : null;
+  });
+
+  /** Done with it: off the row, and off the top bar's list, which shows the same failure. */
+  protected dismissFailure(): void {
+    const task = this.activity.engine(this.pack().id);
+    if (task) this.activity.dismiss(task.id);
+  }
 }

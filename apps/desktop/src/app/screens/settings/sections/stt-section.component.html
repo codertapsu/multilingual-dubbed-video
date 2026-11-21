@@ -31,9 +31,12 @@
     </div>
   </div>
   @if (store.defaultsSaved()) {
-    <p class="hint test-ok saved" role="status">{{ 'settings.defaults.saved' | translate }}</p>
+    <p class="hint test-ok saved" role="status" animate.leave="fade-out">{{ 'settings.defaults.saved' | translate }}</p>
   }
 </div>
+
+<!-- The engine list did not load: whisper.cpp and its models would be missing below without a word. -->
+<vd-engines-load-error />
 
 <!-- ===================== Whisper ===================== -->
 <vd-engine-family-card familyId="whisper" [family]="whisper()">
@@ -71,38 +74,70 @@
 
 <!-- One list of built-in speech models, for faster-whisper and for PhoWhisper. -->
 <ng-template #models let-list>
-  @if (downloaded() === null) {
+  @if (downloaded() === null && modelsLoaded()) {
     <p class="hint">{{ 'settings.builtin.models-unavailable' | translate }}</p>
   }
   <div class="variants">
     @for (m of list; track m.id) {
+      @let st = modelState(m.id);
       <div class="model" [attr.id]="'model-' + m.id">
         <div class="card-head">
           <span class="model-name">{{ m.label | translate }}</span>
           @if (isRecommended(m.id)) {
             <span class="badge badge-info">{{ 'settings.engines.recommended' | translate }}</span>
           }
-          @if (isDownloaded(m.id)) {
-            <span class="badge badge-completed">{{ 'settings.builtin.downloaded' | translate }}</span>
+          <!-- Always says whether the model is on this computer (unknown only when the backend cannot be asked). -->
+          @switch (st.kind) {
+            @case ('ready') {
+              <span class="badge badge-completed">✓ {{ 'settings.builtin.downloaded' | translate }}</span>
+            }
+            @case ('missing') {
+              <span class="badge badge-pending">{{ 'settings.builtin.not-downloaded' | translate }}</span>
+            }
+            @case ('failed') {
+              <span class="badge badge-failed">{{ 'settings.builtin.download-failed' | translate }}</span>
+            }
+          }
+          @if (st.kind === 'downloading') {
+            <span class="badge badge-running">
+              @if (st.percent !== null) {
+                {{ 'settings.builtin.downloading-pct' | translate: { percent: st.percent } }}
+              } @else {
+                {{ 'settings.builtin.downloading-badge' | translate }}
+              }
+            </span>
           }
           @if (defaultModel() === m.id) {
             <span class="badge badge-running">{{ 'settings.builtin.default-model' | translate }}</span>
           }
         </div>
-        @if (downloading() === m.id) {
+        @if (st.kind === 'downloading') {
           <div class="install-progress" role="status" aria-live="polite">
-            <span class="hint">{{ downloadProgress()?.message || ('settings.builtin.downloading' | translate) }}</span>
-            @if (downloadProgress()?.percent; as pct) {
-              <progress [value]="pct" max="100"></progress>
+            <span class="hint">{{ st.message || ('settings.builtin.downloading' | translate) }}</span>
+            @if (st.percent !== null) {
+              <progress [value]="st.percent" max="100"></progress>
             } @else {
               <progress></progress>
             }
           </div>
         } @else {
+          @if (st.kind === 'failed') {
+            <vd-error-banner [error]="st.error" (dismiss)="dismissFailure(m.id)" />
+          }
           <div class="row-actions">
-            @if (!isDownloaded(m.id) && downloaded() !== null) {
-              <button type="button" class="btn btn-sm" (click)="download(m.id)" [disabled]="downloading() !== null">
-                {{ sizeOf(m.id) ? ('settings.builtin.download-size' | translate: { size: store.sizeLabel(sizeOf(m.id)!) }) : ('settings.builtin.download' | translate) }}
+            @if (st.kind === 'missing' || st.kind === 'failed') {
+              <button
+                type="button"
+                class="btn btn-sm"
+                [class.btn-primary]="st.kind === 'failed'"
+                (click)="download(m.id)"
+                [disabled]="downloading() !== null"
+              >
+                @if (st.kind === 'failed') {
+                  {{ sizeOf(m.id) ? ('settings.engines.retry-size' | translate: { size: store.sizeLabel(sizeOf(m.id)!) }) : ('settings.engines.retry' | translate) }}
+                } @else {
+                  {{ sizeOf(m.id) ? ('settings.builtin.download-size' | translate: { size: store.sizeLabel(sizeOf(m.id)!) }) : ('settings.builtin.download' | translate) }}
+                }
               </button>
             }
             @if (defaultModel() !== m.id) {

@@ -7,10 +7,13 @@ import { IpcService } from '../../../core/ipc/ipc.service';
 import { ActivityService } from '../../../core/activity/activity.service';
 import type { WhisperModelInfo } from '../../../core/models/setup';
 import { toAppError } from '../../../core/state/project.store';
+import { ErrorBannerComponent } from '../../../shared/error-banner/error-banner.component';
 import { DefaultEngineComponent } from '../components/default-engine.component';
 import { EngineFamilyCardComponent } from '../components/engine-family-card.component';
+import { EnginesLoadErrorComponent } from '../components/engines-load-error.component';
 import { ProviderRowComponent } from '../components/provider-row.component';
 import { SPEECH_MODELS, familiesForPage, familyOfProvider } from '../engine-families';
+import { downloadState, whisperItem, type DownloadState } from '../install-state';
 import { SettingsStore } from '../settings.store';
 
 /**
@@ -26,7 +29,16 @@ import { SettingsStore } from '../settings.store';
 @Component({
   selector: 'vd-settings-stt',
   standalone: true,
-  imports: [NgTemplateOutlet, FormsModule, TranslatePipe, DefaultEngineComponent, EngineFamilyCardComponent, ProviderRowComponent],
+  imports: [
+    NgTemplateOutlet,
+    FormsModule,
+    TranslatePipe,
+    ErrorBannerComponent,
+    DefaultEngineComponent,
+    EngineFamilyCardComponent,
+    EnginesLoadErrorComponent,
+    ProviderRowComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './stt-section.component.html',
   styleUrls: ['../settings-shared.scss', './engine-page.scss'],
@@ -55,20 +67,18 @@ export class SttSectionComponent implements OnInit, OnDestroy {
   // ---- built-in (faster-whisper) models: the setup catalog and what is on disk
   protected readonly catalog = signal<WhisperModelInfo[]>([]);
   protected readonly downloaded = signal<Set<string> | null>(null);
+  /** The first answer came: from then on, no list means it could not be read (not "still asking"). */
+  protected readonly modelsLoaded = signal(false);
 
   /**
-   * The model downloading now, and how far: from the app-wide activity service,
-   * so it is still shown after Settings was left and opened again, and a click
-   * is answered at once ("Starting…"). Before, a stream of this page's own
-   * followed it and died with the page.
+   * The model downloading now: from the app-wide activity service, so it is
+   * still shown after Settings was left and opened again, and a click is
+   * answered at once ("Starting…"). Before, a stream of this page's own
+   * followed it and died with the page. One downloads at a time from here.
    */
   protected readonly downloading = computed<string | null>(() => {
     const t = this.activity.running().find((x) => x.id.startsWith('setup:whisper:'));
     return t ? t.id.slice('setup:whisper:'.length) : null;
-  });
-  protected readonly downloadProgress = computed(() => {
-    const id = this.downloading();
-    return id ? (this.activity.setupItem(`whisper:${id}`) ?? null) : null;
   });
 
   constructor() {
@@ -97,10 +107,25 @@ export class SttSectionComponent implements OnInit, OnDestroy {
     ]);
     if (catalog) this.catalog.set(catalog.whisperModels);
     this.downloaded.set(status ? new Set(status.installed.whisperModels) : null);
+    this.modelsLoaded.set(true);
   }
 
-  protected isDownloaded(id: string): boolean {
-    return this.downloaded()?.has(id) === true;
+  /**
+   * What a model's row says it is: downloaded, not downloaded, downloading
+   * (how far), or failed (why). The row showed a badge only once a model was
+   * there, so "Download" that did nothing looked the same as a model that was
+   * never asked for, and the user could not tell whether anything was
+   * installed (0.17.0 report).
+   */
+  protected modelState(id: string): DownloadState {
+    const known = this.downloaded();
+    return downloadState(this.activity.setupItem(whisperItem(id)), known === null ? null : known.has(id));
+  }
+
+  /** Done with a failed download: off the row, and off the top bar's list. */
+  protected dismissFailure(id: string): void {
+    const task = this.activity.setupItem(whisperItem(id));
+    if (task) this.activity.dismiss(task.id);
   }
 
   protected sizeOf(id: string): number | null {
@@ -114,15 +139,18 @@ export class SttSectionComponent implements OnInit, OnDestroy {
     return this.store.system()?.recommendation.whisperModel === id;
   }
 
+  /**
+   * Download a model. How it ends shows on its row (modelState): a failure to
+   * start as much as one halfway through, which used to reach the page only
+   * as a corner notice while the row quietly went back to "Download".
+   */
   protected async download(id: string): Promise<void> {
     if (this.downloading()) return;
-    this.store.error.set(null);
-    this.activity.markStarting('model', `whisper:${id}`);
+    this.activity.markStarting('model', whisperItem(id));
     try {
       await this.ipc.setupInstallModels({ whisperModel: id });
     } catch (err) {
-      this.activity.markFailed('model', `whisper:${id}`, toAppError(err));
-      this.store.error.set(toAppError(err));
+      this.activity.markFailed('model', whisperItem(id), toAppError(err));
     }
   }
 

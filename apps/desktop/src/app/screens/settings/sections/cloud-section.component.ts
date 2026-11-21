@@ -21,6 +21,9 @@ import { SettingsStore } from '../settings.store';
 /** Mirrors DEFAULT_CLAUDE_MODEL in the orchestrator (providers/cloud/claudeMessages.ts). */
 const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5';
 
+/** What a Save or Remove button saves: a service's API key, or Mother Claude's address or key. */
+type KeyTarget = CloudServiceId | 'mc-url' | 'mc-key';
+
 /** Display metadata per cloud service. */
 const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string; usedFor: string }> = {
   // Product names stay as they are; the hints are keys.
@@ -60,10 +63,22 @@ export class CloudSectionComponent {
   protected readonly testResults = signal<Partial<Record<CloudServiceId, CredentialTestResult>>>({});
   /** The service whose Test is in flight (a save also sets credBusy). */
   protected readonly testing = signal<CloudServiceId | null>(null);
+  /**
+   * The Save or Remove button whose work is in flight, so that button says
+   * "Saving…" or "Removing…" while the others only wait. Test showed "…" for
+   * any busy service, so saving a key put the dots on the Test button and Save
+   * looked as though nothing had happened.
+   */
+  protected readonly working = signal<{ target: KeyTarget; action: 'save' | 'remove' } | null>(null);
 
   // Claude through Mother Claude: its HTTP API as last checked (null = not yet).
   protected readonly motherClaudeStatus = signal<MotherClaudeStatus | null>(null);
   protected readonly motherClaudeChecking = signal(false);
+  /**
+   * The last check could not be made (the request itself failed). It used to
+   * leave the status null, which reads "Checking Mother Claude…", forever.
+   */
+  protected readonly motherClaudeCheckFailed = signal(false);
   /** The address being typed; null shows the saved one. */
   protected readonly motherClaudeUrlInput = signal<string | null>(null);
   protected readonly motherClaudeKeyInput = signal('');
@@ -142,6 +157,12 @@ export class CloudSectionComponent {
     return this.keyInputs()[service] ?? '';
   }
 
+  /** This Save (or Remove) button's own work is in flight. */
+  protected isWorking(target: KeyTarget, action: 'save' | 'remove'): boolean {
+    const w = this.working();
+    return w !== null && w.target === target && w.action === action;
+  }
+
   protected setKeyInput(service: CloudServiceId, value: string): void {
     this.keyInputs.update((m) => ({ ...m, [service]: value }));
   }
@@ -150,6 +171,7 @@ export class CloudSectionComponent {
     const key = this.keyInputFor(service).trim();
     if (!key || this.credBusy()) return;
     this.credBusy.set(service);
+    this.working.set({ target: service, action: 'save' });
     this.store.error.set(null);
     try {
       const res = await this.ipc.saveCredential({ service, apiKey: key });
@@ -163,6 +185,7 @@ export class CloudSectionComponent {
       this.store.error.set(toAppError(err));
     } finally {
       this.credBusy.set(null);
+      this.working.set(null);
     }
   }
 
@@ -177,6 +200,7 @@ export class CloudSectionComponent {
     });
     if (!ok) return;
     this.credBusy.set(service);
+    this.working.set({ target: service, action: 'remove' });
     this.store.error.set(null);
     try {
       const res = await this.ipc.saveCredential({ service, apiKey: null });
@@ -188,6 +212,7 @@ export class CloudSectionComponent {
       this.store.error.set(toAppError(err));
     } finally {
       this.credBusy.set(null);
+      this.working.set(null);
     }
   }
 
@@ -230,10 +255,17 @@ export class CloudSectionComponent {
     return this.credentialFor('anthropic')?.motherClaude?.keySet === true;
   }
 
-  /** Save part of Claude's settings; true when it worked (the error banner says why not). */
-  private async saveClaude(patch: Omit<SaveCredentialRequest, 'service'>): Promise<boolean> {
+  /**
+   * Save part of Claude's settings; true when it worked (the error banner says
+   * why not). `button` is the Save or Remove that asked, to say it is working.
+   */
+  private async saveClaude(
+    patch: Omit<SaveCredentialRequest, 'service'>,
+    button?: { target: KeyTarget; action: 'save' | 'remove' },
+  ): Promise<boolean> {
     if (this.credBusy()) return false;
     this.credBusy.set('anthropic');
+    if (button) this.working.set(button);
     this.store.error.set(null);
     try {
       const res = await this.ipc.saveCredential({ service: 'anthropic', ...patch });
@@ -245,6 +277,7 @@ export class CloudSectionComponent {
       return false;
     } finally {
       this.credBusy.set(null);
+      this.working.set(null);
     }
   }
 
@@ -262,8 +295,14 @@ export class CloudSectionComponent {
     this.motherClaudeChecking.set(true);
     try {
       this.motherClaudeStatus.set(await this.ipc.getMotherClaudeStatus());
-    } catch {
+      this.motherClaudeCheckFailed.set(false);
+    } catch (err) {
+      // A Mother Claude that is down still answers (`reachable: false`): a
+      // throw means VideoDubber's own backend did not. Recorded for the
+      // support bundle; the panel says it and keeps "Check again".
+      toAppError(err);
       this.motherClaudeStatus.set(null);
+      this.motherClaudeCheckFailed.set(true);
     } finally {
       this.motherClaudeChecking.set(false);
     }
@@ -272,7 +311,7 @@ export class CloudSectionComponent {
   protected async saveMotherClaudeUrl(): Promise<void> {
     const typed = this.motherClaudeUrlInput();
     if (typed === null) return;
-    if (!(await this.saveClaude({ motherClaudeUrl: typed.trim() || null }))) return;
+    if (!(await this.saveClaude({ motherClaudeUrl: typed.trim() || null }, { target: 'mc-url', action: 'save' }))) return;
     this.motherClaudeUrlInput.set(null);
     void this.checkMotherClaude();
   }
@@ -285,13 +324,13 @@ export class CloudSectionComponent {
 
   protected async saveMotherClaudeKey(): Promise<void> {
     const key = this.motherClaudeKeyInput().trim();
-    if (!key || !(await this.saveClaude({ motherClaudeKey: key }))) return;
+    if (!key || !(await this.saveClaude({ motherClaudeKey: key }, { target: 'mc-key', action: 'save' }))) return;
     this.motherClaudeKeyInput.set('');
     void this.checkMotherClaude();
   }
 
   protected async clearMotherClaudeKey(): Promise<void> {
-    if (!(await this.saveClaude({ motherClaudeKey: null }))) return;
+    if (!(await this.saveClaude({ motherClaudeKey: null }, { target: 'mc-key', action: 'remove' }))) return;
     void this.checkMotherClaude();
   }
 

@@ -55,6 +55,12 @@ export interface EngineProgress {
   message: string;
 }
 
+/** What an installed pack's row is doing: removing it, or switching the model in use. */
+export type PackAction = 'remove' | 'use' | 'auto';
+
+/** How long "✓ Saved — applies to new projects" stays up after a save. */
+const SAVED_NOTE_MS = 4000;
+
 /**
  * The state the Settings sections share, and what changes it.
  *
@@ -81,12 +87,23 @@ export class SettingsStore implements OnDestroy {
   readonly system = signal<SystemProfileResponse | null>(null);
   readonly providers = signal<ProvidersResponse | null>(null);
   readonly credentials = signal<CloudCredentialInfo[]>([]);
+  /**
+   * {@link loadProcessingSetup} has answered once, so a part still missing
+   * failed rather than is on its way. Performance and the default pickers said
+   * "Provider list unavailable" while the first answer was still coming.
+   */
+  readonly processingSetupLoaded = signal(false);
 
   // ---------------------------------------------- defaults for new projects
   readonly defaults = signal<ProviderDefaults>({});
   readonly defaultsSaving = signal(false);
-  /** A default was saved since Settings opened: "Saved — applies to new projects". */
+  /**
+   * A default was just saved: "✓ Saved — applies to new projects", for a few
+   * seconds. It used to stay up for as long as Settings was open, on every
+   * engine page, so it no longer said anything about the last change.
+   */
   readonly defaultsSaved = signal(false);
+  private savedTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * What a new project would use now (GET /project-defaults), for a dub into
    * Vietnamese: "Automatic" spelled out. The orchestrator decides it
@@ -119,6 +136,16 @@ export class SettingsStore implements OnDestroy {
   });
   readonly prerequisites = signal<EnginePrerequisites | null>(null);
   readonly enginesLoaded = signal(false);
+  /**
+   * The engine list could not be loaded. Every load error used to be
+   * swallowed, so a backend that did not answer left the engine pages with no
+   * cards at all: it looked as though there was nothing to install. The pages
+   * say so instead, with Try again (components/engines-load-error.component.ts).
+   */
+  readonly enginesError = signal<AppError | null>(null);
+  readonly enginesLoading = signal(false);
+  /** Installed packs whose Remove or model choice is being saved (their buttons gave no sign of it). */
+  readonly packBusy = signal<Readonly<Record<string, PackAction>>>({});
 
   /** The packs as family cards (engine-families.ts). */
   readonly families = computed<EngineFamilyView[]>(() => groupEngineFamilies(this.enginePacks()));
@@ -155,7 +182,8 @@ export class SettingsStore implements OnDestroy {
   }
 
   ngOnDestroy(): void {
-    /* the activity service keeps following installs */
+    // The activity service keeps following installs; only the note's timer is ours.
+    if (this.savedTimer) clearTimeout(this.savedTimer);
   }
 
   // ========================================================================
@@ -183,6 +211,7 @@ export class SettingsStore implements OnDestroy {
         .then((prefs) => this.defaults.set(prefs.providerDefaults ?? {}))
         .catch(() => undefined),
     ]);
+    this.processingSetupLoaded.set(true);
   }
 
   /** Refresh the provider pickers' availability (a key saved, a pack installed). */
@@ -295,7 +324,7 @@ export class SettingsStore implements OnDestroy {
     this.error.set(null);
     try {
       await this.ipc.saveAppPreferences({ providerDefaults: next });
-      this.defaultsSaved.set(true);
+      this.showSaved();
       void this.loadEffective();
       return true;
     } catch (err) {
@@ -305,6 +334,16 @@ export class SettingsStore implements OnDestroy {
     } finally {
       this.defaultsSaving.set(false);
     }
+  }
+
+  /** "✓ Saved" for a few seconds; another save keeps it up from that save on. */
+  private showSaved(): void {
+    if (this.savedTimer) clearTimeout(this.savedTimer);
+    this.defaultsSaved.set(true);
+    this.savedTimer = setTimeout(() => {
+      this.savedTimer = null;
+      this.defaultsSaved.set(false);
+    }, SAVED_NOTE_MS);
   }
 
   /**
@@ -347,6 +386,7 @@ export class SettingsStore implements OnDestroy {
   // ========================================================================
 
   async loadEngines(): Promise<void> {
+    this.enginesLoading.set(true);
     await Promise.all([
       this.ipc
         .getEngines()
@@ -355,8 +395,11 @@ export class SettingsStore implements OnDestroy {
           this.installedEngines.set(e.installed);
           this.updatableEngineIds.set(new Set(e.updatable ?? []));
           this.activeSelections.set(e.activeSelections ?? []);
+          this.enginesError.set(null);
         })
-        .catch(() => undefined),
+        // The list is what the pages are made of: its failure is shown. The
+        // other two only add badges and the uv note, so they stay quiet.
+        .catch((err: unknown) => this.enginesError.set(toAppError(err))),
       this.ipc
         .getRecommendedEngines()
         .then((r) => {
@@ -370,6 +413,21 @@ export class SettingsStore implements OnDestroy {
         .catch(() => undefined),
     ]);
     this.enginesLoaded.set(true);
+    this.enginesLoading.set(false);
+  }
+
+  /** What an installed pack's row is busy with, if anything. */
+  packBusyFor(packId: string): PackAction | undefined {
+    return this.packBusy()[packId];
+  }
+
+  private setPackBusy(packId: string, action: PackAction | null): void {
+    this.packBusy.update((m) => {
+      const next = { ...m };
+      if (action) next[packId] = action;
+      else delete next[packId];
+      return next;
+    });
   }
 
   isEngineInstalled(packId: string): boolean {
@@ -455,13 +513,16 @@ export class SettingsStore implements OnDestroy {
   /** Use this model for its job (`use`), or go back to the automatic choice. */
   async chooseModel(pack: EnginePackInfo, use: boolean): Promise<void> {
     const job = SettingsStore.MODEL_JOB[pack.providerId];
-    if (!job) return;
+    if (!job || this.packBusyFor(pack.id)) return;
     this.error.set(null);
+    this.setPackBusy(pack.id, use ? 'use' : 'auto');
     try {
       await this.ipc.saveAppPreferences({ localModels: { [job]: use ? pack.id : '' } });
       await this.loadEngines();
     } catch (err) {
       this.error.set(toAppError(err));
+    } finally {
+      this.setPackBusy(pack.id, null);
     }
   }
 
@@ -527,16 +588,49 @@ export class SettingsStore implements OnDestroy {
     void this.loadEffective();
   }
 
+  /**
+   * Try again after the engine list failed to load. The rest of an engine
+   * page (the default pickers, what Automatic picks) comes from the same
+   * backend and most likely failed with it, so it is asked again too.
+   */
+  retryEngines(): void {
+    this.afterEngineChange();
+  }
+
+  /**
+   * Install (or update) a pack. How it ends shows on its row, from the
+   * activity service: the progress, and a failure with Try again, whether it
+   * failed to start here or broke halfway through. Not in the page's banner as
+   * well: the same failure told twice, once far from the row it belongs to.
+   */
   async installEngine(packId: string): Promise<void> {
-    this.error.set(null);
     // Listed as starting at once (and in the top bar), before the first progress event.
     this.activity.markStarting('engine', packId, this.enginePacks().find((p) => p.id === packId)?.displayName);
     try {
       await this.ipc.installEngine(packId);
     } catch (err) {
       this.activity.markFailed('engine', packId, toAppError(err));
-      this.error.set(toAppError(err));
     }
+  }
+
+  /**
+   * Reinstall an installed pack, after saying what it costs. "Reinstall" sat
+   * beside "Remove" like a quick repair and downloaded the whole pack again
+   * (gigabytes for a voice engine) at a click, and the app has no way to stop
+   * an install once it has begun, so the question comes first.
+   */
+  async reinstallEngine(packId: string): Promise<void> {
+    const pack = this.enginePacks().find((p) => p.id === packId);
+    const size = this.sizeLabel(pack?.approxSizeMb ?? 0);
+    const ok = await this.confirmSvc.confirm({
+      title: this.translate.instant('settings.engines.reinstall-confirm-title', {
+        name: pack?.displayName ?? this.translate.instant('confirm.remove-engine-fallback'),
+      }),
+      message: this.translate.instant('settings.engines.reinstall-confirm-body', { size }),
+      confirmLabel: this.translate.instant('settings.engines.reinstall-confirm', { size }),
+      danger: false,
+    });
+    if (ok) await this.installEngine(packId);
   }
 
   /** A pack installed from the recommendations panel: refresh the full list and what can run. */
@@ -545,6 +639,7 @@ export class SettingsStore implements OnDestroy {
   }
 
   async uninstallEngine(packId: string): Promise<void> {
+    if (this.packBusyFor(packId)) return;
     const pack = this.enginePacks().find((p) => p.id === packId);
     const ok = await this.confirmSvc.confirm({
       title: this.translate.instant('confirm.remove-engine-title'),
@@ -555,6 +650,8 @@ export class SettingsStore implements OnDestroy {
     });
     if (!ok) return;
     this.error.set(null);
+    // Busy only once confirmed: the row says "Removing…" while it happens.
+    this.setPackBusy(packId, 'remove');
     try {
       await this.ipc.uninstallEngine(packId);
       await this.loadEngines();
@@ -562,6 +659,8 @@ export class SettingsStore implements OnDestroy {
       void this.loadEffective();
     } catch (err) {
       this.error.set(toAppError(err));
+    } finally {
+      this.setPackBusy(packId, null);
     }
   }
 

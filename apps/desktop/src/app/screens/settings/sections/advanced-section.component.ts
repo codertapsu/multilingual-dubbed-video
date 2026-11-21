@@ -38,8 +38,11 @@ import { SettingsStore } from '../settings.store';
         } @else {
           <p class="hint test-fail">{{ 'settings.engines.uv-missing' | translate }}</p>
         }
+      } @else if (store.enginesLoaded()) {
+        <!-- The engine list's load answered and this part did not come with it. -->
+        <p class="hint warn-text">{{ 'settings.advanced.uv-unavailable' | translate }}</p>
       } @else {
-        <p class="hint">{{ 'settings.defaults.unavailable' | translate }}</p>
+        <p class="hint">{{ 'common.loading' | translate }}</p>
       }
     </div>
 

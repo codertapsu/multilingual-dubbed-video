@@ -88,6 +88,7 @@ import { PipelineRunner, type RunnerDeps } from './pipeline/runner.js';
 import type { SpeechMapService } from './pipeline/speechMap.js';
 import type { ProjectStore } from './workspace/projectStore.js';
 import { fileExistsNonEmpty, segmentIdToIndex, type WorkspacePaths } from './workspace/paths.js';
+import { hasSpeakableText, writeSilentClip } from './pipeline/speakable.js';
 import { mixFingerprint, readMixFingerprint } from './pipeline/mixFingerprint.js';
 import type { BrandKit } from './branding/brandKit.js';
 import { greetingSettingsKey, readGreetingPlan } from './branding/greetingMix.js';
@@ -311,7 +312,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   /** Pending re-pump for a transient dispatch failure (worker still booting). */
   private queueRetryTimer: ReturnType<typeof setTimeout> | undefined;
   /** In-flight editor actions per owner id, so the LAST one frees the lane. */
-  private readonly editorLaneRefs = new Map<string, number>();
+  /** Jobs in progress per lane owner outside a run (`editor:<id>`, `preview:<voice>`). */
+  private readonly laneRefs = new Map<string, number>();
   /**
    * Serializes read-modify-write updates of a project's artifacts.
    *
@@ -326,7 +328,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   /** In-flight editor media builds (waveform/filmstrip), so concurrent opens share one ffmpeg. */
   private readonly editorMediaInFlight = new Map<string, Promise<unknown>>();
 
-  constructor(private readonly deps: OrchestratorDeps) {}
+  constructor(private readonly deps: OrchestratorDeps) {
+    // A lane whose owner is gone (a run that ended, an editor action or a
+    // preview that never released it) is free: the engine manager asks us.
+    deps.engines?.setOwnerLiveness?.((owner) => this.laneOwnerAlive(owner));
+  }
 
   /** Build a per-project logger bound to the project's event bus. */
   private loggerFor(projectId: string): ProjectLogger {
@@ -372,7 +378,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * under any of them would pull its files from under the work.
    */
   busyProjects(): string[] {
-    const editing = [...this.editorLaneRefs.keys()].map((owner) => owner.replace(/^editor:/, ''));
+    const editing = [...this.laneRefs.keys()].filter((owner) => owner.startsWith('editor:')).map((owner) => owner.slice('editor:'.length));
     return [...new Set([...this.running.keys(), ...this.queued, ...this.movingOutput, ...editing])];
   }
 
@@ -1048,21 +1054,36 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * others are still using.
    */
   private async withEditorLane<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
-    const owner = `editor:${projectId}`;
-    this.editorLaneRefs.set(owner, (this.editorLaneRefs.get(owner) ?? 0) + 1);
+    return this.runLaneJob(`editor:${projectId}`, fn);
+  }
+
+  /**
+   * Run work outside any dub (an editor action, a voice preview) under an
+   * owner of its own: `editor:<project>`, `preview:<voice>`. It may take a
+   * free heavy lane, is refused (ENGINE_BUSY) rather than unloading a running
+   * dub's engine, and releases the lane when the last job of that owner ends.
+   * Before this, a preview ran as "anonymous" and its claim never ended.
+   */
+  async runLaneJob<T>(owner: string, fn: () => Promise<T>): Promise<T> {
+    this.laneRefs.set(owner, (this.laneRefs.get(owner) ?? 0) + 1);
     try {
       return await withEngineOwner(owner, fn);
     } finally {
-      const remaining = (this.editorLaneRefs.get(owner) ?? 1) - 1;
+      const remaining = (this.laneRefs.get(owner) ?? 1) - 1;
       if (remaining > 0) {
-        this.editorLaneRefs.set(owner, remaining);
+        this.laneRefs.set(owner, remaining);
       } else {
-        this.editorLaneRefs.delete(owner);
+        this.laneRefs.delete(owner);
         this.deps.engines?.releaseHeavyLane(owner);
         // The lane may now be free for a queued heavy dub.
         void this.pump();
       }
     }
+  }
+
+  /** Whether a heavy-lane owner still exists: a live run, or a lane job in progress. */
+  private laneOwnerAlive(owner: string): boolean {
+    return this.running.has(owner) || this.laneRefs.has(owner);
   }
 
   private async synthesizeSingleSegmentImpl(
@@ -1128,6 +1149,15 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     }
     const synthesized: TtsSegment[] = [];
     for (const b of buckets.values()) {
+      // A line with nothing to say ("…", "♪") is silence, never an engine call (speakable.ts).
+      const silent = b.units.filter((u) => !hasSpeakableText(u.text) && segmentIdToIndex(u.id) > 0);
+      for (const u of silent) {
+        const audioPath = paths.ttsSegment(segmentIdToIndex(u.id));
+        const durationMs = await writeSilentClip(audioPath);
+        synthesized.push({ segmentId: u.id, audioPath, durationMs, text: u.text, startMs: u.startMs, endMs: u.endMs });
+      }
+      b.units = b.units.filter((u) => !silent.includes(u));
+      if (b.units.length === 0) continue;
       const result = await provider.synthesizeSegments({
         language: project.settings.targetLanguage,
         voiceId: b.voiceId,
@@ -1532,10 +1562,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // Quitting (pauseAll): a dub asked for now waits in the queue, which the
     // next start resumes, instead of starting a run nothing would pause.
     const decision =
-      this.queue.length > 0 || this.closing
+      (this.queue.length > 0 && !workload.lightOnly) || this.closing
         ? { start: [] as string[] }
         : decideAdmissions(
-            [{ projectId: project.id, points: workload.points, needsHeavyEngine: workload.needsHeavyEngine }],
+            [{ projectId: project.id, points: workload.points, needsHeavyEngine: workload.needsHeavyEngine, lightOnly: workload.lightOnly }],
             this.runningRuns(),
             {
               budgetPoints: capacity.budgetPoints,
@@ -1592,6 +1622,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         projectId,
         points: w?.points ?? POINTS_PER_LOCAL_RUN,
         needsHeavyEngine: w?.needsHeavyEngine ?? false,
+        lightOnly: w?.lightOnly ?? false,
       };
     });
   }
@@ -1639,6 +1670,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         projectId,
         points: w?.points ?? POINTS_PER_LOCAL_RUN,
         needsHeavyEngine: w?.needsHeavyEngine ?? false,
+        lightOnly: w?.lightOnly ?? false,
       };
     });
     const externalHeavyOwner = this.externalHeavyOwner();
@@ -1890,6 +1922,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         projectId,
         points: w?.points ?? POINTS_PER_LOCAL_RUN,
         needsHeavyEngine: w?.needsHeavyEngine ?? false,
+        lightOnly: w?.lightOnly ?? false,
       };
     });
     const externalHeavyOwner = this.externalHeavyOwner();

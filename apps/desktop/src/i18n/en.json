@@ -1639,7 +1639,10 @@
   },
   "warning": {
     "gpu-fallback-busy": "The graphics card was busy with another job, so a step ran on the slower CPU build ({{pack}}).",
-    "gpu-fallback-failed": "A GPU engine ({{pack}}) could not start, so a step ran on the slower CPU build. If it keeps happening, reinstall it in Settings → Engines."
+    "gpu-fallback-failed": "A GPU engine ({{pack}}) could not start, so a step ran on the slower CPU build. If it keeps happening, reinstall it in Settings → Engines.",
+    "no-speech-lines": "{{count}} line(s) have no words to say ({{examples}}): they stay silent in the dub and keep their subtitle.",
+    "speakers-failed": "Speaker detection failed ({{cause}}), so the dub uses one voice. Re-detect speakers in the editor.",
+    "speakers-low-confidence": "{{count}} line(s) were given the nearest speaker, not a sure one. Check them in the editor's Issues."
   },
   "diagnostics": {
     "heading": "Diagnostics",
@@ -1676,5 +1679,12 @@
     "recent-none": "No recent warnings or errors.",
     "crashes": "Crash reports",
     "crashes-none": "None."
+  },
+  "step-detail": {
+    "translating": "Translating {{done}}/{{total}} lines",
+    "translating-rate": "Translating {{done}}/{{total}} lines · {{rate}} lines/min",
+    "voicing": "Voicing {{done}}/{{total}}",
+    "transcribing": "Transcribing part {{done}}/{{total}}",
+    "speakers": "Detecting speakers {{done}}/{{total}}"
   }
 }

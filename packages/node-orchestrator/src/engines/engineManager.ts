@@ -447,6 +447,14 @@ export function isHeavyPack(packId: string, family: string): boolean {
 /** Owner recorded for heavy work that runs outside any {@link withEngineOwner}. */
 const ANONYMOUS_OWNER = 'anonymous';
 
+/**
+ * How long an anonymous claim on the heavy lane lasts after its last engine
+ * acquisition. Anonymous work has no end to hook: a voice preview once left
+ * the lane "anonymous" until the app was restarted, and the queue held every
+ * GPU dub behind a phantom "another dub" (field report B5, 2026-11-20).
+ */
+export const ANONYMOUS_LANE_LEASE_MS = 5 * 60_000;
+
 /** Injectable seams (tests provide fakes). */
 export interface EngineManagerDeps {
   store: EnginePackStore;
@@ -489,6 +497,14 @@ export class EngineManager {
   private readonly running = new Map<string, RunningEngine>();
   /** Owner currently holding the exclusive heavy-engine lane (see engineOwner.ts). */
   private heavyOwner: string | undefined;
+  /** When the holder last acquired an engine on the lane (an anonymous claim's lease). */
+  private heavyClaimedAt = 0;
+  /**
+   * Whether an owner still exists (a live run, an editor action, a preview):
+   * set by the orchestrator, which knows them. A lane whose owner is gone is
+   * free, whatever forgot to release it.
+   */
+  private ownerAlive: ((owner: string) => boolean) | undefined;
   /** Packs that failed to start in this session (see ensureRunningFirstUsable). */
   private readonly unusablePacks = new Set<string>();
   /** In-flight starts per pack, so concurrent calls share one spawn. */
@@ -498,7 +514,32 @@ export class EngineManager {
 
   /** The owner holding the heavy lane, if any (for scheduler/UI messaging). */
   heavyLaneOwner(): string | undefined {
+    this.releaseStaleLane();
     return this.heavyOwner;
+  }
+
+  /** Tell the manager how to know whether a lane owner still exists (Orchestrator). */
+  setOwnerLiveness(alive: (owner: string) => boolean): void {
+    this.ownerAlive = alive;
+  }
+
+  /**
+   * Free the lane when its holder is gone: an anonymous claim past its lease,
+   * or an owner the orchestrator no longer knows (a run that ended, an editor
+   * action or preview that finished without releasing). The engines stay up.
+   */
+  private releaseStaleLane(now = Date.now()): void {
+    const owner = this.heavyOwner;
+    if (owner === undefined) return;
+    const alive = owner === ANONYMOUS_OWNER ? now - this.heavyClaimedAt < ANONYMOUS_LANE_LEASE_MS : (this.ownerAlive?.(owner) ?? true);
+    if (alive) return;
+    this.heavyOwner = undefined;
+    this.deps.logger?.info(`Released the GPU lane held by "${owner}": that work has ended.`);
+  }
+
+  private takeLane(owner: string): void {
+    this.heavyOwner = owner;
+    this.heavyClaimedAt = Date.now();
   }
 
   /**
@@ -521,10 +562,11 @@ export class EngineManager {
    */
   async claimForJob(label: string, ownerId?: string): Promise<void> {
     const owner = ownerId ?? currentEngineOwner() ?? ANONYMOUS_OWNER;
+    this.releaseStaleLane();
     if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
       throw new AppErrorException('ENGINE_BUSY', `${label} needs the engines another dub is using (${this.heavyOwner}).`);
     }
-    this.heavyOwner = owner;
+    this.takeLane(owner);
     await this.unloadHeavyExcept('');
   }
 
@@ -641,6 +683,7 @@ export class EngineManager {
     let claimedLane: string | undefined;
     if (wantsHeavyLane) {
       const owner = opts.ownerId ?? currentEngineOwner() ?? ANONYMOUS_OWNER;
+      this.releaseStaleLane();
       if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
         throw new AppErrorException(
           'ENGINE_BUSY',
@@ -648,7 +691,7 @@ export class EngineManager {
         );
       }
       if (this.heavyOwner === undefined) claimedLane = owner;
-      this.heavyOwner = owner;
+      this.takeLane(owner);
     }
 
     try {

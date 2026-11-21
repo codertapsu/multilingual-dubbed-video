@@ -655,6 +655,63 @@ describe('PipelineRunner — per-speaker voices', () => {
   });
 });
 
+describe('PipelineRunner — lines with nothing to say', () => {
+  it('never sends a "…" or "♪" line to the voice engine: it is silence, and the project says so', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video, { settings: defaultSettings({ ttsVoiceId: 'v' }) }));
+    const paths = store.paths(project.id);
+    const segments = makeSegments([
+      [0, 1000, 'one'],
+      [1100, 2000, '…'],
+      [2100, 3000, '♪'],
+      [3100, 4000, 'two'],
+    ]);
+    // The translation keeps the text as it is ("…" stays "…").
+    const identity: TranslationProvider = {
+      id: 'argos',
+      displayName: 'identity',
+      isLocal: true,
+      async translateSegments(input: TranslationInput): Promise<TranslationResult> {
+        return { segments: input.segments.map((s) => ({ id: s.id, translatedText: s.sourceText })) };
+      },
+    };
+    const spoken: string[] = [];
+    const tts: TtsProvider = {
+      id: 'piper-local',
+      displayName: 'voice-tts',
+      isLocal: true,
+      async synthesizeSegments(input: TtsInput): Promise<TtsResult> {
+        const segs = await Promise.all(
+          input.segments.map(async (s, i) => {
+            spoken.push(s.text);
+            const num = Number.parseInt(s.id.replace(/\D/g, ''), 10) || i + 1;
+            const audioPath = path.join(input.outputDir, `segment_${String(num).padStart(4, '0')}.wav`);
+            await fsp.mkdir(input.outputDir, { recursive: true });
+            await fsp.writeFile(audioPath, '800', 'utf8');
+            return { segmentId: s.id, text: s.text, audioPath, durationMs: 800, startMs: s.startMs, endMs: s.endMs, speedRatio: 1 };
+          }),
+        );
+        return { segments: segs, engine: 'piper' };
+      },
+    };
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(10_000) }),
+      registry: fakeRegistry(new FakeSttProvider(segments), identity, tts),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    expect(spoken.join(' ')).not.toMatch(/…|♪/);
+    // The silent lines have a clip (alignment and the mix find one), and are no group's members.
+    expect((await fsp.stat(paths.ttsSegment(2))).size).toBeGreaterThan(44);
+    expect((await fsp.stat(paths.ttsSegment(3))).size).toBeGreaterThan(44);
+    const pipeline = await store.getPipeline(project.id);
+    expect(pipeline.warnings?.map((w) => w.code)).toContain('no-speech-lines');
+  });
+});
+
 describe('PipelineRunner — review & refine step', () => {
   it('skips instantly (with a report) when no refine provider is configured', async () => {
     const { project, deps } = await buildProject();

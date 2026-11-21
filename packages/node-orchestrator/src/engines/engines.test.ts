@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MIN_GPU_RESIDENT_FRACTION,
   gpuResidentFraction,
@@ -33,7 +33,7 @@ import {
   packHardwareSupported,
   recommendEnginePacks,
 } from './engineRecommendation.js';
-import { ENGINE_LAUNCH_SPECS, EngineManager, findFile, waitFor } from './engineManager.js';
+import { ANONYMOUS_LANE_LEASE_MS, ENGINE_LAUNCH_SPECS, EngineManager, findFile, waitFor } from './engineManager.js';
 import { _resetUvCache, resolveUvPath, uvAvailable } from './uv.js';
 import { resolveUvRequirements } from './uvRequirements.js';
 import { recommendSetup } from '../system/systemProfile.js';
@@ -592,6 +592,14 @@ describe('Gemma instruct chat-model packs (context-aware translation)', () => {
     expect(recommended).toContain('translategemma-12b');
     expect(recommended).toContain('chat-gemma4-26b-a4b');
 
+    // The user chose the 27B (the 10-hour field run, ~0.36 lines/s): kept, and
+    // said that the 12B runs on the card.
+    const chosen = (await pickInstalledLocalLlmModel(store, rtx3050, 'translategemma-27b'))!;
+    expect(chosen.packId).toBe('translategemma-27b');
+    expect(chosen.chosenByUser).toBe(true);
+    expect(chosen.slowerThan?.packId).toBe('translategemma-12b');
+    expect(chosen.slowerThan?.reason).toMatch(/processor/);
+
     await rm(dir, { recursive: true, force: true });
   });
 
@@ -722,6 +730,59 @@ describe('Gemma instruct chat-model packs (context-aware translation)', () => {
 
     await manager.stopAll();
     await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('heavy lane: a claim whose owner is gone is free', () => {
+  async function laneManager() {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'vd-lane-'));
+    const store = new EnginePackStore(dir);
+    const p = store.packDir('llama-cpp-metal');
+    await mkdir(p, { recursive: true });
+    await writeFile(path.join(p, 'llama-server'), '#!/bin/sh\n');
+    await store.add({ id: 'llama-cpp-metal', path: p, installedAt: '2026-01-01T00:00:00Z' });
+    const manager = new EngineManager({
+      store,
+      allocatePort: async () => 52346,
+      healthProbe: async () => true,
+      spawnImpl: () => ({ on: () => undefined, stderr: { on: () => undefined }, kill: () => true }) as never,
+      startTimeoutMs: 1000,
+    });
+    return { manager, dir };
+  }
+
+  it('releases a lane whose owner (a preview that ended without releasing) the orchestrator no longer knows', async () => {
+    const { manager, dir } = await laneManager();
+    const alive = new Set(['preview:vp_1']);
+    manager.setOwnerLiveness((o) => alive.has(o));
+    await manager.ensureRunning('llama-cpp-metal', { exclusive: true, ownerId: 'preview:vp_1' });
+    expect(manager.heavyLaneOwner()).toBe('preview:vp_1');
+    // While it lives, another owner is refused.
+    await expect(manager.ensureRunning('llama-cpp-metal', { exclusive: true, ownerId: 'proj_a' })).rejects.toMatchObject({ code: 'ENGINE_BUSY' });
+    alive.delete('preview:vp_1');
+    expect(manager.heavyLaneOwner()).toBeUndefined();
+    alive.add('proj_a'); // a live run
+    await manager.ensureRunning('llama-cpp-metal', { exclusive: true, ownerId: 'proj_a' });
+    expect(manager.heavyLaneOwner()).toBe('proj_a');
+    await manager.stopAll();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('lets an anonymous claim lapse after its lease (it has no end to hook)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const { manager, dir } = await laneManager();
+      await manager.ensureRunning('llama-cpp-metal', { exclusive: true });
+      expect(manager.heavyLaneOwner()).toBe('anonymous');
+      vi.setSystemTime(Date.now() + ANONYMOUS_LANE_LEASE_MS - 1000);
+      expect(manager.heavyLaneOwner()).toBe('anonymous');
+      vi.setSystemTime(Date.now() + 2000);
+      expect(manager.heavyLaneOwner()).toBeUndefined();
+      await manager.stopAll();
+      await rm(dir, { recursive: true, force: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

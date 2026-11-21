@@ -86,6 +86,28 @@ describe('decideAdmissions', () => {
   });
 });
 
+describe('decideAdmissions — the light lane (mix and render only)', () => {
+  const render = (id: string): AdmissionCandidate => ({ projectId: id, points: 2, needsHeavyEngine: false, lightOnly: true });
+  const runningRender = (id: string): RunningRun => ({ projectId: id, points: 2, needsHeavyEngine: false, lightOnly: true });
+
+  it('starts a render-only run behind a GPU dub waiting for its turn, and outside a full budget', () => {
+    // Budget 2 is full (one local run), the heavy head is blocked and reserves.
+    const d = decideAdmissions([heavy('h'), render('r')], [runningHeavy('a')], ctx(2));
+    expect(d.start).toEqual(['r']);
+    expect(d.held.get('h')?.reason).toBe('heavy-busy');
+  });
+
+  it('runs one render at a time on the light lane, and its points never block the budget', () => {
+    const d = decideAdmissions([render('r2'), local('b')], [runningRender('r1')], ctx(2));
+    expect(d.start).toEqual(['b']);
+    expect(d.held.get('r2')?.reason).toBe('no-slot');
+  });
+
+  it('starts nothing on the light lane while the queue is paused', () => {
+    expect(decideAdmissions([render('r')], [], ctx(4, true)).start).toEqual([]);
+  });
+});
+
 describe('decideAdmissions — external heavy-lane holder (editor actions)', () => {
   it('holds a heavy candidate while an EDITOR action owns the lane', () => {
     // Review finding: the scheduler only saw pipeline runs, so it dispatched a

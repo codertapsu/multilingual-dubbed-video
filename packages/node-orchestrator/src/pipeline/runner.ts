@@ -129,6 +129,7 @@ import type { PipelineMediaService, SeparationService, TimelineSegmentInput } fr
 import type { AlignmentService } from '../providers/alignment/whisperxProvider.js';
 import type { DiarizationService } from '../providers/diarization/sherpaDiarizationProvider.js';
 import { assignSpeakers, cachedSpeakerTurns } from './diarization.js';
+import { hasSpeakableText, writeSilentClip } from './speakable.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
 import { fileExistsNonEmpty, padSegmentIndex, segmentIdToIndex, type WorkspacePaths } from '../workspace/paths.js';
@@ -293,17 +294,30 @@ async function writeGroups(path: string, groups: SynthesisGroup[]): Promise<void
 export function translationProgress(
   step: StepProgress,
   log: (done: number, total: number) => void,
+  now: () => number = Date.now,
 ): (done: number, total: number) => void {
   let lastPct = -1;
   let lastTenth = 0;
   let chain: Promise<unknown> = Promise.resolve();
+  // The measured pace, from the first report on (batches a checkpoint gave
+  // back arrive at once and would make it look fast): on an 8 GB card the 27B
+  // model translated about 0.36 lines/s, and nothing said so (field report B7).
+  let first: { at: number; done: number } | undefined;
   return (done, total) => {
     if (!(total > 0)) return;
     const fraction = Math.min(1, done / total);
     const pct = Math.floor(fraction * 90);
+    first ??= { at: now(), done };
     if (pct > lastPct) {
       lastPct = pct;
-      chain = chain.then(() => step(pct / 100)).catch(() => undefined);
+      const minutes = (now() - first.at) / 60_000;
+      const perMin = minutes > 0.25 && done > first.done ? Math.round((done - first.done) / minutes) : undefined;
+      const detail = {
+        key: perMin !== undefined ? 'step-detail.translating-rate' : 'step-detail.translating',
+        params: { done, total, ...(perMin !== undefined ? { rate: perMin } : {}) },
+        text: `Translating ${done}/${total} lines${perMin !== undefined ? ` · ${perMin} lines/min` : ''}`,
+      };
+      chain = chain.then(() => step(pct / 100, detail)).catch(() => undefined);
     }
     const tenth = Math.floor(fraction * 10);
     if (tenth > lastTenth && done < total) {
@@ -331,16 +345,22 @@ function toGroupInputs(segments: readonly TranscriptSegment[]): {
   voiceId?: string;
   speakingRate?: number;
 }[] {
-  return segments.map((s) => ({
+  return segments.map((s) => {
+    const text = (s.translatedText ?? s.sourceText ?? '').trim();
+    return {
     id: s.id,
     startMs: s.startMs,
     endMs: s.endMs,
-    text: (s.translatedText ?? s.sourceText ?? '').trim(),
+    // A line with nothing to say ("…", "♪", zero-width) is an empty unit:
+    // grouping never joins it to a neighbour, and synthesis writes silence
+    // for it (pipeline/speakable.ts) instead of letting the engine read it.
+    text: hasSpeakableText(text) ? text : '',
     ...(s.speakerId ? { speakerId: s.speakerId } : {}),
     // Per-line editor overrides: grouping splits on them and synthesis honours them.
     ...(s.voiceId ? { voiceId: s.voiceId } : {}),
     ...(s.speakingRate !== undefined ? { speakingRate: s.speakingRate } : {}),
-  }));
+    };
+  });
 }
 
 /** Progress callback for a long-running step (fraction in 0..1). */
@@ -425,7 +445,11 @@ function ttsProgress(
 ): (done: number, total: number) => Promise<void> {
   let loggedTenths = 0;
   return async (done, total) => {
-    await onProgress(from + ((to - from) * done) / total);
+    await onProgress(from + ((to - from) * done) / total, {
+      key: 'step-detail.voicing',
+      params: { done, total },
+      text: `Voicing ${done}/${total}`,
+    });
     const tenths = Math.floor((done / total) * 10);
     if (done < total && tenths > loggedTenths) {
       loggedTenths = tenths;
@@ -1206,7 +1230,11 @@ export class PipelineRunner {
       }
 
       all.push(...chunkSegments);
-      await onProgress((chunk.index + 1) / plan.length);
+      await onProgress((chunk.index + 1) / plan.length, {
+        key: 'step-detail.transcribing',
+        params: { done: chunk.index + 1, total: plan.length },
+        text: `Transcribing part ${chunk.index + 1}/${plan.length}`,
+      });
     }
 
     // Re-number ids/index so the merged transcript is contiguous and unique
@@ -1730,6 +1758,16 @@ export class PipelineRunner {
       enabled: project.settings.synthesisGrouping !== false,
     });
     await writeGroups(paths.synthesisGroupsJson, groups);
+    const unspoken = segments.filter((s) => !hasSpeakableText(s.translatedText ?? s.sourceText));
+    if (unspoken.length > 0) {
+      const examples = [...new Set(unspoken.map((s) => (s.translatedText ?? s.sourceText ?? '').trim() || '(empty)'))].slice(0, 3);
+      onProgress.warn?.({
+        code: 'no-speech-lines',
+        key: 'warning.no-speech-lines',
+        params: { count: unspoken.length, examples: examples.join(' ') },
+        message: `${unspoken.length} line(s) have no words to say (${examples.join(' ')}): they stay silent in the dub, and keep their subtitle.`,
+      });
+    }
 
     this.deps.logger.info(
       `Synthesizing ${groups.length} utterance(s) covering ${segments.length} segment(s) with provider "${provider.id}"...`,
@@ -1908,6 +1946,18 @@ export class PipelineRunner {
       reusedSegments: 0,
     };
     let done = 0;
+    // Units with nothing to say get a short silence, never an engine call.
+    for (const bucket of byVoice.values()) {
+      const silent = bucket.groups.filter((g) => !hasSpeakableText(g.text) && segmentIdToIndex(g.id) > 0);
+      if (silent.length === 0) continue;
+      for (const g of silent) {
+        throwIfCancelled(signal);
+        outcome.durations.set(g.id, await writeSilentClip(paths.ttsSegment(segmentIdToIndex(g.id))));
+        outcome.synthesizedIds.add(g.id);
+      }
+      bucket.groups = bucket.groups.filter((g) => !silent.includes(g));
+      done += silent.length;
+    }
     for (const { voiceId, speed, groups: voiceGroups } of byVoice.values()) {
       for (let at = 0; at < voiceGroups.length; ) {
         throwIfCancelled(signal);
@@ -1964,7 +2014,7 @@ export class PipelineRunner {
     // concurrency (sequential probing dominated this step on long videos).
     const PROBE_CONCURRENCY = 8;
     const alignInputs = new Array<AlignInputSegment>(groups.length);
-    const outcomes = new Map<MeasuredClip['outcome'] | 'failed', string[]>();
+    const outcomes = new Map<MeasuredClip['outcome'] | 'failed' | 'no-speech', string[]>();
     const progressEvery = Math.max(1, Math.floor(groups.length / 20));
     let nextGroup = 0;
     let probedCount = 0;
@@ -1984,7 +2034,9 @@ export class PipelineRunner {
             audioPath,
             generatedDurationMs: 0,
           };
-          const outcome = await this.measureInto(input, group.text, signal);
+          const measured = await this.measureInto(input, group.text, signal);
+          // Silence is what a line with nothing to say should be (speakable.ts).
+          const outcome = measured === 'silent' && !hasSpeakableText(group.text) ? 'no-speech' : measured;
           outcomes.set(outcome, [...(outcomes.get(outcome) ?? []), group.id]);
           alignInputs[i] = input;
           // Throttled progress (<=~20 emits) so long-video probing isn't a
@@ -2015,6 +2067,7 @@ export class PipelineRunner {
     // noise cut off says nothing about the voice's pace.
     const unreliable = new Set([
       ...(outcomes.get('silent') ?? []),
+      ...(outcomes.get('no-speech') ?? []),
       ...(outcomes.get('failed') ?? []),
       ...(outcomes.get('cut') ?? []),
     ]);
@@ -2149,7 +2202,7 @@ export class PipelineRunner {
     input: AlignInputSegment,
     text: string,
     signal: AbortSignal,
-  ): Promise<MeasuredClip['outcome'] | 'failed'> {
+  ): Promise<MeasuredClip['outcome'] | 'failed' | 'no-speech'> {
     const MEASURE_TIMEOUT_MS = 15_000;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -2175,8 +2228,8 @@ export class PipelineRunner {
    * trimmed, and by name the ones to listen to — a botched clip whose noise
    * was cut, a silent one, one that could not be read.
    */
-  private logClipMeasurements(outcomes: ReadonlyMap<MeasuredClip['outcome'] | 'failed', readonly string[]>): void {
-    const ids = (k: MeasuredClip['outcome'] | 'failed'): readonly string[] => outcomes.get(k) ?? [];
+  private logClipMeasurements(outcomes: ReadonlyMap<MeasuredClip['outcome'] | 'failed' | 'no-speech', readonly string[]>): void {
+    const ids = (k: MeasuredClip['outcome'] | 'failed' | 'no-speech'): readonly string[] => outcomes.get(k) ?? [];
     const named = (list: readonly string[]): string =>
       list.length > 10 ? `${list.slice(0, 10).join(', ')} and ${list.length - 10} more` : list.join(', ');
     const total = [...outcomes.values()].reduce((sum, list) => sum + list.length, 0);

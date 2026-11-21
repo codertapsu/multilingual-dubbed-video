@@ -30,6 +30,11 @@ export interface ProjectDefaultsDeps {
   usable(phase: Phase | 'refine', providerId: string): Promise<boolean>;
   /** The speech model the hardware recommendation picks (systemProfile.recommendSetup). */
   recommendedSttModel(): Promise<string | undefined>;
+  /**
+   * Which TranslateGemma model will run, and advice when the user's choice
+   * runs mostly on the processor here (packSelection.gpuAdvice). Optional.
+   */
+  translationModelNote?(): Promise<string | undefined>;
 }
 
 export interface ProjectDefaults {
@@ -106,6 +111,10 @@ export async function recommendProjectSettings(
       autoPicked.push('translation');
       notes.push('Translation: the context-aware Gemma chat model on this computer (installed).');
     }
+  }
+  if (settings.translationProviderId === 'llama-cpp') {
+    const note = await deps.translationModelNote?.().catch(() => undefined);
+    if (note) notes.push(note);
   }
   if (CONTEXT_FREE_TRANSLATORS.has(settings.translationProviderId) && (await deps.usable('refine', 'llama-cpp-chat'))) {
     // The translation audit: TranslateGemma alone left ~4 of 20 sampled lines

@@ -248,6 +248,12 @@ export interface ModelPackSelection {
   skipped?: { packId: string; reason: string };
   /** The user picked this pack in Settings → Engines. */
   chosenByUser?: boolean;
+  /**
+   * The user's choice runs mostly on the processor here, and an installed pack
+   * would sit on the graphics card: said, never overridden. The 10-hour field
+   * run used TranslateGemma 27B on an 8 GB RTX 3050 at about 0.36 lines/s.
+   */
+  slowerThan?: { packId: string; reason: string };
 }
 
 /** Is `modelPath` a real file (a half-finished download has no GGUF)? */
@@ -299,9 +305,11 @@ async function pickRankedModelPack(
   // The user's choice (Settings → Engines) wins whatever the hardware advice:
   // a slower, better model is theirs to pick.
   const chosenByUser = preferred ? candidates.find((c) => c.packId === preferred) : undefined;
-  if (chosenByUser) return { ...chosenByUser, chosenByUser: true };
-
   const profile = profileOverride ?? (await machineProfile());
+  if (chosenByUser) {
+    const advice = profile ? gpuAdvice(chosenByUser.packId, candidates, profile) : undefined;
+    return { ...chosenByUser, chosenByUser: true, ...(advice ? { slowerThan: advice } : {}) };
+  }
   if (!profile) return best;
 
   const fits = (packId: string): boolean => {
@@ -351,6 +359,34 @@ async function pickRankedModelPack(
         ? `${bestName} needs about ${needGb} GB of memory; this computer has ${haveGb} GB.`
         : `${bestName} needs more memory than this computer has (${haveGb} GB).`,
     },
+  };
+}
+
+/**
+ * When `packId` would run mostly on the processor while another installed
+ * candidate sits on the graphics card: which one, and why. Pure.
+ */
+export function gpuAdvice(
+  packId: string,
+  candidates: readonly { packId: string }[],
+  profile: SystemProfile,
+): { packId: string; reason: string } | undefined {
+  if (gpuWeightBudgetMb(profile) <= 0) return undefined;
+  const share = (id: string): number => {
+    const pack = findPack(id);
+    const size = pack ? gpuWorkingSetMb(pack) : 0;
+    return size > 0 ? gpuResidentFraction(size, profile) : 1;
+  };
+  if (share(packId) >= MIN_GPU_RESIDENT_FRACTION) return undefined;
+  const alt = candidates.find((c) => c.packId !== packId && share(c.packId) >= MIN_GPU_RESIDENT_FRACTION);
+  if (!alt) return undefined;
+  const name = findPack(packId)?.displayName ?? packId;
+  const altName = findPack(alt.packId)?.displayName ?? alt.packId;
+  return {
+    packId: alt.packId,
+    reason:
+      `Only about ${Math.round(share(packId) * 100)}% of ${name} fits in the graphics card's memory, so most of it runs on the processor and translating is slow; ` +
+      `${altName} (installed) runs on the card and is recommended for this computer.`,
   };
 }
 

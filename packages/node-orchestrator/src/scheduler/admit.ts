@@ -15,6 +15,12 @@
  *  3. Points budget — local runs cost 2, cloud-only runs 1, against
  *     `maxProjects * 2`.
  *
+ * The light lane: a run that only mixes and renders (ffmpeg, no engine) is
+ * admitted on a small slot count of its own, outside the points budget and
+ * any reservation, so it never waits behind a GPU dub's turn. A render after
+ * edits on a finished part sat ~2 h at the back of the queue during a series
+ * (field report B5, 2026-11-21).
+ *
  * Starvation: the first entry that cannot be admitted RESERVES its points, so
  * cheap cloud runs behind it may backfill the remainder but can never keep the
  * blocked head waiting forever. That is an invariant, not a timer — no clock,
@@ -29,6 +35,8 @@ export interface AdmissionCandidate {
   points: number;
   /** Needs the exclusive heavy-engine lane. */
   needsHeavyEngine: boolean;
+  /** Only mixes and renders: admitted on the light lane (RunWorkload.lightOnly). */
+  lightOnly?: boolean;
 }
 
 /** A run already executing. */
@@ -37,7 +45,12 @@ export interface RunningRun {
   points: number;
   /** Holds the exclusive heavy-engine lane. */
   needsHeavyEngine: boolean;
+  /** Admitted on the light lane: counts against its slots, not the points budget. */
+  lightOnly?: boolean;
 }
+
+/** Light-lane runs (mix and render only) that may run at once, besides the budget. */
+export const LIGHT_LANE_SLOTS = 1;
 
 /** Why an entry was held back, with the copy the UI shows. */
 export interface HeldBack {
@@ -66,6 +79,8 @@ export interface AdmissionContext {
    * waiting for the lane.
    */
   externalHeavyOwner?: string;
+  /** Light-lane slots (default {@link LIGHT_LANE_SLOTS}). */
+  lightSlots?: number;
 }
 
 /**
@@ -90,7 +105,8 @@ export function decideAdmissions(
     return { start, held };
   }
 
-  let usedPoints = running.reduce((sum, r) => sum + r.points, 0);
+  let usedPoints = running.filter((r) => !r.lightOnly).reduce((sum, r) => sum + r.points, 0);
+  let lightRunning = running.filter((r) => r.lightOnly).length;
   let heavyHolder: string | undefined =
     running.find((r) => r.needsHeavyEngine)?.projectId ?? ctx.externalHeavyOwner;
   /** Points reserved for the first entry we could not admit (anti-starvation). */
@@ -103,10 +119,25 @@ export function decideAdmissions(
       const name = ctx.nameOf?.(projectId.slice('editor:'.length));
       return name ? `an edit in ${name}` : 'an edit in the editor';
     }
+    if (projectId.startsWith('preview:')) return 'a voice preview';
+    if (projectId === 'anonymous') return 'other work outside a dub';
     return ctx.nameOf?.(projectId) ?? 'another dub';
   };
 
   for (const c of candidates) {
+    // Mix and render only: its own lane, never behind the budget's reservation.
+    if (c.lightOnly && !c.needsHeavyEngine) {
+      if (lightRunning < (ctx.lightSlots ?? LIGHT_LANE_SLOTS)) {
+        start.push(c.projectId);
+        lightRunning += 1;
+      } else {
+        held.set(c.projectId, {
+          reason: 'no-slot',
+          message: 'Waiting for the render before it to finish.',
+        });
+      }
+      continue;
+    }
     if (c.needsHeavyEngine && heavyHolder !== undefined) {
       const holder = nameFor(heavyHolder);
       const message = holder.startsWith('an edit')

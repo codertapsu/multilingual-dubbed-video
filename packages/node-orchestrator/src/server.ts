@@ -77,6 +77,7 @@ import {
   installedPacksForProvider,
   isPackUsable,
   pickInstalledLocalLlmChatModel,
+  pickInstalledLocalLlmModel,
   resolveActivePackSelections,
 } from './engines/packSelection.js';
 import { packFitsMachine, packHardwareSupported, recommendEnginePacks } from './engines/engineRecommendation.js';
@@ -290,6 +291,9 @@ function sanitizeDownloadPrefs(raw: Partial<DownloadPreferences> | undefined): D
 export async function createServer(options: CreateServerOptions = {}): Promise<FastifyInstance> {
   // Warnings raised outside a run (engine fallbacks), kept with the run's step.
   const warningInbox = new WarningInbox();
+  /** Engine fallbacks of work outside runs (`editor:<id>`, `preview:<voice>`), newest last. */
+  const laneFallbacks: { ownerId: string; at: number; packId: string; reason: 'busy' | 'failed'; busyWith?: string }[] = [];
+  const fallbacksSince = (ownerId: string, since: number) => laneFallbacks.filter((f) => f.ownerId === ownerId && f.at >= since);
   const config = options.config ?? loadConfig();
   // The app's own logs (diagnostics/logFiles.ts): engines' output, and one
   // JSON record per line for what matters later (requests that failed or
@@ -334,7 +338,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           ...(f.ownerId ? { projectId: f.ownerId } : {}),
           event: 'engine-fallback',
         });
-        if (!f.ownerId || f.ownerId.includes(':') || f.ownerId === 'anonymous') return;
+        if (f.ownerId?.includes(':')) {
+          // An editor action or a preview: its route reports it (a re-voice
+          // over MCP once said nothing about running on the CPU, B5).
+          laneFallbacks.push({ ...f, ownerId: f.ownerId, at: Date.now() });
+          if (laneFallbacks.length > 50) laneFallbacks.shift();
+          return;
+        }
+        if (!f.ownerId || f.ownerId === 'anonymous') return;
         warningInbox.push(f.ownerId, {
           code: 'gpu-fallback',
           message:
@@ -390,6 +401,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     prep: referencePrep,
     registry: (): ProviderRegistry => registry,
     projectExists: (id) => store.exists(id).catch(() => false),
+    // Previews and enrollment hold the GPU lane only while they run.
+    laneJob: (owner, fn) => orchestrator.runLaneJob(owner, fn),
   });
   const registry: ProviderRegistry =
     options.registry ??
@@ -1007,12 +1020,15 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       const dir = join(config.configDir, 'cache', 'voice-speak', key);
       const done = join(dir, 'segment_0001.wav');
       if (await stat(done).then((s) => s.size > 44, () => false)) return done;
-      const result = await provider.synthesizeSegments({
-        language,
-        voiceId,
-        segments: [{ id: 'seg_0001', text, startMs: 0, endMs: 15_000 }],
-        outputDir: dir,
-      });
+      // A preview holds the GPU lane only while it speaks (preview:<voice>).
+      const result = await orchestrator.runLaneJob(`preview:${voiceId}`, () =>
+        provider.synthesizeSegments({
+          language,
+          voiceId,
+          segments: [{ id: 'seg_0001', text, startMs: 0, endMs: 15_000 }],
+          outputDir: dir,
+        }),
+      );
       const clip = result.segments[0]?.audioPath;
       if (!clip || (result.fallbackSegments ?? 0) > 0 || result.engine === 'fallback') {
         throw new AppErrorException('ENGINE_UNAVAILABLE', `The voice "${voiceId}" could not speak this sentence.`);
@@ -1554,6 +1570,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         providerDefaults: async () => (await setupStore.getPreferences()).providerDefaults,
         usable,
         recommendedSttModel: async () => (await buildSystemResponse().catch(() => undefined))?.recommendation.whisperModel,
+        translationModelNote: async () => {
+          const preferred = (await setupStore.getPreferences().catch(() => undefined))?.localModels?.translation;
+          const picked = await pickInstalledLocalLlmModel(enginePackStore, undefined, preferred || undefined);
+          if (!picked) return undefined;
+          const name = findPack(picked.packId)?.displayName ?? picked.packId;
+          if (picked.slowerThan) return `Translation model: ${name}, chosen in Settings. ${picked.slowerThan.reason}`;
+          return `Translation model: ${name}${picked.chosenByUser ? ', chosen in Settings' : ', the largest that runs well on this computer'}.`;
+        },
       },
       { sourceLanguage: sourceLanguage.trim(), targetLanguage: targetLanguage.trim() || 'vi-VN' },
     );
@@ -2740,8 +2764,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       reply,
     ) => {
       try {
+        const since = Date.now();
         const result = await orchestrator.synthesizeSingleSegment(req.params.id, req.params.segId, req.body ?? {});
-        return result;
+        const fell = fallbacksSince(`editor:${req.params.id}`, since)[0];
+        return fell
+          ? { ...result, engineFallback: { packId: fell.packId, reason: fell.reason, ...(fell.busyWith ? { busyWith: fell.busyWith } : {}) } }
+          : result;
       } catch (err) {
         return sendError(reply, err);
       }

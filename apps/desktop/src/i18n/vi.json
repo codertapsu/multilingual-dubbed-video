@@ -1639,7 +1639,10 @@
   },
   "warning": {
     "gpu-fallback-busy": "Card đồ hoạ đang bận việc khác nên một bước đã chạy bằng bản dùng CPU, chậm hơn ({{pack}}).",
-    "gpu-fallback-failed": "Không khởi động được bộ máy GPU ({{pack}}) nên một bước đã chạy bằng bản dùng CPU, chậm hơn. Nếu lặp lại, hãy cài lại nó trong Cài đặt → Engine."
+    "gpu-fallback-failed": "Không khởi động được bộ máy GPU ({{pack}}) nên một bước đã chạy bằng bản dùng CPU, chậm hơn. Nếu lặp lại, hãy cài lại nó trong Cài đặt → Engine.",
+    "no-speech-lines": "{{count}} câu không có chữ nào để đọc ({{examples}}): bản lồng tiếng để im lặng ở những câu này, phụ đề vẫn giữ nguyên.",
+    "speakers-failed": "Không nhận diện được người nói ({{cause}}), nên cả bản lồng tiếng dùng một giọng. Hãy nhận diện lại người nói trong trình chỉnh sửa.",
+    "speakers-low-confidence": "{{count}} câu được gán cho người nói gần nhất, chưa chắc chắn. Hãy kiểm tra chúng ở mục Vấn đề trong trình chỉnh sửa."
   },
   "diagnostics": {
     "heading": "Chẩn đoán",
@@ -1676,5 +1679,12 @@
     "recent-none": "Không có cảnh báo hay lỗi nào gần đây.",
     "crashes": "Báo cáo sự cố",
     "crashes-none": "Không có."
+  },
+  "step-detail": {
+    "translating": "Đang dịch {{done}}/{{total}} câu",
+    "translating-rate": "Đang dịch {{done}}/{{total}} câu · {{rate}} câu/phút",
+    "voicing": "Đang lồng tiếng {{done}}/{{total}}",
+    "transcribing": "Đang chuyển giọng nói thành chữ, phần {{done}}/{{total}}",
+    "speakers": "Đang nhận diện người nói {{done}}/{{total}}"
   }
 }

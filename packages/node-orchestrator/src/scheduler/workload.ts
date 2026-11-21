@@ -37,6 +37,13 @@ export interface RunWorkload {
    * dubbing (providers/download/downloadGate.ts).
    */
   heavySteps: PipelineStepId[];
+  /**
+   * Only mixes and renders (ffmpeg): a run from audio-mix or render with no
+   * heavy engine. Admitted on the light lane (scheduler/admit.ts), never behind
+   * a reservation for a GPU dub: a render after edits on a finished part waited
+   * about 2 h at the end of the queue during a series (field report B5).
+   */
+  lightOnly: boolean;
 }
 
 /** The provider traits the classifier reads (registry instances satisfy this). */
@@ -179,12 +186,17 @@ export function classifyWorkload(
   const cloudOnly =
     !needsHeavyEngine && providers.length > 0 && providers.every((p) => p.isLocal === false);
 
+  // Nothing but the mix and the render runs (alignment may re-voice and
+  // re-translate, so a run from alignment is not light).
+  const lightOnly = !needsHeavyEngine && fromIndex >= pipelineStepIndex('audio-mix');
+
   return {
     needsHeavyEngine,
     cloudOnly,
     points: cloudOnly ? POINTS_PER_CLOUD_RUN : POINTS_PER_LOCAL_RUN,
     ...(heavyFamily ? { heavyFamily } : {}),
     heavySteps,
+    lightOnly,
   };
 }
 

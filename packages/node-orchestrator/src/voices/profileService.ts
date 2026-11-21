@@ -66,6 +66,12 @@ export interface VoiceProfileServiceDeps {
   /** Does this project exist (for project voices)? */
   projectExists?: (projectId: string) => Promise<boolean>;
   now?: () => Date;
+  /**
+   * Run engine work under a heavy-lane owner of its own that is released when
+   * it ends (Orchestrator.runLaneJob). Without it a preview took the GPU lane
+   * as "anonymous" and kept it until the app restarted (field report B5).
+   */
+  laneJob?: <T>(owner: string, fn: () => Promise<T>) => Promise<T>;
 }
 
 const NAME_MAX = 80;
@@ -86,6 +92,10 @@ export class VoiceProfileService implements VoiceRefResolver {
 
   private now(): Date {
     return this.deps.now?.() ?? new Date();
+  }
+
+  private onLane<T>(owner: string, fn: () => Promise<T>): Promise<T> {
+    return this.deps.laneJob ? this.deps.laneJob(owner, fn) : fn();
   }
 
   private cloner(engine: VoiceEngineId) {
@@ -155,11 +165,8 @@ export class VoiceProfileService implements VoiceRefResolver {
     try {
       const reference = this.deps.store.fileOf(id, PROFILE_FILES.reference);
       await this.deps.prep.cut(input.analysisId, window, reference, signal);
-      const enrollment = await provider.enroll(
-        reference,
-        this.deps.store.fileOf(id, PROFILE_FILES.enrollment(engine)),
-        { denoise: input.denoise !== false },
-        signal,
+      const enrollment = await this.onLane(`preview:${id}`, () =>
+        provider.enroll(reference, this.deps.store.fileOf(id, PROFILE_FILES.enrollment(engine)), { denoise: input.denoise !== false }, signal),
       );
       const createdAt = this.now().toISOString();
       const keep = input.keepRecording !== false;
@@ -213,14 +220,16 @@ export class VoiceProfileService implements VoiceRefResolver {
     const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'vd-voice-preview-'));
     try {
       const sentence = (text ?? '').trim().slice(0, 300) || PREVIEW_TEXT;
-      const result = await provider.synthesizeSegments(
-        {
-          language: 'vi-VN',
-          voiceId: profile.id,
-          segments: [{ id: 'seg_0001', text: sentence, startMs: 0, endMs: 10_000 }],
-          outputDir: scratch,
-        },
-        signal,
+      const result = await this.onLane(`preview:${profile.id}`, () =>
+        provider.synthesizeSegments(
+          {
+            language: 'vi-VN',
+            voiceId: profile.id,
+            segments: [{ id: 'seg_0001', text: sentence, startMs: 0, endMs: 10_000 }],
+            outputDir: scratch,
+          },
+          signal,
+        ),
       );
       const clip = result.segments[0]?.audioPath;
       if (!clip || (result.fallbackSegments ?? 0) > 0) {

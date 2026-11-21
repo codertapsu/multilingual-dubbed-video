@@ -1728,6 +1728,12 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const deadline = Date.now() + workBudgetMs;
       const wanted = ids ? new Set(ids) : undefined;
       let done = 0;
+      // Lines voiced on the slower CPU build because the GPU was busy or its
+      // engine would not start: said in the result, never only in a log (B5).
+      let onCpu = 0;
+      let cpuWhy = '';
+      const cpuNote = (): string =>
+        onCpu > 0 ? `\n${onCpu} line(s) were voiced on the CPU build (slower; ${cpuWhy}). They sound the same; nothing needs reinstalling unless it says the engine could not start.` : '';
       for (;;) {
         const doc = await getTimeline(projectId, signal);
         if (!doc.aligned) {
@@ -1738,11 +1744,20 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         // Explicit ids are each done once, stale or not (the user asked).
         const pending = doc.segments.filter((s) => (wanted ? wanted.has(s.id) : s.ttsStale));
         const next = pending[0];
-        if (!next) return text(`Re-voiced ${done} line(s). Nothing left out of date: render_video next.`);
+        if (!next) return text(`Re-voiced ${done} line(s). Nothing left out of date: render_video next.${cpuNote()}`);
         if (Date.now() > deadline || signal.aborted) {
-          return text(`Re-voiced ${done} line(s); ${pending.length} still to do. Call regenerate_voices again to continue.`);
+          return text(`Re-voiced ${done} line(s); ${pending.length} still to do. Call regenerate_voices again to continue.${cpuNote()}`);
         }
-        await api.post(`/projects/${encodeURIComponent(projectId)}/segments/${encodeURIComponent(next.id)}/tts`, {}, { signal, timeoutMs: 300_000 });
+        const res = await api.post<{ engineFallback?: { packId: string; reason: 'busy' | 'failed'; busyWith?: string } }>(
+          `/projects/${encodeURIComponent(projectId)}/segments/${encodeURIComponent(next.id)}/tts`,
+          {},
+          { signal, timeoutMs: 300_000 },
+        );
+        if (res?.engineFallback) {
+          onCpu++;
+          const f = res.engineFallback;
+          cpuWhy = f.reason === 'busy' ? `the GPU was busy with ${f.busyWith ?? 'another job'}` : `${f.packId} could not start; reinstall it in Settings > Engines if this keeps happening`;
+        }
         wanted?.delete(next.id);
         done++;
         void progress(ctx, done, done + pending.length - 1, `re-voiced ${next.id}`);

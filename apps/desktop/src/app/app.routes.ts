@@ -1,7 +1,9 @@
-import type { Routes } from '@angular/router';
+import { inject } from '@angular/core';
+import { Router, type Routes } from '@angular/router';
 
 import { firstRunGuard, onboardingGuard } from './core/guards/first-run.guard';
 import { unsavedChangesGuard } from './core/guards/unsaved-changes.guard';
+import { sectionForAnchor } from './screens/settings/settings-sections';
 
 /**
  * Application routes. Every screen is a lazily-loaded standalone component so
@@ -32,7 +34,17 @@ export const APP_ROUTES: Routes = [
       ),
   },
   {
+    // Settings is a set of sections (/settings/general, /settings/stt, …). The
+    // bare address, and the anchors of the single page it used to be
+    // (/settings#brand-kit, #downloads), land on the section holding them,
+    // anchor kept, so a link written for the old page still finds its option.
     path: 'settings',
+    pathMatch: 'full',
+    redirectTo: ({ fragment }) =>
+      inject(Router).createUrlTree(['/settings', sectionForAnchor(fragment)], fragment ? { fragment } : {}),
+  },
+  {
+    path: 'settings/:section',
     title: 'VideoDubber — Settings',
     loadComponent: () =>
       import('./screens/settings/settings.component').then(

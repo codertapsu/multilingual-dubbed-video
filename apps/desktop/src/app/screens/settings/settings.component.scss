@@ -2,264 +2,157 @@
   display: block;
 }
 
-.note {
-  align-self: flex-start;
-  white-space: normal;
-  line-height: 1.4;
+// The navigation on the left, the open section on the right. The window's main
+// area scrolls (app.component), so the navigation sticks to its top.
+.settings-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: var(--vd-sp-5);
+  align-items: start;
+  max-width: 1180px;
 }
 
-.version-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--vd-sp-3);
-}
-.version-row .label {
-  font-weight: 600;
-  color: var(--vd-text-muted);
-}
-.version-value {
-  font-size: 0.95rem;
-}
-
-.setting-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--vd-sp-3);
-}
-
-.switch-label {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--vd-sp-3);
-  margin: 0;
-  font-weight: 400;
-  cursor: pointer;
-}
-.switch-label input {
-  margin-top: 3px;
-  width: auto;
-}
-.switch-label input:disabled {
-  cursor: not-allowed;
-}
-.switch-body {
+.settings-side {
+  position: sticky;
+  top: var(--vd-sp-4);
   display: flex;
   flex-direction: column;
-  gap: 2px;
-}
-.switch-title {
-  font-weight: 600;
-}
-
-.actions {
-  display: flex;
   gap: var(--vd-sp-3);
-  flex-wrap: wrap;
-}
-
-.update-detail {
-  margin-top: var(--vd-sp-2);
-}
-.release-notes h3 {
-  margin-bottom: var(--vd-sp-2);
-}
-.notes-body {
-  margin: 0;
-  padding: var(--vd-sp-3);
-  background: var(--vd-surface-2);
-  border-radius: var(--vd-radius-sm);
-  font-family: var(--vd-font-mono);
-  font-size: 0.8rem;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 240px;
+  max-height: calc(100vh - 110px);
   overflow-y: auto;
 }
 
-// ---- Processing setup (system profile / defaults / cloud keys) ----
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.chip {
-  padding: 0.2rem 0.6rem;
-  border: 1px solid var(--vd-border-strong);
-  border-radius: 999px;
-  font-size: 0.82rem;
-  opacity: 0.9;
-}
-
-.chip-tier {
-  text-transform: capitalize;
-  border-color: var(--vd-primary);
-}
-
-.stack-sm {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.rec-line {
+.side-title {
   margin: 0;
+  font-size: 1.35rem;
 }
 
-.defaults-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 0.9rem 1.2rem;
-}
-
-.static-value {
-  margin: 0.35rem 0 0;
-  font-size: 0.9rem;
-  opacity: 0.8;
-}
-
-.cred-row {
-  padding: 0.7rem 0;
-  border-top: 1px solid var(--vd-border);
-}
-
-.cred-head {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-}
-
-.cred-name {
-  font-weight: 600;
-}
-
-.cred-model {
-  display: flex;
-  gap: 0.6rem;
-  align-items: center;
-  flex-wrap: wrap;
-
-  select {
-    min-width: 18rem;
-  }
-}
-
-.cred-controls {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-
-  .grow {
-    flex: 1;
-    min-width: 0;
-  }
-}
-
-/* Claude: API key or the Claude plan through Mother Claude (same look as the wizard's choices). */
-.radio-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--vd-sp-2);
-}
-.radio-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--vd-sp-3);
-  padding: var(--vd-sp-3);
-  border: 1px solid var(--vd-border);
-  border-radius: var(--vd-radius-sm);
-  cursor: pointer;
-  font-weight: 400;
-}
-.radio-row:hover {
-  background: var(--vd-surface-2);
-}
-.radio-row input {
-  margin-top: 3px;
-  width: auto;
-}
-.radio-body {
+.settings-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.radio-title {
-  font-weight: 600;
-}
-
-.mc-panel {
-  padding: var(--vd-sp-3);
-  border: 1px solid var(--vd-border);
+.settings-nav a {
+  display: block;
+  padding: 6px var(--vd-sp-3);
   border-radius: var(--vd-radius-sm);
+  color: var(--vd-text-muted);
+  font-weight: 550;
+  line-height: 1.3;
+}
+.settings-nav a:hover {
   background: var(--vd-surface-2);
+  color: var(--vd-text);
+  text-decoration: none;
 }
-.mc-status {
+.settings-nav a.active {
+  background: var(--vd-info-bg);
+  color: var(--vd-primary);
+}
+.settings-nav li.child a {
+  margin-left: var(--vd-sp-4);
+  padding-left: var(--vd-sp-3);
+  border-left: 2px solid var(--vd-border);
+  border-radius: 0 var(--vd-radius-sm) var(--vd-radius-sm) 0;
+  font-weight: 500;
+  font-size: 0.92rem;
+}
+.settings-nav li.child a.active {
+  border-left-color: var(--vd-primary);
+}
+
+.section-head p {
+  margin: var(--vd-sp-1) 0 0;
+}
+.section-title-row {
   display: flex;
-  gap: 0.5rem;
+  flex-wrap: wrap;
   align-items: center;
-
-  .grow {
-    flex: 1;
-    min-width: 0;
-  }
+  justify-content: space-between;
+  gap: var(--vd-sp-2) var(--vd-sp-4);
 }
-.mc-steps {
+.section-title {
   margin: 0;
-  padding-left: 1.4rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  font-size: 1.4rem;
 }
-.mc-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  font-weight: 400;
+.section-title:focus-visible {
+  box-shadow: none;
+  text-decoration: underline;
 }
-
+.crumb {
+  display: inline-block;
+  margin-bottom: 2px;
+}
+.reset {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+}
 .test-ok {
   color: var(--vd-success);
 }
 
-.test-fail {
-  color: var(--vd-danger);
-}
-
-.install-progress {
+// ---- Search results
+.results {
+  list-style: none;
+  margin: 0;
+  padding: var(--vd-sp-2);
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-
-  progress {
-    width: 100%;
-    height: 6px;
-  }
 }
-
-/* ---- Translation packs (Argos) toolbar ---------------------------------- */
-.argos-toolbar {
-  align-items: center;
-  gap: var(--vd-sp-2);
-}
-
-.argos-filter {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 22rem;
-}
-
-// Divider between the recommendations panel and the full engine list.
-hr.sep {
-  border: 0;
-  border-top: 1px solid var(--vd-border);
-  margin: 4px 0;
+.result {
+  appearance: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--vd-sp-3);
   width: 100%;
+  padding: var(--vd-sp-3);
+  border: 0;
+  border-radius: var(--vd-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.result:hover {
+  background: var(--vd-surface-2);
+}
+.result-title {
+  font-weight: 600;
+}
+.result-where {
+  color: var(--vd-text-muted);
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+.result-hint {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
-/* A projects folder that cannot be reached: amber, the projects are not lost. */
-.warn-text {
-  color: var(--vd-warning);
+// A narrow window: the navigation goes above the page, as a wrapping row.
+@media (max-width: 860px) {
+  .settings-layout {
+    grid-template-columns: 1fr;
+  }
+  .settings-side {
+    position: static;
+    max-height: none;
+  }
+  .settings-nav ul {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .settings-nav li.child a {
+    margin-left: 0;
+    border-left: 0;
+    border-radius: var(--vd-radius-sm);
+  }
 }

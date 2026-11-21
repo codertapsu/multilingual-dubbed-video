@@ -199,9 +199,7 @@
   },
   "settings": {
     "title": "Settings",
-    "subtitle": "Application preferences and updates",
     "language": {
-      "heading": "Language",
       "label": "Display language",
       "hint": "Applies to the whole app immediately, and is remembered next time you open it."
     },
@@ -209,7 +207,7 @@
       "heading": "This computer",
       "cores": "{{ n }} cores",
       "rec-model": "Recommended local speech-recognition model:",
-      "cloud-suggest": "For this machine, cloud processing is suggested for: {{ phases }} — add an API key below, then pick the cloud provider per phase.",
+      "cloud-suggest": "For this machine, cloud processing is suggested for {{ phases }}: add an API key, then choose the cloud engine on that step's page.",
       "stt": "speech-to-text",
       "translation": "translation",
       "concurrent": "Dubbing at the same time",
@@ -217,22 +215,14 @@
       "n-at-a-time": "{{ n }} at a time",
       "pause-queue": "Pause the queue",
       "why-limit": "Why this limit?",
-      "use-recommended": "Use recommended model as default"
+      "use-recommended": "Use the recommended settings"
     },
     "defaults": {
-      "heading": "Processing defaults",
-      "intro": "The engine used for each phase of new projects. Local engines are private and free; cloud engines can give better quality on weaker hardware but send that phase's data to the service. You can still change providers per project in the wizard, and re-visit this screen anytime.",
-      "stt": "1 · Speech to text",
-      "stt-model": "Local STT model",
-      "translation": "2 · Translation",
-      "tts": "3 · Text to speech",
-      "needs-key": " — needs API key",
-      "auto": "Automatic — the best engine installed on this computer",
-      "auto-model": "Automatic — the model recommended for this computer",
-      "render": "4 · Rendering",
+      "needs-key": "needs an API key",
+      "auto": "Automatic (the best one installed)",
+      "auto-model": "Automatic (recommended for this computer)",
+      "render": "Rendering",
       "render-value": "Local FFmpeg — always on this machine (your video never leaves it).",
-      "save": "Save defaults",
-      "saving": "Saving…",
       "saved": "✓ Saved — applies to new projects",
       "unavailable": "Provider list unavailable — is the local backend running?"
     },
@@ -265,7 +255,6 @@
       }
     },
     "keys": {
-      "heading": "Cloud API keys",
       "intro": "Optional. Keys are stored only on this machine (~/VideoDubber/credentials.json, owner-only permissions) and are sent only to the service they belong to. Nothing is uploaded anywhere unless you select a cloud provider for a phase.",
       "from-env": "from environment",
       "key-set": "key {{ masked }}",
@@ -315,8 +304,6 @@
       }
     },
     "engines": {
-      "heading": "Engines",
-      "intro": "Optional high-quality engines for capable machines — accelerated transcription, local LLM translation, neural voices, vocal separation, and forced alignment. They download on demand and run only when a project uses them, so the base app stays small. Packs marked “recommended” suit this computer. Nothing else needs to be installed first.",
       "uv-ok": "✓ Python engines are self-contained{{ bundled }} — just click Install.",
       "uv-bundled": " (uses the bundled runtime)",
       "uv-download": "Python engines (neural voices, separation, alignment) need uv. It isn't bundled in this build, so the first install downloads it automatically (~20 MB, verified) — just click Install.",
@@ -340,8 +327,7 @@
       "reinstall-title": "Re-download the latest version",
       "remove": "Remove",
       "install": "Install",
-      "needs-uv-title": "This engine needs uv, which has no build for this platform",
-      "needs-uv": "Needs uv — see the note above."
+      "needs-uv-title": "This engine needs uv, which has no build for this platform"
     },
     "argos": {
       "heading": "Translation packs",
@@ -390,7 +376,8 @@
       "downloads": "Downloaded videos",
       "downloads-hint": "Source videos from the Download screen. They are yours, so \"Delete\" above never touches them. Projects made from them keep their own copy.",
       "downloads-delete": "Delete finished downloads",
-      "downloads-deleted": "Deleted {{n}} downloads."
+      "downloads-deleted": "Deleted {{n}} downloads.",
+      "freed": "Freed {{ size }}."
     },
     "updates": {
       "heading": "Updates",
@@ -417,7 +404,6 @@
     "brand-kit-heading": "Logo & greeting",
     "brand-kit-intro": "Your logos and spoken greetings, made once and chosen per project (New project, the editor, Export). A project keeps its own copy, so changing this list never changes a finished project.",
     "downloads": {
-      "heading": "Downloads",
       "intro": "Downloading uses the network, the disk and the processor. This decides what downloads do while a dub runs; dubbing always comes first.",
       "while-dubbing": "While a dub runs",
       "opt-auto": "Automatic (by this computer)",
@@ -427,7 +413,334 @@
       "now-pause-heavy": "Now: downloads run alongside dubs and pause during their heavy steps (a graphics card with 12 GB or more and room for two dubs counts as powerful). A paused download goes on from where it stopped.",
       "now-one-task": "Now: one task at a time. With less than 12 GB of graphics memory, or room for only one dub, a dub uses the whole computer, so downloads wait until it finishes and then go one at a time.",
       "now-no-limit": "Now: downloads run alongside dubs without pausing, two at a time. Dubs may be slower.",
-      "login-hint": "Signing in to a site for better quality is on the Download screen (Source account)."
+      "login-hint": "Signing in to a site for better quality is on the Download screen (Source account).",
+      "logins": "Site logins",
+      "open-download": "Open the Download screen",
+      "space": "Space used by downloaded videos"
+    },
+    "nav": {
+      "aria": "Settings sections"
+    },
+    "search": {
+      "label": "Search settings",
+      "placeholder": "Search: GPU, voice, key…",
+      "heading": "Search results",
+      "count": "{{ n }} results for “{{ query }}”",
+      "count-one": "1 result for “{{ query }}”",
+      "none": "Nothing in Settings matches “{{ query }}”.",
+      "none-hint": "Try a shorter or different word, such as “voice”, “GPU”, “key” or “folder”. Accents are optional.",
+      "clear": "Clear the search",
+      "section": "Section"
+    },
+    "sections": {
+      "general": {
+        "title": "General",
+        "intro": "Language, appearance, where your projects are kept, and updates."
+      },
+      "dubbing": {
+        "title": "Dubbing defaults",
+        "intro": "What a new dub starts from: your presets, logos and greetings."
+      },
+      "engines": {
+        "title": "Engines & models",
+        "intro": "The programs (engines) and AI models that do each step on this computer. Only what you install is downloaded; the app works without any of them."
+      },
+      "stt": {
+        "title": "Speech-to-text",
+        "intro": "Writes down what is said in the video, with timings: the first step of every dub."
+      },
+      "translation": {
+        "title": "Translation",
+        "intro": "Translates the transcript into the language of the dub."
+      },
+      "tts": {
+        "title": "Text-to-speech",
+        "intro": "Reads the translation aloud in a synthetic voice."
+      },
+      "audio": {
+        "title": "Speakers & separation",
+        "intro": "Optional helpers a project can turn on: who says each line, and the voices taken apart from the music."
+      },
+      "cloud": {
+        "title": "Cloud services & keys",
+        "intro": "Optional API keys for cloud AI (OpenAI, Claude, Gemini). Nothing leaves this computer unless a project uses a cloud engine."
+      },
+      "claude": {
+        "title": "Claude (AI assistant)",
+        "intro": "Let Claude Desktop or Claude Code run VideoDubber for you."
+      },
+      "downloads": {
+        "title": "Downloads",
+        "intro": "How video downloads share this computer with dubbing."
+      },
+      "performance": {
+        "title": "Performance",
+        "intro": "This computer's hardware, and how many dubs run at the same time."
+      },
+      "storage": {
+        "title": "Storage",
+        "intro": "What VideoDubber's downloads take on disk, and how to free it."
+      },
+      "diagnostics": {
+        "title": "Diagnostics",
+        "intro": "The app's health and recent problems, and a support bundle to send with a bug report."
+      },
+      "advanced": {
+        "title": "Advanced",
+        "intro": "Rarely needed: the Python runtime of the engines, and resetting everything at once."
+      }
+    },
+    "reset": {
+      "button": "Reset to defaults",
+      "button-title": "Put this page's settings back to how VideoDubber ships",
+      "done": "Defaults restored.",
+      "title": "Reset this page to its defaults?",
+      "all-title": "Reset every setting to its default?",
+      "confirm": "Reset",
+      "body-general": "The app goes back to Vietnamese, the theme follows the system, and updates install by themselves again. Your projects stay where they are.",
+      "body-stt": "New projects go back to the speech-to-text engine and speech model that Automatic picks for this computer. Installed engines and downloaded models are kept.",
+      "body-translation": "New projects go back to the translation engine that Automatic picks, and the TranslateGemma and Gemma models are chosen automatically again. Installed models are kept.",
+      "body-tts": "New projects go back to the voice engine that Automatic picks for this computer. Installed engines and voices are kept.",
+      "body-downloads": "Downloads go back to Automatic: this computer's hardware decides whether they run alongside a dub.",
+      "body-performance": "The number of dubs at the same time goes back to this computer's recommendation, and the queue runs again if it was paused.",
+      "body-all": "Language, theme and updates, the engines new projects use, the model choices, downloads while dubbing and dubs at the same time all go back to their defaults. API keys, site logins, presets, logos and greetings, installed engines and your projects are not touched."
+    },
+    "general": {
+      "look": "Language & appearance",
+      "theme": "Theme",
+      "theme-hint": "Light or dark colours. “Follow the system” switches with your computer's setting. The button at the top right of the window changes it too.",
+      "theme-system": "Follow the system",
+      "theme-light": "Light",
+      "theme-dark": "Dark",
+      "updates-hint": "See whether a newer VideoDubber is out, and install it.",
+      "folder-moving-wait": "You can keep using the app meanwhile; projects cannot be changed until the move has finished.",
+      "version": "Version {{ version }}"
+    },
+    "dubbing": {
+      "presets": "Presets",
+      "presets-hint": "A preset keeps the languages, engines, voice, subtitles and audio mix of a dub, to dub the next videos the same way (in New project, or many downloads at once on the Download screen). Make one in New project: set everything up, then “Save as preset”.",
+      "presets-empty": "No presets yet. New projects start from the settings recommended for this computer.",
+      "preset-languages": "{{ from }} → {{ to }}",
+      "detect": "detect the language",
+      "preset-starts": "starts dubbing by itself",
+      "preset-folder": "Saves finished videos in",
+      "preset-new": "Make a preset in New project",
+      "series": "Long videos as a series",
+      "series-hint": "A long video can be dubbed as a series of shorter parts (in New project, or for downloads on the Download screen). An AI chooses where to cut, so one is needed: Claude (an API key, or your Claude plan through Mother Claude), OpenAI or Gemini in Cloud services & keys, or the Gemma chat model on this computer.",
+      "series-cloud": "Set up a cloud AI",
+      "series-local": "Install the Gemma chat model"
+    },
+    "overview": {
+      "defaults": "What new projects use",
+      "defaults-hint": "The engine each step of a new dub uses now. “Automatic” picks the best engine installed on this computer; you can still change any of them per project.",
+      "change": "Change",
+      "use-recommended-hint": "Every step back to Automatic, with the {{ model }} speech model.",
+      "why": "Why these"
+    },
+    "fn": {
+      "defaults-heading": "Default for new projects",
+      "stt-engine": "Speech-to-text engine",
+      "stt-engine-hint": "What writes down the speech in new projects. On a computer with an NVIDIA graphics card, whisper.cpp is several times faster than the built-in faster-whisper.",
+      "stt-model": "Speech model",
+      "stt-model-hint": "Bigger models hear more accurately and take longer. PhoWhisper is made for Vietnamese speech.",
+      "translation-engine": "Translation engine",
+      "translation-engine-hint": "What translates new projects. TranslateGemma and Gemma run on this computer and translate far better than the built-in Argos; the cloud AIs need a key.",
+      "tts-engine": "Voice engine",
+      "tts-engine-hint": "What speaks the translation in new projects. The voice itself is chosen per project, or per speaker.",
+      "auto-now": "Automatic uses {{ name }} on this computer now.",
+      "auto-now-tts": "For Vietnamese, Automatic uses {{ name }} on this computer now; for other languages, the built-in Piper voices.",
+      "auto-model-now": "Automatic uses {{ model }}, the model recommended for this computer.",
+      "chosen-cannot-run": "Your choice cannot run now ({{ reason }}), so new projects get the automatic one.",
+      "add-key": "Add a key",
+      "reason-not-installed": "not installed",
+      "reason-model-missing": "its model is not downloaded",
+      "reason-not-running": "not running",
+      "reason-starting": "starting…",
+      "reason-unavailable": "not available",
+      "used": "✓ New projects use this",
+      "used-auto": "✓ New projects use this (Automatic)",
+      "use-for-new": "Use for new projects",
+      "install-first": "Install it above to use it for new projects",
+      "runtime-installed": "✓ Runs on {{ name }}, which is installed.",
+      "runtime-missing": "Runs on {{ name }}: it installs together with the first model.",
+      "models": "Models",
+      "models-for": "Models for {{ name }}",
+      "built-in": "Built in",
+      "other-engines": "Built-in and cloud engines",
+      "cloud": "Cloud",
+      "on-this-computer": "On this computer",
+      "cloud-hint": "Cloud AIs translate with the whole video as context and need a key; the transcript is sent to the service. Ollama is a separate program you run yourself.",
+      "review-now": "After translating, {{ name }} reviews the whole translation for names, pronouns and forms of address.",
+      "open-voices": "Browse voices",
+      "open-voices-hint": "Listen to, install and favourite the voices of every engine, and make your own, on the Voices screen.",
+      "helpers-how": "These run only when a project asks for them: “Detect who speaks” and “Replace voices, keep music & effects” in New project (or in the editor). Install them here ahead of time, or when a project first needs them.",
+      "automatic": "Automatic",
+      "install-model-first": "Install a model below to use it"
+    },
+    "variant": {
+      "download": "{{ size }} download",
+      "needs-vram": "Graphics memory {{ size }}+",
+      "needs-ram": "RAM {{ size }}+",
+      "install": "Install ({{ size }})",
+      "installs-runtime": "Installs its engine with it.",
+      "details": "Details and licence",
+      "licence": "Licence:",
+      "not-installed": "not installed"
+    },
+    "builtin": {
+      "faster-whisper": "faster-whisper (built in, on the processor)",
+      "faster-whisper-hint": "Comes with the app and runs on any computer. Its speech models download once, the first time a project needs them, or here.",
+      "phowhisper": "PhoWhisper (Vietnamese speech)",
+      "phowhisper-hint": "Whisper trained further on Vietnamese by VinAI: the most accurate choice for videos spoken in Vietnamese. Runs on the built-in faster-whisper.",
+      "models-unavailable": "Could not tell which models are downloaded: is the background service running?",
+      "downloaded": "downloaded",
+      "default-model": "default model",
+      "downloading": "Downloading…",
+      "download": "Download",
+      "use-model": "Use as default",
+      "model-distil": "Distil Large v3.5 — English only, fastest large (~760 MB)",
+      "download-size": "Download ({{ size }})"
+    },
+    "families": {
+      "whisper": {
+        "title": "Whisper",
+        "desc": "OpenAI's speech recognition, run on this computer: it writes down what is said, with timings. Bigger models are more accurate and slower; the one recommended for this computer is marked."
+      },
+      "translategemma": {
+        "title": "TranslateGemma",
+        "desc": "Google's open translation model, run on this computer: far better than Argos, and offline. It comes in three sizes and one runs at a time: the best this computer runs well, or the one you choose. 4B runs on any computer with 8 GB of RAM; 12B and 27B want a graphics card or Apple Silicon."
+      },
+      "gemma-chat": {
+        "title": "Gemma (translation with context, and review)",
+        "desc": "Google's Gemma models follow instructions, so they translate whole scenes with the project's character sheet (names, terms, forms of address), review a finished translation, and shorten lines too long to speak in time. One runs at a time: the best this computer runs well, or the one you choose."
+      },
+      "llama-cpp": {
+        "title": "llama.cpp (runs TranslateGemma and Gemma)",
+        "desc": "The program that runs the TranslateGemma and Gemma models on this computer. It installs by itself with the first model; when several builds are installed, the fastest one this computer can use runs."
+      },
+      "libretranslate": {
+        "title": "LibreTranslate",
+        "desc": "A LibreTranslate server on this computer. Its engine is Argos, so it translates exactly as the built-in Argos does, with your Argos language packs: install it only if you want the server itself."
+      },
+      "vieneu": {
+        "title": "VieNeu (natural Vietnamese voices)",
+        "desc": "Vietnamese voices far more natural than Piper. VieNeu-TTS 3.8 is the newest: 25 voices across the three regions, and voice cloning. Neural TTS v3 keeps the ten voices of projects made before it. Each has a processor build and an NVIDIA build about 4× faster, which falls back to the processor when the card cannot be used."
+      },
+      "zerotts": {
+        "title": "ZeroTTS",
+        "desc": "Eight natural Vietnamese voices (young, middle-aged and older; storytelling, news and commentary) on the processor: the most accurate Vietnamese reader measured."
+      },
+      "kokoro": {
+        "title": "Kokoro",
+        "desc": "A small, fast voice model: 54 voices in English, Japanese, Chinese, Spanish, French, Hindi, Italian and Portuguese (no Vietnamese)."
+      },
+      "supertonic": {
+        "title": "Supertonic",
+        "desc": "Ten voices that each speak 31 languages, Vietnamese included, though they read it slowly: VieNeu or ZeroTTS fit Vietnamese timing better. Its maker has archived it, so no more updates."
+      },
+      "omnivoice": {
+        "title": "OmniVoice",
+        "desc": "A voice model for more than 600 languages, on Apple Silicon only."
+      },
+      "speaker-detection": {
+        "title": "Speaker detection",
+        "desc": "Works out who says each line, so every person in the video can get their own voice and the translator knows who is talking to whom. Runs on the processor in about a tenth of the video's length; turn it on per project (“Detect who speaks”)."
+      },
+      "separation": {
+        "title": "Music & voice separation",
+        "desc": "Takes the voices apart from the music and sound effects, so “Replace voices, keep music & effects” keeps the soundtrack at full volume under the dub, and a voice copied from the video comes out clean. About a tenth of the video's length on a graphics card, about its length on the processor alone."
+      },
+      "alignment": {
+        "title": "Forced alignment",
+        "desc": "Word-accurate timings, for a tighter sync."
+      }
+    },
+    "engine-notes": {
+      "whisper-cpp": "Runs Whisper on the NVIDIA graphics card, several times faster than the processor. It needs the model of the size each project uses: install the sizes you use below.",
+      "vieneu-tts": "25 natural voices across the North, Centre and South, and voice cloning from a short recording. The one to choose for new projects.",
+      "neural-tts": "The ten voices of the earlier VieNeu, which projects made with them keep using.",
+      "audio-cpp": "The program that runs the separation model; it installs with the model. On Windows the processor build installs beside the graphics-card one, as its fallback."
+    },
+    "provider-notes": {
+      "llama-cpp": "Translates line by line with TranslateGemma: accurate and fast, but it sees one line at a time, so a Gemma review is added when Gemma is installed.",
+      "llama-cpp-chat": "Gemma translates whole scenes with the character sheet: the most consistent offline translation, and slower.",
+      "argos-llm-repair": "Argos drafts quickly, then Gemma fixes names, pronouns and terms with the character sheet.",
+      "argos": "Comes with the app: offline and quick, but word for word. It needs the language pack of each pair (below).",
+      "ollama": "TranslateGemma in Ollama, a separate program you install and run yourself (ollama.com).",
+      "openai-stt": "Sends the audio to OpenAI to be transcribed. Needs an OpenAI key.",
+      "openai-translate": "Translates with OpenAI's models, with the whole video as context. Needs an OpenAI key.",
+      "anthropic-translate": "Translates with Claude, with the whole video as context. Needs an Anthropic key, or your Claude plan through Mother Claude.",
+      "gemini-translate": "Translates with Google Gemini, with the whole video as context. Needs a Gemini key.",
+      "piper-local": "Comes with the app: quick voices in many languages, less natural than VieNeu or ZeroTTS. Pick and download its voices on the Voices screen.",
+      "openai-tts": "OpenAI's cloud voices, in many languages. The text is sent to OpenAI; needs an OpenAI key."
+    },
+    "providers": {
+      "faster-whisper": "faster-whisper (built in)",
+      "whisper-cpp": "whisper.cpp (NVIDIA graphics card)",
+      "openai-stt": "OpenAI Whisper (cloud)",
+      "argos": "Argos Translate (built in)",
+      "llama-cpp": "TranslateGemma (on this computer)",
+      "llama-cpp-chat": "Gemma, translating whole scenes (on this computer)",
+      "argos-llm-repair": "Argos draft + Gemma review (on this computer)",
+      "libretranslate": "LibreTranslate (local server)",
+      "ollama": "TranslateGemma through Ollama",
+      "openai-translate": "OpenAI (cloud)",
+      "anthropic-translate": "Claude (cloud)",
+      "gemini-translate": "Google Gemini (cloud)",
+      "piper-local": "Piper (built in)",
+      "openai-tts": "OpenAI voices (cloud)",
+      "neural-tts": "VieNeu Neural TTS v3 (10 Vietnamese voices)",
+      "vieneu-tts": "VieNeu-TTS 3.8 (25 Vietnamese voices)",
+      "zerotts": "ZeroTTS (8 Vietnamese voices)",
+      "kokoro": "Kokoro (54 voices, 9 languages)",
+      "supertonic": "Supertonic 3 (10 voices, 31 languages)",
+      "omnivoice": "OmniVoice (600+ languages)",
+      "neural-tts-v2": "VieNeu Neural TTS v2"
+    },
+    "accel": {
+      "cpu": "Processor (CPU)",
+      "cuda": "NVIDIA graphics card (CUDA)",
+      "vulkan": "Graphics card (Vulkan)",
+      "metal": "Apple Silicon (Metal)",
+      "coreml": "Apple Neural Engine (Core ML)",
+      "mps": "Apple Silicon (Metal)"
+    },
+    "cloud": {
+      "openai": "OpenAI (ChatGPT)",
+      "anthropic": "Anthropic (Claude)",
+      "gemini": "Google Gemini",
+      "openai-uses": "Used for cloud speech-to-text, translation and voices, and to cut long videos into a series.",
+      "anthropic-uses": "Used to translate and review with Claude, and to cut long videos into a series.",
+      "gemini-uses": "Used to translate with Gemini, and to cut long videos into a series.",
+      "where-used": "Choose the cloud engine for each step on its own page, in",
+      "mc-advanced": "Advanced: Mother Claude's address and key",
+      "save-title": "Type or paste a key first",
+      "test-title": "Save a key first"
+    },
+    "claude-page": {
+      "translate-with": "To translate with Claude (an API key, or your Claude plan through Mother Claude), see"
+    },
+    "performance": {
+      "computer-hint": "What VideoDubber found in this computer. It decides how many dubs run at once and which engines are recommended.",
+      "concurrent-hint": "How many dubs run at the same time; the others wait in the queue. On most computers more at once is not faster.",
+      "pause-hint": "Waiting dubs stay in the queue and do not start until you resume; dubs already running carry on.",
+      "tier-title": "How capable VideoDubber rates this computer",
+      "engines-link": "Which engines suit this computer:",
+      "pause": "Pause",
+      "paused-now": "Paused: waiting dubs will not start until you untick “Pause”.",
+      "tier-constrained": "Modest computer",
+      "tier-balanced": "Mid-range computer",
+      "tier-performance": "Powerful computer"
+    },
+    "advanced": {
+      "uv": "Python engines (uv)",
+      "uv-hint": "The voice and helper engines install into Python environments of their own, made with uv. Nothing to do here unless an install says uv is missing.",
+      "reset-all": "Reset all settings",
+      "reset-all-hint": "Every page's settings back to their defaults at once. API keys, site logins, presets, logos and greetings, installed engines and your projects are kept.",
+      "reset-all-button": "Reset all settings…"
+    },
+    "diagnostics": {
+      "help": "Something not working? The Help screen runs the self-check again and shows each background service:"
     }
   },
   "support": {
@@ -903,7 +1216,7 @@
     "max-speed": "Max speech speed",
     "max-speed-hint": "Translated speech is often longer than the original line. The app may speed segments up to this limit to keep them in sync; lines that still don't fit are flagged for review in the editor.",
     "engines": "Processing engines",
-    "engines-hint": "Each phase can run locally (private, free, works offline) or in the cloud (often better quality on weaker hardware; needs an API key from Settings and sends that phase's data to the service). Defaults come from Settings → Processing defaults.",
+    "engines-hint": "Each phase can run locally (private, free, works offline) or in the cloud (often better quality on weaker hardware; needs an API key from Settings and sends that phase's data to the service). Defaults come from Settings → Engines & models.",
     "stt": "Speech to text",
     "translation": "Translation",
     "refine": "Review & refine (optional)",

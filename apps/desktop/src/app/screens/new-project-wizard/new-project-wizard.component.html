@@ -374,7 +374,7 @@
         <p class="hint muted">{{ 'series.wizard-intro' | translate }}</p>
         @if (seriesAiReady().length === 0) {
           <p class="hint warn-text">{{ 'series.wizard-no-ai' | translate }}</p>
-          <a class="hint" routerLink="/settings">{{ 'series.wizard-open-settings' | translate }}</a>
+          <a class="hint" routerLink="/settings/dubbing" fragment="series">{{ 'series.wizard-open-settings' | translate }}</a>
         } @else {
           <label class="check-row">
             <input type="checkbox" name="splitSeries" [ngModel]="splitSeries()" (ngModelChange)="splitSeries.set($event)" />

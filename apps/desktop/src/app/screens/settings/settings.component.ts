@@ -1,1249 +1,307 @@
-import type { DownloadsWhileDubbing } from '@videodubber/shared';
-import { BrandKitComponent } from '../../shared/branding/brand-kit.component';
-import type { OnDestroy, OnInit } from '@angular/core';
 import {
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
+  ElementRef,
   computed,
+  effect,
   inject,
+  input,
   signal,
+  untracked,
+  type OnInit,
 } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 
-import { IpcService } from '../../core/ipc/ipc.service';
-import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
-import { toAppError } from '../../core/state/project.store';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
-import { RecommendedEnginesComponent } from '../../shared/recommended-engines/recommended-engines.component';
-import { ClaudeConnectionsComponent } from '../../shared/claude-connections/claude-connections.component';
-import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
-import { environment } from '../../core/environment';
-// Runtime helper (not a type), so it comes straight from the shared package per
-// the re-export note in core/models/index.ts. Shared with the orchestrator's
-// pack gate so the badge and the gate can never disagree about the same driver.
-import { outdatedNvidiaDriver } from '@videodubber/shared';
-import type {
-  ActivePackSelection,
-  AppError,
-  EnginePackInfo,
-  EnginePrerequisites,
-  InstalledEnginePack,
-  StorageInfo,
-  ProjectsFolderInfo,
-} from '../../core/models';
-import type {
-  ArgosPair,
-  ClaudeConnection,
-  CloudCredentialInfo,
-  ConcurrencyPreferences,
-  CloudServiceId,
-  CredentialTestResult,
-  MotherClaudeStatus,
-  ProviderDefaults,
-  ProviderInfo,
-  ProvidersResponse,
-  SaveCredentialRequest,
-  SystemProfileResponse,
-  UpdateInfo,
-} from '../../core/models/setup';
-import { MOTHER_CLAUDE_DEFAULT_URL } from '../../core/models/setup';
-import { MOTHER_CLAUDE_DOWNLOAD_URL } from '../../core/claude/claude-view';
+import { packsOfFamily, variantLabelOf } from './engine-families';
+import { searchSettings, type SettingsSearchEntry } from './settings-search';
 import {
-  LOCALE_LABELS,
-  SUPPORTED_LOCALES,
-  TranslatePipe,
-  TranslateService,
-  type SupportedLocale,
-} from '../../core/i18n';
-
-/** One row in the Translation-packs manager (a pair + resolved names + state). */
-interface ArgosPackRow extends ArgosPair {
-  key: string;
-  installed: boolean;
-  fromName: string;
-  toName: string;
-}
-
-/** Outcome of the most recent "Check for updates" action. */
-type CheckOutcome = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error';
-
-/** Mirrors DEFAULT_CLAUDE_MODEL in the orchestrator (providers/cloud/claudeMessages.ts). */
-const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5';
-
-/** Display metadata per cloud service. */
-const SERVICE_META: Record<CloudServiceId, { label: string; keyHint: string }> = {
-  // Product names stay as they are; only the hint is translated (it is a key).
-  openai: { label: 'OpenAI (ChatGPT)', keyHint: 'svc.openai-hint' },
-  anthropic: { label: 'Anthropic (Claude)', keyHint: 'svc.anthropic-hint' },
-  gemini: { label: 'Google Gemini', keyHint: 'svc.gemini-hint' },
-};
+  DEFAULT_SETTINGS_SECTION,
+  SETTINGS_OPTIONS,
+  SETTINGS_SECTIONS,
+  isSettingsSection,
+  settingsSection,
+  type SettingsSectionId,
+} from './settings-sections';
+import { SettingsStore } from './settings.store';
+import { AdvancedSectionComponent } from './sections/advanced-section.component';
+import { AudioSectionComponent } from './sections/audio-section.component';
+import { ClaudeSectionComponent } from './sections/claude-section.component';
+import { CloudSectionComponent } from './sections/cloud-section.component';
+import { DiagnosticsSectionComponent } from './sections/diagnostics-section.component';
+import { DownloadsSectionComponent } from './sections/downloads-section.component';
+import { DubbingSectionComponent } from './sections/dubbing-section.component';
+import { EnginesSectionComponent } from './sections/engines-section.component';
+import { GeneralSectionComponent } from './sections/general-section.component';
+import { PerformanceSectionComponent } from './sections/performance-section.component';
+import { StorageSectionComponent } from './sections/storage-section.component';
+import { SttSectionComponent } from './sections/stt-section.component';
+import { TranslationSectionComponent } from './sections/translation-section.component';
+import { TtsSectionComponent } from './sections/tts-section.component';
 
 /**
- * SettingsComponent (route "settings").
+ * SettingsComponent (route "settings/:section"): the navigation, the search
+ * box and the section that is open.
  *
- * Three concerns:
- *  1. Processing setup — what this machine can handle (GET /system), the
- *     default provider per phase for new projects, and cloud API keys
- *     (masked; full keys never leave the orchestrator).
- *  2. Auto-update controls backed by tauri-plugin-updater + /preferences.
- *  3. About.
+ * Settings used to be one page of thirteen cards; it is now sections in a left
+ * navigation (settings-sections.ts has the map and the reasons), each page
+ * with a one-line explanation, a reset where the defaults are known, and a
+ * search over every option in the user's language. The sections share their
+ * data through {@link SettingsStore}, provided here, so an engine install
+ * started on one page keeps its progress on the next.
+ *
+ * Links reach an option directly: `/settings/<section>#<anchor>` scrolls to it
+ * and marks it, and the old single-page anchors (`/settings#brand-kit`) are
+ * sent to their section by the route (app.routes.ts).
  */
 @Component({
   selector: 'vd-settings',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
+  providers: [SettingsStore],
   imports: [
     FormsModule,
     RouterLink,
-    ErrorBannerComponent,
-    BusyIndicatorComponent,
     TranslatePipe,
-    RecommendedEnginesComponent,
-    ClaudeConnectionsComponent,
-    BrandKitComponent,
+    ErrorBannerComponent,
+    GeneralSectionComponent,
+    DubbingSectionComponent,
+    EnginesSectionComponent,
+    SttSectionComponent,
+    TranslationSectionComponent,
+    TtsSectionComponent,
+    AudioSectionComponent,
+    CloudSectionComponent,
+    ClaudeSectionComponent,
+    DownloadsSectionComponent,
+    PerformanceSectionComponent,
+    StorageSectionComponent,
+    DiagnosticsSectionComponent,
+    AdvancedSectionComponent,
   ],
   templateUrl: './settings.component.html',
   styleUrl: './settings.component.scss',
 })
-export class SettingsComponent implements OnInit, OnDestroy {
-  private readonly ipc = inject(IpcService);
+export class SettingsComponent implements OnInit {
+  /** The `:section` route parameter (component input binding). */
+  readonly section = input<string | undefined>(undefined);
+
+  protected readonly store = inject(SettingsStore);
+  private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
   private readonly translate = inject(TranslateService);
-  /** Language picker. Vietnamese is the default — see DEFAULT_LOCALE. */
-  protected readonly supportedLocales = SUPPORTED_LOCALES;
-  protected readonly localeLabels = LOCALE_LABELS;
-  protected readonly locale = this.translate.locale;
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 
-  private readonly confirmSvc = inject(ConfirmService);
+  protected readonly sections = SETTINGS_SECTIONS;
 
-  protected readonly inTauri = this.ipc.inTauri;
-  protected readonly serviceMeta = SERVICE_META;
-  protected readonly services: readonly CloudServiceId[] = ['openai', 'anthropic', 'gemini'];
+  /** The open section; an unknown one opens General. */
+  protected readonly active = computed<SettingsSectionId>(() => {
+    const s = this.section();
+    return isSettingsSection(s) ? s : DEFAULT_SETTINGS_SECTION;
+  });
+  protected readonly activeDef = computed(() => settingsSection(this.active()));
+  /** The section the open one sits under (Engines & models), for the breadcrumb. */
+  protected readonly parentDef = computed(() => {
+    const parent = this.activeDef().parent;
+    return parent ? settingsSection(parent) : null;
+  });
 
-  protected readonly error = signal<AppError | null>(null);
-
-  // -------- processing setup --------
-  protected readonly system = signal<SystemProfileResponse | null>(null);
-  protected readonly providers = signal<ProvidersResponse | null>(null);
-  protected readonly credentials = signal<CloudCredentialInfo[]>([]);
-  protected readonly defaults = signal<ProviderDefaults>({});
-  protected readonly defaultsSaving = signal(false);
-  protected readonly defaultsSaved = signal(false);
-
-  /** Whisper model choices for the default-model picker. */
-  /** `label` is a TRANSLATION KEY — the template pipes it. */
-  protected readonly whisperModels: ReadonlyArray<{ id: string; label: string }> = [
-    { id: 'tiny', label: 'whisper.tiny' },
-    { id: 'base', label: 'whisper.base' },
-    { id: 'small', label: 'whisper.small' },
-    { id: 'large-v3-turbo', label: 'whisper.large-v3-turbo' },
-    { id: 'distil-large-v3.5', label: 'whisper.distil-large-v3.5' },
-    { id: 'medium', label: 'whisper.medium' },
-    { id: 'large-v3', label: 'whisper.large-v3' },
-    { id: 'phowhisper-medium', label: 'whisper.phowhisper-medium' },
-    { id: 'phowhisper-large', label: 'whisper.phowhisper-large' },
-  ];
-
-  // Per-service key editing state.
-  protected readonly keyInputs = signal<Partial<Record<CloudServiceId, string>>>({});
-  protected readonly credBusy = signal<CloudServiceId | null>(null);
-
-  protected readonly testResults = signal<Partial<Record<CloudServiceId, CredentialTestResult>>>({});
-  /** The service whose Test is in flight (a save also sets credBusy). */
-  protected readonly testing = signal<CloudServiceId | null>(null);
-
-  // Claude through Mother Claude: its HTTP API as last checked (null = not yet).
-  protected readonly motherClaudeStatus = signal<MotherClaudeStatus | null>(null);
-  protected readonly motherClaudeChecking = signal(false);
-  /** The address being typed; null shows the saved one. */
-  protected readonly motherClaudeUrlInput = signal<string | null>(null);
-  protected readonly motherClaudeKeyInput = signal('');
-  protected readonly defaultMotherClaudeUrl = MOTHER_CLAUDE_DEFAULT_URL;
-
-  // -------- engine packs --------
-  protected readonly enginePacks = signal<EnginePackInfo[]>([]);
-  protected readonly installedEngines = signal<InstalledEnginePack[]>([]);
-  /** Installed packs with a newer version in the catalog (reinstall to update). */
-  protected readonly updatableEngineIds = signal<Set<string>>(new Set());
-  /** Per-function winner when several installed packs compete (GET /engines). */
-  protected readonly activeSelections = signal<ActivePackSelection[]>([]);
-  protected readonly recommendedEngineIds = signal<Set<string>>(new Set());
-  /** Packs this machine's hardware can run (local-first fit check). null = the
-   * backend didn't report fit (older build) -> assume everything fits. */
-  protected readonly engineFits = signal<Set<string> | null>(null);
-  protected readonly engineProgress = signal<Record<string, { percent: number | null; message: string }>>({});
-  protected readonly prerequisites = signal<EnginePrerequisites | null>(null);
-  private engineEvents: EventSource | null = null;
-
-  /** True for packs delivered as a uv-managed Python env (need uv). */
-  protected needsUv(pack: EnginePackInfo): boolean {
-    return pack.packKind === 'python-uv';
-  }
+  // ------------------------------------------------------------------ search
+  protected readonly query = signal('');
 
   /**
-   * Can uv be used or fetched? The install flow downloads a pinned,
-   * checksum-verified uv when none is present, so a missing uv is not a dead
-   * end — only a platform with no published uv build is. Older orchestrators
-   * omit the flag; treat that as "only if already available".
+   * Everything the search box can find, in the user's language: every option
+   * of SETTINGS_OPTIONS, every section by name, and every engine pack under its
+   * family. Recomputed on a language switch (instant() reads the locale).
    */
-  protected uvObtainable(): boolean {
-    const uv = this.prerequisites()?.uv;
-    if (!uv) return false;
-    return uv.obtainable ?? uv.available;
-  }
-
-  // -------- projects folder (where the projects live) --------
-  protected readonly projectsFolder = signal<ProjectsFolderInfo | null>(null);
-  protected readonly projectsFolderBusy = signal(false);
-  /** The folder typed in the browser, where there is no native folder dialog. */
-  protected readonly projectsFolderInput = signal('');
-  private projectsFolderTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // -------- storage (free up disk space) --------
-  protected readonly storage = signal<StorageInfo | null>(null);
-  protected readonly storageLoading = signal(false);
-  protected readonly storageClearing = signal(false);
-  /** Last "freed N" message after a successful clear. */
-  protected readonly storageMessage = signal<string | null>(null);
-
-  // -------- Argos translation packs (browse the full index + install/remove) --
-  protected readonly argosInstalled = signal<ArgosPair[]>([]);
-  protected readonly argosAvailable = signal<ArgosPair[]>([]);
-  protected readonly argosRefreshing = signal(false);
-  /** "from->to" key of the pair currently installing/removing (per-row spinner). */
-  protected readonly argosBusy = signal<string | null>(null);
-  protected readonly argosFilter = signal('');
-
-  private static readonly langDisplay = (() => {
-    try {
-      return new Intl.DisplayNames(['en'], { type: 'language' });
-    } catch {
-      return null;
-    }
-  })();
-
-  /** Human language name for a code (e.g. "zh" -> "Chinese"); falls back to the code. */
-  protected langName(code: string): string {
-    try {
-      return SettingsComponent.langDisplay?.of(code) ?? code;
-    } catch {
-      return code;
-    }
-  }
-
-  private pairKey(p: ArgosPair): string {
-    return `${p.from}->${p.to}`;
-  }
-
-  /** Installed ∪ available pairs as display rows (installed first, then by name),
-   * filtered by the search box. Pure read — safe inside a computed. */
-  protected readonly argosRows = computed<ArgosPackRow[]>(() => {
-    const installedKeys = new Set(this.argosInstalled().map((p) => this.pairKey(p)));
-    const byKey = new Map<string, ArgosPair>();
-    for (const p of this.argosInstalled()) byKey.set(this.pairKey(p), p);
-    for (const p of this.argosAvailable()) byKey.set(this.pairKey(p), p);
-
-    const q = this.argosFilter().trim().toLowerCase();
-    const rows: ArgosPackRow[] = [...byKey.values()].map((p) => ({
-      ...p,
-      key: this.pairKey(p),
-      installed: installedKeys.has(this.pairKey(p)),
-      fromName: this.langName(p.from),
-      toName: this.langName(p.to),
+  private readonly searchIndex = computed<SettingsSearchEntry[]>(() => {
+    const t = (key: string) => this.translate.instant(key);
+    const sectionTitle = (id: SettingsSectionId) => t(settingsSection(id).titleKey);
+    const entries: SettingsSearchEntry[] = SETTINGS_SECTIONS.map((s) => ({
+      anchor: '',
+      section: s.id,
+      title: t(s.titleKey),
+      hint: t(s.introKey),
     }));
-    const filtered = q
-      ? rows.filter((r) => `${r.fromName} ${r.toName} ${r.from} ${r.to}`.toLowerCase().includes(q))
-      : rows;
-    return filtered.sort(
-      (a, b) =>
-        Number(b.installed) - Number(a.installed) ||
-        a.fromName.localeCompare(b.fromName) ||
-        a.toName.localeCompare(b.toName),
-    );
+    for (const o of SETTINGS_OPTIONS) {
+      entries.push({
+        anchor: o.anchor,
+        section: o.section,
+        title: t(o.titleKey),
+        ...(o.hintKey ? { hint: t(o.hintKey) } : {}),
+        keywords: `${sectionTitle(o.section)} ${o.keywords ?? ''}`,
+      });
+    }
+    for (const family of this.store.families()) {
+      const key = `settings.families.${family.id}.title`;
+      const familyTitle = t(key) === key ? '' : t(key);
+      // "TranslateGemma · 12B", but "Gemma 3 12B" alone: its name carries the family's.
+      const brand = familyTitle.split(/[\s(]/)[0]?.toLowerCase() ?? '';
+      const packs = packsOfFamily(family);
+      for (const pack of packs) {
+        const label = variantLabelOf(pack);
+        const accelKey = `settings.accel.${pack.accel}`;
+        const title =
+          pack.packKind !== 'model'
+            ? `${label} · ${t(accelKey) === accelKey ? pack.accel : t(accelKey)}`
+            : brand && !label.toLowerCase().startsWith(brand)
+              ? `${familyTitle.split(' (')[0]} · ${label}`
+              : label;
+        const installed = this.store.isEngineInstalled(pack.id);
+        entries.push({
+          anchor: `pack-${pack.id}`,
+          section: family.page,
+          title,
+          hint: `${familyTitle} · ${t(installed ? 'settings.engines.installed' : 'settings.variant.not-installed')} · ${this.store.sizeLabel(pack.approxSizeMb)}`,
+          keywords: `${sectionTitle(family.page)} ${pack.displayName} ${pack.id} ${pack.accel} ${pack.description}`,
+        });
+      }
+    }
+    return entries;
   });
 
-  /** Load installed pairs (fast); pass `refresh` to also fetch the full index. */
-  protected async loadArgosPackages(refresh = false): Promise<void> {
-    if (refresh) this.argosRefreshing.set(true);
-    this.error.set(null);
-    try {
-      const res = await this.ipc.getArgosPackages(refresh);
-      this.argosInstalled.set(res.installed);
-      // Only a refresh returns the index; a plain reload (after install/remove)
-      // must NOT wipe the browsed list.
-      if (refresh) this.argosAvailable.set(res.available);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      if (refresh) this.argosRefreshing.set(false);
-    }
-  }
+  protected readonly results = computed(() => searchSettings(this.searchIndex(), this.query()));
+  protected readonly searching = computed(() => this.query().trim().length > 0);
 
-  protected async installArgosPair(pair: ArgosPair): Promise<void> {
-    const key = this.pairKey(pair);
-    if (this.argosBusy()) return;
-    this.argosBusy.set(key);
-    this.error.set(null);
-    try {
-      await this.ipc.ensureArgosPackage({ from: pair.from, to: pair.to });
-      await this.loadArgosPackages(false);
-      void this.loadProcessingSetup(); // a newly-installed pair can flip availability
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.argosBusy.set(null);
-    }
-  }
+  // ------------------------------------------------------------------- reset
+  protected readonly resetting = signal(false);
+  protected readonly resetDone = signal(false);
+  private resetTimer: ReturnType<typeof setTimeout> | null = null;
 
-  protected async removeArgosPair(pair: ArgosPair): Promise<void> {
-    const key = this.pairKey(pair);
-    if (this.argosBusy()) return;
-    const ok = await this.confirmSvc.confirm({
-      title: this.translate.instant('confirm.remove-argos-title'),
-      message: this.translate.instant('confirm.remove-argos-body', {
-        from: this.langName(pair.from),
-        to: this.langName(pair.to),
-      }),
-      confirmLabel: this.translate.instant('confirm.remove'),
+  /** Move focus to the page title after a section is chosen (not on first load). */
+  private focusTitleOnChange = false;
+
+  constructor() {
+    effect(() => {
+      this.active();
+      untracked(() => {
+        this.resetDone.set(false);
+        // An error belongs to the page it happened on (a pack that failed on
+        // Speech-to-text); following the user to the next page, it reads as
+        // that page's failure.
+        this.store.error.set(null);
+        if (this.focusTitleOnChange) {
+          this.focusTitleOnChange = false;
+          setTimeout(() => this.host.nativeElement.querySelector<HTMLElement>('.section-title')?.focus(), 0);
+        }
+      });
     });
-    if (!ok) return;
-    this.argosBusy.set(key);
-    this.error.set(null);
-    try {
-      await this.ipc.removeArgosPackage({ from: pair.from, to: pair.to });
-      await this.loadArgosPackages(false);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.argosBusy.set(null);
-    }
+    this.destroyRef.onDestroy(() => {
+      if (this.resetTimer) clearTimeout(this.resetTimer);
+      this.cancelScroll?.();
+    });
   }
-
-  protected readonly ramLabel = computed(() => {
-    const profile = this.system()?.profile;
-    return profile ? `${Math.round(profile.totalRamMb / 1024)} GB RAM` : '';
-  });
-
-  // -------- auto-update preference --------
-  protected readonly autoUpdate = signal<boolean>(true);
-  protected readonly prefLoading = signal(false);
-  protected readonly prefSaving = signal(false);
-
-  // -------- update check / install --------
-  protected readonly checkOutcome = signal<CheckOutcome>('idle');
-  protected readonly updateInfo = signal<UpdateInfo | null>(null);
-  protected readonly installing = signal(false);
-
-  /** Installed app version (network-free, via get_app_version in Tauri). */
-  protected readonly appVersion = signal<string | null>(null);
-
-  protected readonly updateAvailable = computed(
-    () => this.updateInfo()?.available === true,
-  );
 
   ngOnInit(): void {
-    void this.loadPreference();
-    void this.loadVersion();
-    void this.loadProcessingSetup();
-    void this.loadEngines();
-    void this.loadStorage();
-    void this.loadProjectsFolder();
-    void this.loadDownloadsPolicy();
-    void this.loadArgosPackages(); // installed-only (fast); index loads on demand
-  }
-
-  ngOnDestroy(): void {
-    this.engineEvents?.close();
-    this.engineEvents = null;
-    if (this.projectsFolderTimer) clearTimeout(this.projectsFolderTimer);
-  }
-
-  // ----------------------------- projects folder -----------------------------
-  //
-  // The projects live in <folder>/projects, VideoDubber's own data folder by
-  // default; choosing another moves them all there, structure unchanged
-  // (orchestrator ProjectsFolderService), in the background with progress.
-
-  private async loadProjectsFolder(): Promise<void> {
-    try {
-      const info = await this.ipc.getProjectsFolder();
-      this.projectsFolder.set(info);
-      if (!this.projectsFolderInput()) this.projectsFolderInput.set(info.root);
-      if (info.moving) this.followProjectsMove();
-    } catch {
-      this.projectsFolder.set(null);
-    }
-  }
-
-  /** Where a finished video lands, as an example of the structure. */
-  protected projectsFolderExample(info: ProjectsFolderInfo): string {
-    const sep = info.projectsDir.includes('\\') ? '\\' : '/';
-    return [info.projectsDir, 'proj_…', 'render', 'output.mp4'].join(sep);
-  }
-
-  /** The native folder dialog (the desktop app); the browser types the folder instead. */
-  protected async chooseProjectsFolder(): Promise<void> {
-    const current = this.projectsFolder();
-    const picked = await this.ipc.pickFolder(this.translate.instant('settings.projects-folder.pick-title'), current?.root);
-    if (picked) await this.moveProjectsTo(picked);
-  }
-
-  protected async moveProjectsTo(root: string | null): Promise<void> {
-    const info = this.projectsFolder();
-    if (!info || this.projectsFolderBusy()) return;
-    const target = root?.trim() || info.defaultRoot;
-    const sep = target.includes('\\') ? '\\' : '/';
-    const ok = await this.confirmSvc.confirm({
-      title: this.translate.instant('settings.projects-folder.confirm-title'),
-      message: this.translate.instant('settings.projects-folder.confirm-body', {
-        count: info.projectCount,
-        folder: `${target.replace(/[\\/]+$/, '')}${sep}projects`,
-      }),
-      confirmLabel: this.translate.instant('settings.projects-folder.confirm-move'),
-      // A move loses nothing: not the red of a delete.
-      danger: false,
+    this.store.init();
+    // `/settings/<section>#<anchor>`: scroll to the option and mark it. The
+    // section's data arrives after it renders, so the target is waited for.
+    this.route.fragment.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((fragment) => {
+      if (fragment) this.scrollToAnchor(fragment);
     });
-    if (!ok) return;
-    this.projectsFolderBusy.set(true);
-    this.error.set(null);
+  }
+
+  protected onNavClick(): void {
+    this.focusTitleOnChange = true;
+    this.query.set('');
+  }
+
+  /** Arrow keys move between the navigation's links (Home/End to the ends). */
+  protected onNavKeydown(event: KeyboardEvent): void {
+    const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
+    if (!keys.includes(event.key)) return;
+    const links = Array.from(this.host.nativeElement.querySelectorAll<HTMLAnchorElement>('.settings-nav a'));
+    const at = links.indexOf(document.activeElement as HTMLAnchorElement);
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? links.length - 1
+          : event.key === 'ArrowDown'
+            ? Math.min(links.length - 1, at + 1)
+            : Math.max(0, at < 0 ? 0 : at - 1);
+    event.preventDefault();
+    links[next]?.focus();
+  }
+
+  protected sectionTitleKey(id: SettingsSectionId): string {
+    return settingsSection(id).titleKey;
+  }
+
+  protected clearSearch(): void {
+    this.query.set('');
+  }
+
+  /** Enter in the search box opens the first result. */
+  protected openFirstResult(): void {
+    const first = this.results()[0];
+    if (first) this.openResult(first);
+  }
+
+  protected openResult(entry: SettingsSearchEntry): void {
+    this.query.set('');
+    this.focusTitleOnChange = !entry.anchor;
+    void this.router.navigate(['/settings', entry.section], entry.anchor ? { fragment: entry.anchor } : {});
+    // Navigating to the same fragment twice emits nothing: scroll anyway.
+    if (entry.anchor && entry.section === this.active()) this.scrollToAnchor(entry.anchor);
+  }
+
+  protected async reset(): Promise<void> {
+    if (this.resetting()) return;
+    this.resetting.set(true);
     try {
-      const next = await this.ipc.moveProjectsFolder(root?.trim() ? root.trim() : null);
-      this.projectsFolder.set(next);
-      if (next.moving) this.followProjectsMove();
-      else this.projectsFolderInput.set(next.root);
-    } catch (err) {
-      this.error.set(toAppError(err));
+      const done = await this.store.resetSection(this.active());
+      if (done) {
+        this.resetDone.set(true);
+        if (this.resetTimer) clearTimeout(this.resetTimer);
+        this.resetTimer = setTimeout(() => this.resetDone.set(false), 4000);
+      }
     } finally {
-      this.projectsFolderBusy.set(false);
+      this.resetting.set(false);
     }
   }
 
-  /** Follow a move until it ends, then show where the projects are now. */
-  private followProjectsMove(): void {
-    if (this.projectsFolderTimer) clearTimeout(this.projectsFolderTimer);
-    this.projectsFolderTimer = setTimeout(() => {
-      this.projectsFolderTimer = null;
-      void this.ipc
-        .getProjectsFolder()
-        .then((info) => {
-          this.projectsFolder.set(info);
-          if (info.moving) this.followProjectsMove();
-          else this.projectsFolderInput.set(info.root);
-        })
-        .catch(() => this.followProjectsMove());
-    }, 700);
-  }
-
-  protected async openProjectsFolder(): Promise<void> {
-    const dir = this.projectsFolder()?.projectsDir;
-    if (!dir) return;
-    this.error.set(null);
-    try {
-      await this.ipc.openManagedFolder(dir);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    }
-  }
-
-  // ----------------------------- engine packs -----------------------------
-
-  private async loadEngines(): Promise<void> {
-    await Promise.all([
-      this.ipc
-        .getEngines()
-        .then((e) => {
-          this.enginePacks.set(e.available);
-          this.installedEngines.set(e.installed);
-          this.updatableEngineIds.set(new Set(e.updatable ?? []));
-          this.activeSelections.set(e.activeSelections ?? []);
-        })
-        .catch(() => undefined),
-      this.ipc
-        .getRecommendedEngines()
-        .then((r) => {
-          this.recommendedEngineIds.set(new Set(r.recommendations.map((x) => x.packId)));
-          this.engineFits.set(r.fits ? new Set(r.fits) : null);
-        })
-        .catch(() => undefined),
-      this.ipc
-        .getEnginePrerequisites()
-        .then((p) => this.prerequisites.set(p))
-        .catch(() => undefined),
-    ]);
-  }
-
-  protected isEngineInstalled(packId: string): boolean {
-    return this.installedEngines().some((i) => i.id === packId);
-  }
+  private cancelScroll: (() => void) | null = null;
 
   /**
-   * When several installed packs do the SAME job (e.g. Gemma 3 4B/12B and
-   * Gemma 4 12B/26B), the app runs the most capable one this machine can
-   * handle. These helpers label that in the list so the extra installs don't
-   * look like they're all doing something.
+   * Bring an option into view and mark it for a moment. The element may not
+   * exist yet (the engine cards render once the packs have loaded), so this
+   * looks for it for a few seconds. Focus moves there too, for the keyboard
+   * and screen readers; the mark is an animation, not a class, because the
+   * option lives in a section component whose styles this one cannot reach.
    */
-  protected activeSelectionFor(pack: EnginePackInfo): ActivePackSelection | undefined {
-    return this.activeSelections().find((s) => s.providerId === pack.providerId);
-  }
-
-  /** This pack is the one actually used for its function. */
-  protected isEngineActive(pack: EnginePackInfo): boolean {
-    return this.activeSelectionFor(pack)?.packId === pack.id;
-  }
-
-  /** Installed, but another pack of the same function is the one being used. */
-  protected isEngineShadowed(pack: EnginePackInfo): boolean {
-    const active = this.activeSelectionFor(pack);
-    return Boolean(active && active.packId !== pack.id && this.isEngineInstalled(pack.id));
-  }
-
-  /**
-   * The local-LLM model packs the user may pick between (TranslateGemma sizes,
-   * Gemma chat models). The app picks automatically — the most capable one that
-   * fits the graphics card — but the choice is the user's: a slower, better
-   * model is a legitimate trade.
-   */
-  private static readonly MODEL_JOB: Readonly<Record<string, 'translation' | 'chat'>> = {
-    'local-llm-model': 'translation',
-    'local-llm-chat-model': 'chat',
-  };
-
-  protected isChoosableModel(pack: EnginePackInfo): boolean {
-    return pack.providerId in SettingsComponent.MODEL_JOB && this.isEngineInstalled(pack.id);
-  }
-
-  /** The running model of this pack's job was picked by the user, not automatically. */
-  protected isModelChosenByUser(pack: EnginePackInfo): boolean {
-    return this.activeSelectionFor(pack)?.chosenByUser === true;
-  }
-
-  /** Use this model for its job (`use`), or go back to the automatic choice. */
-  protected async chooseModel(pack: EnginePackInfo, use: boolean): Promise<void> {
-    const job = SettingsComponent.MODEL_JOB[pack.providerId];
-    if (!job) return;
-    this.error.set(null);
-    try {
-      await this.ipc.saveAppPreferences({ localModels: { [job]: use ? pack.id : '' } });
-      await this.loadEngines();
-    } catch (err) {
-      this.error.set(toAppError(err));
-    }
-  }
-
-  /** Display name of the pack actually used for this pack's function. */
-  protected activePackName(pack: EnginePackInfo): string {
-    const active = this.activeSelectionFor(pack);
-    if (!active) return '';
-    return this.enginePacks().find((p) => p.id === active.packId)?.displayName ?? active.packId;
-  }
-
-  /** Why a more capable installed pack was passed over (memory), if that happened. */
-  protected activeSelectionNote(pack: EnginePackInfo): string {
-    return this.activeSelectionFor(pack)?.note ?? '';
-  }
-
-  /** True if an installed pack has a newer version available (reinstall to update). */
-  protected isEngineUpdatable(packId: string): boolean {
-    return this.updatableEngineIds().has(packId);
-  }
-
-  protected isEngineRecommended(packId: string): boolean {
-    return this.recommendedEngineIds().has(packId);
-  }
-
-  /** True if this machine's hardware can run the pack (or fit is unknown). */
-  protected isEngineFit(packId: string): boolean {
-    const fits = this.engineFits();
-    return fits === null || fits.has(packId);
-  }
-
-  /**
-   * Why this machine can't comfortably run a pack — the whole sentence, because
-   * the two cases don't end the same way.
-   *
-   * The driver case comes FIRST and deliberately does not say "may run slowly":
-   * a CUDA build on a driver older than its toolkit doesn't run slowly, it loads
-   * the model, allocates every buffer and then aborts. Falling through to the
-   * RAM wording would send that user to buy hardware for something a driver
-   * update fixes — and the crash itself carries no hint of a driver, so this
-   * badge is the only place they can learn it.
-   *
-   * All three branches go through {@link TranslateService}: the first two were
-   * English template literals while the third already used a key, so the same
-   * function rendered two languages depending on which branch you hit.
-   */
-  protected engineFitHint(pack: EnginePackInfo): string {
-    const driver = outdatedNvidiaDriver(pack, this.system()?.profile.gpus ?? []);
-    if (driver) {
-      return this.translate.instant('misc.needs-nvidia-driver', {
-        required: pack.minNvidiaDriver ?? '',
-        found: driver,
-      });
-    }
-    const gb = pack.minRamMb ? Math.round(pack.minRamMb / 1024) : 0;
-    return gb > 0
-      ? this.translate.instant('misc.needs-ram', { gb })
-      : this.translate.instant('misc.heavy-for-machine');
-  }
-
-  protected engineProgressFor(packId: string): { percent: number | null; message: string } | undefined {
-    return this.engineProgress()[packId];
-  }
-
-  /** Subscribe to /engines/events once; updates progress + refreshes on done. */
-  private ensureEngineEvents(): void {
-    if (this.engineEvents || !environment.orchestratorUrl) return;
-    const es = new EventSource(`${environment.orchestratorUrl}/engines/events`);
-    es.onmessage = (ev) => {
-      try {
-        const event = JSON.parse(ev.data) as
-          | { type: 'progress'; packId: string; percent: number | null; message: string }
-          | { type: 'done'; packId: string }
-          | { type: 'error'; packId: string; error: AppError }
-          | { type: 'log' };
-        if (event.type === 'progress') {
-          this.engineProgress.update((m) => ({ ...m, [event.packId]: { percent: event.percent, message: event.message } }));
-        } else if (event.type === 'done') {
-          this.engineProgress.update((m) => {
-            const next = { ...m };
-            delete next[event.packId];
-            return next;
-          });
-          void this.loadEngines();
-          void this.loadProcessingSetup(); // availability flips once a pack lands
-        } else if (event.type === 'error') {
-          this.engineProgress.update((m) => {
-            const next = { ...m };
-            delete next[event.packId];
-            return next;
-          });
-          this.error.set(event.error);
-        }
-      } catch {
-        /* ignore malformed frame */
+  private scrollToAnchor(anchor: string): void {
+    this.cancelScroll?.();
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const attempt = (): void => {
+      const el = document.getElementById(anchor);
+      if (!el || !this.host.nativeElement.contains(el)) {
+        if (++tries < 40) timer = setTimeout(attempt, 100);
+        return;
+      }
+      this.cancelScroll = null;
+      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+      el.focus({ preventScroll: true });
+      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      if (!reduce && typeof el.animate === 'function') {
+        const color = getComputedStyle(document.documentElement).getPropertyValue('--vd-primary').trim() || '#2563eb';
+        el.animate(
+          [{ boxShadow: `0 0 0 3px ${color}` }, { boxShadow: `0 0 0 3px ${color}`, offset: 0.6 }, { boxShadow: '0 0 0 0 transparent' }],
+          { duration: 1800, easing: 'ease-out' },
+        );
       }
     };
-    es.onerror = () => {
-      // EventSource auto-reconnects on transient blips; only act on a genuine
-      // close so an in-flight row doesn't sit at "Starting…" forever with no
-      // feedback. Clear progress, surface a retryable error, and allow a reconnect.
-      if (es.readyState === EventSource.CLOSED) {
-        this.engineProgress.set({});
-        this.error.set({
-          code: 'WORKER_UNAVAILABLE',
-          message: this.translate.instant('misc.engine-stream-lost'),
-          remediation:
-            this.translate.instant('misc.engine-stream-lost-fix'),
-        });
-        this.engineEvents = null;
-      }
+    this.cancelScroll = () => {
+      if (timer) clearTimeout(timer);
+      this.cancelScroll = null;
     };
-    this.engineEvents = es;
-  }
-
-  protected async installEngine(packId: string): Promise<void> {
-    this.error.set(null);
-    this.ensureEngineEvents();
-    this.engineProgress.update((m) => ({
-      ...m,
-      [packId]: { percent: 0, message: this.translate.instant('common.working') },
-    }));
-    try {
-      await this.ipc.installEngine(packId);
-    } catch (err) {
-      this.engineProgress.update((m) => {
-        const next = { ...m };
-        delete next[packId];
-        return next;
-      });
-      this.error.set(toAppError(err));
-    }
-  }
-
-  /** A pack installed from the recommendations panel: refresh the full list and what can run. */
-  protected onRecommendedInstalled(): void {
-    void this.loadEngines();
-    void this.loadProcessingSetup();
-  }
-
-  protected async uninstallEngine(packId: string): Promise<void> {
-    const pack = this.enginePacks().find((p) => p.id === packId);
-    const ok = await this.confirmSvc.confirm({
-      title: this.translate.instant('confirm.remove-engine-title'),
-      message: this.translate.instant('confirm.remove-engine-body', {
-        name: pack?.displayName ?? this.translate.instant('confirm.remove-engine-fallback'),
-      }),
-      confirmLabel: this.translate.instant('confirm.remove'),
-    });
-    if (!ok) return;
-    this.error.set(null);
-    try {
-      await this.ipc.uninstallEngine(packId);
-      await this.loadEngines();
-      await this.loadProcessingSetup();
-      void this.loadStorage();
-    } catch (err) {
-      this.error.set(toAppError(err));
-    }
-  }
-
-  // ----------------------------- storage -----------------------------
-
-  private async loadStorage(): Promise<void> {
-    this.storageLoading.set(true);
-    try {
-      this.storage.set(await this.ipc.getStorage());
-    } catch {
-      // Non-fatal — leave the panel empty rather than blanking Settings.
-    } finally {
-      this.storageLoading.set(false);
-    }
-  }
-
-  /** Human file size (decimal, matching the engine-pack size chips). */
-  protected formatBytes(bytes: number): string {
-    if (bytes <= 0) return '0 MB';
-    const gb = bytes / 1e9;
-    if (gb >= 1) return `${gb.toFixed(1)} GB`;
-    const mb = bytes / 1e6;
-    if (mb >= 1) return `${mb.toFixed(0)} MB`;
-    return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
-  }
-
-  /** OS-specific label for the reveal-folder button. */
-  protected openFolderLabel(): string {
-    const platform = this.system()?.profile.platform;
-    if (platform === 'darwin') return this.translate.instant('misc.show-in-finder');
-    if (platform === 'win32') return this.translate.instant('misc.show-in-explorer');
-    return this.translate.instant('misc.open-folder');
-  }
-
-  protected async openStorageFolder(): Promise<void> {
-    const root = this.storage()?.root;
-    if (!root) return;
-    this.error.set(null);
-    try {
-      await this.ipc.openManagedFolder(root);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    }
-  }
-
-  /** Delete all downloaded engine packs, models, and caches (with confirm), then refresh. */
-  protected async clearStorage(): Promise<void> {
-    if (this.storageClearing()) return;
-    const s = this.storage();
-    const ok = await this.confirmSvc.confirm({
-      title: this.translate.instant('confirm.clear-storage-title'),
-      message: this.translate.instant('confirm.clear-storage-body', {
-        packs: s?.installedEnginePacks ?? 0,
-        size: s ? ` (${this.formatBytes(s.totalBytes)})` : '',
-      }),
-      confirmLabel: this.translate.instant('confirm.delete-everything'),
-    });
-    if (!ok) return;
-    this.storageClearing.set(true);
-    this.storageMessage.set(null);
-    this.error.set(null);
-    try {
-      const res = await this.ipc.clearStorage();
-      this.storageMessage.set(`Freed ${this.formatBytes(res.freedBytes)}.`);
-      // Refresh everything the wipe affected.
-      await Promise.all([this.loadStorage(), this.loadEngines(), this.loadProcessingSetup()]);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.storageClearing.set(false);
-    }
-  }
-
-  /** Delete the finished downloads and their videos (with confirm), then refresh. */
-  protected async clearDownloads(): Promise<void> {
-    if (this.storageClearing()) return;
-    const ok = await this.confirmSvc.confirm({
-      title: this.translate.instant('confirm.clear-downloads-title'),
-      message: this.translate.instant('confirm.clear-downloads-body'),
-      confirmLabel: this.translate.instant('settings.storage.downloads-delete'),
-    });
-    if (!ok) return;
-    this.storageClearing.set(true);
-    this.storageMessage.set(null);
-    this.error.set(null);
-    try {
-      const res = await this.ipc.clearFinishedDownloads();
-      this.storageMessage.set(this.translate.instant('settings.storage.downloads-deleted', { n: res.removed }));
-      await this.loadStorage();
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.storageClearing.set(false);
-    }
-  }
-
-  // ----------------------------- processing setup -----------------------------
-
-  private async loadProcessingSetup(): Promise<void> {
-    // Each block is independent and non-fatal: a missing orchestrator should
-    // not blank the whole Settings screen.
-    await Promise.all([
-      this.ipc
-        .getSystemProfile()
-        .then((s) => this.system.set(s))
-        .catch(() => undefined),
-      this.ipc
-        .getProviders()
-        .then((p) => this.providers.set(p))
-        .catch(() => undefined),
-      this.ipc
-        .getCredentials()
-        .then((c) => {
-          this.credentials.set(c.services);
-          if (this.claudeVia() === 'mother-claude') void this.checkMotherClaude();
-        })
-        .catch(() => undefined),
-      this.ipc
-        .getAppPreferences()
-        .then((prefs) => this.defaults.set(prefs.providerDefaults ?? {}))
-        .catch(() => undefined),
-    ]);
-  }
-
-  protected patchDefault<K extends keyof ProviderDefaults>(key: K, value: ProviderDefaults[K]): void {
-    this.defaults.update((d) => ({ ...d, [key]: value }));
-    this.defaultsSaved.set(false);
-  }
-
-  protected async saveDefaults(): Promise<void> {
-    if (this.defaultsSaving()) return;
-    this.defaultsSaving.set(true);
-    this.error.set(null);
-    try {
-      await this.ipc.saveAppPreferences({ providerDefaults: this.defaults() });
-      this.defaultsSaved.set(true);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.defaultsSaving.set(false);
-    }
-  }
-
-  /**
-   * One-click: adopt the hardware-aware recommendation as the defaults — the
-   * recommended speech model, and every engine back to "Automatic", which the
-   * orchestrator resolves to the best engine INSTALLED on this machine
-   * (projectDefaults.ts). It used to set only the model, so a user who had
-   * installed the recommended GPU engines kept dubbing on the CPU.
-   */
-  protected async applyRecommended(): Promise<void> {
-    const rec = this.system()?.recommendation;
-    if (!rec) return;
-    this.defaults.set({ sttModel: rec.whisperModel });
-    await this.saveDefaults();
-  }
-
-  protected credentialFor(service: CloudServiceId): CloudCredentialInfo | undefined {
-    return this.credentials().find((c) => c.service === service);
-  }
-
-  /**
-   * The Claude model used for translation and review. It could only be changed
-   * by hand-editing credentials.json, so every Claude user ran the old default
-   * (Claude Haiku 4.5). A model saved by hand stays selectable as "other".
-   */
-  protected claudeModel(): string {
-    return this.credentialFor('anthropic')?.model ?? DEFAULT_CLAUDE_MODEL;
-  }
-
-  /** `label` is a TRANSLATION KEY; `{id}` fills in a hand-set model's name. */
-  protected claudeModels(): { id: string; label: string }[] {
-    const choices = [
-      { id: 'claude-opus-5-5', label: 'settings.keys.claude.opus' },
-      { id: 'claude-sonnet-5-5', label: 'settings.keys.claude.sonnet' },
-      { id: 'claude-haiku-5-5', label: 'settings.keys.claude.haiku' },
-    ];
-    const current = this.claudeModel();
-    return choices.some((c) => c.id === current) ? choices : [...choices, { id: current, label: 'settings.keys.claude.other' }];
-  }
-
-  protected async saveClaudeModel(model: string): Promise<void> {
-    if (this.credBusy() || model === this.claudeModel()) return;
-    this.credBusy.set('anthropic');
-    this.error.set(null);
-    try {
-      const res = await this.ipc.saveCredential({ service: 'anthropic', model });
-      this.credentials.set(res.services);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.credBusy.set(null);
-    }
-  }
-
-  protected keyInputFor(service: CloudServiceId): string {
-    return this.keyInputs()[service] ?? '';
-  }
-
-  protected setKeyInput(service: CloudServiceId, value: string): void {
-    this.keyInputs.update((m) => ({ ...m, [service]: value }));
-  }
-
-  protected async saveKey(service: CloudServiceId): Promise<void> {
-    const key = this.keyInputFor(service).trim();
-    if (!key || this.credBusy()) return;
-    this.credBusy.set(service);
-    this.error.set(null);
-    try {
-      const res = await this.ipc.saveCredential({ service, apiKey: key });
-      this.credentials.set(res.services);
-      this.setKeyInput(service, '');
-      this.testResults.update((m) => ({ ...m, [service]: undefined }));
-      // Refresh availability flags on the provider pickers.
-      this.providers.set(await this.ipc.getProviders().catch(() => this.providers()));
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.credBusy.set(null);
-    }
-  }
-
-  protected async clearKey(service: CloudServiceId): Promise<void> {
-    if (this.credBusy()) return;
-    const ok = await this.confirmSvc.confirm({
-      title: this.translate.instant('confirm.remove-key-title'),
-      message: this.translate.instant('confirm.remove-key-body', {
-        service: this.serviceMeta[service].label,
-      }),
-      confirmLabel: this.translate.instant('confirm.remove'),
-    });
-    if (!ok) return;
-    this.credBusy.set(service);
-    this.error.set(null);
-    try {
-      const res = await this.ipc.saveCredential({ service, apiKey: null });
-      this.credentials.set(res.services);
-      this.testResults.update((m) => ({ ...m, [service]: undefined }));
-      this.providers.set(await this.ipc.getProviders().catch(() => this.providers()));
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.credBusy.set(null);
-    }
-  }
-
-  protected async testKey(service: CloudServiceId): Promise<void> {
-    if (this.credBusy()) return;
-    this.credBusy.set(service);
-    this.testing.set(service);
-    this.testResults.update((m) => ({ ...m, [service]: undefined }));
-    try {
-      const result = await this.ipc.testCredential(service);
-      this.testResults.update((m) => ({ ...m, [service]: result }));
-    } catch (err) {
-      this.testResults.update((m) => ({
-        ...m,
-        [service]: { service, ok: false, detail: toAppError(err).message },
-      }));
-    } finally {
-      this.credBusy.set(null);
-      this.testing.set(null);
-    }
-    // A test through Mother Claude also tells whether its HTTP API is up.
-    if (service === 'anthropic' && this.claudeVia() === 'mother-claude') void this.checkMotherClaude();
-  }
-
-  // ----------------------- Claude through Mother Claude -----------------------
-  //
-  // The user's Claude plan instead of an API key: Mother Claude's HTTP API
-  // speaks the Claude API, so translation only changes its address. The API
-  // key is never touched by switching: choosing "API key" again uses it.
-
-  protected claudeVia(): ClaudeConnection {
-    return this.credentialFor('anthropic')?.via === 'mother-claude' ? 'mother-claude' : 'api-key';
-  }
-
-  protected motherClaudeUrl(): string {
-    return this.credentialFor('anthropic')?.motherClaude?.url ?? MOTHER_CLAUDE_DEFAULT_URL;
-  }
-
-  protected motherClaudeKeySet(): boolean {
-    return this.credentialFor('anthropic')?.motherClaude?.keySet === true;
-  }
-
-  /** Save part of Claude's settings; true when it worked (the error banner says why not). */
-  private async saveClaude(patch: Omit<SaveCredentialRequest, 'service'>): Promise<boolean> {
-    if (this.credBusy()) return false;
-    this.credBusy.set('anthropic');
-    this.error.set(null);
-    try {
-      const res = await this.ipc.saveCredential({ service: 'anthropic', ...patch });
-      this.credentials.set(res.services);
-      this.testResults.update((m) => ({ ...m, anthropic: undefined }));
-      return true;
-    } catch (err) {
-      this.error.set(toAppError(err));
-      return false;
-    } finally {
-      this.credBusy.set(null);
-    }
-  }
-
-  protected async setClaudeVia(via: ClaudeConnection): Promise<void> {
-    if (via === this.claudeVia()) return;
-    if (!(await this.saveClaude({ via }))) return;
-    // The provider pickers' "needs an API key" follows the choice.
-    this.providers.set(await this.ipc.getProviders().catch(() => this.providers()));
-    if (via === 'mother-claude') void this.checkMotherClaude();
-  }
-
-  protected async checkMotherClaude(): Promise<void> {
-    if (this.motherClaudeChecking()) return;
-    this.motherClaudeChecking.set(true);
-    try {
-      this.motherClaudeStatus.set(await this.ipc.getMotherClaudeStatus());
-    } catch {
-      this.motherClaudeStatus.set(null);
-    } finally {
-      this.motherClaudeChecking.set(false);
-    }
-  }
-
-  protected async saveMotherClaudeUrl(): Promise<void> {
-    const typed = this.motherClaudeUrlInput();
-    if (typed === null) return;
-    if (!(await this.saveClaude({ motherClaudeUrl: typed.trim() || null }))) return;
-    this.motherClaudeUrlInput.set(null);
-    void this.checkMotherClaude();
-  }
-
-  protected async resetMotherClaudeUrl(): Promise<void> {
-    if (!(await this.saveClaude({ motherClaudeUrl: null }))) return;
-    this.motherClaudeUrlInput.set(null);
-    void this.checkMotherClaude();
-  }
-
-  protected async saveMotherClaudeKey(): Promise<void> {
-    const key = this.motherClaudeKeyInput().trim();
-    if (!key || !(await this.saveClaude({ motherClaudeKey: key }))) return;
-    this.motherClaudeKeyInput.set('');
-    void this.checkMotherClaude();
-  }
-
-  protected async clearMotherClaudeKey(): Promise<void> {
-    if (!(await this.saveClaude({ motherClaudeKey: null }))) return;
-    void this.checkMotherClaude();
-  }
-
-  protected downloadMotherClaude(): void {
-    void this.ipc.openExternal(MOTHER_CLAUDE_DOWNLOAD_URL);
-  }
-
-  // ----------------------------- version -----------------------------
-
-  private async loadVersion(): Promise<void> {
-    try {
-      this.appVersion.set(await this.ipc.getAppVersion());
-    } catch {
-      // Non-fatal — leave the version blank rather than showing an error.
-    }
-  }
-
-  // ----------------------------- preference -----------------------------
-
-  private async loadPreference(): Promise<void> {
-    this.prefLoading.set(true);
-    try {
-      const pref = await this.ipc.getUpdatePreference();
-      this.autoUpdate.set(pref.autoUpdate);
-      const c = pref.concurrency;
-      this.concurrencyValue.set(
-        c?.mode === 'manual' && c.maxProjects ? String(c.maxProjects) : 'auto',
-      );
-      this.queuePaused.set(c?.paused === true);
-    } catch (err) {
-      this.error.set(toAppError(err));
-    } finally {
-      this.prefLoading.set(false);
-    }
-  }
-
-  // -------------------- simultaneous dubs (run queue) --------------------
-  /** 'auto' (follow the hardware recommendation) or a pinned number. */
-  protected readonly concurrencyValue = signal<string>('auto');
-  protected readonly queuePaused = signal(false);
-  protected readonly concurrencyChoices = [1, 2, 3, 4, 5, 6, 7, 8];
-
-  /** Persist the simultaneous-dub limit (auto = follow the recommendation). */
-  protected async setConcurrency(value: string): Promise<void> {
-    if (this.prefSaving()) return;
-    const previous = this.concurrencyValue();
-    this.concurrencyValue.set(value);
-    await this.saveConcurrency(
-      value === 'auto'
-        ? { mode: 'auto', paused: this.queuePaused() }
-        : { mode: 'manual', maxProjects: Number(value), paused: this.queuePaused() },
-      () => this.concurrencyValue.set(previous),
-    );
-  }
-
-  /** Pause/resume dispatching queued dubs. */
-  protected async setQueuePaused(paused: boolean): Promise<void> {
-    if (this.prefSaving()) return;
-    const previous = this.queuePaused();
-    this.queuePaused.set(paused);
-    const pinned = this.concurrencyValue();
-    await this.saveConcurrency(
-      pinned === 'auto'
-        ? { mode: 'auto', paused }
-        : { mode: 'manual', maxProjects: Number(pinned), paused },
-      () => this.queuePaused.set(previous),
-    );
-  }
-
-  private async saveConcurrency(concurrency: ConcurrencyPreferences, rollback: () => void): Promise<void> {
-    this.prefSaving.set(true);
-    this.error.set(null);
-    try {
-      // Send autoUpdate too: /preferences merges partials, but the Tauri
-      // command mirrors the whole object.
-      await this.ipc.setUpdatePreference({ autoUpdate: this.autoUpdate(), concurrency });
-    } catch (err) {
-      rollback();
-      this.error.set(toAppError(err));
-    } finally {
-      this.prefSaving.set(false);
-    }
-  }
-
-  // ---- Downloads while dubbing (Settings → Downloads) ----------------------
-  protected readonly downloadsChoice = signal<DownloadsWhileDubbing>('auto');
-  protected readonly downloadsEffective = signal<Exclude<DownloadsWhileDubbing, 'auto'> | null>(null);
-
-  private async loadDownloadsPolicy(): Promise<void> {
-    try {
-      const p = await this.ipc.downloadsPolicy();
-      this.downloadsChoice.set(p.choice);
-      this.downloadsEffective.set(p.effective);
-    } catch {
-      /* an older backend: the card shows the choice only */
-    }
-  }
-
-  protected async setDownloadsChoice(value: DownloadsWhileDubbing): Promise<void> {
-    if (this.prefSaving()) return;
-    const previous = this.downloadsChoice();
-    this.downloadsChoice.set(value);
-    this.prefSaving.set(true);
-    this.error.set(null);
-    try {
-      // autoUpdate too: the Tauri command mirrors the whole object.
-      await this.ipc.setUpdatePreference({ autoUpdate: this.autoUpdate(), downloads: { whileDubbing: value } });
-      await this.loadDownloadsPolicy();
-    } catch (err) {
-      this.downloadsChoice.set(previous);
-      this.error.set(toAppError(err));
-    } finally {
-      this.prefSaving.set(false);
-    }
-  }
-
-  protected async toggleAutoUpdate(value: boolean): Promise<void> {
-    if (this.prefSaving()) return;
-    const previous = this.autoUpdate();
-    this.autoUpdate.set(value); // optimistic
-    this.prefSaving.set(true);
-    this.error.set(null);
-    try {
-      await this.ipc.setUpdatePreference({ autoUpdate: value });
-    } catch (err) {
-      this.autoUpdate.set(previous); // roll back on failure
-      this.error.set(toAppError(err));
-    } finally {
-      this.prefSaving.set(false);
-    }
-  }
-
-  // ----------------------------- update check -----------------------------
-
-  /**
-   * The phases cloud processing is suggested for, as one localized list.
-   *
-   * Built here rather than concatenated in the template: the old markup glued
-   * "speech-to-text" + "+" + "translation" together with ternaries, which is
-   * exactly the kind of sentence assembly that cannot be translated — word
-   * order and separators differ per language.
-   */
-  protected cloudSuggestPhases(): string {
-    const rec = this.system()?.recommendation;
-    if (!rec) return '';
-    const parts: string[] = [];
-    if (rec.suggestCloud.stt) parts.push(this.translate.instant('settings.computer.stt'));
-    if (rec.suggestCloud.translation) parts.push(this.translate.instant('settings.computer.translation'));
-    return parts.join(' + ');
-  }
-
-  /**
-   * Providers offerable in a `<select>`: the available ones, PLUS whatever is
-   * currently selected even if it is not.
-   *
-   * Hiding an unusable option is right — a disabled row you cannot pick is
-   * noise. But hiding the SELECTED one is not: the control would render some
-   * other provider while the stored setting still said the old one, silently
-   * misreporting the user's own configuration. So the current value always
-   * survives the filter, carrying its "needs API key" suffix as the explanation.
-   */
-  protected selectable(list: readonly ProviderInfo[] | undefined, current: string | undefined): ProviderInfo[] {
-    return (list ?? []).filter((p) => p.available || p.id === current);
-  }
-
-  /** Switch the app language. Applies immediately; no reload needed. */
-  protected setLocale(next: SupportedLocale): void {
-    this.translate.use(next);
-  }
-
-  protected async check(): Promise<void> {
-    if (this.checkOutcome() === 'checking') return;
-    this.checkOutcome.set('checking');
-    this.error.set(null);
-    try {
-      const info = await this.ipc.checkForUpdate();
-      this.updateInfo.set(info);
-      this.checkOutcome.set(info.available ? 'available' : 'up-to-date');
-    } catch (err) {
-      this.checkOutcome.set('error');
-      this.error.set(toAppError(err));
-    }
-  }
-
-  protected async installUpdate(): Promise<void> {
-    if (this.installing() || !this.updateAvailable()) return;
-    this.installing.set(true);
-    this.error.set(null);
-    try {
-      // On success the app relaunches; this promise typically never resolves in
-      // the running window. We still clear `installing` for the edge case where
-      // install completes without an immediate relaunch.
-      const res = await this.ipc.downloadAndInstallUpdate();
-      if (!res.ok) {
-        this.installing.set(false);
-      }
-    } catch (err) {
-      this.installing.set(false);
-      this.error.set(toAppError(err));
-    }
-  }
-
-  // ----------------------------- helpers -----------------------------
-
-  protected async openReleaseNotes(): Promise<void> {
-    const info = this.updateInfo();
-    if (!info?.version) return;
-    // Best-effort: link to the GitHub releases page for the new tag.
-    await this.ipc.openExternal(
-      `https://github.com/codertapsu/multilingual-dubbed-video/releases/tag/v${info.version}`,
-    );
-  }
-
-  protected dismissError(): void {
-    this.error.set(null);
+    attempt();
   }
 }

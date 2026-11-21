@@ -1,0 +1,29 @@
+// The engine pages (speech-to-text, translation, text-to-speech, helpers):
+// a column of cards.
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-4);
+}
+
+.card-title {
+  margin: 0 0 var(--vd-sp-3);
+}
+
+.saved {
+  margin-top: var(--vd-sp-2);
+}
+
+// A built-in model (faster-whisper's, PhoWhisper's): the same box as a pack row.
+.model {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--vd-sp-3);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius-sm);
+  background: var(--vd-surface);
+}
+.model-name {
+  font-weight: 600;
+}

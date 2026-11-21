@@ -1,0 +1,74 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-4);
+}
+
+h3 {
+  margin: 0 0 var(--vd-sp-2);
+}
+h4 {
+  margin: 0 0 var(--vd-sp-2);
+  font-size: 0.92rem;
+}
+
+.folder-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--vd-sp-2) var(--vd-sp-3);
+}
+.folder-line .label {
+  font-weight: 600;
+  color: var(--vd-text-muted);
+}
+.folder-line code {
+  overflow-wrap: anywhere;
+}
+
+.row-actions .grow {
+  flex: 1;
+  min-width: 14rem;
+}
+
+// A checkbox with its name and explanation beside it.
+.check-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vd-sp-3);
+  margin: 0;
+  font-weight: 400;
+  cursor: pointer;
+}
+.check-opt input {
+  margin-top: 3px;
+  width: auto;
+}
+.check-opt input:disabled {
+  cursor: not-allowed;
+}
+.check-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.note {
+  align-self: flex-start;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.notes-body {
+  margin: 0;
+  padding: var(--vd-sp-3);
+  background: var(--vd-surface-2);
+  border-radius: var(--vd-radius-sm);
+  font-family: var(--vd-font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}

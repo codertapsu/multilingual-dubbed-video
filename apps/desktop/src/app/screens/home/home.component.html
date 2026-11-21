@@ -31,7 +31,7 @@
     <div class="card models-missing" role="status">
       <strong>{{ 'home.models-missing-title' | translate }}</strong>
       <p class="hint">{{ 'home.models-missing-body' | translate }}</p>
-      <a routerLink="/settings" class="btn btn-sm">{{ 'home.models-missing-cta' | translate }}</a>
+      <a routerLink="/settings/stt" fragment="faster-whisper" class="btn btn-sm">{{ 'home.models-missing-cta' | translate }}</a>
     </div>
   }
 
@@ -57,7 +57,7 @@
       <div class="card stack-sm queue-summary">
         <div class="row row-between">
           <strong>{{ 'home.now-dubbing' | translate }}</strong>
-          <a routerLink="/settings" class="hint"
+          <a routerLink="/settings/performance" fragment="opt-concurrency" class="hint"
             >{{ 'home.queue-link' | translate: { running: q.running.length, max: q.maxProjects } }}</a
           >
         </div>

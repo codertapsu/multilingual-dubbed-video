@@ -199,9 +199,7 @@
   },
   "settings": {
     "title": "Cài đặt",
-    "subtitle": "Tuỳ chọn ứng dụng và cập nhật.",
     "language": {
-      "heading": "Ngôn ngữ",
       "label": "Ngôn ngữ hiển thị",
       "hint": "Áp dụng ngay cho toàn bộ ứng dụng và được ghi nhớ cho lần mở sau."
     },
@@ -209,7 +207,7 @@
       "heading": "Máy tính này",
       "cores": "{{ n }} nhân",
       "rec-model": "Mô hình nhận dạng lời thoại nên dùng:",
-      "cloud-suggest": "Với máy này, nên dùng xử lý đám mây cho: {{ phases }} — hãy thêm khoá API bên dưới, rồi chọn nhà cung cấp đám mây cho từng bước.",
+      "cloud-suggest": "Với máy này, nên dùng xử lý đám mây cho {{ phases }}: hãy thêm khoá API, rồi chọn engine đám mây ở trang của bước đó.",
       "stt": "nhận dạng giọng nói",
       "translation": "dịch thuật",
       "concurrent": "Lồng tiếng đồng thời",
@@ -217,22 +215,14 @@
       "n-at-a-time": "{{ n }} cùng lúc",
       "pause-queue": "Tạm dừng hàng đợi",
       "why-limit": "Vì sao có giới hạn này?",
-      "use-recommended": "Dùng mô hình khuyến nghị làm mặc định"
+      "use-recommended": "Dùng cài đặt khuyến nghị"
     },
     "defaults": {
-      "heading": "Mặc định khi xử lý",
-      "intro": "Engine dùng cho từng bước của dự án mới. Engine cục bộ thì riêng tư và miễn phí; engine đám mây có thể cho chất lượng tốt hơn trên máy yếu nhưng sẽ gửi dữ liệu của bước đó tới dịch vụ. Bạn vẫn có thể đổi nhà cung cấp cho từng dự án trong trình hướng dẫn và quay lại màn hình này bất cứ lúc nào.",
-      "stt": "1 · Nhận dạng giọng nói",
-      "stt-model": "Mô hình STT cục bộ",
-      "translation": "2 · Dịch thuật",
-      "tts": "3 · Tổng hợp giọng nói",
-      "needs-key": " — cần khoá API",
-      "auto": "Tự động — engine tốt nhất đã cài trên máy này",
-      "auto-model": "Tự động — mô hình được đề xuất cho máy này",
-      "render": "4 · Render",
+      "needs-key": "cần khoá API",
+      "auto": "Tự động (engine tốt nhất đã cài)",
+      "auto-model": "Tự động (khuyến nghị cho máy này)",
+      "render": "Xuất video (render)",
       "render-value": "FFmpeg cục bộ — luôn chạy trên máy này (video của bạn không rời khỏi máy).",
-      "save": "Lưu mặc định",
-      "saving": "Đang lưu…",
       "saved": "✓ Đã lưu — áp dụng cho dự án mới",
       "unavailable": "Chưa lấy được danh sách nhà cung cấp — dịch vụ nền đã chạy chưa?"
     },
@@ -265,7 +255,6 @@
       }
     },
     "keys": {
-      "heading": "Khoá API đám mây",
       "intro": "Không bắt buộc. Khoá chỉ được lưu trên máy này (~/VideoDubber/credentials.json, chỉ chủ sở hữu truy cập được) và chỉ gửi tới đúng dịch vụ tương ứng. Không có gì được tải lên ở đâu trừ khi bạn chọn nhà cung cấp đám mây cho một bước.",
       "from-env": "từ biến môi trường",
       "key-set": "khoá {{ masked }}",
@@ -315,8 +304,6 @@
       }
     },
     "engines": {
-      "heading": "Engine",
-      "intro": "Các engine chất lượng cao tuỳ chọn dành cho máy đủ mạnh — nhận dạng có tăng tốc, dịch bằng LLM cục bộ, giọng nói neural, tách giọng và căn chỉnh thời gian. Chúng được tải khi cần và chỉ chạy khi dự án dùng tới, nên ứng dụng cơ bản vẫn gọn nhẹ. Các gói gắn nhãn “khuyến nghị” phù hợp với máy này. Không cần cài gì trước.",
       "uv-ok": "✓ Các engine Python là gói tự chứa{{ bundled }} — chỉ cần bấm Cài đặt.",
       "uv-bundled": " (dùng runtime đi kèm)",
       "uv-download": "Các engine Python (giọng neural, tách giọng, căn chỉnh) cần uv. Bản dựng này không kèm sẵn, nên lần cài đầu tiên sẽ tự tải về (~20 MB, có xác thực) — chỉ cần bấm Cài đặt.",
@@ -340,8 +327,7 @@
       "reinstall-title": "Tải lại phiên bản mới nhất",
       "remove": "Xoá",
       "install": "Cài đặt",
-      "needs-uv-title": "Engine này cần uv, nhưng chưa có bản dựng cho nền tảng này",
-      "needs-uv": "Cần uv — xem ghi chú ở trên."
+      "needs-uv-title": "Engine này cần uv, nhưng chưa có bản dựng cho nền tảng này"
     },
     "argos": {
       "heading": "Gói dịch thuật",
@@ -390,7 +376,8 @@
       "downloads": "Video đã tải",
       "downloads-hint": "Video nguồn tải từ màn hình Tải video. Đây là tệp của bạn nên nút \"Xoá\" ở trên không bao giờ đụng đến. Các dự án tạo từ những video này vẫn giữ bản của riêng chúng.",
       "downloads-delete": "Xoá các video đã tải xong",
-      "downloads-deleted": "Đã xoá {{n}} video đã tải."
+      "downloads-deleted": "Đã xoá {{n}} video đã tải.",
+      "freed": "Đã giải phóng {{ size }}."
     },
     "updates": {
       "heading": "Cập nhật",
@@ -417,7 +404,6 @@
     "brand-kit-heading": "Logo & lời chào",
     "brand-kit-intro": "Logo và lời chào của bạn, tạo một lần rồi chọn cho từng dự án (Dự án mới, trình chỉnh sửa, Xuất video). Mỗi dự án giữ bản sao của riêng nó nên việc sửa danh sách này không làm thay đổi dự án đã xong.",
     "downloads": {
-      "heading": "Tải video",
       "intro": "Tải video dùng mạng, ổ đĩa và bộ xử lý. Mục này quyết định việc tải video khi đang lồng tiếng; lồng tiếng luôn được ưu tiên.",
       "while-dubbing": "Khi đang lồng tiếng",
       "opt-auto": "Tự động (theo cấu hình máy này)",
@@ -427,7 +413,334 @@
       "now-pause-heavy": "Hiện tại: tải song song với lồng tiếng và tạm dừng khi bản lồng tiếng chạy bước nặng (máy có card đồ hoạ từ 12 GB và đủ sức chạy hai bản lồng tiếng được xem là mạnh). Video đang tải dở sẽ tải tiếp từ chỗ đã dừng.",
       "now-one-task": "Hiện tại: mỗi lần một việc. Máy có bộ nhớ đồ hoạ dưới 12 GB, hoặc chỉ đủ sức chạy một bản lồng tiếng, nên lồng tiếng dùng toàn bộ máy; video sẽ chờ lồng tiếng xong rồi tải lần lượt từng video.",
       "now-no-limit": "Hiện tại: tải song song với lồng tiếng, không tạm dừng, mỗi lần hai video. Lồng tiếng có thể chậm hơn.",
-      "login-hint": "Đăng nhập trang web để tải chất lượng cao hơn nằm ở màn hình Tải video (mục Tài khoản nguồn)."
+      "login-hint": "Đăng nhập trang web để tải chất lượng cao hơn nằm ở màn hình Tải video (mục Tài khoản nguồn).",
+      "logins": "Đăng nhập trang web",
+      "open-download": "Mở màn hình Tải video",
+      "space": "Dung lượng video đã tải"
+    },
+    "nav": {
+      "aria": "Các mục cài đặt"
+    },
+    "search": {
+      "label": "Tìm trong cài đặt",
+      "placeholder": "Tìm: GPU, giọng, khoá…",
+      "heading": "Kết quả tìm kiếm",
+      "count": "{{ n }} kết quả cho “{{ query }}”",
+      "count-one": "1 kết quả cho “{{ query }}”",
+      "none": "Không có mục cài đặt nào khớp với “{{ query }}”.",
+      "none-hint": "Hãy thử từ ngắn hơn hoặc từ khác, như “giọng”, “GPU”, “khoá” hay “thư mục”. Gõ không dấu cũng được.",
+      "clear": "Xoá tìm kiếm",
+      "section": "Mục"
+    },
+    "sections": {
+      "general": {
+        "title": "Chung",
+        "intro": "Ngôn ngữ, giao diện, nơi lưu dự án và cập nhật."
+      },
+      "dubbing": {
+        "title": "Mặc định lồng tiếng",
+        "intro": "Những gì một bản lồng tiếng mới dùng sẵn: mẫu lồng tiếng, logo và lời chào của bạn."
+      },
+      "engines": {
+        "title": "Engine & mô hình",
+        "intro": "Các chương trình (engine) và mô hình AI làm từng bước ngay trên máy này. Chỉ những gì bạn cài mới được tải về; ứng dụng vẫn chạy khi chưa cài thứ nào."
+      },
+      "stt": {
+        "title": "Nhận dạng giọng nói",
+        "intro": "Chép lại lời nói trong video kèm thời gian: bước đầu tiên của mọi bản lồng tiếng."
+      },
+      "translation": {
+        "title": "Dịch thuật",
+        "intro": "Dịch lời thoại sang ngôn ngữ lồng tiếng."
+      },
+      "tts": {
+        "title": "Tổng hợp giọng nói",
+        "intro": "Đọc bản dịch thành lời bằng giọng nói nhân tạo."
+      },
+      "audio": {
+        "title": "Người nói & tách nhạc",
+        "intro": "Các công cụ phụ trợ mà dự án có thể bật: xác định ai nói từng câu, và tách giọng nói khỏi nhạc nền."
+      },
+      "cloud": {
+        "title": "Dịch vụ đám mây & khoá API",
+        "intro": "Không bắt buộc: khoá API cho AI trên đám mây (OpenAI, Claude, Gemini). Không có gì rời khỏi máy trừ khi dự án dùng một engine đám mây."
+      },
+      "claude": {
+        "title": "Claude (trợ lý AI)",
+        "intro": "Để Claude Desktop hoặc Claude Code điều khiển VideoDubber thay bạn."
+      },
+      "downloads": {
+        "title": "Tải video",
+        "intro": "Cách việc tải video dùng chung máy với việc lồng tiếng."
+      },
+      "performance": {
+        "title": "Hiệu năng",
+        "intro": "Phần cứng của máy và số bản lồng tiếng chạy cùng lúc."
+      },
+      "storage": {
+        "title": "Dung lượng",
+        "intro": "Dung lượng ổ đĩa mà những thứ VideoDubber đã tải về đang chiếm, và cách giải phóng."
+      },
+      "diagnostics": {
+        "title": "Chẩn đoán",
+        "intro": "Tình trạng của ứng dụng, các lỗi gần đây, và gói hỗ trợ để gửi kèm khi báo lỗi."
+      },
+      "advanced": {
+        "title": "Nâng cao",
+        "intro": "Hiếm khi cần: môi trường Python của các engine, và khôi phục mọi cài đặt cùng lúc."
+      }
+    },
+    "reset": {
+      "button": "Khôi phục mặc định",
+      "button-title": "Đưa các cài đặt trên trang này về như lúc mới cài VideoDubber",
+      "done": "Đã khôi phục mặc định.",
+      "title": "Khôi phục trang này về mặc định?",
+      "all-title": "Khôi phục mọi cài đặt về mặc định?",
+      "confirm": "Khôi phục",
+      "body-general": "Ứng dụng trở về tiếng Việt, giao diện theo hệ thống, và cập nhật lại được cài tự động. Các dự án vẫn ở nguyên chỗ cũ.",
+      "body-stt": "Dự án mới sẽ quay về engine nhận dạng và mô hình giọng nói mà chế độ Tự động chọn cho máy này. Các engine đã cài và mô hình đã tải vẫn được giữ.",
+      "body-translation": "Dự án mới sẽ quay về engine dịch mà chế độ Tự động chọn, và các mô hình TranslateGemma, Gemma lại được chọn tự động. Các mô hình đã cài vẫn được giữ.",
+      "body-tts": "Dự án mới sẽ quay về engine giọng đọc mà chế độ Tự động chọn cho máy này. Các engine và giọng đã cài vẫn được giữ.",
+      "body-downloads": "Việc tải video quay về chế độ Tự động: cấu hình máy quyết định có tải song song khi đang lồng tiếng hay không.",
+      "body-performance": "Số bản lồng tiếng chạy cùng lúc quay về mức khuyến nghị cho máy này, và hàng đợi chạy lại nếu đang tạm dừng.",
+      "body-all": "Ngôn ngữ, giao diện và cập nhật, các engine mà dự án mới dùng, lựa chọn mô hình, việc tải video khi đang lồng tiếng và số bản lồng tiếng cùng lúc đều về mặc định. Khoá API, đăng nhập trang web, mẫu lồng tiếng, logo và lời chào, các engine đã cài và dự án của bạn không bị đụng tới."
+    },
+    "general": {
+      "look": "Ngôn ngữ & giao diện",
+      "theme": "Giao diện sáng/tối",
+      "theme-hint": "Màu sáng hay tối. “Theo hệ thống” sẽ đổi theo cài đặt của máy tính. Nút ở góc trên bên phải cửa sổ cũng đổi được.",
+      "theme-system": "Theo hệ thống",
+      "theme-light": "Sáng",
+      "theme-dark": "Tối",
+      "updates-hint": "Xem đã có phiên bản VideoDubber mới chưa, và cài đặt.",
+      "folder-moving-wait": "Trong lúc chuyển, bạn vẫn dùng ứng dụng được; các dự án chỉ chỉnh sửa được khi đã chuyển xong.",
+      "version": "Phiên bản {{ version }}"
+    },
+    "dubbing": {
+      "presets": "Mẫu lồng tiếng",
+      "presets-hint": "Mẫu lồng tiếng ghi nhớ ngôn ngữ, engine, giọng đọc, phụ đề và cách trộn âm của một bản lồng tiếng, để lồng tiếng các video tiếp theo y như vậy (trong Dự án mới, hoặc nhiều video đã tải cùng lúc ở màn hình Tải video). Tạo mẫu trong Dự án mới: chọn mọi thứ xong rồi bấm “Lưu thành mẫu”.",
+      "presets-empty": "Chưa có mẫu nào. Dự án mới sẽ bắt đầu từ các cài đặt được khuyến nghị cho máy này.",
+      "preset-languages": "{{ from }} → {{ to }}",
+      "detect": "tự nhận diện ngôn ngữ",
+      "preset-starts": "tự bắt đầu lồng tiếng",
+      "preset-folder": "Lưu video hoàn chỉnh vào",
+      "preset-new": "Tạo mẫu trong Dự án mới",
+      "series": "Video dài thành nhiều phần",
+      "series-hint": "Video dài có thể được lồng tiếng thành nhiều phần ngắn hơn (trong Dự án mới, hoặc cho video đã tải ở màn hình Tải video). AI sẽ chọn chỗ cắt nên cần có một AI: Claude (khoá API, hoặc gói Claude của bạn qua Mother Claude), OpenAI hay Gemini trong mục Dịch vụ đám mây & khoá API, hoặc mô hình Gemma trò chuyện chạy trên máy này.",
+      "series-cloud": "Thiết lập AI đám mây",
+      "series-local": "Cài mô hình Gemma trò chuyện"
+    },
+    "overview": {
+      "defaults": "Dự án mới dùng gì",
+      "defaults-hint": "Engine mà mỗi bước của một bản lồng tiếng mới đang dùng. “Tự động” chọn engine tốt nhất đã cài trên máy; bạn vẫn đổi được cho từng dự án.",
+      "change": "Thay đổi",
+      "use-recommended-hint": "Mọi bước về Tự động, với mô hình giọng nói {{ model }}.",
+      "why": "Vì sao khuyến nghị như vậy"
+    },
+    "fn": {
+      "defaults-heading": "Mặc định cho dự án mới",
+      "stt-engine": "Engine nhận dạng giọng nói",
+      "stt-engine-hint": "Engine chép lại lời nói trong dự án mới. Trên máy có card đồ hoạ NVIDIA, whisper.cpp nhanh hơn nhiều lần so với faster-whisper có sẵn.",
+      "stt-model": "Mô hình giọng nói",
+      "stt-model-hint": "Mô hình càng lớn nghe càng chính xác nhưng chạy càng lâu. PhoWhisper được làm riêng cho giọng nói tiếng Việt.",
+      "translation-engine": "Engine dịch",
+      "translation-engine-hint": "Engine dịch cho dự án mới. TranslateGemma và Gemma chạy ngay trên máy và dịch tốt hơn nhiều so với Argos có sẵn; AI đám mây thì cần khoá API.",
+      "tts-engine": "Engine giọng đọc",
+      "tts-engine-hint": "Engine đọc bản dịch trong dự án mới. Giọng cụ thể thì chọn cho từng dự án, hoặc cho từng người nói.",
+      "auto-now": "Chế độ Tự động hiện đang dùng {{ name }} trên máy này.",
+      "auto-now-tts": "Với tiếng Việt, chế độ Tự động hiện đang dùng {{ name }}; với ngôn ngữ khác là các giọng Piper có sẵn.",
+      "auto-model-now": "Chế độ Tự động dùng {{ model }}, mô hình được khuyến nghị cho máy này.",
+      "chosen-cannot-run": "Lựa chọn của bạn hiện không chạy được ({{ reason }}), nên dự án mới sẽ dùng engine được chọn tự động.",
+      "add-key": "Thêm khoá",
+      "reason-not-installed": "chưa cài",
+      "reason-model-missing": "chưa tải mô hình",
+      "reason-not-running": "chưa chạy",
+      "reason-starting": "đang khởi động…",
+      "reason-unavailable": "không dùng được",
+      "used": "✓ Dự án mới dùng mục này",
+      "used-auto": "✓ Dự án mới dùng mục này (Tự động)",
+      "use-for-new": "Dùng cho dự án mới",
+      "install-first": "Cài ở trên để dùng cho dự án mới",
+      "runtime-installed": "✓ Chạy bằng {{ name }}, đã được cài.",
+      "runtime-missing": "Chạy bằng {{ name }}: được cài kèm theo mô hình đầu tiên.",
+      "models": "Mô hình",
+      "models-for": "Mô hình cho {{ name }}",
+      "built-in": "Có sẵn",
+      "other-engines": "Engine có sẵn và đám mây",
+      "cloud": "Đám mây",
+      "on-this-computer": "Trên máy này",
+      "cloud-hint": "AI đám mây dịch với ngữ cảnh của cả video và cần khoá API; lời thoại sẽ được gửi tới dịch vụ đó. Ollama là một chương trình riêng do bạn tự chạy.",
+      "review-now": "Sau khi dịch, {{ name }} rà soát lại toàn bộ bản dịch về tên riêng, đại từ và cách xưng hô.",
+      "open-voices": "Xem các giọng đọc",
+      "open-voices-hint": "Nghe thử, cài đặt, đánh dấu yêu thích giọng của mọi engine và tạo giọng của riêng bạn ở màn hình Giọng đọc.",
+      "helpers-how": "Các công cụ này chỉ chạy khi dự án cần: “Nhận diện người nói” và “Thay giọng nói, giữ nhạc & hiệu ứng” trong Dự án mới (hoặc trong trình chỉnh sửa). Bạn có thể cài trước ở đây, hoặc khi dự án cần lần đầu.",
+      "automatic": "Tự động",
+      "install-model-first": "Cài một mô hình bên dưới để dùng"
+    },
+    "variant": {
+      "download": "Tải {{ size }}",
+      "needs-vram": "Bộ nhớ đồ hoạ từ {{ size }}",
+      "needs-ram": "RAM từ {{ size }}",
+      "install": "Cài đặt ({{ size }})",
+      "installs-runtime": "Engine đi kèm sẽ được cài cùng.",
+      "details": "Chi tiết và giấy phép",
+      "licence": "Giấy phép:",
+      "not-installed": "chưa cài"
+    },
+    "builtin": {
+      "faster-whisper": "faster-whisper (có sẵn, chạy trên bộ xử lý)",
+      "faster-whisper-hint": "Có sẵn trong ứng dụng và chạy trên mọi máy. Mô hình giọng nói được tải một lần, khi dự án cần lần đầu, hoặc tải trước ở đây.",
+      "phowhisper": "PhoWhisper (giọng nói tiếng Việt)",
+      "phowhisper-hint": "Whisper được VinAI huấn luyện thêm cho tiếng Việt: lựa chọn chính xác nhất cho video nói tiếng Việt. Chạy bằng faster-whisper có sẵn.",
+      "models-unavailable": "Chưa biết mô hình nào đã được tải: dịch vụ nền đã chạy chưa?",
+      "downloaded": "đã tải",
+      "default-model": "mô hình mặc định",
+      "downloading": "Đang tải…",
+      "download": "Tải về",
+      "use-model": "Dùng làm mặc định",
+      "model-distil": "Distil Large v3.5 — chỉ tiếng Anh, nhanh nhất trong nhóm large (~760 MB)",
+      "download-size": "Tải về ({{ size }})"
+    },
+    "families": {
+      "whisper": {
+        "title": "Whisper",
+        "desc": "Nhận dạng giọng nói của OpenAI, chạy ngay trên máy này: chép lại lời nói kèm thời gian. Mô hình càng lớn càng chính xác nhưng càng chậm; mô hình khuyến nghị cho máy này được đánh dấu."
+      },
+      "translategemma": {
+        "title": "TranslateGemma",
+        "desc": "Mô hình dịch mở của Google, chạy ngay trên máy: dịch tốt hơn Argos nhiều và không cần mạng. Có ba kích cỡ, mỗi lần chỉ chạy một: cỡ tốt nhất mà máy chạy tốt, hoặc cỡ bạn chọn. Bản 4B chạy được trên mọi máy có 8 GB RAM; 12B và 27B cần card đồ hoạ hoặc Apple Silicon."
+      },
+      "gemma-chat": {
+        "title": "Gemma (dịch theo ngữ cảnh và rà soát)",
+        "desc": "Các mô hình Gemma của Google làm theo chỉ dẫn, nên dịch được cả cảnh với bảng nhân vật của dự án (tên riêng, thuật ngữ, cách xưng hô), rà soát bản dịch đã xong, và rút gọn những câu quá dài để đọc kịp. Mỗi lần chỉ chạy một mô hình: mô hình tốt nhất mà máy chạy tốt, hoặc mô hình bạn chọn."
+      },
+      "llama-cpp": {
+        "title": "llama.cpp (chạy TranslateGemma và Gemma)",
+        "desc": "Chương trình chạy các mô hình TranslateGemma và Gemma trên máy này. Nó tự được cài cùng mô hình đầu tiên; nếu cài nhiều bản, bản nhanh nhất mà máy dùng được sẽ chạy."
+      },
+      "libretranslate": {
+        "title": "LibreTranslate",
+        "desc": "Máy chủ LibreTranslate chạy trên máy này. Bên trong nó chính là Argos, nên dịch y như Argos có sẵn, dùng các gói ngôn ngữ Argos của bạn: chỉ cài khi bạn cần chính máy chủ này."
+      },
+      "vieneu": {
+        "title": "VieNeu (giọng tiếng Việt tự nhiên)",
+        "desc": "Giọng tiếng Việt tự nhiên hơn Piper rất nhiều. VieNeu-TTS 3.8 là bản mới nhất: 25 giọng của cả ba miền và nhân bản giọng nói. Neural TTS v3 giữ mười giọng của các dự án làm trước đó. Mỗi engine có bản chạy trên bộ xử lý và bản cho card NVIDIA nhanh hơn khoảng 4 lần, tự chuyển sang bộ xử lý khi không dùng được card."
+      },
+      "zerotts": {
+        "title": "ZeroTTS",
+        "desc": "Tám giọng tiếng Việt tự nhiên (trẻ, trung niên, lớn tuổi; kể chuyện, tin tức, bình luận) chạy trên bộ xử lý: engine đọc tiếng Việt chính xác nhất từng được đo."
+      },
+      "kokoro": {
+        "title": "Kokoro",
+        "desc": "Mô hình giọng nhỏ và nhanh: 54 giọng tiếng Anh, Nhật, Trung, Tây Ban Nha, Pháp, Hindi, Ý và Bồ Đào Nha (không có tiếng Việt)."
+      },
+      "supertonic": {
+        "title": "Supertonic",
+        "desc": "Mười giọng, mỗi giọng nói được 31 ngôn ngữ kể cả tiếng Việt, nhưng đọc tiếng Việt chậm: VieNeu hay ZeroTTS khớp thời gian tiếng Việt hơn. Nhà phát triển đã ngừng cập nhật."
+      },
+      "omnivoice": {
+        "title": "OmniVoice",
+        "desc": "Mô hình giọng nói cho hơn 600 ngôn ngữ, chỉ chạy trên Apple Silicon."
+      },
+      "speaker-detection": {
+        "title": "Nhận diện người nói",
+        "desc": "Xác định ai nói từng câu, để mỗi người trong video có giọng riêng và bản dịch biết ai đang nói với ai. Chạy trên bộ xử lý, mất khoảng một phần mười thời lượng video; bật cho từng dự án (“Nhận diện người nói”)."
+      },
+      "separation": {
+        "title": "Tách nhạc và giọng nói",
+        "desc": "Tách giọng nói khỏi nhạc và hiệu ứng âm thanh, để chế độ “Thay giọng nói, giữ nhạc & hiệu ứng” giữ nguyên âm lượng nhạc bên dưới giọng lồng tiếng, và giọng sao chép từ video được sạch. Mất khoảng một phần mười thời lượng video trên card đồ hoạ, và khoảng bằng thời lượng video nếu chỉ chạy trên bộ xử lý."
+      },
+      "alignment": {
+        "title": "Căn chỉnh thời gian",
+        "desc": "Thời gian chính xác tới từng từ, để khớp tiếng tốt hơn."
+      }
+    },
+    "engine-notes": {
+      "whisper-cpp": "Chạy Whisper trên card đồ hoạ NVIDIA, nhanh hơn bộ xử lý nhiều lần. Nó cần đúng mô hình cỡ mà dự án dùng: hãy cài các cỡ bạn dùng ở bên dưới.",
+      "vieneu-tts": "25 giọng tự nhiên của cả miền Bắc, Trung, Nam, và nhân bản giọng từ một đoạn ghi âm ngắn. Nên chọn cho dự án mới.",
+      "neural-tts": "Mười giọng của VieNeu bản trước, vẫn được các dự án đã làm bằng chúng sử dụng.",
+      "audio-cpp": "Chương trình chạy mô hình tách nhạc; được cài cùng mô hình. Trên Windows, bản chạy trên bộ xử lý được cài kèm bản card đồ hoạ để dự phòng."
+    },
+    "provider-notes": {
+      "llama-cpp": "Dịch từng câu bằng TranslateGemma: chính xác và nhanh, nhưng mỗi lần chỉ thấy một câu, nên sẽ được Gemma rà soát lại nếu đã cài Gemma.",
+      "llama-cpp-chat": "Gemma dịch cả cảnh theo bảng nhân vật: bản dịch ngoại tuyến nhất quán nhất, nhưng chậm hơn.",
+      "argos-llm-repair": "Argos dịch nháp thật nhanh, rồi Gemma sửa tên riêng, đại từ và thuật ngữ theo bảng nhân vật.",
+      "argos": "Có sẵn trong ứng dụng: ngoại tuyến và nhanh, nhưng dịch sát từng chữ. Cần gói ngôn ngữ cho từng cặp ngôn ngữ (bên dưới).",
+      "ollama": "TranslateGemma chạy trong Ollama, một chương trình riêng bạn tự cài và tự chạy (ollama.com).",
+      "openai-stt": "Gửi âm thanh lên OpenAI để nhận dạng. Cần khoá API OpenAI.",
+      "openai-translate": "Dịch bằng mô hình của OpenAI, với ngữ cảnh của cả video. Cần khoá API OpenAI.",
+      "anthropic-translate": "Dịch bằng Claude, với ngữ cảnh của cả video. Cần khoá API Anthropic, hoặc gói Claude của bạn qua Mother Claude.",
+      "gemini-translate": "Dịch bằng Google Gemini, với ngữ cảnh của cả video. Cần khoá API Gemini.",
+      "piper-local": "Có sẵn trong ứng dụng: giọng đọc nhanh cho nhiều ngôn ngữ, kém tự nhiên hơn VieNeu hay ZeroTTS. Chọn và tải giọng ở màn hình Giọng đọc.",
+      "openai-tts": "Giọng đọc trên đám mây của OpenAI, nhiều ngôn ngữ. Văn bản được gửi tới OpenAI; cần khoá API OpenAI."
+    },
+    "providers": {
+      "faster-whisper": "faster-whisper (có sẵn)",
+      "whisper-cpp": "whisper.cpp (card đồ hoạ NVIDIA)",
+      "openai-stt": "OpenAI Whisper (đám mây)",
+      "argos": "Argos Translate (có sẵn)",
+      "llama-cpp": "TranslateGemma (trên máy này)",
+      "llama-cpp-chat": "Gemma dịch cả cảnh (trên máy này)",
+      "argos-llm-repair": "Argos dịch nháp + Gemma sửa (trên máy này)",
+      "libretranslate": "LibreTranslate (máy chủ trên máy này)",
+      "ollama": "TranslateGemma qua Ollama",
+      "openai-translate": "OpenAI (đám mây)",
+      "anthropic-translate": "Claude (đám mây)",
+      "gemini-translate": "Google Gemini (đám mây)",
+      "piper-local": "Piper (có sẵn)",
+      "openai-tts": "Giọng OpenAI (đám mây)",
+      "neural-tts": "VieNeu Neural TTS v3 (10 giọng tiếng Việt)",
+      "vieneu-tts": "VieNeu-TTS 3.8 (25 giọng tiếng Việt)",
+      "zerotts": "ZeroTTS (8 giọng tiếng Việt)",
+      "kokoro": "Kokoro (54 giọng, 9 ngôn ngữ)",
+      "supertonic": "Supertonic 3 (10 giọng, 31 ngôn ngữ)",
+      "omnivoice": "OmniVoice (hơn 600 ngôn ngữ)",
+      "neural-tts-v2": "VieNeu Neural TTS v2"
+    },
+    "accel": {
+      "cpu": "Bộ xử lý (CPU)",
+      "cuda": "Card đồ hoạ NVIDIA (CUDA)",
+      "vulkan": "Card đồ hoạ (Vulkan)",
+      "metal": "Apple Silicon (Metal)",
+      "coreml": "Apple Neural Engine (Core ML)",
+      "mps": "Apple Silicon (Metal)"
+    },
+    "cloud": {
+      "openai": "OpenAI (ChatGPT)",
+      "anthropic": "Anthropic (Claude)",
+      "gemini": "Google Gemini",
+      "openai-uses": "Dùng cho nhận dạng giọng nói, dịch và giọng đọc trên đám mây, và để chia video dài thành nhiều phần.",
+      "anthropic-uses": "Dùng để dịch và rà soát bằng Claude, và để chia video dài thành nhiều phần.",
+      "gemini-uses": "Dùng để dịch bằng Gemini, và để chia video dài thành nhiều phần.",
+      "where-used": "Chọn engine đám mây cho từng bước ở trang riêng của bước đó, trong mục",
+      "mc-advanced": "Nâng cao: địa chỉ và khoá của Mother Claude",
+      "save-title": "Hãy nhập hoặc dán khoá trước",
+      "test-title": "Hãy lưu khoá trước"
+    },
+    "claude-page": {
+      "translate-with": "Để dịch bằng Claude (khoá API, hoặc gói Claude của bạn qua Mother Claude), xem mục"
+    },
+    "performance": {
+      "computer-hint": "Những gì VideoDubber nhận ra ở máy này. Thông tin này quyết định số bản lồng tiếng chạy cùng lúc và các engine được khuyến nghị.",
+      "concurrent-hint": "Số bản lồng tiếng chạy cùng lúc; các bản khác chờ trong hàng đợi. Trên đa số máy, chạy nhiều bản cùng lúc không nhanh hơn.",
+      "pause-hint": "Các bản đang chờ ở lại trong hàng đợi và chưa bắt đầu cho tới khi bạn tiếp tục; các bản đang chạy vẫn chạy tiếp.",
+      "tier-title": "Mức cấu hình mà VideoDubber đánh giá cho máy này",
+      "engines-link": "Engine nào hợp với máy này:",
+      "pause": "Tạm dừng",
+      "paused-now": "Đang tạm dừng: các bản đang chờ sẽ chưa bắt đầu cho tới khi bạn bỏ chọn “Tạm dừng”.",
+      "tier-constrained": "Máy cấu hình thấp",
+      "tier-balanced": "Máy cấu hình vừa",
+      "tier-performance": "Máy cấu hình mạnh"
+    },
+    "advanced": {
+      "uv": "Engine Python (uv)",
+      "uv-hint": "Các engine giọng đọc và công cụ phụ trợ được cài vào môi trường Python riêng, tạo bằng uv. Không cần làm gì ở đây, trừ khi việc cài đặt báo thiếu uv.",
+      "reset-all": "Khôi phục mọi cài đặt",
+      "reset-all-hint": "Đưa cài đặt của mọi trang về mặc định cùng lúc. Khoá API, đăng nhập trang web, mẫu lồng tiếng, logo và lời chào, các engine đã cài và dự án của bạn vẫn được giữ.",
+      "reset-all-button": "Khôi phục mọi cài đặt…"
+    },
+    "diagnostics": {
+      "help": "Có gì không chạy? Màn hình Trợ giúp kiểm tra lại ứng dụng và hiện tình trạng từng dịch vụ nền:"
     }
   },
   "support": {
@@ -903,7 +1216,7 @@
     "max-speed": "Tốc độ nói tối đa",
     "max-speed-hint": "Lời thoại đã dịch thường dài hơn câu gốc. Ứng dụng có thể tăng tốc các đoạn tới giới hạn này để giữ đồng bộ; những dòng vẫn không vừa sẽ được đánh dấu để rà soát trong trình chỉnh sửa.",
     "engines": "Engine xử lý",
-    "engines-hint": "Mỗi bước có thể chạy cục bộ (riêng tư, miễn phí, hoạt động ngoại tuyến) hoặc trên đám mây (thường cho chất lượng tốt hơn trên máy yếu; cần khoá API trong Cài đặt và sẽ gửi dữ liệu của bước đó tới dịch vụ). Giá trị mặc định lấy từ Cài đặt → Mặc định khi xử lý.",
+    "engines-hint": "Mỗi bước có thể chạy cục bộ (riêng tư, miễn phí, hoạt động ngoại tuyến) hoặc trên đám mây (thường cho chất lượng tốt hơn trên máy yếu; cần khoá API trong Cài đặt và sẽ gửi dữ liệu của bước đó tới dịch vụ). Giá trị mặc định lấy từ Cài đặt → Engine & mô hình.",
     "stt": "Nhận dạng giọng nói",
     "translation": "Dịch thuật",
     "refine": "Rà soát & tinh chỉnh (tuỳ chọn)",

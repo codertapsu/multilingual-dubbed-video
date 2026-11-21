@@ -1,0 +1,118 @@
+<!-- ===================== Default for new projects ===================== -->
+<div class="card" id="stt-defaults">
+  <h3 class="card-title">{{ 'settings.fn.defaults-heading' | translate }}</h3>
+  <vd-default-engine
+    id="opt-stt-default"
+    phase="stt"
+    titleKey="settings.fn.stt-engine"
+    hintKey="settings.fn.stt-engine-hint"
+  />
+  <div class="opt" id="opt-stt-model">
+    <div class="opt-text">
+      <label class="opt-title" for="defSttModel">{{ 'settings.fn.stt-model' | translate }}</label>
+      <p class="hint">{{ 'settings.fn.stt-model-hint' | translate }}</p>
+    </div>
+    <div class="opt-control stack-sm">
+      <select
+        id="defSttModel"
+        name="defSttModel"
+        [ngModel]="store.defaults().sttModel ?? ''"
+        (ngModelChange)="store.setDefault('sttModel', $event)"
+        [disabled]="store.defaultsSaving()"
+      >
+        <option value="">{{ 'settings.defaults.auto-model' | translate }}</option>
+        @for (m of speechModels; track m.id) {
+          <option [value]="m.id">{{ m.label | translate }}</option>
+        }
+      </select>
+      @if (!store.defaults().sttModel && store.system(); as sys) {
+        <p class="hint">{{ 'settings.fn.auto-model-now' | translate: { model: sys.recommendation.whisperModel } }}</p>
+      }
+    </div>
+  </div>
+  @if (store.defaultsSaved()) {
+    <p class="hint test-ok saved" role="status">{{ 'settings.defaults.saved' | translate }}</p>
+  }
+</div>
+
+<!-- ===================== Whisper ===================== -->
+<vd-engine-family-card familyId="whisper" [family]="whisper()">
+  <!-- The built-in engine: no pack to install, models download on first use or here. -->
+  <section class="family-section" id="faster-whisper">
+    <div class="card-head">
+      <h3>{{ 'settings.builtin.faster-whisper' | translate }}</h3>
+      <span class="badge badge-pending">{{ 'settings.fn.built-in' | translate }}</span>
+    </div>
+    <p class="hint">{{ 'settings.builtin.faster-whisper-hint' | translate }}</p>
+    <ng-container [ngTemplateOutlet]="models" [ngTemplateOutletContext]="{ $implicit: builtInModels }" />
+  </section>
+  <section class="family-section" id="phowhisper">
+    <div class="card-head">
+      <h3>{{ 'settings.builtin.phowhisper' | translate }}</h3>
+    </div>
+    <p class="hint">{{ 'settings.builtin.phowhisper-hint' | translate }}</p>
+    <ng-container [ngTemplateOutlet]="models" [ngTemplateOutletContext]="{ $implicit: phoWhisperModels }" />
+  </section>
+</vd-engine-family-card>
+
+@for (family of otherFamilies(); track family.id) {
+  <vd-engine-family-card [familyId]="family.id" [family]="family" />
+}
+
+<!-- ===================== Cloud ===================== -->
+@if (otherProviders().length > 0) {
+  <div class="card" id="stt-other">
+    <h3 class="card-title">{{ 'settings.fn.other-engines' | translate }}</h3>
+    @for (p of otherProviders(); track p.id) {
+      <vd-provider-row [provider]="p" phase="stt" />
+    }
+  </div>
+}
+
+<!-- One list of built-in speech models, for faster-whisper and for PhoWhisper. -->
+<ng-template #models let-list>
+  @if (downloaded() === null) {
+    <p class="hint">{{ 'settings.builtin.models-unavailable' | translate }}</p>
+  }
+  <div class="variants">
+    @for (m of list; track m.id) {
+      <div class="model" [attr.id]="'model-' + m.id">
+        <div class="card-head">
+          <span class="model-name">{{ m.label | translate }}</span>
+          @if (isRecommended(m.id)) {
+            <span class="badge badge-info">{{ 'settings.engines.recommended' | translate }}</span>
+          }
+          @if (isDownloaded(m.id)) {
+            <span class="badge badge-completed">{{ 'settings.builtin.downloaded' | translate }}</span>
+          }
+          @if (defaultModel() === m.id) {
+            <span class="badge badge-running">{{ 'settings.builtin.default-model' | translate }}</span>
+          }
+        </div>
+        @if (downloading() === m.id) {
+          <div class="install-progress" role="status" aria-live="polite">
+            <span class="hint">{{ downloadProgress()?.message || ('settings.builtin.downloading' | translate) }}</span>
+            @if (downloadProgress()?.percent; as pct) {
+              <progress [value]="pct" max="100"></progress>
+            } @else {
+              <progress></progress>
+            }
+          </div>
+        } @else {
+          <div class="row-actions">
+            @if (!isDownloaded(m.id) && downloaded() !== null) {
+              <button type="button" class="btn btn-sm" (click)="download(m.id)" [disabled]="downloading() !== null">
+                {{ sizeOf(m.id) ? ('settings.builtin.download-size' | translate: { size: store.sizeLabel(sizeOf(m.id)!) }) : ('settings.builtin.download' | translate) }}
+              </button>
+            }
+            @if (defaultModel() !== m.id) {
+              <button type="button" class="btn btn-ghost btn-sm" (click)="useModel(m.id)" [disabled]="store.defaultsSaving()">
+                {{ 'settings.builtin.use-model' | translate }}
+              </button>
+            }
+          </div>
+        }
+      </div>
+    }
+  </div>
+</ng-template>

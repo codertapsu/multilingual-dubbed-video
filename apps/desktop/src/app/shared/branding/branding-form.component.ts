@@ -175,7 +175,7 @@ export function formatPeriods(spans: readonly TimeSpan[] | undefined): string {
         <span class="hint muted">{{ 'branding.greeting-hint' | translate }}</span>
       }
 
-      <a class="hint" routerLink="/settings" fragment="brand-kit">{{ 'branding.manage' | translate }}</a>
+      <a class="hint" routerLink="/settings/dubbing" fragment="brand-kit">{{ 'branding.manage' | translate }}</a>
     </div>
   `,
   styles: [

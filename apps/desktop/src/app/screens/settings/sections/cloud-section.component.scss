@@ -1,0 +1,100 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-4);
+}
+
+h3 {
+  margin: 0;
+}
+
+.cred-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.cred-controls .grow {
+  flex: 1;
+  min-width: 12rem;
+}
+
+// The global form styles cover text fields but not password ones: the key
+// fields rendered as bare browser boxes beside every styled control.
+input[type='password'] {
+  font: inherit;
+  color: var(--vd-text);
+  background: var(--vd-surface);
+  border: 1px solid var(--vd-border-strong);
+  border-radius: var(--vd-radius-sm);
+  padding: var(--vd-sp-2) var(--vd-sp-3);
+}
+input[type='password']:focus-visible {
+  border-color: var(--vd-primary);
+}
+
+/* Claude: API key or the Claude plan through Mother Claude (same look as the wizard's choices). */
+.radio-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-2);
+}
+.radio-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vd-sp-3);
+  margin: 0;
+  padding: var(--vd-sp-3);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius-sm);
+  cursor: pointer;
+  font-weight: 400;
+}
+.radio-row:hover {
+  background: var(--vd-surface-2);
+}
+.radio-row input {
+  margin-top: 3px;
+  width: auto;
+}
+.radio-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.radio-title {
+  font-weight: 600;
+}
+
+.mc-panel {
+  padding: var(--vd-sp-3);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius-sm);
+  background: var(--vd-surface-2);
+}
+.mc-status {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.mc-status .grow {
+  flex: 1;
+  min-width: 0;
+}
+.mc-steps {
+  margin: 0;
+  padding-left: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.mc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0;
+  font-weight: 400;
+}
+.mc-advanced > summary {
+  margin-bottom: var(--vd-sp-2);
+}

@@ -5,9 +5,10 @@ import { ActivityService } from '../../core/activity/activity.service';
 import { TranslatePipe } from '../../core/i18n';
 
 /**
- * Corner notices (core/activity/activity.service.ts): an engine or a model
- * finished downloading, or failed, wherever the user is in the app. Success
- * goes by itself; a failure stays until dismissed, with where to retry.
+ * Corner notices (core/activity/activity.service.ts): an engine, a model or a
+ * video finished downloading, a dub or render finished, the projects folder
+ * moved, or one of them failed, wherever the user is in the app. Success goes
+ * by itself; a failure stays until dismissed, with where to retry.
  */
 @Component({
   selector: 'vd-toasts',
@@ -25,7 +26,7 @@ import { TranslatePipe } from '../../core/i18n';
               <span class="msg">{{ t.message }}</span>
             }
             @if (t.link) {
-              <a [routerLink]="t.link" (click)="activity.closeToast(t.id)">{{ t.linkLabel ?? ('activity.open' | translate) }}</a>
+              <a [routerLink]="t.link" [fragment]="t.fragment" (click)="activity.closeToast(t.id)">{{ t.linkLabel ?? ('activity.open' | translate) }}</a>
             }
           </div>
           <button type="button" class="close" (click)="activity.closeToast(t.id)" [attr.aria-label]="'activity.dismiss' | translate">×</button>

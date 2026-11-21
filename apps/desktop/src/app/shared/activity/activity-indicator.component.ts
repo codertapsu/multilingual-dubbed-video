@@ -5,11 +5,12 @@ import { ActivityService, type ActivityTask } from '../../core/activity/activity
 import { TranslatePipe } from '../../core/i18n';
 
 /**
- * The top bar's "what is downloading" button (core/activity/activity.service.ts):
- * hidden while nothing runs or failed lately; a spinner and a count while
- * engine packs or models download; a list with each one's progress on click,
- * and a link to where it is managed. Users could not tell what was still
- * downloading once they left the screen they started it on (0.17.0 report).
+ * The top bar's "what is going on" button (core/activity/activity.service.ts):
+ * hidden while nothing runs, waits or failed lately; a spinner and a count
+ * while engine packs, models, videos or dubs are at work; a list with each
+ * one's progress on click, and a link to where it is managed. Users could not
+ * tell what was still downloading once they left the screen they started it
+ * on (0.17.0 report), nor that a dub had finished (UX audit, 2026-11-21).
  */
 @Component({
   selector: 'vd-activity-indicator',
@@ -35,6 +36,8 @@ import { TranslatePipe } from '../../core/i18n';
             <span class="count">{{ activity.running().length }}</span>
           } @else if (activity.failed().length > 0) {
             <span aria-hidden="true">!</span>
+          } @else if (activity.waiting().length > 0) {
+            <span aria-hidden="true">…</span>
           } @else {
             <span aria-hidden="true">✓</span>
           }
@@ -43,7 +46,7 @@ import { TranslatePipe } from '../../core/i18n';
           <div class="panel" role="dialog" [attr.aria-label]="'activity.heading' | translate">
             <div class="panel-head">
               <strong>{{ 'activity.heading' | translate }}</strong>
-              @if (activity.tasks().length > activity.running().length) {
+              @if (hasFinished()) {
                 <button type="button" class="btn btn-ghost btn-sm" (click)="activity.clearFinished()">{{ 'activity.clear' | translate }}</button>
               }
             </div>
@@ -55,6 +58,7 @@ import { TranslatePipe } from '../../core/i18n';
                     <span class="task-state">
                       @switch (t.state) {
                         @case ('running') { {{ t.percent !== null ? t.percent + '%' : ('activity.working' | translate) }} }
+                        @case ('waiting') { {{ 'activity.waiting' | translate }} }
                         @case ('done') { ✓ }
                         @case ('failed') { {{ 'activity.failed' | translate }} }
                       }
@@ -65,12 +69,12 @@ import { TranslatePipe } from '../../core/i18n';
                       <span [class.indeterminate]="t.percent === null" [style.width.%]="t.percent ?? 30"></span>
                     </div>
                   }
-                  @if (t.message) {
-                    <span class="task-msg" [class.err]="t.state === 'failed'">{{ t.message }}</span>
+                  @if (messageOf(t); as msg) {
+                    <span class="task-msg" [class.err]="t.state === 'failed'">{{ msg }}</span>
                   }
                   <div class="task-actions">
-                    <a [routerLink]="t.link" (click)="open.set(false)">{{ 'activity.open' | translate }}</a>
-                    @if (t.state !== 'running') {
+                    <a [routerLink]="t.link" [fragment]="t.fragment" (click)="open.set(false)">{{ t.linkLabel ?? ('activity.open' | translate) }}</a>
+                    @if (t.state === 'done' || t.state === 'failed') {
                       <button type="button" class="link-btn" (click)="activity.dismiss(t.id)">{{ 'activity.dismiss' | translate }}</button>
                     }
                   </div>
@@ -234,8 +238,21 @@ export class ActivityIndicatorComponent {
   protected readonly summary = computed(() => {
     const running: ActivityTask[] = this.activity.running();
     if (running.length > 0) return running.map((t) => `${t.label}${t.percent !== null ? ` ${t.percent}%` : ''}`).join(' · ');
-    return this.activity.failed().map((t) => t.label).join(' · ');
+    const failed = this.activity.failed();
+    if (failed.length > 0) return failed.map((t) => t.label).join(' · ');
+    return [...this.activity.waiting(), ...this.activity.tasks().filter((t) => t.state === 'done')].map((t) => t.label).join(' · ');
   });
+
+  /** Something ended (done or failed) that "Clear finished" would remove. */
+  protected readonly hasFinished = computed(() => this.activity.tasks().some((t) => t.state === 'done' || t.state === 'failed'));
+
+  /**
+   * A failure says what went wrong in the user's language (an engine's error
+   * arrives in the server's English); anything else shows its own message.
+   */
+  protected messageOf(t: ActivityTask): string {
+    return t.state === 'failed' && t.error ? this.activity.failureLine(t.error) : t.message;
+  }
 
   /** A click outside closes the list. */
   @HostListener('document:click', ['$event'])

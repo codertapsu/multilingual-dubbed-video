@@ -224,6 +224,24 @@ app binary unstripped anyway, in case that changes.
 **Windows installers are unsigned, by standing decision** — not a missing step. SmartScreen is
 expected; in-app updates are unaffected (they carry the updater's own signature).
 
+**In-app updates go through `src-tauri/src/update.rs`, both paths** (the Install button and the
+background update at launch). The 0.16.1 → 0.17.0 update hung for good: reqwest has no timeout by
+default, the ~280 MB download stalled behind a spinner, and every step was a `println!` a windowed
+build has nobody to read. So the updater's client carries connect/read timeouts, the download
+reports progress (`update-status`), can be cancelled, logs to `shell.log`, and writes
+`<config>/update-attempt.json` before the installer starts; the next launch compares versions to
+say whether it took. The NSIS hooks (`windows/installer-hooks.nsh`, pure ASCII) are the NEW
+version's code: they keep killing VideoDubber's background programs (Claude's `--mcp` connections
+run the same orchestrator exe) until none is left, rename a still-busy exe aside (Windows can
+rename a running program, never overwrite it; the app deletes `*.exe.old-*` at its next start),
+and write `logs/installer.log`.
+
+**Tauri matches command arguments by name.** A Rust parameter `options` never receives the
+webview's `{ request }`: unknown keys are dropped and an `Option` arrives `None`, silently. That
+is how Settings' model Download posted `{}` and did nothing for months.
+`scripts/check-tauri-commands.mjs` (in `pnpm check`) compares every `invoke`/`call` in
+`ipc.service.ts` with the `#[tauri::command]` signatures.
+
 When writing code that touches the filesystem or spawns processes, assume the test suite has only
 ever run on macOS unless proven otherwise. Recent Windows-only failures: POSIX separators asserted
 against a `path.join` result; `/dev/null/...` used as an uncreatable path; `mode & 0o111` and

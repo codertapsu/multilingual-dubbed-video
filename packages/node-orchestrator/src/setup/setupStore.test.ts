@@ -141,4 +141,11 @@ describe('SetupStore preferences round-trip', () => {
     await store.savePreferences({ autoUpdate: true, localModels: { translation: '../../etc', chat: '' } as never });
     expect((await store.getPreferences()).localModels).toBeUndefined();
   });
+
+  it('keeps the downloads-while-dubbing choice (it snapped back to Automatic before)', async () => {
+    await store.savePreferences({ autoUpdate: true, downloads: { whileDubbing: 'one-task' } });
+    expect((await store.getPreferences()).downloads).toEqual({ whileDubbing: 'one-task' });
+    await store.savePreferences({ autoUpdate: true, downloads: { whileDubbing: 'sometimes' } as never });
+    expect((await store.getPreferences()).downloads).toBeUndefined();
+  });
 });

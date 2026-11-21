@@ -186,7 +186,7 @@
                 />
                 <span class="radio-body">
                   <span class="radio-title">
-                    {{ 'whisper.' + model.id | translate }}
+                    {{ 'whisper.' + model.id.replace('.', '_') | translate }}
                     <!-- "Recommended" means MEASURED fit for this machine when
                          GET /system answered, and the catalog's static flag only
                          as a fallback. Every model stays selectable either way. -->

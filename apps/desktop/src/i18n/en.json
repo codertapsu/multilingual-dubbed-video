@@ -1400,7 +1400,7 @@
     "base": "Base — balanced; good on 8 GB (~145 MB)",
     "small": "Small — better accuracy (~480 MB)",
     "large-v3-turbo": "Large v3 Turbo — recommended: near-best, 6-8x faster (~1.6 GB)",
-    "distil-large-v3.5": "Distil Large v3.5 — English only, fastest large (~760 MB)",
+    "distil-large-v3_5": "Distil Large v3.5 — English only, fastest large (~760 MB)",
     "medium": "Medium — high accuracy (~1.5 GB)",
     "large-v3": "Large v3 — best accuracy, slow on CPU (~3 GB)",
     "phowhisper-medium": "PhoWhisper Medium — best for Vietnamese-source audio",

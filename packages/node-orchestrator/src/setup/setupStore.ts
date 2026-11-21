@@ -18,6 +18,7 @@ import path from 'node:path';
 import { renameReplacing } from '../fsRename.js';
 import type {
   ArgosPair,
+  DownloadPreferences,
   InstalledModels,
   LocalModelPreferences,
   SetupStatus,
@@ -235,6 +236,9 @@ export class SetupStore {
         ? { concurrency: stored.concurrency }
         : {}),
       ...(cleanLocalModels(stored.localModels) ? { localModels: cleanLocalModels(stored.localModels) } : {}),
+      // Settings → Downloads ("while a dub runs"). Dropped here and below until
+      // 0.17.0's own review: the choice snapped back to Automatic on reload.
+      ...(cleanDownloads(stored.downloads) ? { downloads: cleanDownloads(stored.downloads) } : {}),
     };
   }
 
@@ -246,10 +250,17 @@ export class SetupStore {
       ...(prefs.providerDefaults ? { providerDefaults: prefs.providerDefaults } : {}),
       ...(prefs.concurrency ? { concurrency: prefs.concurrency } : {}),
       ...(localModels ? { localModels } : {}),
+      ...(cleanDownloads(prefs.downloads) ? { downloads: cleanDownloads(prefs.downloads) } : {}),
     };
     await writeJsonAtomic(this.preferencesPath, next);
     return next;
   }
+}
+
+/** The downloads-while-dubbing choice, when it is one of the four. */
+function cleanDownloads(value: unknown): DownloadPreferences | undefined {
+  const choice = (value as { whileDubbing?: unknown } | null | undefined)?.whileDubbing;
+  return choice === 'auto' || choice === 'pause-heavy' || choice === 'one-task' || choice === 'no-limit' ? { whileDubbing: choice } : undefined;
 }
 
 /** The user's local-model choices with only pack-id-shaped values, or undefined when none. */

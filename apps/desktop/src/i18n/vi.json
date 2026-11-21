@@ -1400,7 +1400,7 @@
     "base": "Base — cân bằng; chạy tốt trên máy 8 GB (~145 MB)",
     "small": "Small — chính xác hơn (~480 MB)",
     "large-v3-turbo": "Large v3 Turbo — khuyến nghị: gần như tốt nhất, nhanh hơn 6-8 lần (~1.6 GB)",
-    "distil-large-v3.5": "Distil Large v3.5 — chỉ tiếng Anh, nhanh nhất trong nhóm large (~760 MB)",
+    "distil-large-v3_5": "Distil Large v3.5 — chỉ tiếng Anh, nhanh nhất trong nhóm large (~760 MB)",
     "medium": "Medium — chính xác cao (~1.5 GB)",
     "large-v3": "Large v3 — chính xác nhất, chậm khi chạy CPU (~3 GB)",
     "phowhisper-medium": "PhoWhisper Medium — tốt nhất cho audio tiếng Việt",

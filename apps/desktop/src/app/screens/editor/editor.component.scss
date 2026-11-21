@@ -169,6 +169,52 @@
   }
 }
 
+/* Why Render is greyed out, beside it (and the wrapper that carries its tooltip). */
+.render-why {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+  color: var(--vd-text-muted);
+}
+.render-slot {
+  display: inline-flex;
+}
+
+/* What the dub is doing, under the toolbar: being dubbed (the editor is
+   read-only) or waiting at the review checkpoint. */
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-3);
+  padding: 6px var(--vd-sp-3);
+  border-bottom: 1px solid var(--vd-border);
+  background: var(--vd-info-bg);
+  font-size: 0.85rem;
+
+  .text {
+    flex: 1;
+    min-width: 0;
+  }
+  a.btn:hover {
+    text-decoration: none;
+  }
+}
+.pulse {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--vd-running);
+  animation: vd-studio-pulse 1.2s ease-in-out infinite;
+}
+@keyframes vd-studio-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
 /* "Tighten to fit" kept the line: say why, until dismissed. */
 .tighten-kept {
   display: flex;

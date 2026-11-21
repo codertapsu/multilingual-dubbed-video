@@ -12,6 +12,7 @@ import {
 
 import { TranslatePipe, TranslateService } from '../../../core/i18n';
 import { ThemeService } from '../../../core/theme/theme.service';
+import { describeFitNote } from './notes';
 import { PlaybackService } from './playback.service';
 import { StudioStore, type UnitVm } from './studio.store';
 import { matchCuesToLines, parseSubtitles } from './subtitle-import';
@@ -143,6 +144,20 @@ export class TimelineComponent implements OnDestroy {
   });
 
   protected readonly playheadX = computed(() => this.playback.currentMs() * this.pxPerMs());
+
+  /**
+   * Each clip's fit note in words, for its tooltip. Computed once per change
+   * of the clips, not per binding: the template re-renders every frame while
+   * the playhead moves.
+   */
+  protected readonly clipNotes = computed(() => {
+    const out = new Map<string, string>();
+    for (const u of this.store.units()) {
+      const note = describeFitNote(u.note, (key, params) => this.translate.instant(key, params));
+      if (note) out.set(u.id, note);
+    }
+    return out;
+  });
 
   /**
    * Level of detail: zoomed far out (a whole feature in one screen) a typical
@@ -335,6 +350,9 @@ export class TimelineComponent implements OnDestroy {
   }
 
   private beginDrag(e: PointerEvent, kind: Drag['kind'], ids: string[], edge: DragEdge): void {
+    // While a dub runs the lines cannot move (the server refuses it): the
+    // click selects, and nothing follows the pointer only to snap back.
+    if (this.store.dubRunning()) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     this.drag = {
       kind,
@@ -462,6 +480,11 @@ export class TimelineComponent implements OnDestroy {
     e.preventDefault();
     if (!/\.(srt|vtt)$/i.test(file.name)) {
       this.importNote.set(this.translate.instant('studio.import-unsupported'));
+      return;
+    }
+    if (this.store.dubRunning()) {
+      this.importNote.set(this.translate.instant('studio.read-only-hint'));
+      setTimeout(() => this.importNote.set(null), 6000);
       return;
     }
     const cues = parseSubtitles(await file.text());

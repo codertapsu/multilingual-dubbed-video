@@ -12,10 +12,11 @@ import { NgTemplateOutlet } from '@angular/common';
 
 import { speakerNumber, splitSubtitleLines, VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
 
-import { TranslatePipe } from '../../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../../core/i18n';
 import type { VoiceProfile } from '../../../core/models';
 import { formatTimecode } from '../../../core/util/format';
 import { VoiceCloneDialogComponent } from '../../../shared/voice-library/voice-clone-dialog.component';
+import { describeFitNote } from './notes';
 import { PlaybackService } from './playback.service';
 import { MAX_CPS, StudioStore, type LineVm } from './studio.store';
 import { VOICE_DRAG_TYPE } from './timeline.component';
@@ -37,6 +38,7 @@ import { constrainDrag, MIN_SEGMENT_MS, parseTimecode, type DragEdge } from './t
 export class InspectorComponent {
   protected readonly store = inject(StudioStore);
   protected readonly playback = inject(PlaybackService);
+  private readonly translate = inject(TranslateService);
   private readonly textArea = viewChild<ElementRef<HTMLTextAreaElement>>('text');
   private readonly timeInput = viewChild<ElementRef<HTMLInputElement>>('timeInput');
 
@@ -63,6 +65,21 @@ export class InspectorComponent {
   protected readonly unit = computed(() => {
     const l = this.line();
     return l ? (this.store.unitBySegment().get(l.seg.id) ?? null) : null;
+  });
+
+  /** How the clip fits, in words (the server's note is English). */
+  protected readonly fitNote = computed(() =>
+    describeFitNote(this.unit()?.note, (key, params) => this.translate.instant(key, params)),
+  );
+
+  /**
+   * The line's clip is being voiced. Asked by CLIP: a merged take is marked
+   * busy under its first line's id, so on its other lines the button looked
+   * idle and every click queued the same synthesis again.
+   */
+  protected readonly lineBusy = computed(() => {
+    const l = this.line();
+    return l ? this.store.isLineBusy(l.seg.id) : false;
   });
 
   protected readonly wrapped = computed(() => splitSubtitleLines(this.line()?.text ?? '', 42, 2));
@@ -215,15 +232,13 @@ export class InspectorComponent {
   }
 
   /**
-   * Re-voice what is selected, once per CLIP: re-voicing any member of a merged
-   * clip re-voices all of its lines (it degroups), so asking for each member
-   * separately would synthesize the same lines several times.
+   * Re-voice what is selected, once per CLIP (the store maps lines to clips
+   * and skips the ones already being voiced): re-voicing any member of a
+   * merged clip re-voices all of its lines.
    */
   protected regenerate(): void {
-    const units = this.store.unitBySegment();
-    const ids = new Set<string>();
-    for (const id of this.selectedIds()) ids.add(units.get(id)?.id ?? id);
-    void this.store.regenerate([...ids].slice(0, 200));
+    const ids = this.selectedIds().length ? this.selectedIds() : this.line() ? [this.line()!.seg.id] : [];
+    void this.store.regenerate(ids, 200);
   }
 
   /** "Make a voice from these lines": one speaker's lines, taken from the video. */

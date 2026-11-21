@@ -246,11 +246,24 @@
   flex-wrap: wrap;
 }
 
-.review-banner {
-  display: flex;
-  flex-direction: column;
-  gap: var(--vd-sp-2);
-  background: var(--vd-info-bg);
+/* The markup here used these (the casting warnings) without styles of its own. */
+.warn-text {
+  color: var(--vd-warning);
+}
+.small {
+  font-size: 0.8rem;
+}
+
+/* A speaker detection that ended without a result, with Retry. */
+.detect-failed {
+  padding: var(--vd-sp-2);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius-sm);
+  background: var(--vd-warning-bg);
+
+  p {
+    margin: 0;
+  }
 }
 
 .ctx-ignored {

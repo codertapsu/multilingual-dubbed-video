@@ -18,10 +18,10 @@
     <button type="button" class="btn btn-ghost btn-sm" (click)="zoomToFit()">{{ 'studio.zoom-fit' | translate }}</button>
   </div>
   <div class="group">
-    <button type="button" class="icon-btn" [class.active]="snap()" (click)="snap.set(!snap())" [title]="'studio.snap-title' | translate" [attr.aria-pressed]="snap()">
+    <button type="button" class="icon-btn" [class.active]="snap()" (click)="snap.set(!snap())" [title]="'studio.snap-title' | translate" [attr.aria-label]="'studio.snap-title' | translate" [attr.aria-pressed]="snap()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 0 0 12 0V3M6 7h4M14 7h4"/></svg>
     </button>
-    <button type="button" class="icon-btn" [class.active]="follow()" (click)="follow.set(!follow())" [title]="'studio.follow-title' | translate" [attr.aria-pressed]="follow()">
+    <button type="button" class="icon-btn" [class.active]="follow()" (click)="follow.set(!follow())" [title]="'studio.follow-title' | translate" [attr.aria-label]="'studio.follow-title' | translate" [attr.aria-pressed]="follow()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M5 9l-3 3 3 3M19 9l3 3-3 3"/></svg>
     </button>
     <span class="legend">
@@ -133,7 +133,7 @@
             (dragover)="onDragOver($event, u.id)"
             (dragleave)="onDragLeave(u.id)"
             (drop)="onVoiceDrop($event, u.segmentIds)"
-            [title]="u.note ?? ''"
+            [title]="clipNotes().get(u.id) ?? ''"
           >
             <!-- The window it had to fit: a clip running past it is an overlap. -->
             <i class="window" [style.width.px]="width(u.startMs, u.endMs)"></i>

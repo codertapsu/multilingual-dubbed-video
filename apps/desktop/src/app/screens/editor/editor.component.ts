@@ -21,6 +21,7 @@ import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { InspectorComponent } from './studio/inspector.component';
 import { LinesPanelComponent } from './studio/lines-panel.component';
+import { describeTightenReason } from './studio/notes';
 import { PlaybackService, type MonitorMode } from './studio/playback.service';
 import { PreviewComponent } from './studio/preview.component';
 import { ProjectPanelComponent } from './studio/project-panel.component';
@@ -34,14 +35,16 @@ const LINES_OPEN_KEY = 'vd.studio.linesOpen';
  * EditorComponent (route "project/:id/editor") — the dubbing studio.
  *
  *   ┌ toolbar: project · save state · undo/redo · voice changed lines · render ┐
+ *   │ notice: being dubbed (read-only) | waiting at the review checkpoint      │
  *   │ lines (search/filter) │ preview + transport │ inspector | project panel  │
  *   ├────────────────────── resizable splitter ────────────────────────────────┤
  *   │ timeline: ruler · filmstrip · original waveform · source · subtitles · dub│
  *
  * Every edit autosaves (debounced) through StudioStore; timing edits re-place
  * the existing clips server-side, so what you see and hear is what renders.
- * The previous editor's settings / re-dub / character-sheet surface lives on,
- * unchanged, in the Project tab.
+ * The previous editor's settings / re-dub / character-sheet surface lives on
+ * in the Project tab; the review checkpoint's way forward ("Continue
+ * dubbing") is in the toolbar, where Render is otherwise.
  */
 @Component({
   selector: 'vd-editor',
@@ -84,6 +87,22 @@ export class EditorComponent implements OnInit, OnDestroy, HasUnsavedChanges {
 
   protected readonly projectName = computed(() => this.store.project()?.name ?? '');
   protected readonly canRender = computed(() => this.store.aligned() && !this.rendering());
+  /**
+   * Why Render is greyed out, said next to it. It used to be disabled with no
+   * word, and at the review checkpoint (no voices yet) that looked like the
+   * end of the road.
+   */
+  protected readonly renderWhy = computed<'running' | 'no-voices' | null>(() => {
+    if (this.store.aligned() || this.store.loading()) return null;
+    return this.store.dubRunning() ? 'running' : 'no-voices';
+  });
+  /** Why "Tighten to fit" kept a line, in words (the server gives its reason in English). */
+  protected readonly tightenText = computed(() => {
+    const kept = this.store.tightenKept();
+    if (!kept) return null;
+    const reason = describeTightenReason(kept.reason, (key, params) => this.translate.instant(key, params));
+    return this.translate.instant('studio.tighten-kept', { n: kept.line, reason });
+  });
 
   private readonly monitors: readonly MonitorMode[] = ['mix', 'original', 'dub'];
   protected readonly saveKeys: Record<SaveState, string> = {
@@ -121,9 +140,19 @@ export class EditorComponent implements OnInit, OnDestroy, HasUnsavedChanges {
     void this.store.flushNow();
   }
 
-  /** Route guard: only what has NOT reached the server yet counts. */
+  /**
+   * Route guard: only the drafts that are lost on leaving count (the project
+   * settings, the character sheet, the greeting times: each saved by its own
+   * button). Line edits save themselves, and the last ones are flushed as the
+   * editor closes, so they are not asked about.
+   */
   hasUnsavedChanges(): boolean {
-    return this.store.hasUnsavedChanges() || this.projectPanel()?.ctxDirty() === true;
+    return (this.projectPanel()?.unsavedDrafts().length ?? 0) > 0;
+  }
+
+  /** What the leave prompt names. */
+  unsavedChangesList(): string[] {
+    return this.projectPanel()?.unsavedDrafts() ?? [];
   }
 
   // ------------------------------------------------------------- actions
@@ -148,11 +177,32 @@ export class EditorComponent implements OnInit, OnDestroy, HasUnsavedChanges {
     localStorage.setItem(LINES_OPEN_KEY, this.linesOpen() ? '1' : '0');
   }
 
+  /** Leave the review checkpoint (the toolbar's way forward), then follow the dub. */
+  protected async continueDubbing(): Promise<void> {
+    if (await this.store.continueDubbing()) {
+      await this.router.navigate(['/project', this.store.projectId(), 'processing']);
+    }
+  }
+
   /** Re-mix + render from the edited timeline (alignment is already on disk). */
   protected async render(): Promise<void> {
     if (this.rendering()) return;
+    // Rendering restarts the dub from the mix: a dub in progress is stopped
+    // first (orchestrator.retryStep cancels it), so ask before doing that.
+    if (
+      this.store.dubRunning() &&
+      !(await this.confirm.confirm({
+        title: this.translate.instant('studio.stop-dub-title'),
+        message: this.translate.instant('studio.stop-dub-body'),
+        confirmLabel: this.translate.instant('studio.stop-dub-render'),
+      }))
+    ) {
+      return;
+    }
     this.rendering.set(true);
     try {
+      // Voicing the changed lines below is refused while the dub runs.
+      if (this.store.dubRunning() && !(await this.store.stopRunningDub())) return;
       if (!(await this.store.flushNow())) return;
       const stale = this.store.staleCount();
       if (stale > 0) {
@@ -314,10 +364,8 @@ export class EditorComponent implements OnInit, OnDestroy, HasUnsavedChanges {
         }
         break;
       case 'r':
-        if (sel.length) {
-          const units = this.store.unitBySegment();
-          void this.store.regenerate([...new Set(sel.map((id) => units.get(id)?.id ?? id))]);
-        }
+        // Once per clip, none already being voiced (the store maps lines to clips).
+        if (sel.length) void this.store.regenerate(sel);
         break;
       case 'm': {
         const i = this.monitors.indexOf(this.playback.monitor());

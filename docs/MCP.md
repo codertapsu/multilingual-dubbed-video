@@ -155,21 +155,26 @@ http://127.0.0.1:5100` or set `VIDEODUBBER_URL`.
 | `set_download_login`, `get_download_login` | Sign in to Bilibili with the browser's cookies: pass the **path** of a cookie export (Mother Claude's `browser_cookies` export); the file is read and deleted, only `SESSDATA` and `buvid3` are kept, and no value is ever shown. Answers the account and the best quality available. |
 | `list_presets`, `dub_downloads` | Make a project per finished download from a preset (or languages + settings) and start them; one waiting for its models starts when they arrive. `series` dubs the long ones as parts (needs an AI set up in Settings; only videos longer than `longerThanMinutes`, by default 1.5 × the longest part). |
 | `list_brand_kit` | The logos and spoken greetings made in Settings → Logo & greeting, by id, for a project's `settings.branding` (`{ logo: { assetId, corner, … }, greeting: { assetId, atStart, repeat } }`). |
-| `get_series`, `set_split_plan`, `start_series` | A long video dubbed in parts: where the series stands, its cuts with titles and summaries, and each part's project and progress; change the cuts or titles before the parts are made (`create_project` with `series.autoStart: false`); make the parts and queue them in order. |
+| `get_series`, `set_split_plan`, `start_series` | A long video dubbed in parts: where the series stands, its cuts with titles and summaries, and each part's project and progress; change the cuts or titles before the parts are made (`create_project` with `series.autoStart: false`); make the parts and queue them in order. Even with `autoStart` a series starts its parts by itself only when its analysis is clean (speakers detected when asked for, no transcription loops left); otherwise it stops at review and `get_series` says why. Every part stays within the min–max length when the pauses allow, and the plan notes say why one does not. |
+| `rebuild_parts` | After the series transcript was fixed: make every part's transcript again from it, with the series' character sheet; parts already translated are kept unless `force`. Reports old and new line counts and speakers per part. |
 | `wait_jobs`, `follow_jobs_command` | Follow downloads and dubs: a wait of up to 50 s, or a command (`curl.exe -sN …/jobs/events?…&untilDone=1`) that prints one JSON line per change and exits when all of them have stopped, for long batches. |
 | `get_outputs`, `mark_published` | A finished dub's files (with size and sha256, and a thumbnail JPG with no subtitle on it), length and source (title, uploader, link) for a post's caption, and where it was posted; record a post so it is never posted twice. |
 | `delete_project` | Delete a project (asks you first). |
-| `list_projects`, `get_project` | Projects, and one project's progress, step by step, with the end of its log. `waitSeconds` (up to 50) waits for progress. |
+| `list_projects`, `get_project` | Projects, and one project's progress, step by step (with the sub-step, e.g. *Detecting speakers 3/12*, and an estimate of the time left), the run's **warnings** (speaker detection failed, transcription loops repaired or left, a step that ran on the CPU because the GPU was busy, lines with nothing to say) and the end of its log. `waitSeconds` (up to 50) waits for progress. |
 | `create_project` | Create a project from a video file, starting from the same automatic settings the New Project wizard uses (the best engines installed here), with any overrides. `saveTo` chooses the folder for the finished video. Can start the dub at once. `series` dubs it as parts (15–20 minutes by default); `settings.useSourceSubtitles` uses the subtitles the site published instead of speech-to-text (Bilibili gives them only to a signed-in account: `set_download_login` first); `settings.branding` adds a logo and a greeting. |
-| `start_dubbing` | Start, continue (after a pause, a review pause or a closed app), or redo from a step. |
-| `pause_dubbing`, `cancel_dubbing` | Pause a running dub: it keeps everything done so far, and `start_dubbing` continues it later, also after the app was closed. `cancel_dubbing` does the same, and takes a queued dub out of the queue. |
-| `update_settings` | Change project settings; reports which step must re-run for the change to take effect. |
-| `get_transcript` | The lines with timing, source text, translation, and each line's speaking budget (e.g. `≤13 syllables`) and current length. Can page and show only lines that need attention. |
+| `start_dubbing` | Start, continue (after a pause, a review pause or a closed app), or redo from a step. On a series whose parts are made, continues every part in order. |
+| `pause_dubbing`, `cancel_dubbing` | Pause a running dub: it keeps everything done so far, and `start_dubbing` continues it later, also after the app was closed. `cancel_dubbing` does the same, and takes a queued dub out of the queue. On a series, `pause_dubbing` pauses all its parts. |
+| `update_settings` | Change project settings; reports which step must re-run for the change to take effect. `applyToParts` makes the same change on every part of a series (speaker voices included), with a result per part. |
+| `get_transcript` | The lines with timing, source text, translation, and each line's speaking budget (e.g. `≤13 syllables`) and current length. Can page and show only lines that need attention. `LOOP?` marks lines of a transcription loop the app could not repair. |
+| `export_transcript` | The whole transcript (id, times, speaker, original, translation, flags) as a JSON or tab-separated file, for long videos. |
+| `replace_lines`, `retranscribe_range` | Restructure the lines of a time range before translation (remove a loop, split, merge, add a missed line; the new ids are returned), and hear a range again with the project's speech-to-text, by default without the previous text (what breaks a loop); `apply` replaces the range with it. |
 | `set_translations` | Write translations for lines (all of them while the project is paused for review). |
 | `adjust_lines` | Change a line's timing, voice or speaking rate (the same rules as the editor: no overlaps). |
 | `regenerate_voices` | Re-voice edited lines. |
 | `get_translation_report` | What the app's own passes did to the translation: whether the character sheet was built (and why not), lines that failed the checks (repaired or still flagged), what the review model changed or was refused, what auto-fit shortened. |
-| `get_translation_context`, `set_translation_context` | The character sheet: synopsis, cast, glossary and forms of address, used by every translation pass. |
+| `get_translation_context`, `set_translation_context` | The character sheet: synopsis, cast, glossary and forms of address, used by every translation pass. `cast[].speakerId` ties a character to a detected speaker (the speaker ids decide the forms of address, so speakers must be detected before translating); `corrections` fix what speech-to-text mishears (`{heard: "枪人", is: "羌人"}`) before translating; `applyToParts` saves it on every part of a series. |
+| `get_queue` | What is dubbing (step, progress, time left), what waits and why, who holds the GPU lane (a dub, an editor action, a voice preview), and the points budget. |
+| `get_diagnostics` | The app's health (uptime, memory, responsiveness), GPU memory, the queue, engines running or failed with their last output, disk used per project and free disk, recent warnings and errors, crash reports; `bundle: true` writes a support bundle (logs and reports, no keys or logins) and returns its path. |
 | `render_video` | Mix and render the final video (optionally changing the subtitle mode). |
 | `set_save_folder` | Choose the folder a project saves its finished video and subtitles in, or go back to the default. A video already made moves along. |
 | `open_output_folder` | Open the folder with the finished video. |
@@ -177,6 +182,16 @@ http://127.0.0.1:5100` or set `VIDEODUBBER_URL`.
 Two prompts are included: **Dub a video with the best quality** and **Review and improve a dub's
 translation**. In Claude Desktop they appear under the attachment (+) menu; in Claude Code and
 Mother Claude they are `/mcp__videodubber__dub_video` and `/mcp__videodubber__improve_translation`.
+
+## When something goes wrong
+
+Every tool error says what failed and what to do, and ends with **Log reference: mcp-…**: the
+app's structured log (`<config>/logs/orchestrator.jsonl`) has the same id on its lines for that
+call. `get_diagnostics` shows the recent errors with their references, the engines' last output
+and the crash reports; `get_diagnostics bundle=true` writes a zip to attach to a bug report.
+
+If the backend itself stops (a crash, not a quit), the app restarts it by itself and the dubs it
+was running continue from where they were; `get_diagnostics` then says when and why it stopped.
 
 ## The best-quality workflow
 

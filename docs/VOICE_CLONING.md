@@ -20,9 +20,16 @@ on your computer; nothing is uploaded anywhere.
 3. **Check.** The waveform shows where the speech is (blue) and the part the
    voice is made from (green, up to 8 seconds). Move it, listen to it, and read
    what the app measured (below). Cleaning background noise is on by default.
-4. **Save.** Name the voice, add a note, and choose whether to keep the
-   recording (recommended: it lets the voice be made again for another engine
-   later). The new voice then speaks a sentence so you can hear it.
+4. **Save.** Name the voice, say whose voice it is (a man's or a woman's), add a
+   note, and choose whether to keep the recording (recommended: it lets the
+   voice be made again for another engine later). The new voice then speaks a
+   sentence so you can hear it.
+
+The gender is asked, never guessed from how high the voice is: clones overlap (a
+man's voice can sit above a woman's). It is what lets the voices of a video's
+speakers be chosen by gender, your clones first. A voice made before 0.17 shows
+**not confirmed** in My voices until you choose or confirm it there; casting by
+gender leaves such a voice out and names it.
 
 The voice appears in **My voices** and in every voice picker (wizard, editor)
 of projects whose voice engine is **VieNeu-TTS 3.8**. Rename or delete it from

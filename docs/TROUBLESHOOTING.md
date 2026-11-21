@@ -248,6 +248,47 @@ speech is in the audio; the log says *"Re-timed N of M lines to when they are
 spoken"*. A project transcribed by an older version keeps its timing: redo it from
 **Transcribe** to get the new timing, or drag the line in the editor.
 
+### "The backend stopped unexpectedly. Restarting…"
+
+The app's backend (the orchestrator) ended without being asked to. The app restarts it by
+itself (after 2 s, then 10 s, then 60 s) and the dubs it was running continue from where they
+stopped; nothing finished is lost. After a fourth stop within ten minutes it gives up and says
+so: quit and reopen VideoDubber. Each stop leaves evidence: **Help → Diagnostics** shows when it
+stopped and its exit code (on Windows `0xC0000409` is a fatal error inside the process, often
+memory), and **Export support bundle** collects the logs and crash reports into one zip to send.
+
+### Downloads pause while a dub runs
+
+By design. Under **Settings → Downloads**, *Automatic* lets downloads run beside a dub only on a
+powerful machine (an NVIDIA card with 12 GB or more, or Apple Silicon with 32 GB or more, and two
+or more dubs at once allowed), and even then pauses them during the steps that use the graphics
+card or write large files, and whenever the app is under memory or load pressure. Elsewhere it
+is one task at a time: downloads wait until the dub is done. A paused download keeps what it
+has and continues where it stopped. Choose *No limit* to always run them together.
+
+### "The GPU was busy, so a step ran on the CPU"
+
+Not a fault, and nothing needs reinstalling: another job (another dub, an editor action, a voice
+preview) held the graphics card, so this step used the slower processor build of the engine.
+**Help → Diagnostics** shows who holds the GPU lane; `get_queue` does too. Only *"could not
+start"* means the engine itself failed: reinstall it in Settings → Engines if that repeats.
+
+### The transcript repeats one phrase for minutes (a transcription loop)
+
+Whisper can lock onto one phrase over music and repeat it (every second, up to the end of a
+10-minute chunk), or write credit lines nobody said ("请不吝点赞 订阅 转发 打赏"). The app finds
+these after speech-to-text, decodes the range again without the previous text, and replaces the
+loop with what is really said, or with silence; a repetition that comes back is real (a chant, a
+song) and is kept. The run's warnings say how many were repaired. A range it could not repair is
+marked **Possible transcription loop** in the editor (Problems) and `LOOP?` in `get_transcript`:
+listen to it and fix or remove the lines.
+
+### A line says "…" or "♪" and the dub is silent there
+
+Lines with no letter or digit (punctuation, a music note, zero-width characters) have nothing a
+voice can say; voice engines read them as noise ("Ơ…"). They are silent in the dub and keep
+their subtitle; the run's warnings say how many.
+
 ---
 
 ## Developing from source

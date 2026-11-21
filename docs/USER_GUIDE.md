@@ -336,16 +336,30 @@ Claude comes first when it is set up.
 - **Repeat from the part before**: each part opens with the last few seconds of
   the one before (4 by default; 0 for none).
 - **Make and dub the parts right away, without stopping to check the cuts**:
-  leave it off to check them first.
+  leave it off to check them first. Even when it is on, the series stops for
+  you to check when its analysis went wrong (speaker detection failed, or the
+  transcript still has repeated lines from a transcription loop), and the
+  series screen says why.
 
 What happens: the whole video is transcribed once (the Processing screen says
 so). The AI then picks each cut in a pause between lines, never in the middle of
 a sentence (a pause where the picture changes shot, or a chapter mark from
 Bilibili, counts for more: the part then ends like a scene), and gives each
-part a title and a one-sentence summary. The
+part a title and a one-sentence summary, with the names the series' character
+sheet uses. Every part stays within the length you chose when the pauses allow
+it; the plan's notes say why a part does not. The
 **series screen** (open the project from Projects) shows the plan: change a
 part's start time (m:ss) or its title, then **Make the parts and start
 dubbing**. **Plan again** asks the AI again.
+
+Once the parts are made, the series screen acts on all of them at once:
+**Pause all parts** and **Start all parts** keep their order; **Apply the series
+settings to every part** copies the engines, the voices (per speaker too), the
+subtitles and the mix to each part that is not being dubbed; **Rebuild parts from
+the series transcript** gives each part its share of the series transcript again
+after you fixed it (speakers detected again, loops repaired), with the character
+sheet. A part already translated is kept unless you tick the box to discard its
+translation.
 
 Each part is a project of its own (*My video - Part 01*, *Part 02*…), listed
 under its series in Projects, with its own progress, editor and Export screen. The parts share one
@@ -418,7 +432,17 @@ not downloaded twice: adding it again points at the one you have.
   shows it in Explorer or Finder.
 
 When Bilibili limits requests from your connection, the download waits (20 s,
-45 s, then 90 s) and tries again by itself; the list shows when. Downloads are
+45 s, then 90 s) and tries again by itself; the list shows when.
+
+While a dub runs, downloads give way to it. **Settings → Downloads** says how:
+*Automatic* (the default) lets them run beside a dub only on a powerful machine
+(an NVIDIA graphics card with 12 GB or more, or Apple Silicon with 32 GB or more,
+when more than one dub at a time is allowed), and even then pauses them during
+the steps that use the graphics card or write large files, and when the computer
+is short of memory; elsewhere a download waits until the dub is done. You can
+also choose *Pause during heavy steps*, *One task at a time* or *No limit*. A
+paused download keeps what it has and continues where it stopped; the list says
+why it waits. Downloads are
 saved in the `downloads` folder beside your projects (`<projects folder>\..\downloads`),
 and they move with the projects when you change the projects folder.
 
@@ -765,6 +789,22 @@ Before filing anything, open **Help** from the top navigation:
 - **Copy diagnostics** puts a redacted, paste-ready summary of your machine and
   the app's state on the clipboard. A diagnostic taken *while* something is
   broken is far more useful than a description of it afterwards.
+- **Diagnostics** shows what the app is doing and what went wrong: its own
+  health (memory, responsiveness), the graphics card and who is using it, the
+  queue, the engines with their last output, disk use, recent warnings and
+  errors, and crash reports. **Export support bundle** writes a zip of the logs
+  and reports to attach to a bug report; it never contains API keys or site
+  logins, and your home folder is written as `~`.
+
+If the app's backend stops unexpectedly, the app restarts it by itself and the
+dubs it was running continue; a banner says so while it restarts.
+
+A dub's **warnings** appear on its Processing screen: things the app decided on
+its own that the result depends on, such as a step that ran on the processor
+because the graphics card was busy, speaker detection that failed (the dub then
+uses one voice), transcription loops it repaired or could not repair (the lines
+are marked in the editor's Problems), or lines with nothing to say (left
+silent).
 
 If it is reproducible, open an
 [issue](https://github.com/codertapsu/multilingual-dubbed-video/issues), paste

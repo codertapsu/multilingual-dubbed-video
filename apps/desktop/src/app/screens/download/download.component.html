@@ -69,7 +69,7 @@
       </button>
     </div>
     @if (notice(); as n) {
-      <p class="notice">{{ n }}</p>
+      <p class="notice" role="status">{{ n }}</p>
     }
   </div>
 
@@ -80,10 +80,13 @@
       <p class="muted">{{ 'source-video.list-count' | translate: { n: l.videos.length, total: l.total } }}</p>
       <ul class="dl-list">
         @for (v of l.videos; track v.input) {
-          <li class="row check">
-            <input type="checkbox" [ngModel]="listPicked().has(v.input)" (ngModelChange)="toggleListItem(v.input, $event)" />
-            <span class="dl-title">{{ v.title }}</span>
-            <span class="muted small">{{ formatDuration(v.durationSec) }}</span>
+          <!-- The row is the checkbox's label: its name for screen readers, and a bigger target. -->
+          <li>
+            <label class="row check list-pick">
+              <input type="checkbox" [ngModel]="listPicked().has(v.input)" (ngModelChange)="toggleListItem(v.input, $event)" />
+              <span class="dl-title">{{ v.title }}</span>
+              <span class="muted small">{{ formatDuration(v.durationSec) }}</span>
+            </label>
           </li>
         }
       </ul>
@@ -225,9 +228,18 @@
               </span>
             }
             @if (item.state === 'failed' && item.error) {
-              <span class="test-fail small">{{ item.error.message }}</span>
-              @if (item.error.remediation) {
-                <span class="hint small">{{ item.error.remediation }}</span>
+              @if (sourceError(item.error); as keys) {
+                <!-- In the user's language, with what to do; the server's own words stay in the tooltip for support. -->
+                <span class="test-fail small" [title]="item.error.message">{{ keys.message | translate }}</span>
+                <span class="hint small">{{ keys.fix | translate }}</span>
+                @if (item.error.code === 'SOURCE_LOGIN_REQUIRED' && sessionProviders().length > 0) {
+                  <button type="button" class="btn btn-sm fix-btn" (click)="openSignIn()">{{ 'source-video.error.open-sign-in' | translate }}</button>
+                }
+              } @else {
+                <span class="test-fail small">{{ item.error.message }}</span>
+                @if (item.error.remediation) {
+                  <span class="hint small">{{ item.error.remediation }}</span>
+                }
               }
             }
             @if (item.state === 'done' && item.filePath) {
@@ -328,22 +340,70 @@
             (click)="dubSelected()"
             [disabled]="dubbing() || selectedDone().length === 0 || !presetId()"
           >
-            {{ 'source-video.dub-button' | translate: { n: selectedDone().length } }}
+            {{ (dubbing() ? 'source-video.dub-making' : 'source-video.dub-button') | translate: { n: selectedDone().length } }}
           </button>
+        </div>
+      }
+
+      <!-- The result, where the button is: a line per video, each with the way to its progress. -->
+      @if (dubError(); as e) {
+        <vd-error-banner [error]="e" (dismiss)="dubError.set(null)" />
+      }
+      @if (dubResults(); as rows) {
+        <div class="dub-results stack-sm" role="status">
+          <strong>
+            @if (dubMade() === 0) {
+              {{ 'source-video.dub-none' | translate }}
+            } @else if (dubParts() > 0) {
+              {{ 'source-video.dub-done-split' | translate: { n: dubMade(), s: dubParts() } }}
+            } @else {
+              {{ 'source-video.dub-done' | translate: { n: dubMade() } }}
+            }
+          </strong>
+          <ul class="dub-rows">
+            @for (r of rows; track r.downloadId) {
+              <li>
+                <span class="dl-title">{{ r.title }}</span>
+                <!-- Literal keys per outcome: the i18n checker can only verify keys it can see. -->
+                <span class="small" [class.test-fail]="r.outcome === 'failed'" [class.muted]="r.outcome !== 'failed'">
+                  @switch (r.outcome) {
+                    @case ('started') { {{ 'source-video.dub-started' | translate }} }
+                    @case ('queued') { {{ 'source-video.dub-queued' | translate }} }
+                    @case ('waiting') { {{ 'source-video.dub-waiting' | translate }} }
+                    @case ('created') { {{ 'source-video.dub-created' | translate }} }
+                    @case ('series') { {{ 'source-video.dub-series' | translate }} }
+                    @case ('failed') {
+                      {{ 'source-video.dub-failed' | translate }}
+                      @if (r.error) {
+                        @if (sourceError(r.error); as keys) {
+                          <span [title]="r.error.message">{{ keys.message | translate }}</span>
+                        } @else {
+                          {{ r.error.message }}
+                        }
+                      }
+                    }
+                  }
+                </span>
+                @if (r.link) {
+                  <a class="btn btn-sm" [routerLink]="r.link">
+                    {{ (r.outcome === 'series' ? 'source-video.dub-open-series' : 'source-video.dub-open') | translate }}
+                  </a>
+                }
+              </li>
+            }
+          </ul>
         </div>
       }
     </div>
   }
 
-  <!-- Optional credentials, one card per provider that takes one. Collapsed
-       by default: most people never need it, and it is the one control here
-       that carries real risk. -->
+  <!-- Optional sign-in, a block per site that takes one. Collapsed by default:
+       most people never need it, and it is the one control here that carries
+       real risk. No cookie value is shown here, not even masked. -->
   @if (sessionProviders().length > 0) {
-    <details class="card stack" [open]="sessionOpen()">
+    <details #sessionCard class="card stack" [open]="sessionOpen()" (toggle)="onSessionToggle($event)">
       <summary class="session-summary">{{ 'source-video.session.heading' | translate }}</summary>
       <p class="muted">{{ 'source-video.session.intro' | translate }}</p>
-      <p class="muted">{{ 'source-video.session.mother-claude' | translate }}</p>
-      <p class="hint">{{ 'source-video.session.warning' | translate }}</p>
 
       @for (p of sessionProviders(); track p.id) {
         <div class="cred-row stack-sm">
@@ -352,43 +412,47 @@
             @if (sessionFor(p.id); as sess) {
               @if (sess.configured) {
                 <span class="badge badge-completed">
-                  {{
-                    sess.fromEnv
-                      ? ('source-video.session.from-env' | translate)
-                      : ('source-video.session.set' | translate: { masked: sess.masked ?? '' })
-                  }}
+                  {{ (sess.fromEnv ? 'source-video.session.from-env' : 'source-video.session.set') | translate }}
                 </span>
               } @else {
                 <span class="badge">{{ 'source-video.session.not-configured' | translate }}</span>
               }
             }
           </div>
+
+          @if (p.id === 'bilibili') {
+            <!-- A cookie file, made with one click of a browser extension. The card
+                 asked for "SESSDATA" out of the browser's developer tools, which a
+                 first-time user cannot find (UX audit, 2026-11). -->
+            <ol class="how-to">
+              <li>{{ 'source-video.session.step-sign-in' | translate }}</li>
+              <li>{{ 'source-video.session.step-extension' | translate }}</li>
+              <li>{{ 'source-video.session.step-export' | translate }}</li>
+              <li>{{ 'source-video.session.step-choose' | translate }}</li>
+              <li>{{ 'source-video.session.step-delete' | translate }}</li>
+            </ol>
+          }
+
           <div class="cred-controls">
-            <input
-              type="password"
-              class="grow"
-              [attr.aria-label]="'source-video.session.heading' | translate"
-              [placeholder]="'source-video.session.placeholder' | translate"
-              [ngModel]="sessionInput()"
-              (ngModelChange)="sessionInput.set($event)"
-              [name]="'session-' + p.id"
-              autocomplete="off"
-            />
-            <button
-              type="button"
-              class="btn btn-sm"
-              (click)="saveSession(p.id)"
-              [disabled]="sessionBusy() !== null || sessionInput().trim().length === 0"
-            >
-              {{ 'source-video.session.save' | translate }}
-            </button>
+            @if (p.id === 'bilibili') {
+              <label class="btn btn-primary btn-sm file-btn" [class.is-disabled]="sessionBusy() !== null">
+                {{ 'source-video.session.choose-file' | translate }}
+                <input
+                  type="file"
+                  class="visually-hidden"
+                  accept=".txt,.json,text/plain,application/json"
+                  [disabled]="sessionBusy() !== null"
+                  (change)="onCookieFile($event, p.id)"
+                />
+              </label>
+            }
             <button
               type="button"
               class="btn btn-sm"
               (click)="checkSession(p.id)"
               [disabled]="sessionBusy() !== null || !(sessionFor(p.id)?.configured ?? false)"
             >
-              {{ sessionBusy() === p.id ? '…' : ('source-video.session.check' | translate) }}
+              {{ 'source-video.session.check' | translate }}
             </button>
             @if (sessionFor(p.id)?.configured && !sessionFor(p.id)?.fromEnv) {
               <button
@@ -401,10 +465,25 @@
               </button>
             }
           </div>
+
+          <!-- Literal keys per problem: the i18n checker can only verify keys it can see. -->
+          @if (cookieProblem(); as problem) {
+            <p class="hint test-fail" role="alert">
+              @switch (problem) {
+                @case ('not-cookies') { {{ 'source-video.session.file-not-cookies' | translate }} }
+                @case ('no-site') { {{ 'source-video.session.file-no-site' | translate }} }
+                @case ('signed-out') { {{ 'source-video.session.file-signed-out' | translate }} }
+                @case ('too-big') { {{ 'source-video.session.file-too-big' | translate }} }
+              }
+            </p>
+          }
+          @if (sessionBusy() === p.id) {
+            <p class="hint" role="status">{{ 'source-video.session.busy' | translate }}</p>
+          }
           <!-- An expired credential does not error, it silently drops back to
                the anonymous ceiling, so the check has to say so out loud. -->
           @if (sessionCheck(); as check) {
-            <p class="hint" [class.test-ok]="check.valid" [class.test-fail]="!check.valid">
+            <p class="hint" role="status" [class.test-ok]="check.valid" [class.test-fail]="!check.valid">
               {{
                 check.valid
                   ? ('source-video.session.valid' | translate: { name: check.uname ?? '' })
@@ -412,8 +491,40 @@
               }}
             </p>
           }
+
+          <!-- The old way, for whoever already knows it: the value out of the developer tools. -->
+          <details class="paste">
+            <summary>{{ 'source-video.session.paste-heading' | translate }}</summary>
+            <p class="hint">{{ 'source-video.session.paste-help' | translate }}</p>
+            <div class="cred-controls">
+              <input
+                type="password"
+                class="grow"
+                [attr.aria-label]="'source-video.session.paste-heading' | translate"
+                [placeholder]="'source-video.session.placeholder' | translate"
+                [ngModel]="sessionInput()"
+                (ngModelChange)="sessionInput.set($event)"
+                [name]="'session-' + p.id"
+                autocomplete="off"
+              />
+              <button
+                type="button"
+                class="btn btn-sm"
+                (click)="saveSession(p.id)"
+                [disabled]="sessionBusy() !== null || sessionInput().trim().length === 0"
+              >
+                {{ 'source-video.session.save' | translate }}
+              </button>
+            </div>
+          </details>
         </div>
       }
+
+      @if (sessionError(); as e) {
+        <vd-error-banner [error]="e" (dismiss)="sessionError.set(null)" />
+      }
+      <p class="hint">{{ 'source-video.session.warning' | translate }}</p>
+      <p class="muted">{{ 'source-video.session.mother-claude' | translate }}</p>
     </details>
   }
 

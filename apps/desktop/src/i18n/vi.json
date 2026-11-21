@@ -1036,7 +1036,25 @@
     "s4-finishing": "Đang hoàn tất…",
     "skip": "Bỏ qua — để sau tôi tải",
     "skipping": "Đang bỏ qua…",
-    "skip-hint": "Bỏ qua vẫn an toàn: khi bạn tạo dự án đầu tiên, VideoDubber sẽ tải đúng những gì dự án đó cần trước khi chạy."
+    "skip-hint": "Bỏ qua vẫn an toàn: khi bạn tạo dự án đầu tiên, VideoDubber sẽ tải đúng những gì dự án đó cần trước khi chạy.",
+    "check": {
+      "ffmpeg": "Công cụ xử lý video (FFmpeg)",
+      "ffprobe": "Công cụ đọc thông tin video (FFprobe)",
+      "stt-worker": "Dịch vụ nhận dạng giọng nói",
+      "translation-worker": "Dịch vụ dịch",
+      "tts-worker": "Dịch vụ đọc lời thoại",
+      "network": "Kết nối internet",
+      "disk": "Dung lượng trống trên ổ đĩa",
+      "media-tool-fix": "Thiếu một công cụ video đi kèm VideoDubber. Hãy cài lại VideoDubber để khôi phục.",
+      "service-fix": "Dịch vụ nền này chưa khởi động được. Hãy đóng VideoDubber rồi mở lại; nếu vẫn lỗi, mục Trợ giúp có phần tự kiểm tra và báo cáo để bạn gửi đi.",
+      "network-fix": "VideoDubber chưa kết nối được tới nơi tải mô hình. Bạn vẫn tiếp tục được, nhưng bước tải cần có internet.",
+      "disk-fix": "Ổ đĩa có thể không đủ chỗ cho các mô hình. Hãy giải phóng vài GB (nên còn trống từ 5 GB trở lên) trước khi tải các mô hình lớn."
+    },
+    "check-status": {
+      "ok": "Ổn",
+      "warn": "Cần lưu ý",
+      "fail": "Có lỗi"
+    }
   },
   "editor": {
     "title": "Chỉnh sửa",
@@ -1454,6 +1472,8 @@
     "creating": "Đang tạo…",
     "downloading-voice": "Đang tải giọng…",
     "continue": "Tiếp tục →",
+    "more": "Tuỳ chọn khác",
+    "more-hint": "Phụ đề, logo & lời chào, âm thanh gốc, căn thời gian và nhận diện người nói, chia thành nhiều phần, chất lượng video, tốc độ nói, engine xử lý và giọng đọc. Thiết lập mặc định đã phù hợp với hầu hết video.",
     "review-media": "Xem lại media",
     "no-audio-warn": "⚠ Tệp này không có luồng âm thanh — không có gì để nhận dạng hay lồng tiếng. Hãy chọn nguồn khác.",
     "duration": "Thời lượng",
@@ -1465,6 +1485,9 @@
     "probe-failed": "Chưa đọc được thông tin media. Bạn vẫn bắt đầu được — ứng dụng sẽ đọc lại file ở bước đầu tiên.",
     "preparing-hint": "Đang tải các mô hình AI cho những ngôn ngữ bạn chọn — nút Bắt đầu sẽ mở khoá khi xong (quá trình này tiếp tục ở chế độ nền).",
     "preparing-label": "Đang chuẩn bị mô hình…",
+    "prep-failed": "Chưa tải được một số mô hình mà các ngôn ngữ này cần.",
+    "prep-failed-hint": "Hãy kiểm tra kết nối internet rồi thử lại: phần đã tải xong vẫn được giữ. Hoặc quay lại để chọn ngôn ngữ hay engine khác.",
+    "prep-retry": "Tải lại",
     "back": "← Quay lại",
     "starting": "Đang bắt đầu…",
     "preparing-models": "Đang chuẩn bị mô hình…",
@@ -1475,7 +1498,6 @@
     "video-path-hint": "Bấm Chọn tệp, hoặc dán đường dẫn tuyệt đối vào ô trên.",
     "video-path-hint-browser": "Đang chạy trên trình duyệt: hãy dán đường dẫn tuyệt đối mà bộ điều phối đọc được (hộp thoại chọn tệp chỉ có trên ứng dụng máy tính).",
     "source-language-warn": "Hãy chắc chắn đây đúng là ngôn ngữ được nói trong video. Nếu chọn sai, phần nhận dạng sẽ bịa ra lời thoại nghe rất trôi chảy, và bản lồng tiếng sẽ sai hoàn toàn mà không báo lỗi gì.",
-    "preflight-and-more": "{{ message }} (và {{ more }} vấn đề engine khác)",
     "pull-failed": "Không tải được mô hình \"{{ model }}\".",
     "provider-hint": {
       "engine-pack-missing": " — cần cài gói engine (Cài đặt → Engine)",
@@ -1498,9 +1520,10 @@
     "browse-title-browser": "Hộp chọn tệp chỉ có trong ứng dụng máy tính. Hãy dán đường dẫn đầy đủ của video vào ô bên cạnh.",
     "output-folder-remember-reset": "Bấm “Dùng thư mục mặc định” ở đây để dự án mới quay về lưu vào thư mục mặc định.",
     "diarize-install": "Cài nhận diện người nói (~135 MB)",
-    "diarize-installing": "Đang cài nhận diện người nói… {{ percent }}%",
+    "diarize-installing": "Đang cài nhận diện người nói…",
     "separation-install": "Cài tách nhạc & giọng nói (~150 MB)",
-    "separation-installing": "Đang cài tách nhạc & giọng nói… {{ percent }}%",
+    "separation-installing": "Đang cài tách nhạc & giọng nói…",
+    "pack-install-failed": "Chưa cài đặt xong. Bấm nút cài đặt để thử lại.",
     "preset-label": "Mẫu lồng tiếng",
     "preset-none": "Không dùng mẫu",
     "preset-hint": "Mẫu lồng tiếng điền sẵn ngôn ngữ, công cụ xử lý, giọng đọc và kiểu phụ đề bên dưới. Lưu biểu mẫu này thành mẫu để lồng tiếng các video tiếp theo của một kênh theo cùng một cách, hoặc lồng tiếng nhiều video đã tải cùng lúc (màn hình Tải video).",
@@ -1512,7 +1535,51 @@
     "preset-delete-title": "Xoá mẫu \"{{name}}\"?",
     "preset-delete-body": "Các dự án đã tạo bằng mẫu này không bị thay đổi.",
     "use-site-subtitles": "Dùng phụ đề có sẵn trên trang web khi video tải về có phụ đề",
-    "use-site-subtitles-hint": "Bilibili chỉ cung cấp phụ đề (của người đăng, hoặc phụ đề AI của Bilibili) cho tài khoản đã đăng nhập, nên video tải về chỉ có phụ đề khi bạn đã thiết lập đăng nhập Bilibili: ở màn hình Tải video, mục Tài khoản nguồn, hoặc để Mother Claude chuyển cookie từ trình duyệt của bạn. Dùng phụ đề này thay cho bước chuyển giọng nói thành văn bản sẽ bỏ qua được bước lâu nhất với video dài. Thời gian của phụ đề theo trang web; video không có phụ đề vẫn được chuyển giọng nói thành văn bản như bình thường."
+    "use-site-subtitles-hint": "Bilibili chỉ cung cấp phụ đề (của người đăng, hoặc phụ đề AI của Bilibili) cho tài khoản đã đăng nhập, nên video tải về chỉ có phụ đề khi bạn đã thiết lập đăng nhập Bilibili: ở màn hình Tải video, mục Tài khoản nguồn, hoặc để Mother Claude chuyển cookie từ trình duyệt của bạn. Dùng phụ đề này thay cho bước chuyển giọng nói thành văn bản sẽ bỏ qua được bước lâu nhất với video dài. Thời gian của phụ đề theo trang web; video không có phụ đề vẫn được chuyển giọng nói thành văn bản như bình thường.",
+    "continue-why": {
+      "video": "Hãy chọn một video ở trên để tiếp tục.",
+      "languages": "Hãy chọn ngôn ngữ đang nói trong video và ngôn ngữ muốn lồng tiếng.",
+      "voice": "Hãy đợi giọng đọc tải xong."
+    },
+    "leave": {
+      "creating-title": "Rời đi khi dự án đang được tạo?",
+      "creating-body": "VideoDubber đang sao chép video vào dự án mới. Nếu bạn rời đi, việc sao chép vẫn tiếp tục và dự án sẽ có trong mục Dự án khi xong; sẽ có thông báo cho bạn biết kết quả.",
+      "pulling-title": "Rời đi khi mô hình dịch đang tải?",
+      "pulling-body": "Ollama vẫn tiếp tục tải, nhưng việc lồng tiếng sẽ không tự bắt đầu: khi tải xong, hãy mở dự án trong mục Dự án và bắt đầu từ đó.",
+      "go": "Rời đi",
+      "stay": "Ở lại"
+    },
+    "away": {
+      "created-title": "Đã tạo xong “{{ name }}”",
+      "created-body": "Mở dự án để bắt đầu lồng tiếng.",
+      "failed-title": "Chưa tạo được “{{ name }}”",
+      "open-form": "Mở lại biểu mẫu"
+    },
+    "fix": {
+      "heading": "Chưa thể bắt đầu lồng tiếng:",
+      "cloud-key": "{{ name }} cần khoá API. Hãy thêm khoá trong Cài đặt, hoặc quay lại chọn một engine chạy ngay trên máy này.",
+      "install": "{{ name }} cần “{{ pack }}” nhưng máy chưa cài. Hãy cài ngay tại đây: nếu bạn rời màn hình này, việc tải vẫn tiếp tục.",
+      "ollama-off": "Ollama chưa chạy trên máy này. Hãy mở Ollama, hoặc quay lại chọn Argos hay TranslateGemma cho bước dịch: cả hai đều không cần Ollama.",
+      "ollama-model": "Ollama đang chạy nhưng chưa có mô hình “{{ model }}”.",
+      "downloading": "Mô hình mà {{ name }} cần vẫn đang tải. Hãy thử lại khi tải xong.",
+      "starting": "{{ name }} vẫn đang khởi động. Hãy đợi vài giây rồi thử lại.",
+      "model-choice": "{{ name }} không dùng được mô hình giọng nói đang đặt cho dự án mới. Hãy quay lại chọn faster-whisper, hoặc chọn mô hình khác trong Cài đặt → Nhận dạng giọng nói.",
+      "voice": "Giọng đã chọn không thuộc {{ name }}. Hãy quay lại chọn lại giọng đọc.",
+      "unavailable": "Hiện chưa dùng được {{ name }}.",
+      "add-key": "Thêm khoá trong Cài đặt",
+      "add-key-hint": "Dự án này vẫn được giữ: quay lại bằng “Dự án mới” để bắt đầu.",
+      "installing": "Đang cài đặt…",
+      "retry": "Thử lại",
+      "change": "Đổi lựa chọn",
+      "details": "Chi tiết",
+      "phase": {
+        "stt": "Nhận dạng giọng nói",
+        "translation": "Dịch",
+        "refine": "Rà soát bản dịch",
+        "tts": "Giọng đọc",
+        "other": "Xử lý"
+      }
+    }
   },
   "status": {
     "created": "Đã tạo",

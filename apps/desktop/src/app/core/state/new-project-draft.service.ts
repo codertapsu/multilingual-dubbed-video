@@ -2,6 +2,22 @@ import { Injectable } from '@angular/core';
 
 import type { ProjectSettings } from '../models';
 
+/** How long each part of a series is: a preset range, or the user's own. */
+export type DraftSeriesLength = '15-20' | '30-40' | '55-65' | 'custom';
+
+/** "Split into parts" as the form holds it. */
+export interface DraftSeries {
+  split: boolean;
+  length: DraftSeriesLength;
+  /** Minutes, used when `length` is 'custom'. */
+  min: number;
+  max: number;
+  /** The AI that chooses the cuts ('' = none set up). */
+  ai: string;
+  recapSec: number;
+  autoStart: boolean;
+}
+
 /** What the New project form held when the user left it. */
 export interface NewProjectDraft {
   name: string;
@@ -9,6 +25,21 @@ export interface NewProjectDraft {
   autoName: string;
   inputVideoPath: string;
   settings: ProjectSettings;
+  series: DraftSeries;
+  /**
+   * The preset chosen (`id`, '' for none), the name typed to save one, and the
+   * folder the chosen preset saves finished videos to.
+   */
+  preset: { id: string; name: string; outputDir?: string };
+  /** "More options" was open. */
+  moreOptions: boolean;
+  /**
+   * The project Continue made from this form, while it has not started:
+   * coming back revises it instead of making a second one (and a second copy
+   * of the video). `step` 2 when the user left step 2 through one of the
+   * form's own links (Add key), to come back to it.
+   */
+  created?: { projectId: string; fromVideo: string; step: 1 | 2 };
 }
 
 /**
@@ -18,6 +49,10 @@ export interface NewProjectDraft {
  * threw it away: opening "Listen to and compare every voice" from the form and
  * coming back gave a blank form, video, languages, engines and voice gone. The
  * wizard leaves its draft here when it closes and takes it back when it opens.
+ * The first version kept only the name, video and settings, so the form's own
+ * Voices and Settings links still lost "Split into parts" and the chosen
+ * preset with its folder (UX audit, 2026-11-21): the draft holds every field
+ * the form shows.
  *
  * In memory for the app session, never on disk; cleared once the project is
  * created (the project is then in the list).

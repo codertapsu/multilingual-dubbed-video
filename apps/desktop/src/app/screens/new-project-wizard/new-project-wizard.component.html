@@ -14,694 +14,799 @@
   <!-- ============================ STEP 1 ============================ -->
   @if (step() === 1) {
     <form class="card stack" (ngSubmit)="goToStep2()">
-      <div class="field">
-        <label for="projName">{{ 'wizard.project-name' | translate }}</label>
-        <input
-          id="projName"
-          type="text"
-          [ngModel]="name()"
-          (ngModelChange)="name.set($event)"
-          name="projName"
-          [placeholder]="'wizard.project-name-ph' | translate"
-          autocomplete="off"
-        />
-      </div>
-
       <!-- Presets: the choices for a channel's videos, saved once (also used by
-           the Download screen to dub many videos at once, and by the plugin). -->
-      <fieldset>
-        <legend>{{ 'wizard.preset-label' | translate }}</legend>
-        <p class="hint muted">{{ 'wizard.preset-hint' | translate }}</p>
-        <div class="row">
-          <select
-            class="grow"
-            name="preset"
-            [attr.aria-label]="'wizard.preset-label' | translate"
-            [ngModel]="presetId()"
-            (ngModelChange)="applyPreset($event)"
-          >
-            <option value="">{{ 'wizard.preset-none' | translate }}</option>
-            @for (p of presets(); track p.id) {
-              <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage }})</option>
+           the Download screen to dub many videos at once, and by the plugin).
+           Written once, shown in one place: among the first questions when
+           there are presets to pick, else first under More options. -->
+      <ng-template #presetFieldset>
+        <fieldset>
+          <legend>{{ 'wizard.preset-label' | translate }}</legend>
+          <p class="hint muted">{{ 'wizard.preset-hint' | translate }}</p>
+          <div class="row">
+            <select
+              class="grow"
+              name="preset"
+              [attr.aria-label]="'wizard.preset-label' | translate"
+              [ngModel]="presetId()"
+              (ngModelChange)="applyPreset($event)"
+            >
+              <option value="">{{ 'wizard.preset-none' | translate }}</option>
+              @for (p of presets(); track p.id) {
+                <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage }})</option>
+              }
+            </select>
+            @if (presetId()) {
+              <button type="button" class="btn btn-ghost btn-sm" (click)="deletePreset()">
+                {{ 'wizard.preset-delete' | translate }}
+              </button>
             }
-          </select>
-          @if (presetId()) {
-            <button type="button" class="btn btn-ghost btn-sm" (click)="deletePreset()">
-              {{ 'wizard.preset-delete' | translate }}
-            </button>
-          }
-        </div>
-        <div class="row">
-          <input
-            class="grow"
-            type="text"
-            name="presetName"
-            [attr.aria-label]="'wizard.preset-name-ph' | translate"
-            [placeholder]="'wizard.preset-name-ph' | translate"
-            [ngModel]="presetName()"
-            (ngModelChange)="presetName.set($event)"
-            autocomplete="off"
-          />
-          <button
-            type="button"
-            class="btn btn-sm"
-            (click)="savePreset()"
-            [disabled]="savingPreset() || !presetName().trim()"
-          >
-            {{ 'wizard.preset-save' | translate }}
-          </button>
-        </div>
-        @if (presetFolder(); as folder) {
-          <p class="hint muted">{{ 'wizard.preset-folder' | translate: { folder: folder } }}</p>
-        }
-        @if (presetNotice(); as n) {
-          <p class="hint">{{ n }}</p>
-        }
-      </fieldset>
-
-      <fieldset>
-        <legend>{{ 'wizard.source-video' | translate }}</legend>
-        <div class="row">
-          <div class="grow">
-            <label for="videoPath">{{ 'wizard.video-path' | translate }}</label>
-            <input
-              id="videoPath"
-              type="text"
-              [ngModel]="inputVideoPath()"
-              (ngModelChange)="onPathInput($event)"
-              name="videoPath"
-              [placeholder]="'wizard.video-path-ph' | translate"
-              aria-describedby="videoPathHint"
-            />
           </div>
-          <div class="pick-btn">
+          <div class="row">
+            <input
+              class="grow"
+              type="text"
+              name="presetName"
+              [attr.aria-label]="'wizard.preset-name-ph' | translate"
+              [placeholder]="'wizard.preset-name-ph' | translate"
+              [ngModel]="presetName()"
+              (ngModelChange)="presetName.set($event)"
+              autocomplete="off"
+            />
             <button
               type="button"
-              class="btn"
-              (click)="pickVideo()"
-              [disabled]="!inTauri"
-              [title]="(inTauri ? 'wizard.browse-title' : 'wizard.browse-title-browser') | translate"
+              class="btn btn-sm"
+              (click)="savePreset()"
+              [disabled]="savingPreset() || !presetName().trim()"
             >
-              {{ 'wizard.browse' | translate }}
+              {{ 'wizard.preset-save' | translate }}
             </button>
           </div>
-        </div>
-        <p id="videoPathHint" class="hint">
-          {{ (inTauri ? 'wizard.video-path-hint' : 'wizard.video-path-hint-browser') | translate }}
-        </p>
-      </fieldset>
-
-      <fieldset>
-        <legend>{{ 'wizard.languages' | translate }}</legend>
-        <div class="lang-grid">
-          <div class="field">
-            <label for="srcLang">{{ 'wizard.source-language' | translate }}</label>
-            <select
-              id="srcLang"
-              name="srcLang"
-              [ngModel]="settings().sourceLanguage"
-              (ngModelChange)="patchSettings('sourceLanguage', $event)"
-            >
-              @for (lang of languages(); track lang.code) {
-                <option [value]="lang.code">{{ lang.label }}</option>
-              }
-            </select>
-          </div>
-          <div class="field">
-            <label for="tgtLang">{{ 'wizard.target-language' | translate }}</label>
-            <select
-              id="tgtLang"
-              name="tgtLang"
-              [ngModel]="settings().targetLanguage"
-              (ngModelChange)="setTargetLanguage($event)"
-            >
-              @for (lang of languages(); track lang.code) {
-                <option [value]="lang.code">{{ lang.label }}</option>
-              }
-            </select>
-          </div>
-        </div>
-        <!--
-          The single most expensive mistake available on this screen. The source
-          language is FORCED into Whisper — it is never auto-detected and a
-          mismatch never errors — so transcribing Chinese audio as English
-          produces confident, fluent, entirely invented English, which is then
-          translated into fluent, entirely wrong Vietnamese and read aloud over
-          the video. The run reports 100% success. Say so before they start.
-        -->
-        <p class="hint warn-text" role="note">
-          {{ 'wizard.source-language-warn' | translate }}
-        </p>
-      </fieldset>
-
-      <label class="check-row">
-        <input
-          type="checkbox"
-          name="useSourceSubtitles"
-          [ngModel]="settings().useSourceSubtitles === true"
-          (ngModelChange)="patchSettings('useSourceSubtitles', $event)"
-        />
-        <span>{{ 'wizard.use-site-subtitles' | translate }}</span>
-      </label>
-      <p class="hint muted">{{ 'wizard.use-site-subtitles-hint' | translate }}</p>
-
-      <fieldset>
-        <legend>{{ 'wizard.subtitles' | translate }}</legend>
-        <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.subtitles-aria' | translate">
-          @for (mode of subtitleModes; track mode) {
-            <label class="radio-row">
-              <input
-                type="radio"
-                name="subtitleMode"
-                [value]="mode"
-                [checked]="settings().subtitleExportMode === mode"
-                (change)="setSubtitleMode(mode)"
-              />
-              <span class="radio-body">
-                <span class="radio-title">{{ subtitleLabels[mode] | translate }}</span>
-                <span class="hint">{{ subtitleHints[mode] | translate }}</span>
-              </span>
-            </label>
+          @if (presetFolder(); as folder) {
+            <p class="hint muted">{{ 'wizard.preset-folder' | translate: { folder: folder } }}</p>
           }
-        </div>
-      </fieldset>
-
-      <!-- Logo & greeting (optional; applied only when mixing and rendering). -->
-      <fieldset>
-        <legend>{{ 'branding.heading' | translate }}</legend>
-        <p class="hint muted">{{ 'branding.intro' | translate }}</p>
-        <vd-branding-form
-          [value]="settings().branding"
-          [assets]="brandAssets()"
-          (changed)="patchSettings('branding', $event)"
-        />
-      </fieldset>
-
-      <fieldset>
-        <legend>{{ 'wizard.original-audio' | translate }}</legend>
-        <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.original-audio-aria' | translate">
-          <label class="radio-row">
-            <input
-              type="radio"
-              name="originalAudio"
-              value="keep"
-              [checked]="(settings().originalAudioMode ?? 'keep') === 'keep'"
-              (change)="setOriginalAudioMode('keep')"
-            />
-            <span class="radio-body">
-              <span class="radio-title">{{ 'wizard.keep' | translate }}</span>
-              <span class="hint"
-                >{{ 'wizard.keep-hint' | translate }}</span
-              >
-            </span>
-          </label>
-          <!-- Vocal separation is only shown where the engine is actually offered
-               on this machine; otherwise the option is hidden entirely. -->
-          @if (vocalSeparationOffered()) {
-            <label class="radio-row">
-              <input
-                type="radio"
-                name="originalAudio"
-                value="replace-vocals"
-                [checked]="settings().originalAudioMode === 'replace-vocals'"
-                (change)="setOriginalAudioMode('replace-vocals')"
-                [disabled]="!vocalSeparationReady()"
-              />
-              <span class="radio-body">
-                <span class="radio-title">{{ 'wizard.replace-vocals' | translate }}</span>
-                <span class="hint">{{ 'wizard.replace-vocals-hint' | translate }}</span>
-                @if (!vocalSeparationReady()) {
-                  <span class="hint">
-                    @if (separationInstalling()) {
-                      {{ 'wizard.separation-installing' | translate: { percent: separationProgress() ?? 0 } }}
-                    } @else {
-                      <button type="button" class="btn btn-sm" (click)="installSeparation(); $event.preventDefault()">
-                        {{ 'wizard.separation-install' | translate }}
-                      </button>
-                    }
-                  </span>
-                }
-                @if (separationError(); as e) {
-                  <span class="hint warn">{{ e.message }}</span>
-                }
-              </span>
-            </label>
+          @if (presetNotice(); as n) {
+            <p class="hint">{{ n }}</p>
           }
-          <label class="radio-row">
-            <input
-              type="radio"
-              name="originalAudio"
-              value="remove"
-              [checked]="settings().originalAudioMode === 'remove'"
-              (change)="setOriginalAudioMode('remove')"
-            />
-            <span class="radio-body">
-              <span class="radio-title">{{ 'wizard.remove' | translate }}</span>
-              <span class="hint"
-                >{{ 'wizard.remove-hint' | translate }}</span
-              >
-            </span>
-          </label>
-        </div>
-        @if ((settings().originalAudioMode ?? 'keep') === 'keep') {
-          <div class="field">
-            <label for="duckLevel">{{ 'wizard.duck-level' | translate }}</label>
-            <select
-              id="duckLevel"
-              name="duckLevel"
-              [ngModel]="settings().duckingLevelDb"
-              (ngModelChange)="setDuckingLevel($event)"
-            >
-              @for (opt of duckingOptions; track opt.value) {
-                <option [value]="opt.value">{{ opt.label | translate }}</option>
-              }
-            </select>
-          </div>
-        }
-      </fieldset>
+        </fieldset>
+      </ng-template>
 
-      <fieldset>
-        <legend>{{ 'wizard.timing' | translate }}</legend>
-        <!-- Forced alignment needs the WhisperX engine; shown only where that
-             engine is offered on this machine. -->
-        @if (whisperxOffered()) {
-          <label class="radio-row">
-            <input
-              type="checkbox"
-              name="forcedAlignment"
-              [ngModel]="settings().forcedAlignment ?? false"
-              (ngModelChange)="toggleForcedAlignment($event)"
-            />
-            <span class="radio-body">
-              <span class="radio-title">{{ 'wizard.forced-alignment' | translate }}</span>
-              <span class="hint"
-                >{{ 'wizard.forced-alignment-hint' | translate }}
-                @if (whisperxReady()) {
-                  {{ 'wizard.active' | translate }}
-                } @else {
-                  {{ 'wizard.fa-not-installed' | translate }}
-                }</span
-              >
-            </span>
-          </label>
-        }
-        <!-- Speaker detection (the diarization-sherpa pack): a small download,
-             installed right here when the user wants it. -->
-        @if (speakersOffered()) {
-          <label class="radio-row">
-            <input
-              type="checkbox"
-              name="diarize"
-              [ngModel]="settings().diarize ?? false"
-              (ngModelChange)="toggleDiarize($event)"
-              [disabled]="!speakersReady()"
-            />
-            <span class="radio-body">
-              <span class="radio-title">{{ 'wizard.diarize' | translate }}</span>
-              <span class="hint">{{ 'wizard.diarize-hint' | translate }}</span>
-              @if (!speakersReady()) {
-                <span class="hint">
-                  @if (speakersInstalling()) {
-                    {{ 'wizard.diarize-installing' | translate: { percent: speakersProgress() ?? 0 } }}
-                  } @else {
-                    <button type="button" class="btn btn-sm" (click)="installSpeakers(); $event.preventDefault()">
-                      {{ 'wizard.diarize-install' | translate }}
-                    </button>
-                  }
-                </span>
-              }
-              @if (speakersError(); as e) {
-                <span class="hint warn">{{ e.message }}</span>
-              }
-              @if (speakersReady() && settings().diarize) {
-                <span class="hint">
-                  {{ 'editor.speaker-count' | translate }}
-                  <select
-                    name="diarizeSpeakers"
-                    [ngModel]="settings().diarizeSpeakers ?? 0"
-                    (ngModelChange)="setSpeakerCount(+$event)"
-                    (click)="$event.preventDefault()"
-                  >
-                    <option [ngValue]="0">{{ 'editor.speaker-count-auto' | translate }}</option>
-                    @for (n of speakerCounts; track n) {
-                      <option [ngValue]="n">{{ n }}</option>
-                    }
-                  </select>
-                </span>
-              }
-            </span>
-          </label>
-        }
-        <label class="radio-row">
-          <input
-            type="checkbox"
-            name="autoFitOverflow"
-            [ngModel]="settings().autoFitOverflow ?? true"
-            (ngModelChange)="patchSettings('autoFitOverflow', $event)"
-          />
-          <span class="radio-body">
-            <span class="radio-title">{{ 'wizard.auto-fit' | translate }}</span>
-            <span class="hint"
-              >{{ 'wizard.auto-fit-hint' | translate }}</span
-            >
-          </span>
-        </label>
-      </fieldset>
-
-      <!-- A long video as a series of parts (needs an AI from Settings). -->
-      <fieldset>
-        <legend>{{ 'series.wizard-legend' | translate }}</legend>
-        <p class="hint muted">{{ 'series.wizard-intro' | translate }}</p>
-        @if (seriesAiReady().length === 0) {
-          <p class="hint warn-text">{{ 'series.wizard-no-ai' | translate }}</p>
-          <a class="hint" routerLink="/settings/dubbing" fragment="series">{{ 'series.wizard-open-settings' | translate }}</a>
-        } @else {
-          <label class="check-row">
-            <input type="checkbox" name="splitSeries" [ngModel]="splitSeries()" (ngModelChange)="splitSeries.set($event)" />
-            <span>{{ 'series.wizard-enable' | translate }}</span>
-          </label>
-          @if (splitSeries()) {
-            <div class="row series-grid">
-              <label class="stack-sm grow">
-                <span class="label">{{ 'series.length' | translate }}</span>
-                <select name="seriesLength" [ngModel]="seriesLength()" (ngModelChange)="seriesLength.set($event)">
-                  <option value="15-20">{{ 'series.length-15' | translate }}</option>
-                  <option value="30-40">{{ 'series.length-30' | translate }}</option>
-                  <option value="55-65">{{ 'series.length-60' | translate }}</option>
-                  <option value="custom">{{ 'series.length-custom' | translate }}</option>
-                </select>
-              </label>
-              @if (seriesLength() === 'custom') {
-                <label class="stack-sm">
-                  <span class="label">{{ 'series.min' | translate }}</span>
-                  <input type="number" name="seriesMin" min="5" max="120" [ngModel]="seriesMin()" (ngModelChange)="seriesMin.set(+$event)" />
-                </label>
-                <label class="stack-sm">
-                  <span class="label">{{ 'series.max' | translate }}</span>
-                  <input type="number" name="seriesMax" min="5" max="180" [ngModel]="seriesMax()" (ngModelChange)="seriesMax.set(+$event)" />
-                </label>
-              }
-              <label class="stack-sm grow">
-                <span class="label">{{ 'series.ai' | translate }}</span>
-                <select name="seriesAi" [ngModel]="seriesAi()" (ngModelChange)="seriesAi.set($event)">
-                  @for (o of seriesAiReady(); track o.id) {
-                    <option [value]="o.id">{{ o.label }}{{ o.viaMotherClaude ? ' (Mother Claude)' : '' }}</option>
-                  }
-                </select>
-              </label>
-              <label class="stack-sm">
-                <span class="label">{{ 'series.recap' | translate }}</span>
-                <input type="number" name="seriesRecap" min="0" max="8" [ngModel]="seriesRecap()" (ngModelChange)="seriesRecap.set(+$event)" />
-              </label>
-            </div>
-            <label class="check-row">
-              <input type="checkbox" name="seriesAuto" [ngModel]="seriesAuto()" (ngModelChange)="seriesAuto.set($event)" />
-              <span>{{ 'series.auto-start' | translate }}</span>
-            </label>
-            <p class="hint muted">{{ 'series.wizard-how' | translate }}</p>
-          }
-        }
-      </fieldset>
-
-      <fieldset>
-        <legend>{{ 'wizard.render-quality' | translate }}</legend>
-        <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.render-quality-aria' | translate">
-          <label class="radio-row">
-            <input
-              type="radio"
-              name="renderQuality"
-              value="auto"
-              [checked]="settings().renderQuality === 'auto'"
-              (change)="setRenderQuality('auto')"
-            />
-            <span class="radio-body">
-              <span class="radio-title">{{ 'wizard.auto' | translate }}</span>
-              <span class="hint">{{ 'wizard.auto-hint' | translate }}</span>
-            </span>
-          </label>
-          <label class="radio-row">
-            <input
-              type="radio"
-              name="renderQuality"
-              value="quality"
-              [checked]="(settings().renderQuality ?? 'quality') === 'quality'"
-              (change)="setRenderQuality('quality')"
-            />
-            <span class="radio-body">
-              <span class="radio-title">{{ 'wizard.quality' | translate }}</span>
-              <span class="hint">{{ 'wizard.quality-hint' | translate }}</span>
-            </span>
-          </label>
-          <label class="radio-row">
-            <input
-              type="radio"
-              name="renderQuality"
-              value="fast"
-              [checked]="settings().renderQuality === 'fast'"
-              (change)="setRenderQuality('fast')"
-            />
-            <span class="radio-body">
-              <span class="radio-title">{{ 'wizard.fast' | translate }}</span>
-              <span class="hint">{{ 'wizard.fast-hint' | translate }}</span>
-            </span>
-          </label>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>{{ 'wizard.voice-timing' | translate }}</legend>
-        <div class="field">
-          <label for="maxSpeed">{{ 'wizard.max-speed' | translate }}</label>
-          <select
-            id="maxSpeed"
-            name="maxSpeed"
-            [ngModel]="settings().maxSpeedRatio"
-            (ngModelChange)="setMaxSpeed($event)"
-          >
-            @for (opt of speedOptions; track opt.value) {
-              <option [value]="opt.value">{{ opt.label | translate }}</option>
-            }
-          </select>
-          <span class="hint">
-            {{ 'wizard.max-speed-hint' | translate }}
-          </span>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>{{ 'wizard.engines' | translate }}</legend>
-        <p class="hint">
-          {{ 'wizard.engines-hint' | translate }}
-        </p>
-        @if (providers(); as provs) {
-          <div class="lang-grid">
-            <div class="field">
-              <label for="provStt">{{ 'wizard.stt' | translate }}</label>
-              <select
-                id="provStt"
-                name="provStt"
-                [ngModel]="settings().sttProviderId"
-                (ngModelChange)="setProvider('sttProviderId', $event)"
-              >
-                @for (p of selectable(provs.stt, settings().sttProviderId); track p.id) {
-                  <option [value]="p.id">
-                    {{ p.displayName }}{{ providerHint(p) }}
-                  </option>
-                }
-              </select>
-            </div>
-            <div class="field">
-              <label for="provTranslation">{{ 'wizard.translation' | translate }}</label>
-              <select
-                id="provTranslation"
-                name="provTranslation"
-                [ngModel]="settings().translationProviderId"
-                (ngModelChange)="setProvider('translationProviderId', $event)"
-              >
-                @for (p of selectable(provs.translation, settings().translationProviderId); track p.id) {
-                  <option [value]="p.id">
-                    {{ p.displayName }}{{ providerHint(p) }}
-                  </option>
-                }
-              </select>
-            </div>
-            @if (refinerOptions(provs); as refiners) {
-              @if (refiners.length > 0) {
-                <div class="field">
-                  <label for="provRefine">{{ 'wizard.refine' | translate }}</label>
-                  <select
-                    id="provRefine"
-                    name="provRefine"
-                    [ngModel]="settings().refineProviderId ?? 'none'"
-                    (ngModelChange)="setRefineProvider($event)"
-                  >
-                    <option value="none">{{ 'wizard.refine-off' | translate }}</option>
-                    @for (p of selectable(refiners, settings().refineProviderId); track p.id) {
-                      <option [value]="p.id">
-                        {{ p.displayName }}{{ providerHint(p) }}
-                      </option>
-                    }
-                  </select>
-                  <span class="hint">
-                    {{ 'wizard.refine-hint' | translate }}
-                  </span>
-                </div>
-              }
-            }
-            <div class="field">
-              <label class="checkbox-row">
-                <input
-                  type="checkbox"
-                  name="reviewBeforeSynthesis"
-                  [ngModel]="settings().reviewBeforeSynthesis ?? false"
-                  (ngModelChange)="patchSettings('reviewBeforeSynthesis', $event)"
-                />
-                <span>{{ 'wizard.review-pause' | translate }}</span>
-              </label>
-              <span class="hint">
-                {{ 'wizard.review-pause-hint' | translate }}
-              </span>
-            </div>
-            <div class="field">
-              <label for="provTts">{{ 'wizard.tts' | translate }}</label>
-              <select
-                id="provTts"
-                name="provTts"
-                [ngModel]="settings().ttsProviderId"
-                (ngModelChange)="setProvider('ttsProviderId', $event)"
-              >
-                @for (p of selectable(provs.tts, settings().ttsProviderId); track p.id) {
-                  <option [value]="p.id">
-                    {{ p.displayName }}{{ providerHint(p) }}
-                  </option>
-                }
-              </select>
-            </div>
-            <div class="field">
-              <label>{{ 'wizard.rendering' | translate }}</label>
-              <p class="hint">
-                {{ 'wizard.rendering-hint' | translate }}
-              </p>
-            </div>
-          </div>
-          @if (cloudPhases().length > 0) {
-            <div class="badge badge-warning audio-warn" role="note">
-              {{ 'wizard.cloud-warn' | translate: { phases: cloudPhases().join('; ') } }}
-            </div>
-          }
-        } @else {
-          <p class="hint">
-            {{ 'wizard.engines-unavailable' | translate }}
-          </p>
-        }
-      </fieldset>
-
-      @if (showVoicePicker()) {
+      <!-- Locked while Continue makes the project: the copy already holds
+           these choices, and a change made meanwhile would not be in it. -->
+      <fieldset class="form-lock" [disabled]="busy()">
+        <!-- The first questions: the video and its languages. -->
         <fieldset>
-          <legend>{{ 'wizard.voice' | translate }}</legend>
-          @if (libraryEngine(); as engine) {
-            <p class="hint">
-              {{ 'wizard.voice-library' | translate: { lang: targetLanguageLabel(), engine: ('voices.engine.' + engine | translate) } }}
-            </p>
-          } @else if (voiceEngine() === 'omnivoice') {
-            <p class="hint">
-              {{ 'wizard.voice-omni' | translate: { lang: targetLanguageLabel() } }}
-            </p>
-          } @else if (voiceEngine() !== 'piper') {
-            <p class="hint">
-              {{ 'wizard.voice-vieneu' | translate: { lang: targetLanguageLabel() } }}
-            </p>
-          } @else {
-            <p class="hint">
-              {{ 'wizard.voice-piper' | translate: { lang: targetLanguageLabel() } }}
-            </p>
-          }
-          @if (voicesLoading()) {
-            <p class="muted">{{ 'wizard.voice-loading' | translate: { lang: targetLanguageLabel() } }}</p>
-          } @else if (availableVoices().length > 0) {
-            <div class="field">
-              <label for="ttsVoice">{{ 'wizard.voice-label' | translate }}</label>
-              <!-- The chosen voice can be heard right here: no trip to the Voices screen. -->
-              <div class="voice-row">
-                <select
-                  id="ttsVoice"
-                  name="ttsVoice"
-                  [ngModel]="settings().ttsVoiceId"
-                  (ngModelChange)="onSelectVoice($event)"
-                  [disabled]="voiceDownloading()"
-                >
-                  @for (v of availableVoices(); track v.id) {
-                    <option [value]="v.id">
-                      {{ v.label }}{{ v.recommended ? ('wizard.voice-recommended' | translate) : '' }}{{
-                        voiceEngine() !== 'piper'
-                          ? ''
-                          : ' — ' + (installedVoiceIds().has(v.id) ? ('wizard.voice-installed' | translate) : ('wizard.voice-size' | translate: { size: v.approxSizeMb }))
-                      }}
-                    </option>
-                  }
-                </select>
-                <button
-                  type="button"
-                  class="btn"
-                  (click)="togglePreview()"
-                  [disabled]="!selectedVoicePreview() || voiceDownloading()"
-                  [attr.aria-label]="(preview() === 'idle' ? 'wizard.voice-listen-aria' : 'wizard.voice-listen-stop') | translate"
-                  [attr.title]="selectedVoicePreview() ? null : ('wizard.voice-no-sample' | translate)"
-                >
-                  {{ (preview() === 'idle' ? 'wizard.voice-listen' : 'wizard.voice-listen-stop') | translate }}
-                </button>
-              </div>
+          <legend>{{ 'wizard.source-video' | translate }}</legend>
+          <div class="row">
+            <div class="grow">
+              <label for="videoPath">{{ 'wizard.video-path' | translate }}</label>
+              <input
+                id="videoPath"
+                type="text"
+                [ngModel]="inputVideoPath()"
+                (ngModelChange)="onPathInput($event)"
+                name="videoPath"
+                [placeholder]="'wizard.video-path-ph' | translate"
+                aria-describedby="videoPathHint"
+              />
             </div>
-            @if (preview() === 'loading' && selectedVoicePreview() === 'speak') {
-              <p class="hint" role="status">{{ 'wizard.voice-listen-making' | translate }}</p>
-            } @else if (previewFailed()) {
-              <p class="hint warn-text" role="status">{{ 'voices.preview-failed' | translate }}</p>
-            } @else if (settings().ttsVoiceId && selectedVoiceItem() && !selectedVoicePreview()) {
-              <p class="hint">{{ 'wizard.voice-no-sample' | translate }}</p>
-            }
-            @if (voiceDownloading()) {
-              <div class="badge" role="status" aria-live="polite">
-                {{ 'wizard.voice-downloading' | translate: { percent: voiceDownloadPercent() === null ? '' : voiceDownloadPercent() + '%' } }}
-              </div>
-            } @else if (selectedVoiceNeedsDownload()) {
-              <p class="hint">
-                {{ 'wizard.voice-needs-download' | translate }}
-              </p>
-            }
-          } @else if (libraryEngine(); as engine) {
-            <p class="muted">
-              {{ 'wizard.voice-library-none' | translate: { lang: targetLanguageLabel(), engine: ('voices.engine.' + engine | translate) } }}
-            </p>
-          } @else if (voiceEngine() === 'omnivoice') {
-            <p class="muted">
-              {{ 'wizard.voice-omni-fail' | translate }}
-            </p>
-          } @else if (voiceEngine() !== 'piper') {
-            <p class="muted">
-              {{ 'wizard.voice-vieneu-vi-only' | translate: { lang: targetLanguageLabel() } }}
-            </p>
-          } @else {
-            <p class="muted">
-              {{ 'wizard.voice-piper-none' | translate: { lang: targetLanguageLabel() } }}
-            </p>
-          }
-          <p class="hint">
-            <!-- Opens on this dub's language, with a way back; the form is kept meanwhile. -->
-            <a routerLink="/voices" [queryParams]="voicesLink()">{{ 'wizard.voice-browse' | translate }}</a>
+            <div class="pick-btn">
+              <button
+                type="button"
+                class="btn"
+                (click)="pickVideo()"
+                [disabled]="!inTauri"
+                [title]="(inTauri ? 'wizard.browse-title' : 'wizard.browse-title-browser') | translate"
+              >
+                {{ 'wizard.browse' | translate }}
+              </button>
+            </div>
+          </div>
+          <p id="videoPathHint" class="hint">
+            {{ (inTauri ? 'wizard.video-path-hint' : 'wizard.video-path-hint-browser') | translate }}
           </p>
         </fieldset>
-      }
+
+        @if (presetsUpFront()) {
+          <ng-container *ngTemplateOutlet="presetFieldset" />
+        }
+
+        <fieldset>
+          <legend>{{ 'wizard.languages' | translate }}</legend>
+          <div class="lang-grid">
+            <div class="field">
+              <label for="srcLang">{{ 'wizard.source-language' | translate }}</label>
+              <select
+                id="srcLang"
+                name="srcLang"
+                [ngModel]="settings().sourceLanguage"
+                (ngModelChange)="patchSettings('sourceLanguage', $event)"
+              >
+                @for (lang of languages(); track lang.code) {
+                  <option [value]="lang.code">{{ lang.label }}</option>
+                }
+              </select>
+            </div>
+            <div class="field">
+              <label for="tgtLang">{{ 'wizard.target-language' | translate }}</label>
+              <select
+                id="tgtLang"
+                name="tgtLang"
+                [ngModel]="settings().targetLanguage"
+                (ngModelChange)="setTargetLanguage($event)"
+              >
+                @for (lang of languages(); track lang.code) {
+                  <option [value]="lang.code">{{ lang.label }}</option>
+                }
+              </select>
+            </div>
+          </div>
+          <!--
+            The single most expensive mistake available on this screen. The source
+            language is FORCED into Whisper — it is never auto-detected and a
+            mismatch never errors — so transcribing Chinese audio as English
+            produces confident, fluent, entirely invented English, which is then
+            translated into fluent, entirely wrong Vietnamese and read aloud over
+            the video. The run reports 100% success. Say so before they start.
+          -->
+          <p class="hint warn-text" role="note">
+            {{ 'wizard.source-language-warn' | translate }}
+          </p>
+        </fieldset>
+
+        <div class="field">
+          <label for="projName">{{ 'wizard.project-name' | translate }}</label>
+          <input
+            id="projName"
+            type="text"
+            [ngModel]="name()"
+            (ngModelChange)="name.set($event)"
+            name="projName"
+            [placeholder]="'wizard.project-name-ph' | translate"
+            autocomplete="off"
+          />
+        </div>
+
+        <!-- Everything else, each choice with its explanation. The defaults
+             suit most videos, so a first dub needs none of it. -->
+        <details class="more-options" [open]="moreOpen()" (toggle)="onMoreToggle($event)">
+          <summary>
+            <span class="more-title">{{ 'wizard.more' | translate }}</span>
+            <span class="hint">{{ 'wizard.more-hint' | translate }}</span>
+          </summary>
+          <div class="more-body stack">
+            @if (!presetsUpFront()) {
+              <ng-container *ngTemplateOutlet="presetFieldset" />
+            }
+
+            <label class="check-row">
+              <input
+                type="checkbox"
+                name="useSourceSubtitles"
+                [ngModel]="settings().useSourceSubtitles === true"
+                (ngModelChange)="patchSettings('useSourceSubtitles', $event)"
+              />
+              <span>{{ 'wizard.use-site-subtitles' | translate }}</span>
+            </label>
+            <p class="hint muted">{{ 'wizard.use-site-subtitles-hint' | translate }}</p>
+
+            <fieldset>
+              <legend>{{ 'wizard.subtitles' | translate }}</legend>
+              <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.subtitles-aria' | translate">
+                @for (mode of subtitleModes; track mode) {
+                  <label class="radio-row">
+                    <input
+                      type="radio"
+                      name="subtitleMode"
+                      [value]="mode"
+                      [checked]="settings().subtitleExportMode === mode"
+                      (change)="setSubtitleMode(mode)"
+                    />
+                    <span class="radio-body">
+                      <span class="radio-title">{{ subtitleLabels[mode] | translate }}</span>
+                      <span class="hint">{{ subtitleHints[mode] | translate }}</span>
+                    </span>
+                  </label>
+                }
+              </div>
+            </fieldset>
+
+            <!-- Logo & greeting (optional; applied only when mixing and rendering). -->
+            <fieldset>
+              <legend>{{ 'branding.heading' | translate }}</legend>
+              <p class="hint muted">{{ 'branding.intro' | translate }}</p>
+              <vd-branding-form
+                [value]="settings().branding"
+                [assets]="brandAssets()"
+                (changed)="patchSettings('branding', $event)"
+              />
+            </fieldset>
+
+            <fieldset>
+              <legend>{{ 'wizard.original-audio' | translate }}</legend>
+              <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.original-audio-aria' | translate">
+                <label class="radio-row">
+                  <input
+                    type="radio"
+                    name="originalAudio"
+                    value="keep"
+                    [checked]="(settings().originalAudioMode ?? 'keep') === 'keep'"
+                    (change)="setOriginalAudioMode('keep')"
+                  />
+                  <span class="radio-body">
+                    <span class="radio-title">{{ 'wizard.keep' | translate }}</span>
+                    <span class="hint"
+                      >{{ 'wizard.keep-hint' | translate }}</span
+                    >
+                  </span>
+                </label>
+                <!-- Vocal separation is only shown where the engine is actually offered
+                     on this machine; otherwise the option is hidden entirely. -->
+                @if (vocalSeparationOffered()) {
+                  <label class="radio-row">
+                    <input
+                      type="radio"
+                      name="originalAudio"
+                      value="replace-vocals"
+                      [checked]="settings().originalAudioMode === 'replace-vocals'"
+                      (change)="setOriginalAudioMode('replace-vocals')"
+                      [disabled]="!vocalSeparationReady()"
+                    />
+                    <span class="radio-body">
+                      <span class="radio-title">{{ 'wizard.replace-vocals' | translate }}</span>
+                      <span class="hint">{{ 'wizard.replace-vocals-hint' | translate }}</span>
+                      @if (!vocalSeparationReady()) {
+                        @if (separationInstalling()) {
+                          <span class="install-line" role="status">
+                            <span class="hint">
+                              {{ 'wizard.separation-installing' | translate }}
+                              @if (separationProgress() !== null) {
+                                <span class="mono">{{ separationProgress() }}%</span>
+                              }
+                            </span>
+                            <span
+                              class="progress"
+                              [class.indeterminate]="separationProgress() === null"
+                              role="progressbar"
+                              aria-valuemin="0"
+                              aria-valuemax="100"
+                              [attr.aria-valuenow]="separationProgress() ?? undefined"
+                              [attr.aria-label]="'wizard.separation-installing' | translate"
+                            ><span [style.width.%]="separationProgress() ?? 100"></span></span>
+                          </span>
+                        } @else {
+                          <span class="hint">
+                            <button type="button" class="btn btn-sm" (click)="installSeparation(); $event.preventDefault()">
+                              {{ 'wizard.separation-install' | translate }}
+                            </button>
+                          </span>
+                        }
+                      }
+                      @if (separationError(); as e) {
+                        <span class="hint warn-text" role="alert">{{ 'wizard.pack-install-failed' | translate }}</span>
+                        @if (e.message) {
+                          <span class="hint muted">{{ e.message }}</span>
+                        }
+                      }
+                    </span>
+                  </label>
+                }
+                <label class="radio-row">
+                  <input
+                    type="radio"
+                    name="originalAudio"
+                    value="remove"
+                    [checked]="settings().originalAudioMode === 'remove'"
+                    (change)="setOriginalAudioMode('remove')"
+                  />
+                  <span class="radio-body">
+                    <span class="radio-title">{{ 'wizard.remove' | translate }}</span>
+                    <span class="hint"
+                      >{{ 'wizard.remove-hint' | translate }}</span
+                    >
+                  </span>
+                </label>
+              </div>
+              @if ((settings().originalAudioMode ?? 'keep') === 'keep') {
+                <div class="field">
+                  <label for="duckLevel">{{ 'wizard.duck-level' | translate }}</label>
+                  <select
+                    id="duckLevel"
+                    name="duckLevel"
+                    [ngModel]="settings().duckingLevelDb"
+                    (ngModelChange)="setDuckingLevel($event)"
+                  >
+                    @for (opt of duckingOptions; track opt.value) {
+                      <option [value]="opt.value">{{ opt.label | translate }}</option>
+                    }
+                  </select>
+                </div>
+              }
+            </fieldset>
+
+            <fieldset>
+              <legend>{{ 'wizard.timing' | translate }}</legend>
+              <!-- Forced alignment needs the WhisperX engine; shown only where that
+                   engine is offered on this machine. -->
+              @if (whisperxOffered()) {
+                <label class="radio-row">
+                  <input
+                    type="checkbox"
+                    name="forcedAlignment"
+                    [ngModel]="settings().forcedAlignment ?? false"
+                    (ngModelChange)="toggleForcedAlignment($event)"
+                  />
+                  <span class="radio-body">
+                    <span class="radio-title">{{ 'wizard.forced-alignment' | translate }}</span>
+                    <span class="hint"
+                      >{{ 'wizard.forced-alignment-hint' | translate }}
+                      @if (whisperxReady()) {
+                        {{ 'wizard.active' | translate }}
+                      } @else {
+                        {{ 'wizard.fa-not-installed' | translate }}
+                      }</span
+                    >
+                  </span>
+                </label>
+              }
+              <!-- Speaker detection (the diarization-sherpa pack): a small download,
+                   installed right here when the user wants it. -->
+              @if (speakersOffered()) {
+                <label class="radio-row">
+                  <input
+                    type="checkbox"
+                    name="diarize"
+                    [ngModel]="settings().diarize ?? false"
+                    (ngModelChange)="toggleDiarize($event)"
+                    [disabled]="!speakersReady()"
+                  />
+                  <span class="radio-body">
+                    <span class="radio-title">{{ 'wizard.diarize' | translate }}</span>
+                    <span class="hint">{{ 'wizard.diarize-hint' | translate }}</span>
+                    @if (!speakersReady()) {
+                      @if (speakersInstalling()) {
+                        <span class="install-line" role="status">
+                          <span class="hint">
+                            {{ 'wizard.diarize-installing' | translate }}
+                            @if (speakersProgress() !== null) {
+                              <span class="mono">{{ speakersProgress() }}%</span>
+                            }
+                          </span>
+                          <span
+                            class="progress"
+                            [class.indeterminate]="speakersProgress() === null"
+                            role="progressbar"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            [attr.aria-valuenow]="speakersProgress() ?? undefined"
+                            [attr.aria-label]="'wizard.diarize-installing' | translate"
+                          ><span [style.width.%]="speakersProgress() ?? 100"></span></span>
+                        </span>
+                      } @else {
+                        <span class="hint">
+                          <button type="button" class="btn btn-sm" (click)="installSpeakers(); $event.preventDefault()">
+                            {{ 'wizard.diarize-install' | translate }}
+                          </button>
+                        </span>
+                      }
+                    }
+                    @if (speakersError(); as e) {
+                      <span class="hint warn-text" role="alert">{{ 'wizard.pack-install-failed' | translate }}</span>
+                      @if (e.message) {
+                        <span class="hint muted">{{ e.message }}</span>
+                      }
+                    }
+                    @if (speakersReady() && settings().diarize) {
+                      <span class="hint">
+                        {{ 'editor.speaker-count' | translate }}
+                        <select
+                          name="diarizeSpeakers"
+                          [ngModel]="settings().diarizeSpeakers ?? 0"
+                          (ngModelChange)="setSpeakerCount(+$event)"
+                          (click)="$event.preventDefault()"
+                        >
+                          <option [ngValue]="0">{{ 'editor.speaker-count-auto' | translate }}</option>
+                          @for (n of speakerCounts; track n) {
+                            <option [ngValue]="n">{{ n }}</option>
+                          }
+                        </select>
+                      </span>
+                    }
+                  </span>
+                </label>
+              }
+              <label class="radio-row">
+                <input
+                  type="checkbox"
+                  name="autoFitOverflow"
+                  [ngModel]="settings().autoFitOverflow ?? true"
+                  (ngModelChange)="patchSettings('autoFitOverflow', $event)"
+                />
+                <span class="radio-body">
+                  <span class="radio-title">{{ 'wizard.auto-fit' | translate }}</span>
+                  <span class="hint"
+                    >{{ 'wizard.auto-fit-hint' | translate }}</span
+                  >
+                </span>
+              </label>
+            </fieldset>
+
+            <!-- A long video as a series of parts (needs an AI from Settings). -->
+            <fieldset>
+              <legend>{{ 'series.wizard-legend' | translate }}</legend>
+              <p class="hint muted">{{ 'series.wizard-intro' | translate }}</p>
+              @if (seriesAiReady().length === 0) {
+                <p class="hint warn-text">{{ 'series.wizard-no-ai' | translate }}</p>
+                <!-- Not while Continue makes the project (see form-lock). -->
+                <a
+                  class="hint"
+                  [routerLink]="busy() ? null : '/settings/dubbing'"
+                  fragment="series"
+                  [attr.aria-disabled]="busy() || null"
+                  >{{ 'series.wizard-open-settings' | translate }}</a
+                >
+              } @else {
+                <label class="check-row">
+                  <input type="checkbox" name="splitSeries" [ngModel]="splitSeries()" (ngModelChange)="splitSeries.set($event)" />
+                  <span>{{ 'series.wizard-enable' | translate }}</span>
+                </label>
+                @if (splitSeries()) {
+                  <div class="row series-grid">
+                    <label class="stack-sm grow">
+                      <span class="label">{{ 'series.length' | translate }}</span>
+                      <select name="seriesLength" [ngModel]="seriesLength()" (ngModelChange)="seriesLength.set($event)">
+                        <option value="15-20">{{ 'series.length-15' | translate }}</option>
+                        <option value="30-40">{{ 'series.length-30' | translate }}</option>
+                        <option value="55-65">{{ 'series.length-60' | translate }}</option>
+                        <option value="custom">{{ 'series.length-custom' | translate }}</option>
+                      </select>
+                    </label>
+                    @if (seriesLength() === 'custom') {
+                      <label class="stack-sm">
+                        <span class="label">{{ 'series.min' | translate }}</span>
+                        <input type="number" name="seriesMin" min="5" max="120" [ngModel]="seriesMin()" (ngModelChange)="seriesMin.set(+$event)" />
+                      </label>
+                      <label class="stack-sm">
+                        <span class="label">{{ 'series.max' | translate }}</span>
+                        <input type="number" name="seriesMax" min="5" max="180" [ngModel]="seriesMax()" (ngModelChange)="seriesMax.set(+$event)" />
+                      </label>
+                    }
+                    <label class="stack-sm grow">
+                      <span class="label">{{ 'series.ai' | translate }}</span>
+                      <select name="seriesAi" [ngModel]="seriesAi()" (ngModelChange)="seriesAi.set($event)">
+                        @for (o of seriesAiReady(); track o.id) {
+                          <option [value]="o.id">{{ o.label }}{{ o.viaMotherClaude ? ' (Mother Claude)' : '' }}</option>
+                        }
+                      </select>
+                    </label>
+                    <label class="stack-sm">
+                      <span class="label">{{ 'series.recap' | translate }}</span>
+                      <input type="number" name="seriesRecap" min="0" max="8" [ngModel]="seriesRecap()" (ngModelChange)="seriesRecap.set(+$event)" />
+                    </label>
+                  </div>
+                  <label class="check-row">
+                    <input type="checkbox" name="seriesAuto" [ngModel]="seriesAuto()" (ngModelChange)="seriesAuto.set($event)" />
+                    <span>{{ 'series.auto-start' | translate }}</span>
+                  </label>
+                  <p class="hint muted">{{ 'series.wizard-how' | translate }}</p>
+                }
+              }
+            </fieldset>
+
+            <fieldset>
+              <legend>{{ 'wizard.render-quality' | translate }}</legend>
+              <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.render-quality-aria' | translate">
+                <label class="radio-row">
+                  <input
+                    type="radio"
+                    name="renderQuality"
+                    value="auto"
+                    [checked]="settings().renderQuality === 'auto'"
+                    (change)="setRenderQuality('auto')"
+                  />
+                  <span class="radio-body">
+                    <span class="radio-title">{{ 'wizard.auto' | translate }}</span>
+                    <span class="hint">{{ 'wizard.auto-hint' | translate }}</span>
+                  </span>
+                </label>
+                <label class="radio-row">
+                  <input
+                    type="radio"
+                    name="renderQuality"
+                    value="quality"
+                    [checked]="(settings().renderQuality ?? 'quality') === 'quality'"
+                    (change)="setRenderQuality('quality')"
+                  />
+                  <span class="radio-body">
+                    <span class="radio-title">{{ 'wizard.quality' | translate }}</span>
+                    <span class="hint">{{ 'wizard.quality-hint' | translate }}</span>
+                  </span>
+                </label>
+                <label class="radio-row">
+                  <input
+                    type="radio"
+                    name="renderQuality"
+                    value="fast"
+                    [checked]="settings().renderQuality === 'fast'"
+                    (change)="setRenderQuality('fast')"
+                  />
+                  <span class="radio-body">
+                    <span class="radio-title">{{ 'wizard.fast' | translate }}</span>
+                    <span class="hint">{{ 'wizard.fast-hint' | translate }}</span>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>{{ 'wizard.voice-timing' | translate }}</legend>
+              <div class="field">
+                <label for="maxSpeed">{{ 'wizard.max-speed' | translate }}</label>
+                <select
+                  id="maxSpeed"
+                  name="maxSpeed"
+                  [ngModel]="settings().maxSpeedRatio"
+                  (ngModelChange)="setMaxSpeed($event)"
+                >
+                  @for (opt of speedOptions; track opt.value) {
+                    <option [value]="opt.value">{{ opt.label | translate }}</option>
+                  }
+                </select>
+                <span class="hint">
+                  {{ 'wizard.max-speed-hint' | translate }}
+                </span>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>{{ 'wizard.engines' | translate }}</legend>
+              <p class="hint">
+                {{ 'wizard.engines-hint' | translate }}
+              </p>
+              @if (providers(); as provs) {
+                <div class="lang-grid">
+                  <div class="field">
+                    <label for="provStt">{{ 'wizard.stt' | translate }}</label>
+                    <select
+                      id="provStt"
+                      name="provStt"
+                      [ngModel]="settings().sttProviderId"
+                      (ngModelChange)="setProvider('sttProviderId', $event)"
+                    >
+                      @for (p of selectable(provs.stt, settings().sttProviderId); track p.id) {
+                        <option [value]="p.id">
+                          {{ p.displayName }}{{ providerHint(p) }}
+                        </option>
+                      }
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="provTranslation">{{ 'wizard.translation' | translate }}</label>
+                    <select
+                      id="provTranslation"
+                      name="provTranslation"
+                      [ngModel]="settings().translationProviderId"
+                      (ngModelChange)="setProvider('translationProviderId', $event)"
+                    >
+                      @for (p of selectable(provs.translation, settings().translationProviderId); track p.id) {
+                        <option [value]="p.id">
+                          {{ p.displayName }}{{ providerHint(p) }}
+                        </option>
+                      }
+                    </select>
+                  </div>
+                  @if (refinerOptions(provs); as refiners) {
+                    @if (refiners.length > 0) {
+                      <div class="field">
+                        <label for="provRefine">{{ 'wizard.refine' | translate }}</label>
+                        <select
+                          id="provRefine"
+                          name="provRefine"
+                          [ngModel]="settings().refineProviderId ?? 'none'"
+                          (ngModelChange)="setRefineProvider($event)"
+                        >
+                          <option value="none">{{ 'wizard.refine-off' | translate }}</option>
+                          @for (p of selectable(refiners, settings().refineProviderId); track p.id) {
+                            <option [value]="p.id">
+                              {{ p.displayName }}{{ providerHint(p) }}
+                            </option>
+                          }
+                        </select>
+                        <span class="hint">
+                          {{ 'wizard.refine-hint' | translate }}
+                        </span>
+                      </div>
+                    }
+                  }
+                  <div class="field">
+                    <label class="checkbox-row">
+                      <input
+                        type="checkbox"
+                        name="reviewBeforeSynthesis"
+                        [ngModel]="settings().reviewBeforeSynthesis ?? false"
+                        (ngModelChange)="patchSettings('reviewBeforeSynthesis', $event)"
+                      />
+                      <span>{{ 'wizard.review-pause' | translate }}</span>
+                    </label>
+                    <span class="hint">
+                      {{ 'wizard.review-pause-hint' | translate }}
+                    </span>
+                  </div>
+                  <div class="field">
+                    <label for="provTts">{{ 'wizard.tts' | translate }}</label>
+                    <select
+                      id="provTts"
+                      name="provTts"
+                      [ngModel]="settings().ttsProviderId"
+                      (ngModelChange)="setProvider('ttsProviderId', $event)"
+                    >
+                      @for (p of selectable(provs.tts, settings().ttsProviderId); track p.id) {
+                        <option [value]="p.id">
+                          {{ p.displayName }}{{ providerHint(p) }}
+                        </option>
+                      }
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label>{{ 'wizard.rendering' | translate }}</label>
+                    <p class="hint">
+                      {{ 'wizard.rendering-hint' | translate }}
+                    </p>
+                  </div>
+                </div>
+              } @else {
+                <p class="hint">
+                  {{ 'wizard.engines-unavailable' | translate }}
+                </p>
+              }
+            </fieldset>
+
+            @if (showVoicePicker()) {
+              <fieldset>
+                <legend>{{ 'wizard.voice' | translate }}</legend>
+                @if (libraryEngine(); as engine) {
+                  <p class="hint">
+                    {{ 'wizard.voice-library' | translate: { lang: targetLanguageLabel(), engine: ('voices.engine.' + engine | translate) } }}
+                  </p>
+                } @else if (voiceEngine() === 'omnivoice') {
+                  <p class="hint">
+                    {{ 'wizard.voice-omni' | translate: { lang: targetLanguageLabel() } }}
+                  </p>
+                } @else if (voiceEngine() !== 'piper') {
+                  <p class="hint">
+                    {{ 'wizard.voice-vieneu' | translate: { lang: targetLanguageLabel() } }}
+                  </p>
+                } @else {
+                  <p class="hint">
+                    {{ 'wizard.voice-piper' | translate: { lang: targetLanguageLabel() } }}
+                  </p>
+                }
+                @if (voicesLoading()) {
+                  <p class="muted">{{ 'wizard.voice-loading' | translate: { lang: targetLanguageLabel() } }}</p>
+                } @else if (availableVoices().length > 0) {
+                  <div class="field">
+                    <label for="ttsVoice">{{ 'wizard.voice-label' | translate }}</label>
+                    <!-- The chosen voice can be heard right here: no trip to the Voices screen. -->
+                    <div class="voice-row">
+                      <select
+                        id="ttsVoice"
+                        name="ttsVoice"
+                        [ngModel]="settings().ttsVoiceId"
+                        (ngModelChange)="onSelectVoice($event)"
+                        [disabled]="voiceDownloading()"
+                      >
+                        @for (v of availableVoices(); track v.id) {
+                          <option [value]="v.id">
+                            {{ v.label }}{{ v.recommended ? ('wizard.voice-recommended' | translate) : '' }}{{
+                              voiceEngine() !== 'piper'
+                                ? ''
+                                : ' — ' + (installedVoiceIds().has(v.id) ? ('wizard.voice-installed' | translate) : ('wizard.voice-size' | translate: { size: v.approxSizeMb }))
+                            }}
+                          </option>
+                        }
+                      </select>
+                      <button
+                        type="button"
+                        class="btn"
+                        (click)="togglePreview()"
+                        [disabled]="!selectedVoicePreview() || voiceDownloading()"
+                        [attr.aria-label]="(preview() === 'idle' ? 'wizard.voice-listen-aria' : 'wizard.voice-listen-stop') | translate"
+                        [attr.title]="selectedVoicePreview() ? null : ('wizard.voice-no-sample' | translate)"
+                      >
+                        {{ (preview() === 'idle' ? 'wizard.voice-listen' : 'wizard.voice-listen-stop') | translate }}
+                      </button>
+                    </div>
+                  </div>
+                  @if (preview() === 'loading' && selectedVoicePreview() === 'speak') {
+                    <p class="hint" role="status">{{ 'wizard.voice-listen-making' | translate }}</p>
+                  } @else if (previewFailed()) {
+                    <p class="hint warn-text" role="status">{{ 'voices.preview-failed' | translate }}</p>
+                  } @else if (settings().ttsVoiceId && selectedVoiceItem() && !selectedVoicePreview()) {
+                    <p class="hint">{{ 'wizard.voice-no-sample' | translate }}</p>
+                  }
+                  @if (voiceDownloading()) {
+                    <div class="install-line" role="status" aria-live="polite">
+                      <span class="hint">
+                        {{ 'wizard.voice-downloading' | translate: { percent: voiceDownloadPercent() === null ? '' : voiceDownloadPercent() + '%' } }}
+                      </span>
+                      <span class="progress" [class.indeterminate]="voiceDownloadPercent() === null" aria-hidden="true"
+                        ><span [style.width.%]="voiceDownloadPercent() ?? 100"></span
+                      ></span>
+                    </div>
+                  } @else if (selectedVoiceNeedsDownload()) {
+                    <p class="hint">
+                      {{ 'wizard.voice-needs-download' | translate }}
+                    </p>
+                  }
+                  <!-- A voice that could not be downloaded or heard: said here, by
+                       the control the user just used, not at the top of the form. -->
+                  <vd-error-banner [error]="voiceError()" (dismiss)="voiceError.set(null)" />
+                } @else if (libraryEngine(); as engine) {
+                  <p class="muted">
+                    {{ 'wizard.voice-library-none' | translate: { lang: targetLanguageLabel(), engine: ('voices.engine.' + engine | translate) } }}
+                  </p>
+                } @else if (voiceEngine() === 'omnivoice') {
+                  <p class="muted">
+                    {{ 'wizard.voice-omni-fail' | translate }}
+                  </p>
+                } @else if (voiceEngine() !== 'piper') {
+                  <p class="muted">
+                    {{ 'wizard.voice-vieneu-vi-only' | translate: { lang: targetLanguageLabel() } }}
+                  </p>
+                } @else {
+                  <p class="muted">
+                    {{ 'wizard.voice-piper-none' | translate: { lang: targetLanguageLabel() } }}
+                  </p>
+                }
+                <p class="hint">
+                  <!-- Opens on this dub's language, with a way back; the form is kept
+                       meanwhile. Not while Continue makes the project (see form-lock). -->
+                  <a
+                    [routerLink]="busy() ? null : '/voices'"
+                    [queryParams]="voicesLink()"
+                    [attr.aria-disabled]="busy() || null"
+                    >{{ 'wizard.voice-browse' | translate }}</a
+                  >
+                </p>
+              </fieldset>
+            }
+          </div>
+        </details>
+
+        <!-- The app's only data-egress disclosure: outside More options, so a
+             cloud engine chosen in Settings is never hidden behind a fold. -->
+        @if (cloudPhases().length > 0) {
+          <div class="badge badge-warning audio-warn" role="note">
+            {{ 'wizard.cloud-warn' | translate: { phases: cloudPhases().join('; ') } }}
+          </div>
+        }
+      </fieldset>
 
       <div class="row row-between">
         @if (busy()) {
           <vd-busy-indicator [active]="true" [label]="'wizard.creating-label' | translate" />
         } @else {
-          <span class="hint">{{ 'wizard.workspace-note' | translate }}</span>
+          <!-- Why Continue is off, beside it: the reason used to be at the top
+               of a long form while the disabled button sat at its bottom. -->
+          @switch (continueBlocker()) {
+            @case ('video') {
+              <span id="continueWhy" class="hint warn-text" role="status">{{ 'wizard.continue-why.video' | translate }}</span>
+            }
+            @case ('languages') {
+              <span id="continueWhy" class="hint warn-text" role="status">{{ 'wizard.continue-why.languages' | translate }}</span>
+            }
+            @case ('voice') {
+              <span id="continueWhy" class="hint warn-text" role="status">{{ 'wizard.continue-why.voice' | translate }}</span>
+            }
+            @default {
+              <span class="hint">{{ 'wizard.workspace-note' | translate }}</span>
+            }
+          }
         }
         <button
           type="submit"
           class="btn btn-primary"
           [disabled]="!step1Valid() || busy() || voiceDownloading()"
+          [attr.aria-describedby]="continueBlocker() && !busy() ? 'continueWhy' : null"
         >
           {{ (busy() ? 'wizard.creating' : voiceDownloading() ? 'wizard.downloading-voice' : 'wizard.continue') | translate }}
         </button>
@@ -774,6 +879,110 @@
             <vd-busy-indicator [active]="true" [label]="'wizard.preparing-label' | translate" />
           }
         </div>
+      } @else if (prepare() === 'failed') {
+        <!-- A failed download stays on screen with its Retry; Start waits for it. -->
+        <div class="notice notice-danger stack-sm" role="alert">
+          <strong>{{ 'wizard.prep-failed' | translate }}</strong>
+          <span class="hint">{{ 'wizard.prep-failed-hint' | translate }}</span>
+          @if (setupEvents.items().length > 0) {
+            <vd-download-progress-list [items]="setupEvents.items()" />
+          }
+          <vd-error-banner [error]="prepareError()" (dismiss)="prepareError.set(null)" />
+          <div class="row">
+            <button type="button" class="btn btn-primary btn-sm" (click)="retryPrepare()">
+              {{ 'wizard.prep-retry' | translate }}
+            </button>
+          </div>
+        </div>
+      }
+
+      <!-- What stops Start, each in the user's language with its fix beside it. -->
+      @if (startProblems().length > 0) {
+        <div class="notice notice-warning stack-sm" role="alert">
+          <strong>{{ 'wizard.fix.heading' | translate }}</strong>
+          <ul class="problem-list">
+            @for (p of startProblems(); track p.id) {
+              <li class="problem stack-sm">
+                <span><span class="problem-phase">{{ p.phase }}</span> {{ p.text }}</span>
+                <div class="row problem-actions">
+                  @if (p.installPack; as packId) {
+                    @let task = packTask(packId);
+                    @if (task?.state === 'running') {
+                      <span class="install-line grow" role="status">
+                        <span class="hint">
+                          {{ 'wizard.fix.installing' | translate }}
+                          @if (task?.percent !== null) {
+                            <span class="mono">{{ task?.percent }}%</span>
+                          }
+                        </span>
+                        <span
+                          class="progress"
+                          [class.indeterminate]="task?.percent === null"
+                          role="progressbar"
+                          aria-valuemin="0"
+                          aria-valuemax="100"
+                          [attr.aria-valuenow]="task?.percent ?? undefined"
+                          [attr.aria-label]="'wizard.fix.installing' | translate"
+                        ><span [style.width.%]="task?.percent ?? 100"></span></span>
+                      </span>
+                    } @else if (task?.state === 'done') {
+                      <span class="hint ok-text">✓ {{ 'activity.installed' | translate }}</span>
+                    } @else {
+                      <button type="button" class="btn btn-primary btn-sm" (click)="installForStart(packId)">
+                        {{ installLabel(packId) }}
+                      </button>
+                      @if (task?.state === 'failed') {
+                        <span class="hint warn-text">{{ 'wizard.pack-install-failed' | translate }}</span>
+                      }
+                    }
+                  }
+                  @if (p.keyService; as service) {
+                    <a
+                      class="btn btn-primary btn-sm"
+                      [routerLink]="['/settings', 'cloud']"
+                      [fragment]="'key-' + service"
+                      (click)="keepForReturn()"
+                      >{{ 'wizard.fix.add-key' | translate }}</a
+                    >
+                    <span class="hint">{{ 'wizard.fix.add-key-hint' | translate }}</span>
+                  }
+                  @if (p.pullModel; as model) {
+                    <button
+                      type="button"
+                      class="btn btn-primary btn-sm"
+                      (click)="pullOllamaAndRetry(model)"
+                      [disabled]="ollamaPulling()"
+                      [title]="'wizard.pull-title' | translate"
+                    >
+                      {{ ollamaPulling() ? ('wizard.pulling' | translate: { percent: ollamaPullPercent() }) : ('wizard.pull-start' | translate: { model: model }) }}
+                    </button>
+                    @if (pullError(); as why) {
+                      <span class="hint warn-text">{{ 'wizard.pull-failed' | translate: { model: model } }} {{ why }}</span>
+                    } @else if (pullError() === '') {
+                      <span class="hint warn-text">{{ 'wizard.pull-failed' | translate: { model: model } }}</span>
+                    }
+                  }
+                  @if (p.retry) {
+                    <button type="button" class="btn btn-sm" (click)="start()" [disabled]="busy()">
+                      {{ 'wizard.fix.retry' | translate }}
+                    </button>
+                  }
+                  @if (p.change; as target) {
+                    <button type="button" class="btn btn-sm" (click)="changeChoice(target)">
+                      {{ 'wizard.fix.change' | translate }}
+                    </button>
+                  }
+                </div>
+                @if (p.detail) {
+                  <details class="problem-detail">
+                    <summary>{{ 'wizard.fix.details' | translate }}</summary>
+                    <p class="hint">{{ p.detail }}</p>
+                  </details>
+                }
+              </li>
+            }
+          </ul>
+        </div>
       }
 
       <div class="row row-between">
@@ -784,21 +993,10 @@
           type="button"
           class="btn btn-primary"
           (click)="start()"
-          [disabled]="busy() || ollamaPulling() || preparingModels()"
+          [disabled]="busy() || ollamaPulling() || prepare() !== 'ready'"
         >
           {{ (busy() ? 'wizard.starting' : preparingModels() ? 'wizard.preparing-models' : 'wizard.start') | translate }}
         </button>
-        @if (ollamaPullAction(); as pullModel) {
-          <button
-            type="button"
-            class="btn"
-            (click)="pullOllamaAndRetry(pullModel)"
-            [disabled]="ollamaPulling()"
-            [title]="'wizard.pull-title' | translate"
-          >
-            {{ ollamaPulling() ? ('wizard.pulling' | translate: { percent: ollamaPullPercent() }) : ('wizard.pull-start' | translate: { model: pullModel }) }}
-          </button>
-        }
       </div>
     </div>
   }

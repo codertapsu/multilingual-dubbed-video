@@ -142,3 +142,127 @@
   gap: var(--vd-sp-3);
   align-items: flex-end;
 }
+
+/* The form's options, locked while Continue makes the project. A fieldset only
+   for its `disabled`: no frame of its own. */
+.form-lock {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-4);
+}
+.form-lock > fieldset,
+.more-body > fieldset {
+  margin-bottom: 0;
+}
+
+/* "More options": every other choice, folded away until asked for. */
+.more-options {
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+  background: var(--vd-surface);
+}
+.more-options > summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--vd-sp-3) var(--vd-sp-4);
+  cursor: pointer;
+  list-style: none;
+  border-radius: var(--vd-radius);
+}
+.more-options > summary::-webkit-details-marker {
+  display: none;
+}
+.more-options > summary:hover {
+  background: var(--vd-surface-2);
+}
+.more-title {
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+}
+.more-title::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.more-options[open] .more-title::before {
+  transform: rotate(45deg);
+}
+.more-body {
+  padding: 0 var(--vd-sp-4) var(--vd-sp-4);
+}
+
+/* An install or download in progress: its words over a bar. */
+.install-line {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-1);
+  min-width: 12rem;
+}
+.install-line .progress {
+  display: block;
+}
+
+/* Step 2: a failed model download, and what stops Start. */
+.notice {
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+  padding: var(--vd-sp-3) var(--vd-sp-4);
+}
+.notice-danger {
+  border-color: var(--vd-danger);
+  background: var(--vd-danger-bg);
+}
+.notice-warning {
+  border-color: var(--vd-warning);
+  background: var(--vd-warning-bg);
+}
+.problem-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-3);
+}
+.problem + .problem {
+  border-top: 1px solid var(--vd-border);
+  padding-top: var(--vd-sp-3);
+}
+.problem-phase {
+  font-weight: 650;
+}
+.problem-phase::after {
+  content: ':';
+}
+.problem-actions {
+  flex-wrap: wrap;
+}
+.problem-detail summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--vd-text-muted);
+}
+.problem-detail p {
+  margin: var(--vd-sp-1) 0 0;
+}
+.ok-text {
+  color: var(--vd-success);
+}
+a.btn:hover {
+  text-decoration: none;
+}
+a[aria-disabled='true'] {
+  color: var(--vd-text-subtle);
+  cursor: not-allowed;
+}

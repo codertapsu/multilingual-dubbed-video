@@ -1036,7 +1036,25 @@
     "s4-finishing": "Finishing…",
     "skip": "Skip for now — I'll download later",
     "skipping": "Skipping…",
-    "skip-hint": "Skipping is safe: when you create your first project, VideoDubber downloads exactly what that project needs before it starts."
+    "skip-hint": "Skipping is safe: when you create your first project, VideoDubber downloads exactly what that project needs before it starts.",
+    "check": {
+      "ffmpeg": "Video tools (FFmpeg)",
+      "ffprobe": "Video reader (FFprobe)",
+      "stt-worker": "Speech-to-text service",
+      "translation-worker": "Translation service",
+      "tts-worker": "Voice service (text to speech)",
+      "network": "Internet connection",
+      "disk": "Free disk space",
+      "media-tool-fix": "A video tool that comes with VideoDubber is missing. Reinstall VideoDubber to bring it back.",
+      "service-fix": "This background service did not start. Close VideoDubber and open it again; if it still fails, Help has a self-check and a report you can send.",
+      "network-fix": "VideoDubber could not reach the site the models download from. You can continue, but the download needs an internet connection.",
+      "disk-fix": "There may not be enough room for the models. Free up a few GB (5 GB or more is comfortable) before downloading the larger models."
+    },
+    "check-status": {
+      "ok": "OK",
+      "warn": "Needs a look",
+      "fail": "Not working"
+    }
   },
   "editor": {
     "title": "Editor",
@@ -1454,6 +1472,8 @@
     "creating": "Creating…",
     "downloading-voice": "Downloading voice…",
     "continue": "Continue →",
+    "more": "More options",
+    "more-hint": "Subtitles, logo & greeting, original audio, timing and speaker detection, splitting into parts, video quality, speech speed, processing engines and voice. The defaults suit most videos.",
     "review-media": "Review media",
     "no-audio-warn": "⚠ This file has no audio stream — there is nothing to transcribe or dub. Pick a different source.",
     "duration": "Duration",
@@ -1465,6 +1485,9 @@
     "probe-failed": "Media could not be probed automatically. You can still start — the pipeline probes the file as its first step.",
     "preparing-hint": "Downloading the AI models for your selected languages — Start unlocks once they're ready (this continues in the background).",
     "preparing-label": "Preparing models…",
+    "prep-failed": "Some of the models these languages need did not download.",
+    "prep-failed-hint": "Check the internet connection and try again: what already downloaded is kept. Or go back and choose other languages or engines.",
+    "prep-retry": "Try the download again",
     "back": "← Back",
     "starting": "Starting…",
     "preparing-models": "Preparing models…",
@@ -1475,7 +1498,6 @@
     "video-path-hint": "Use Browse to pick a file, or paste an absolute path.",
     "video-path-hint-browser": "Running in the browser: paste an absolute path the orchestrator can read (the native file picker is desktop-only).",
     "source-language-warn": "Make sure this is the language actually spoken in the video. If it is wrong, the transcription will invent text that sounds fluent, and the dub will be confidently wrong with no error shown.",
-    "preflight-and-more": "{{ message }} (and {{ more }} more engine problem(s))",
     "pull-failed": "Could not download the model \"{{ model }}\".",
     "provider-hint": {
       "engine-pack-missing": " — needs an engine pack (Settings → Engines)",
@@ -1498,9 +1520,10 @@
     "browse-title-browser": "The file picker is only in the desktop app. Paste the video's full path instead.",
     "output-folder-remember-reset": "“Use the default folder” here makes them start in the default folder again.",
     "diarize-install": "Install speaker detection (~135 MB)",
-    "diarize-installing": "Installing speaker detection… {{ percent }}%",
+    "diarize-installing": "Installing speaker detection…",
     "separation-install": "Install music & voice separation (~150 MB)",
-    "separation-installing": "Installing music & voice separation… {{ percent }}%",
+    "separation-installing": "Installing music & voice separation…",
+    "pack-install-failed": "The install did not finish. Press Install to try again.",
     "preset-label": "Preset",
     "preset-none": "No preset",
     "preset-hint": "A preset fills in the languages, engines, voice and subtitle choices below. Save this form as one to dub a channel's next videos the same way, or many downloads at once (Download screen).",
@@ -1512,7 +1535,51 @@
     "preset-delete-title": "Delete the preset \"{{name}}\"?",
     "preset-delete-body": "Projects already made with it are not changed.",
     "use-site-subtitles": "Use the subtitles the site published, when the downloaded video has them",
-    "use-site-subtitles-hint": "Bilibili gives its subtitles (the uploader's, or its own AI ones) only to a signed-in account, so they come with a download once your Bilibili login is set: Download screen, Source account, or Mother Claude passing your browser's cookies. Using them instead of speech-to-text saves the longest step on a long video. The timing is the site's; a video without them is transcribed as usual."
+    "use-site-subtitles-hint": "Bilibili gives its subtitles (the uploader's, or its own AI ones) only to a signed-in account, so they come with a download once your Bilibili login is set: Download screen, Source account, or Mother Claude passing your browser's cookies. Using them instead of speech-to-text saves the longest step on a long video. The timing is the site's; a video without them is transcribed as usual.",
+    "continue-why": {
+      "video": "Choose a video above to continue.",
+      "languages": "Choose the language spoken in the video and the language to dub it into.",
+      "voice": "Wait until the voice has finished downloading."
+    },
+    "leave": {
+      "creating-title": "Leave while the project is being created?",
+      "creating-body": "VideoDubber is copying the video into the new project. If you leave, the copy carries on and the project appears in Projects when it is done; a notice tells you how it went.",
+      "pulling-title": "Leave while the translation model downloads?",
+      "pulling-body": "The download carries on in Ollama, but the dub will not start by itself: when the download is done, open the project in Projects and start it there.",
+      "go": "Leave",
+      "stay": "Stay here"
+    },
+    "away": {
+      "created-title": "“{{ name }}” is created",
+      "created-body": "Open it to start dubbing.",
+      "failed-title": "“{{ name }}” could not be created",
+      "open-form": "Back to the form"
+    },
+    "fix": {
+      "heading": "The dub can't start yet:",
+      "cloud-key": "{{ name }} needs an API key. Add it in Settings, or go back and pick an engine that runs on this computer.",
+      "install": "{{ name }} needs “{{ pack }}”, which is not installed yet. Install it here: the download carries on if you leave this screen.",
+      "ollama-off": "Ollama is not running on this computer. Start it, or go back and pick Argos or TranslateGemma for translation: neither needs Ollama.",
+      "ollama-model": "Ollama is running, but the model “{{ model }}” is not downloaded yet.",
+      "downloading": "The model {{ name }} needs is still downloading. Try again once it is done.",
+      "starting": "{{ name }} is still starting. Wait a few seconds, then try again.",
+      "model-choice": "{{ name }} cannot use the speech model set for new projects. Go back and pick faster-whisper, or choose another speech model in Settings → Speech-to-text.",
+      "voice": "The chosen voice does not belong to {{ name }}. Go back and choose the voice again.",
+      "unavailable": "{{ name }} cannot run right now.",
+      "add-key": "Add the key in Settings",
+      "add-key-hint": "This project is kept: come back with “New project” to start it.",
+      "installing": "Installing…",
+      "retry": "Try again",
+      "change": "Change it",
+      "details": "Details",
+      "phase": {
+        "stt": "Speech to text",
+        "translation": "Translation",
+        "refine": "Review & refine",
+        "tts": "Voice",
+        "other": "Processing"
+      }
+    }
   },
   "status": {
     "created": "Created",

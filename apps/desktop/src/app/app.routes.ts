@@ -2,6 +2,7 @@ import { inject } from '@angular/core';
 import { Router, type Routes } from '@angular/router';
 
 import { firstRunGuard, onboardingGuard } from './core/guards/first-run.guard';
+import { leaveWhileBusyGuard } from './core/guards/leave-while-busy.guard';
 import { unsavedChangesGuard } from './core/guards/unsaved-changes.guard';
 import { sectionForAnchor } from './screens/settings/settings-sections';
 
@@ -58,6 +59,7 @@ export const APP_ROUTES: Routes = [
   {
     path: 'new',
     title: 'nav.title.new-project',
+    canDeactivate: [leaveWhileBusyGuard],
     loadComponent: () =>
       import('./screens/new-project-wizard/new-project-wizard.component').then(
         (m) => m.NewProjectWizardComponent,

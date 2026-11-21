@@ -2,10 +2,53 @@
   display: block;
 }
 
-.summary-badge {
-  align-self: flex-start;
-  white-space: normal;
-  line-height: 1.4;
+/* The line Help leads with: "All good", or how many problems and where the fixes are. */
+.summary {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vd-sp-3);
+  padding: var(--vd-sp-3) var(--vd-sp-4);
+  border-radius: var(--vd-radius);
+  border: 1px solid var(--vd-success);
+  background: var(--vd-success-bg);
+}
+.summary[data-tone='warn'] {
+  border-color: var(--vd-warning);
+  background: var(--vd-warning-bg);
+}
+.summary[data-tone='fail'] {
+  border-color: var(--vd-danger);
+  background: var(--vd-danger-bg);
+}
+.summary[data-tone='ok'] .check-icon {
+  background: var(--vd-success);
+}
+.summary[data-tone='warn'] .check-icon {
+  background: var(--vd-warning);
+}
+.summary[data-tone='fail'] .check-icon {
+  background: var(--vd-danger);
+}
+
+/* The backend's own words, folded away: support needs them, a user rarely does. */
+.tech summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--vd-text-muted);
+}
+.tech-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--vd-sp-1) var(--vd-sp-4);
+  margin: var(--vd-sp-2) 0 0;
+  font-size: 0.8rem;
+}
+.tech-list dt {
+  color: var(--vd-text-muted);
+}
+.tech-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* ----- Self-check + service list (mirrors the onboarding wizard's step 2, so

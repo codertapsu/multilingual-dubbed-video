@@ -1,6 +1,6 @@
 import { DiagnosticsPanelComponent } from '../../shared/diagnostics/diagnostics-panel.component';
 import type { OnDestroy, OnInit } from '@angular/core';
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 
 import { IpcService } from '../../core/ipc/ipc.service';
@@ -12,6 +12,7 @@ import type { WorkersHealth } from '../../core/models/view-models';
 import type { AppError } from '../../core/models';
 import type { PreflightResult, SystemProfileResponse } from '../../core/models/setup';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { checkViews, serviceViews, setupSummary } from './setup-summary';
 
 /** The troubleshooting page every error banner's `docsRef` points into. */
 const TROUBLESHOOTING_URL =
@@ -39,6 +40,10 @@ const NEW_ISSUE_URL =
  *      ffprobe), so "nothing happens" gets a cause.
  *   3. Copy diagnostics — a redacted, paste-ready bundle, plus the links that
  *      actually open (the error banner's docsRef target, and the issue form).
+ *
+ * Both lists speak plainly and lead with one line ("All good", "2 problems
+ * found"); what the backend said, in its own words, is one click away under
+ * Technical details (setup-summary.ts).
  */
 @Component({
   selector: 'vd-help',
@@ -125,14 +130,20 @@ export class HelpComponent implements OnInit, OnDestroy {
     this.installedWhisperModels.set(status?.installed.whisperModels ?? null);
   }
 
-  /** The health rows, as [name, available, detail] tuples for the template. */
-  protected serviceRows(): { name: string; available: boolean; detail?: string }[] {
+  /** The self-check's rows, with plain names and what to do. */
+  protected readonly checks = computed(() => {
+    const pf = this.preflight();
+    return pf ? checkViews(pf) : [];
+  });
+
+  /** The service rows, with plain names: Running / Not running. */
+  protected readonly services = computed(() => {
     const h = this.workers();
-    if (!h) return [];
-    return (Object.entries(h) as [string, { available: boolean; detail?: string }][]).map(
-      ([name, v]) => ({ name, available: v.available, ...(v.detail ? { detail: v.detail } : {}) }),
-    );
-  }
+    return h ? serviceViews(h) : [];
+  });
+
+  /** The line the page leads with. */
+  protected readonly summary = computed(() => setupSummary(this.preflight(), this.workers()));
 
   /** Build the redacted bundle and put it on the clipboard. */
   protected async copyDiagnostics(): Promise<void> {

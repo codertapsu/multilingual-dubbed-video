@@ -1768,12 +1768,15 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Choose a voice for each speaker',
       description:
-        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones; within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance; speakers past the voices share a default voice of their gender. Refuses while a cloned voice\'s gender is unconfirmed (ask the user to confirm it in Voices → My voices) unless ignoreUnconfirmed=true (they are then left out). Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
+        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones; within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance; speakers past the voices share a default voice of their gender. A cloned voice whose gender the user has not confirmed is left out of the proposal, which then says so first; apply=true is refused while any is left out, unless allowWithoutClones=true (the user agreed to a cast without them). Ask the user to confirm them in Voices → My voices instead when you can: their rule is their clones first. Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
       inputSchema: z.object({
         projectId: z.string(),
         apply: z.boolean().default(false),
         applyToParts: z.boolean().default(false),
-        ignoreUnconfirmed: z.boolean().default(false),
+        allowWithoutClones: z
+          .boolean()
+          .default(false)
+          .describe('Apply even though some cloned voices are left out (gender not confirmed): only when the user said so.'),
         swaps: z
           .array(z.object({ speakerId: z.string(), voiceId: z.string() }))
           .optional()
@@ -1781,7 +1784,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    guarded(async ({ projectId, apply, applyToParts, ignoreUnconfirmed, swaps }, ctx) => {
+    guarded(async ({ projectId, apply, applyToParts, allowWithoutClones, swaps }, ctx) => {
       type Cast = {
         refused?: boolean;
         message?: string;
@@ -1795,24 +1798,26 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       };
       const res = await api.post<Cast>(
         `/projects/${encodeURIComponent(projectId)}/speakers/cast`,
-        { apply, applyToParts, ignoreUnconfirmed, ...(swaps?.length ? { swaps } : {}) },
+        { apply, applyToParts, allowWithoutClones, ...(swaps?.length ? { swaps } : {}) },
         { signal: ctx.mcpReq.signal },
       );
+      // What was left out comes first: the user's rule is their clones first,
+      // and a proposal without them must not read like the intended cast.
+      const leftOut = res.unconfirmed.length
+        ? [
+            `${res.unconfirmed.length} of the user's cloned voices were left out because their gender isn't confirmed: ${res.unconfirmed.map((v) => `"${v.name}" (${v.voiceId})`).join(', ')}. ` +
+              'Ask the user to confirm them in Voices → My voices and propose again, or apply without them only if the user agrees (allowWithoutClones=true).',
+          ]
+        : [];
       if (res.refused) {
-        return text(
-          [
-            res.message ?? 'Some cloned voices have no confirmed gender.',
-            ...res.unconfirmed.map((v) => `- ${v.voiceId} "${v.name}"`),
-            'Ask the user to set or confirm their gender in Voices → My voices, or call again with ignoreUnconfirmed=true to leave them out.',
-          ].join('\n'),
-        );
+        return text([...leftOut, `Not saved: ${res.message ?? 'cloned voices would be left out.'}`].join('\n'));
       }
       return text(
         [
+          ...leftOut,
           `${res.applied ? 'Saved' : 'Proposed'} cast (${res.assignments.length} speaker(s)):`,
           ...res.assignments.map((a) => `- ${a.speakerId} -> ${a.voiceName} (${a.voiceId}, ${a.by})`),
           ...(res.unassigned.length ? [`Project voice (gender unknown): ${res.unassigned.join(', ')}`] : []),
-          ...(res.unconfirmed.length ? [`Left out, gender not confirmed: ${res.unconfirmed.map((v) => v.name).join(', ')}`] : []),
           ...res.notes.map((n) => `Note: ${n}`),
           ...(res.parts ?? []).map((p) => `- part ${p.index} (${p.projectId}): ${p.ok ? 'saved' : p.skipped ? `skipped, ${p.skipped}` : `failed: ${p.error ?? '?'}`}`),
           res.applied

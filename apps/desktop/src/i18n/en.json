@@ -20,11 +20,25 @@
     "support": "♥ Sponsor",
     "primary": "Primary",
     "home-aria": "VideoDubber home",
-    "download": "Download",
-    "voices": "Voices"
+    "download": "Download videos",
+    "voices": "Voices",
+    "title": {
+      "projects": "Projects",
+      "welcome": "Welcome",
+      "settings": "Settings",
+      "new-project": "New project",
+      "processing": "Processing",
+      "editor": "Editor",
+      "series": "Video in parts",
+      "export": "Export",
+      "voices": "Voices",
+      "download": "Download videos",
+      "claude": "Use from Claude",
+      "help": "Help",
+      "support": "Sponsor"
+    }
   },
   "shell": {
-    "mode-desktop": "Desktop",
     "mode-browser": "Browser dev",
     "backend-down-title": "VideoDubber's backend isn't running.",
     "backend-down-body": "This can happen the first time you open the app after installing or updating.",
@@ -32,7 +46,6 @@
     "backend-down-dev": "Start the local services (scripts/dev.sh or scripts/dev.ps1), then reload.",
     "restart": "Quit & reopen",
     "restarting": "Restarting…",
-    "mode-desktop-tooltip": "Running inside the VideoDubber desktop app. Commands use native IPC.",
     "mode-browser-tooltip": "Running in a browser dev session. Commands fall back to HTTP against the orchestrator (port 5100).",
     "backend-down-help": "Get help",
     "theme-system": "Theme: follow the system (click to switch)",

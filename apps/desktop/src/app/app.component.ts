@@ -12,9 +12,9 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
 
 /**
  * Root shell: a slim top nav + a routed outlet. The whole app lives inside a
- * single window so navigation is lightweight. A "mode" tag indicates whether
- * we're running inside the Tauri desktop shell or in a plain browser dev
- * session (HTTP fallback to the orchestrator).
+ * single window so navigation is lightweight. In a plain browser dev session
+ * a "mode" tag says so (HTTP fallback to the orchestrator); the desktop app
+ * shows none.
  */
 @Component({
   selector: 'vd-root',
@@ -69,9 +69,12 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
         }
       </button>
 
-      <span class="mode-tag" [class.local]="!ipc.inTauri" [title]="modeTooltip()">
-        {{ (ipc.inTauri ? 'shell.mode-desktop' : 'shell.mode-browser') | translate }}
-      </span>
+      <!-- Only in a browser dev session, where it tells a developer that calls
+           go over HTTP. In the app it said "Desktop" with a tooltip about
+           native IPC, in the space the activity indicator needs. -->
+      @if (!ipc.inTauri) {
+        <span class="mode-tag" [title]="modeTooltip()">{{ 'shell.mode-browser' | translate }}</span>
+      }
     </header>
 
     <vd-update-notice />
@@ -212,13 +215,9 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
         font-weight: 600;
         padding: 2px 8px;
         border-radius: 999px;
-        background: var(--vd-success-bg);
-        color: var(--vd-success);
-        border: 1px solid transparent;
-      }
-      .mode-tag.local {
         background: var(--vd-warning-bg);
         color: var(--vd-warning);
+        border: 1px solid transparent;
       }
       /* A column that fills the window below the nav: ordinary screens stack
          their .page inside it, and the studio editor takes the full height. */
@@ -279,9 +278,5 @@ export class AppComponent {
    * this one string behind for the rest of the session — which is exactly the
    * bug the app-wide switch was written to avoid.
    */
-  protected readonly modeTooltip = computed(() =>
-    this.translate.instant(
-      this.ipc.inTauri ? 'shell.mode-desktop-tooltip' : 'shell.mode-browser-tooltip',
-    ),
-  );
+  protected readonly modeTooltip = computed(() => this.translate.instant('shell.mode-browser-tooltip'));
 }

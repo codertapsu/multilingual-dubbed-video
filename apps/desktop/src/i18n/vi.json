@@ -21,10 +21,24 @@
     "primary": "Điều hướng chính",
     "home-aria": "Trang chủ VideoDubber",
     "download": "Tải video",
-    "voices": "Giọng đọc"
+    "voices": "Giọng đọc",
+    "title": {
+      "projects": "Dự án",
+      "welcome": "Chào mừng",
+      "settings": "Cài đặt",
+      "new-project": "Dự án mới",
+      "processing": "Đang xử lý",
+      "editor": "Chỉnh sửa",
+      "series": "Video nhiều phần",
+      "export": "Xuất video",
+      "voices": "Giọng đọc",
+      "download": "Tải video",
+      "claude": "Dùng từ Claude",
+      "help": "Trợ giúp",
+      "support": "Ủng hộ"
+    }
   },
   "shell": {
-    "mode-desktop": "Ứng dụng",
     "mode-browser": "Trình duyệt (dev)",
     "backend-down-title": "Dịch vụ nền của VideoDubber chưa chạy.",
     "backend-down-body": "Điều này có thể xảy ra trong lần mở đầu tiên sau khi cài đặt hoặc cập nhật.",
@@ -32,7 +46,6 @@
     "backend-down-dev": "Hãy khởi động các dịch vụ cục bộ (scripts/dev.sh hoặc scripts/dev.ps1), rồi tải lại.",
     "restart": "Thoát và mở lại",
     "restarting": "Đang khởi động lại…",
-    "mode-desktop-tooltip": "Đang chạy trong ứng dụng VideoDubber trên máy. Lệnh gọi qua IPC nội bộ.",
     "mode-browser-tooltip": "Đang chạy trong phiên dev trên trình duyệt. Lệnh gọi qua HTTP tới bộ điều phối (cổng 5100).",
     "backend-down-help": "Nhận trợ giúp",
     "theme-system": "Giao diện: theo hệ thống (nhấn để đổi)",

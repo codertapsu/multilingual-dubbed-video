@@ -14,19 +14,23 @@ import { sectionForAnchor } from './screens/settings/settings-sections';
  * orchestrator reports `firstRunComplete=false`, the guard redirects to the
  * "welcome" onboarding wizard. The wizard route uses {@link onboardingGuard}
  * so it's not reachable once setup is done.
+ *
+ * Each `title` is an i18n key (`nav.title.*`), not text: the window title
+ * follows the chosen language, also when it changes on a screen
+ * (core/title/translated-title.strategy.ts). They were English literals.
  */
 export const APP_ROUTES: Routes = [
   {
     path: '',
     pathMatch: 'full',
-    title: 'VideoDubber — Projects',
+    title: 'nav.title.projects',
     canActivate: [firstRunGuard],
     loadComponent: () =>
       import('./screens/home/home.component').then((m) => m.HomeComponent),
   },
   {
     path: 'welcome',
-    title: 'VideoDubber — Welcome',
+    title: 'nav.title.welcome',
     canActivate: [onboardingGuard],
     loadComponent: () =>
       import('./screens/onboarding/onboarding.component').then(
@@ -45,7 +49,7 @@ export const APP_ROUTES: Routes = [
   },
   {
     path: 'settings/:section',
-    title: 'VideoDubber — Settings',
+    title: 'nav.title.settings',
     loadComponent: () =>
       import('./screens/settings/settings.component').then(
         (m) => m.SettingsComponent,
@@ -53,7 +57,7 @@ export const APP_ROUTES: Routes = [
   },
   {
     path: 'new',
-    title: 'VideoDubber — New project',
+    title: 'nav.title.new-project',
     loadComponent: () =>
       import('./screens/new-project-wizard/new-project-wizard.component').then(
         (m) => m.NewProjectWizardComponent,
@@ -61,7 +65,7 @@ export const APP_ROUTES: Routes = [
   },
   {
     path: 'project/:id/processing',
-    title: 'VideoDubber — Processing',
+    title: 'nav.title.processing',
     loadComponent: () =>
       import('./screens/processing/processing.component').then(
         (m) => m.ProcessingComponent,
@@ -69,7 +73,7 @@ export const APP_ROUTES: Routes = [
   },
   {
     path: 'project/:id/editor',
-    title: 'VideoDubber — Editor',
+    title: 'nav.title.editor',
     // Transcript edits live in a draft buffer until Save, and leaving the screen
     // threw them away without a word. The guard asks first.
     canDeactivate: [unsavedChangesGuard],
@@ -78,12 +82,12 @@ export const APP_ROUTES: Routes = [
   },
   {
     path: 'project/:id/series',
-    title: 'VideoDubber — Series',
+    title: 'nav.title.series',
     loadComponent: () => import('./screens/series/series.component').then((m) => m.SeriesComponent),
   },
   {
     path: 'project/:id/export',
-    title: 'VideoDubber — Export',
+    title: 'nav.title.export',
     loadComponent: () =>
       import('./screens/export/export.component').then((m) => m.ExportComponent),
   },
@@ -91,12 +95,12 @@ export const APP_ROUTES: Routes = [
     // The voice library: browse, preview, install and favourite voices of
     // every engine, each with its licence (docs/VOICES.md).
     path: 'voices',
-    title: 'VideoDubber — Voices',
+    title: 'nav.title.voices',
     loadComponent: () => import('./screens/voices/voices.component').then((m) => m.VoicesComponent),
   },
   {
     path: 'download',
-    title: 'VideoDubber — Download source video',
+    title: 'nav.title.download',
     loadComponent: () =>
       import('./screens/download/download.component').then(
         (m) => m.DownloadComponent,
@@ -107,7 +111,7 @@ export const APP_ROUTES: Routes = [
     // drive VideoDubber from Mother Claude, step by step. Linked from
     // Settings → Claude, Help, and a one-time tip on Home.
     path: 'claude',
-    title: 'VideoDubber — Use from Claude',
+    title: 'nav.title.claude',
     loadComponent: () =>
       import('./screens/claude-guide/claude-guide.component').then((m) => m.ClaudeGuideComponent),
   },
@@ -117,13 +121,13 @@ export const APP_ROUTES: Routes = [
     // the only route that sounded like help was /support — a donation page —
     // which is the worst possible screen to land on after a failed first dub.
     path: 'help',
-    title: 'VideoDubber — Help',
+    title: 'nav.title.help',
     loadComponent: () =>
       import('./screens/help/help.component').then((m) => m.HelpComponent),
   },
   {
     path: 'support',
-    title: 'VideoDubber — Sponsor',
+    title: 'nav.title.support',
     loadComponent: () =>
       import('./screens/support/support.component').then(
         (m) => m.SupportComponent,

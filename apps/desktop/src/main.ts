@@ -3,11 +3,12 @@ import {
   provideZoneChangeDetection,
   type ApplicationConfig,
 } from '@angular/core';
-import { provideRouter, withComponentInputBinding, withHashLocation } from '@angular/router';
+import { provideRouter, TitleStrategy, withComponentInputBinding, withHashLocation } from '@angular/router';
 import { provideHttpClient, withFetch } from '@angular/common/http';
 
 import { AppComponent } from './app/app.component';
 import { APP_ROUTES } from './app/app.routes';
+import { TranslatedTitleStrategy } from './app/core/title/translated-title.strategy';
 
 /**
  * Root application configuration.
@@ -28,11 +29,14 @@ import { APP_ROUTES } from './app/app.routes';
  *   exposes for SSE / cross-origin localhost calls.
  * - provideZoneChangeDetection: standard zone-based change detection with
  *   event coalescing for fewer redundant CD cycles.
+ * - TitleStrategy: route titles are i18n keys, so the window title follows the
+ *   chosen language (core/title/translated-title.strategy.ts).
  */
 const appConfig: ApplicationConfig = {
   providers: [
     provideZoneChangeDetection({ eventCoalescing: true }),
     provideRouter(APP_ROUTES, withComponentInputBinding(), withHashLocation()),
+    { provide: TitleStrategy, useExisting: TranslatedTitleStrategy },
     provideHttpClient(withFetch()),
   ],
 };

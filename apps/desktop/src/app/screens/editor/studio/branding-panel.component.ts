@@ -26,7 +26,7 @@ import { StudioStore } from './studio.store';
       <vd-branding-form
         [value]="store.project()?.settings?.branding"
         [assets]="assets()"
-        [disabled]="saving()"
+        [disabled]="saving() || store.dubRunning()"
         (changed)="save($event)"
       />
 
@@ -53,14 +53,22 @@ import { StudioStore } from './studio.store';
               <span class="kind">
                 {{ (row.kind === 'opening' ? 'branding.placement-opening' : 'branding.placement-repeat') | translate }}
               </span>
-              <input type="text" class="time" [ngModel]="clock(row.atMs)" (change)="setTime($index, $any($event.target).value)" />
-              <button type="button" class="btn btn-ghost btn-sm" (click)="seek(row.atMs)">▶</button>
-              <button type="button" class="btn btn-ghost btn-sm" (click)="removeRow($index)">{{ 'branding.placement-remove' | translate }}</button>
+              <input type="text" class="time" [ngModel]="clock(row.atMs)" (change)="setTime($index, $any($event.target).value)" [disabled]="store.dubRunning()" />
+              <button
+                type="button"
+                class="btn btn-ghost btn-sm"
+                (click)="seek(row.atMs)"
+                [title]="'studio.greeting-seek' | translate: { time: clock(row.atMs) }"
+                [attr.aria-label]="'studio.greeting-seek' | translate: { time: clock(row.atMs) }"
+              >
+                <span aria-hidden="true">▶</span>
+              </button>
+              <button type="button" class="btn btn-ghost btn-sm" (click)="removeRow($index)" [disabled]="store.dubRunning()">{{ 'branding.placement-remove' | translate }}</button>
             </div>
           }
           <div class="row">
-            <button type="button" class="btn btn-sm" (click)="addAtPlayhead()">{{ 'branding.placement-add' | translate }}</button>
-            <button type="button" class="btn btn-sm btn-primary" (click)="savePlan()" [disabled]="!dirty() || saving()">
+            <button type="button" class="btn btn-sm" (click)="addAtPlayhead()" [disabled]="store.dubRunning()">{{ 'branding.placement-add' | translate }}</button>
+            <button type="button" class="btn btn-sm btn-primary" (click)="savePlan()" [disabled]="!dirty() || saving() || store.dubRunning()">
               {{ 'branding.placement-save' | translate }}
             </button>
           </div>
@@ -105,7 +113,8 @@ export class BrandingPanelComponent implements OnInit {
   protected readonly saving = signal(false);
   protected readonly plan = signal<(GreetingPlan & { preview?: boolean }) | null>(null);
   protected readonly rows = signal<GreetingPlacement[]>([]);
-  protected readonly dirty = signal(false);
+  /** Greeting times moved, added or removed and not saved yet (the leave-page prompt names them). */
+  readonly dirty = signal(false);
   protected readonly notice = signal<string | null>(null);
 
   ngOnInit(): void {

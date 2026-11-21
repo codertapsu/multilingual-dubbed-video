@@ -1,3 +1,9 @@
+<!-- While a dub runs every edit is refused: the controls are disabled, with
+     the reason here (fieldset[disabled] disables everything inside it). -->
+@if (store.dubRunning() && (multi() || line())) {
+  <p class="read-only-note" role="status">{{ 'studio.read-only-hint' | translate }}</p>
+}
+
 @if (multi()) {
   <!-- ======================= Several lines: bulk edits ======================= -->
   <section class="block">
@@ -5,23 +11,25 @@
     <p class="hint">{{ 'studio.bulk-hint' | translate }}</p>
   </section>
 
-  <section class="block">
-    <h4>{{ 'studio.timing' | translate }}</h4>
-    <div class="nudges">
-      @for (d of nudges; track d) {
-        <button type="button" class="btn btn-sm" (click)="shiftSelected(d)">{{ d > 0 ? '+' : '' }}{{ d }} ms</button>
-      }
-    </div>
-  </section>
+  <fieldset class="edit-lock" [disabled]="store.dubRunning()">
+    <section class="block">
+      <h4>{{ 'studio.timing' | translate }}</h4>
+      <div class="nudges">
+        @for (d of nudges; track d) {
+          <button type="button" class="btn btn-sm" (click)="shiftSelected(d)">{{ d > 0 ? '+' : '' }}{{ d }} ms</button>
+        }
+      </div>
+    </section>
 
-  <ng-container *ngTemplateOutlet="voiceBlock" />
+    <ng-container *ngTemplateOutlet="voiceBlock" />
 
-  <section class="block actions">
-    <button type="button" class="btn btn-sm" (click)="toggleLock()">{{ 'studio.toggle-lock' | translate }}</button>
-    <button type="button" class="btn btn-primary btn-sm" (click)="regenerate()" [disabled]="store.busy().size > 0">
-      {{ 'studio.regenerate-selected' | translate }}
-    </button>
-  </section>
+    <section class="block actions">
+      <button type="button" class="btn btn-sm" (click)="toggleLock()">{{ 'studio.toggle-lock' | translate }}</button>
+      <button type="button" class="btn btn-primary btn-sm" (click)="regenerate()" [disabled]="store.busy().size > 0">
+        {{ 'studio.regenerate-selected' | translate }}
+      </button>
+    </section>
+  </fieldset>
 } @else if (line(); as l) {
   <!-- ============================ One line ============================ -->
   <section class="block head">
@@ -72,61 +80,71 @@
     <p class="source">{{ l.seg.sourceText }}</p>
   </section>
 
-  <section class="block">
-    <label class="h4" for="vd-inspector-text">{{ 'editor.col-translation' | translate }}</label>
-    <textarea
-      #text
-      id="vd-inspector-text"
-      rows="3"
-      spellcheck="true"
-      [value]="l.text"
-      (input)="onText($any($event.target).value)"
-      [disabled]="!store.translated()"
-    ></textarea>
-    <div class="meter">
-      <span>{{ 'studio.chars' | translate: { n: l.text.length } }}</span>
-      <span [class]="'cps ' + cpsLevel(l.cps)" [title]="'studio.cps-title' | translate: { max: maxCps }">
-        {{ 'studio.cps' | translate: { n: l.cps.toFixed(1) } }}
-      </span>
-      <span [class.warn]="wrapped().length > 2">{{ 'studio.wrap-lines' | translate: { n: wrapped().length } }}</span>
-    </div>
-  </section>
+  <fieldset class="edit-lock" [disabled]="store.dubRunning()">
+    <section class="block">
+      <label class="h4" for="vd-inspector-text">{{ 'editor.col-translation' | translate }}</label>
+      <textarea
+        #text
+        id="vd-inspector-text"
+        rows="3"
+        spellcheck="true"
+        [value]="l.text"
+        (input)="onText($any($event.target).value)"
+        [disabled]="!store.translated()"
+      ></textarea>
+      <div class="meter">
+        <span>{{ 'studio.chars' | translate: { n: l.text.length } }}</span>
+        <span [class]="'cps ' + cpsLevel(l.cps)" [title]="'studio.cps-title' | translate: { max: maxCps }">
+          {{ 'studio.cps' | translate: { n: l.cps.toFixed(1) } }}
+        </span>
+        <span [class.warn]="wrapped().length > 2">{{ 'studio.wrap-lines' | translate: { n: wrapped().length } }}</span>
+      </div>
+    </section>
 
-  <section class="block">
-    <h4>{{ 'studio.timing' | translate }}</h4>
-    <div class="timing">
-      @for (edge of edges; track edge) {
-        <div class="edge">
-          <span class="label">{{ edgeKeys[edge] | translate }}</span>
-          @if (editingTime()?.edge === edge) {
-            <input
-              #timeInput
-              type="text"
-              class="mono"
-              [value]="editingTime()!.value"
-              (keydown.enter)="commitTimeEdit(edge, $any($event.target).value)"
-              (keydown.escape)="editingTime.set(null)"
-              (blur)="commitTimeEdit(edge, $any($event.target).value)"
-              [attr.aria-label]="edgeKeys[edge] | translate"
-            />
-          } @else {
-            <button type="button" class="tc mono" (click)="beginTimeEdit(edge)" [title]="'studio.edit-time' | translate">
-              {{ fmt(edge === 'start' ? l.seg.startMs : l.seg.endMs) }}
-            </button>
-          }
-          <div class="nudges">
-            @for (d of nudges; track d) {
-              <button type="button" class="btn btn-sm" (click)="nudge(edge, d)">{{ d > 0 ? '+' : '' }}{{ d }}</button>
+    <section class="block">
+      <h4>{{ 'studio.timing' | translate }}</h4>
+      <div class="timing">
+        @for (edge of edges; track edge) {
+          <div class="edge">
+            <span class="label">{{ edgeKeys[edge] | translate }}</span>
+            @if (editingTime()?.edge === edge) {
+              <input
+                #timeInput
+                type="text"
+                class="mono"
+                [value]="editingTime()!.value"
+                (keydown.enter)="commitTimeEdit(edge, $any($event.target).value)"
+                (keydown.escape)="editingTime.set(null)"
+                (blur)="commitTimeEdit(edge, $any($event.target).value)"
+                [attr.aria-label]="edgeKeys[edge] | translate"
+              />
+            } @else {
+              <button type="button" class="tc mono" (click)="beginTimeEdit(edge)" [title]="'studio.edit-time' | translate">
+                {{ fmt(edge === 'start' ? l.seg.startMs : l.seg.endMs) }}
+              </button>
             }
-            <button type="button" class="btn btn-sm" (click)="toPlayhead(edge)" [title]="'studio.to-playhead' | translate">⇤▸</button>
+            <div class="nudges">
+              @for (d of nudges; track d) {
+                <button type="button" class="btn btn-sm" (click)="nudge(edge, d)">{{ d > 0 ? '+' : '' }}{{ d }}</button>
+              }
+              <button
+                type="button"
+                class="btn btn-sm"
+                (click)="toPlayhead(edge)"
+                [title]="'studio.to-playhead' | translate"
+                [attr.aria-label]="(edge === 'start' ? 'studio.start-to-playhead' : 'studio.end-to-playhead') | translate"
+              >
+                <span aria-hidden="true">⇤▸</span>
+              </button>
+            </div>
           </div>
-        </div>
-      }
-      <p class="hint mono">{{ 'studio.duration' | translate: { s: (duration() / 1000).toFixed(2) } }}</p>
-    </div>
-  </section>
+        }
+        <p class="hint mono">{{ 'studio.duration' | translate: { s: (duration() / 1000).toFixed(2) } }}</p>
+      </div>
+    </section>
 
-  <ng-container *ngTemplateOutlet="voiceBlock" />
+    <ng-container *ngTemplateOutlet="voiceBlock" />
+  </fieldset>
 
   @if (unit(); as u) {
     <section class="block">
@@ -147,8 +165,8 @@
           <dd>{{ 'studio.merged-n' | translate: { n: u.segmentIds.length } }}</dd>
         }
       </dl>
-      @if (u.note) {
-        <p class="hint">{{ u.note }}</p>
+      @if (fitNote(); as note) {
+        <p class="hint">{{ note }}</p>
       }
     </section>
   }
@@ -160,17 +178,29 @@
       class="btn btn-sm"
       [class.btn-primary]="l.stale"
       (click)="regenerate()"
-      [disabled]="store.busy().has(l.seg.id) || !store.translated()"
+      [disabled]="lineBusy() || !store.translated() || store.dubRunning()"
       [title]="'studio.regenerate-title' | translate"
     >
-      {{ (store.busy().has(l.seg.id) ? 'editor.synthesizing' : 'editor.regenerate') | translate }}
+      {{ (lineBusy() ? 'editor.synthesizing' : 'editor.regenerate') | translate }}
     </button>
     @if (l.status === 'timing-conflict' || l.status === 'needs-review') {
-      <button type="button" class="btn btn-sm" (click)="store.tighten(l.seg.id)" [disabled]="store.busy().has(l.seg.id)" [title]="'editor.tighten-title' | translate">
+      <button
+        type="button"
+        class="btn btn-sm"
+        (click)="store.tighten(l.seg.id)"
+        [disabled]="lineBusy() || store.dubRunning()"
+        [title]="'editor.tighten-title' | translate"
+      >
         {{ 'editor.tighten' | translate }}
       </button>
     }
-    <button type="button" class="btn btn-ghost btn-sm" (click)="toggleLock()" [title]="'studio.locked-title' | translate">
+    <button
+      type="button"
+      class="btn btn-ghost btn-sm"
+      (click)="toggleLock()"
+      [disabled]="store.dubRunning()"
+      [title]="'studio.locked-title' | translate"
+    >
       {{ (l.locked ? 'studio.unlock' : 'studio.lock') | translate }}
     </button>
   </section>
@@ -214,7 +244,7 @@
       <!-- Selected per option, not by the select's value: a voice set before
            its option exists (one just made from the video, while the list
            reloads) would otherwise show as the project voice. -->
-      <select (change)="setVoice($any($event.target).value)">
+      <select (change)="setVoice($any($event.target).value)" [attr.aria-label]="'editor.voice' | translate">
         <option value="" [selected]="!lineVoiceId()">
           {{ 'studio.voice-default' | translate: { label: store.voiceLabel(store.settings()?.ttsVoiceId) || ('editor.provider-default' | translate) } }}
         </option>
@@ -230,7 +260,7 @@
       }
       <div class="voice-chips" [attr.aria-label]="'studio.voice-chips' | translate">
         @for (v of store.voices().slice(0, 12); track v.id) {
-          <span class="voice-chip" draggable="true" (dragstart)="onVoiceDragStart($event, v.id)" [title]="'studio.voice-drag-title' | translate">{{ v.label }}</span>
+          <span class="voice-chip" [attr.draggable]="!store.dubRunning()" (dragstart)="onVoiceDragStart($event, v.id)" [title]="'studio.voice-drag-title' | translate">{{ v.label }}</span>
         }
       </div>
     } @else {

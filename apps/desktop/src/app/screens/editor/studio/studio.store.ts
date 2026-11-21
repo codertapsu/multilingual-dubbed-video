@@ -1,4 +1,4 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal, type OnDestroy } from '@angular/core';
 
 import { nextSpeakerId, splitSubtitleLines, summarizeSpeakers, voiceForLine, type LineVoiceSettings } from '@videodubber/shared';
 
@@ -7,6 +7,7 @@ import { toAppError } from '../../../core/state/project.store';
 import type {
   AlignedSegment,
   AppError,
+  PipelineState,
   Project,
   SegmentPatch,
   TimelineDocument,
@@ -14,8 +15,10 @@ import type {
   TimelineSegment,
 } from '../../../core/models';
 import type { PiperVoiceInfo } from '../../../core/models/setup';
+import { clipOf, clipsToVoice } from './clips';
 import { EditHistory, isEffective, type HistoryEntry, type LineChange, type LineFields } from './history';
 import { applyFields, fieldsToPatch, patchToFields } from './line-fields';
+import { StudioJobsService } from './studio-jobs.service';
 import { charsPerSecond, constrainGroupMove, type Span } from './timeline-math';
 
 /** Reading-speed ceiling (chars/s) — Netflix-style guidance for most languages. */
@@ -23,6 +26,17 @@ export const MAX_CPS = 17;
 const LONG_SUBTITLE_CHARS = 84;
 /** Debounce between the last edit and the save (ms). */
 const SAVE_DEBOUNCE_MS = 450;
+/**
+ * How often the editor asks whether a dub of the project runs: often while
+ * one runs or waits in the queue (to give the editor back the moment it
+ * ends), rarely otherwise (a dub started from elsewhere: the queue, a series,
+ * Claude over MCP).
+ */
+const RUN_POLL_ACTIVE_MS = 3000;
+const RUN_POLL_IDLE_MS = 15_000;
+/** Speaker detection's progress poll, and how many failed polls mean the backend is gone. */
+const DETECT_POLL_MS = 1500;
+const DETECT_MAX_MISSES = 10;
 
 /** One clip on the dub track, as drawn and as previewed. */
 export interface UnitVm {
@@ -71,6 +85,27 @@ export interface LineVm {
 
 export type SaveState = 'saved' | 'pending' | 'saving' | 'error';
 
+/**
+ * Why the last speaker detection ended without a result: it failed (the
+ * server's words in `detail`), or it is gone. A job lives in the backend's
+ * memory, so a backend restart loses it, and the editor used to wait for it
+ * forever.
+ */
+export interface DetectFailure {
+  kind: 'failed' | 'gone';
+  detail?: string;
+}
+
+type SpeakerJobState = NonNullable<Awaited<ReturnType<IpcService['getSpeakers']>>['job']> & {
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+/** Two reads of the same server object (small: a project or its pipeline). */
+function sameContent<T>(a: T, b: T): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
+
 const CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 function norm(text: string): string {
   return text.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '').normalize('NFC');
@@ -94,11 +129,14 @@ function looksUntranslated(source: string, text: string): boolean {
  * the timeline constraints should make that rare), the editor reloads rather
  * than drift from what is on disk.
  *
- * Provided by the editor component, so each open project gets a fresh store.
+ * Provided by the editor component, so each open project gets a fresh store
+ * (and loses it on leaving: work that must outlive the screen lives in
+ * {@link StudioJobsService}, or on the server, and is picked up again here).
  */
 @Injectable()
-export class StudioStore {
+export class StudioStore implements OnDestroy {
   private readonly ipc = inject(IpcService);
+  private readonly jobs = inject(StudioJobsService);
 
   readonly projectId = signal('');
   readonly loading = signal(false);
@@ -106,7 +144,7 @@ export class StudioStore {
   /**
    * Why "Tighten to fit" kept a line as it was (the model's proposal was not
    * shorter, failed the checks, or cut too far). Without it the button looked
-   * like it did nothing.
+   * like it did nothing. `reason` is the server's; the editor says it in words.
    */
   readonly tightenKept = signal<{ line: number; reason: string } | null>(null);
 
@@ -129,9 +167,28 @@ export class StudioStore {
   readonly waveform = signal<{ peaksPerSecond: number; durationMs: number; peaks: Int8Array } | null>(null);
   readonly filmstrip = signal<(TimelineFilmstrip & { url: string }) | null>(null);
 
-  /** The project (settings drive the voice list, mix simulation, re-dub). */
-  readonly project = signal<Project | null>(null);
+  /**
+   * The project (settings drive the voice list, mix simulation, re-dub).
+   * Compared by content: the run poll reads it every few seconds, and a copy
+   * equal to the last one must not hand every form a new settings object (the
+   * logo's periods field follows it and would lose what the user is typing).
+   */
+  readonly project = signal<Project | null>(null, { equal: sameContent });
   readonly settings = computed(() => this.project()?.settings ?? null);
+  /** The project's pipeline as last read: the review checkpoint, the finished render. */
+  readonly pipeline = signal<PipelineState | null>(null, { equal: sameContent });
+  /**
+   * A dub of this project is running. The server refuses every edit then
+   * (RUN_IN_PROGRESS), yet the editor let the user make them: each one
+   * failed, and the failure threw away the queued edits and the undo history.
+   * While one runs the editor is read-only, says so and links to the
+   * progress; Render and Re-dub ask before they stop it.
+   */
+  readonly dubRunning = computed(() => this.project()?.status === 'running');
+  /** The dub waits at the review checkpoint: translated, no voice made yet. */
+  readonly awaitingReview = computed(() => !this.dubRunning() && this.pipeline()?.awaitingReview === true);
+  /** "Continue dubbing" (the toolbar's, at the review checkpoint) is on its way. */
+  readonly continuing = signal(false);
   /** Voices the project's TTS engine offers here (installed ones). */
   readonly voices = signal<PiperVoiceInfo[]>([]);
   /**
@@ -148,10 +205,16 @@ export class StudioStore {
   readonly primaryId = signal<string | null>(null);
 
   readonly saveState = signal<SaveState>('saved');
-  /** Lines currently being (re)synthesized. */
-  readonly busy = signal<ReadonlySet<string>>(new Set());
-  /** Progress of a "voice all changed lines" batch. */
-  readonly batch = signal<{ done: number; total: number } | null>(null);
+  /** Clips this editor is (re)synthesizing (by clip id: see clips.ts). */
+  private readonly ownBusy = signal<ReadonlySet<string>>(new Set());
+  /** Progress of a "voice all changed lines" batch (it outlives the editor: StudioJobsService). */
+  readonly batch = computed(() => this.jobs.voicing(this.projectId()));
+  /** Clips being (re)synthesized: this editor's, and the batch's current one. */
+  readonly busy = computed<ReadonlySet<string>>(() => {
+    const own = this.ownBusy();
+    const clip = this.batch()?.clipId;
+    return clip && !own.has(clip) ? new Set([...own, clip]) : own;
+  });
   /** Bumped per unit when its WAV is rewritten in place (cache-busts previews). */
   readonly audioVersion = signal<Readonly<Record<string, number>>>({});
 
@@ -163,8 +226,12 @@ export class StudioStore {
   readonly redoLabel = computed(() => (this.historyTick(), this.history.peekRedo()?.label ?? null));
 
   private pending = new Map<string, SegmentPatch>();
-  private inFlight: Promise<void> | null = null;
+  /** The save on the wire; resolves false when the server refused it. */
+  private inFlight: Promise<boolean> | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private runTimer: ReturnType<typeof setTimeout> | undefined;
+  private unwatchJobs: (() => void) | null = null;
+  private disposed = false;
 
   // ---------------------------------------------------------------- derived
 
@@ -256,12 +323,35 @@ export class StudioStore {
   readonly staleCount = computed(() => this.segments().filter((s) => s.ttsStale === true).length);
   readonly problemCount = computed(() => this.lines().filter((l) => l.problem).length);
 
+  /** The clip a line is voiced in (a merged take's id is its first line's). */
+  clipOf(segmentId: string): string {
+    return clipOf(segmentId, this.unitBySegment());
+  }
+
+  /** The line's clip is being voiced (whichever of its lines asked). */
+  isLineBusy(segmentId: string): boolean {
+    return this.busy().has(this.clipOf(segmentId));
+  }
+
   // ------------------------------------------------------------- loading
 
   async load(projectId: string): Promise<void> {
     this.projectId.set(projectId);
     this.loading.set(true);
     this.error.set(null);
+    // A "voice the changed lines" batch may be running from an earlier visit:
+    // follow it (its progress shows through `batch`), and show the error of
+    // one that failed while the editor was closed.
+    this.unwatchJobs?.();
+    this.unwatchJobs = this.jobs.watch(projectId, {
+      voiced: (doc, clipId) => {
+        this.bumpAudio(clipId);
+        this.adopt(doc);
+      },
+      failed: (error) => this.fail(error),
+    });
+    const failure = this.jobs.takeFailure(projectId);
+    if (failure) this.error.set(failure);
     try {
       const doc = await this.ipc.getTimeline(projectId);
       this.adopt(doc);
@@ -273,6 +363,8 @@ export class StudioStore {
     } finally {
       this.loading.set(false);
     }
+    this.watchRun();
+    void this.resumeDetection();
   }
 
   /** Re-read the document (after a regenerate / an external change). */
@@ -312,6 +404,83 @@ export class StudioStore {
     }
     if (film.status === 'fulfilled') {
       this.filmstrip.set({ ...film.value, url: this.ipc.fileUrl(film.value.path, doc.media.durationMs ?? 0) });
+    }
+  }
+
+  // --------------------------------------------------------- the dub's run
+
+  /** Re-read the project and its pipeline (what runs, the review checkpoint). */
+  async refreshProject(): Promise<void> {
+    const { project, pipeline } = await this.ipc.getProject(this.projectId());
+    this.adoptProject(project, pipeline ?? null);
+  }
+
+  /** Take a freshly read project + pipeline (the project panel reads them at load). */
+  adoptProject(project: Project, pipeline: PipelineState | null): void {
+    const wasRunning = this.dubRunning();
+    this.project.set(project);
+    this.pipeline.set(pipeline);
+    if (this.disposed) return;
+    if (wasRunning && !this.dubRunning()) void this.afterRun();
+    // A dub just started: from now on ask often, to hand the editor back soon.
+    else if (!wasRunning && this.dubRunning()) this.watchRun();
+  }
+
+  /**
+   * A dub ended while the editor was open. It rewrote the lines, so read them
+   * again, and forget the undo history: an undo from before the dub would put
+   * back text and timing it replaced.
+   */
+  private async afterRun(): Promise<void> {
+    this.history.clear();
+    this.historyTick.update((n) => n + 1);
+    await this.reload();
+    const doc = this.doc();
+    // Opened before the audio was extracted: the tracks can be drawn now.
+    if (doc && !this.waveform()) void this.loadMedia(doc);
+  }
+
+  private watchRun(): void {
+    clearTimeout(this.runTimer);
+    if (this.disposed) return;
+    const status = this.project()?.status;
+    const delay = status === 'running' || status === 'queued' ? RUN_POLL_ACTIVE_MS : RUN_POLL_IDLE_MS;
+    this.runTimer = setTimeout(() => {
+      this.refreshProject()
+        .catch(() => undefined) // the backend is restarting: ask again at the next tick
+        .finally(() => this.watchRun());
+    }, delay);
+  }
+
+  /**
+   * Pause the project's running dub (what it finished is kept) and wait until
+   * it has stopped: Render and Re-dub save settings, voice lines or re-mix,
+   * and the server refuses all of that while a dub runs.
+   */
+  async stopRunningDub(): Promise<boolean> {
+    try {
+      await this.ipc.pausePipeline(this.projectId());
+      await this.refreshProject();
+      return !this.dubRunning();
+    } catch (err) {
+      this.fail(err);
+      return false;
+    }
+  }
+
+  /** Leave the review checkpoint: save the edits, resume at synthesis. True once it started. */
+  async continueDubbing(): Promise<boolean> {
+    if (this.continuing()) return false;
+    this.continuing.set(true);
+    try {
+      if (!(await this.flushNow())) return false;
+      await this.ipc.retryPipelineStep(this.projectId(), 'tts');
+      return true;
+    } catch (err) {
+      this.fail(err);
+      return false;
+    } finally {
+      this.continuing.set(false);
     }
   }
 
@@ -360,8 +529,13 @@ export class StudioStore {
 
   // ---------------------------------------------------------------- edits
 
-  /** Record + apply + queue a set of line changes as ONE undoable edit. */
+  /**
+   * Record + apply + queue a set of line changes as ONE undoable edit. Nothing
+   * while a dub runs: every edit path (drags, drops, shortcuts, the inspector)
+   * comes through here, and the server would refuse it.
+   */
   edit(changes: LineChange[], label: string, coalesceKey?: string): void {
+    if (this.dubRunning()) return;
     const effective = changes.filter(isEffective);
     if (effective.length === 0) return;
     this.history.push({ label, changes: effective, ...(coalesceKey ? { coalesceKey } : {}), at: Date.now() });
@@ -370,6 +544,7 @@ export class StudioStore {
   }
 
   undo(): void {
+    if (this.dubRunning()) return;
     const entry = this.history.undo();
     if (!entry) return;
     this.historyTick.update((n) => n + 1);
@@ -377,6 +552,7 @@ export class StudioStore {
   }
 
   redo(): void {
+    if (this.dubRunning()) return;
     const entry = this.history.redo();
     if (!entry) return;
     this.historyTick.update((n) => n + 1);
@@ -419,6 +595,7 @@ export class StudioStore {
 
   /** Shift lines by `deltaMs`, clamped so nothing crosses an unselected neighbour. */
   shift(ids: readonly string[], deltaMs: number, coalesceKey?: string): number {
+    if (this.dubRunning()) return 0;
     const segs = this.segments();
     const set = new Set(ids);
     const delta = constrainGroupMove(segs as Span[], set, deltaMs, this.durationMs());
@@ -479,7 +656,7 @@ export class StudioStore {
    */
   async setSpeakerVoice(speakerId: string, voiceId: string | null): Promise<boolean> {
     const settings = this.settings();
-    if (!settings) return false;
+    if (!settings || this.dubRunning()) return false;
     const rest = (settings.speakerVoices ?? []).filter((v) => v.speakerId !== speakerId);
     try {
       if (!(await this.flushNow())) return false;
@@ -490,7 +667,7 @@ export class StudioStore {
       await this.reload();
       return true;
     } catch (err) {
-      this.error.set(toAppError(err));
+      this.fail(err);
       return false;
     }
   }
@@ -499,39 +676,154 @@ export class StudioStore {
   readonly detectingSpeakers = signal(false);
   /** Its parts done, of the total (long audio is detected in 10-minute parts). */
   readonly detectProgress = signal<{ done: number; total: number } | null>(null);
+  /** Why the last detection ended without a result (shown with a Retry), or null. */
+  readonly detectFailure = signal<DetectFailure | null>(null);
 
   /**
    * Detect who says each line again (no new transcript, timing untouched):
    * the lines are relabelled, those whose voice moves are marked for
    * re-voicing. A background job on the server (hours of audio take an hour
    * or more): followed here until it ends, then the timeline is read again.
+   * Asking while one runs follows that one (the server starts no second).
    */
   async detectSpeakers(numSpeakers?: number): Promise<boolean> {
-    if (this.detectingSpeakers()) return false;
+    if (this.detectingSpeakers() || this.dubRunning()) return false;
+    this.detectFailure.set(null);
     this.detectingSpeakers.set(true);
     this.detectProgress.set(null);
     try {
-      if (!(await this.flushNow())) return false;
+      if (!(await this.flushNow())) {
+        this.detectingSpeakers.set(false);
+        return false;
+      }
       await this.ipc.detectSpeakers(this.projectId(), numSpeakers);
+    } catch (err) {
+      this.fail(err);
+      this.detectingSpeakers.set(false);
+      return false;
+    }
+    return this.followDetection();
+  }
+
+  /**
+   * Follow the server's detection job to its end. Also one started before
+   * this editor opened: leaving the editor used to drop the spinner while the
+   * job went on, and the editor opened again knew nothing of it.
+   */
+  private async followDetection(): Promise<boolean> {
+    this.detectingSpeakers.set(true);
+    this.markDetecting(true);
+    let misses = 0;
+    try {
       for (;;) {
-        await new Promise((r) => setTimeout(r, 1500));
-        const { job } = await this.ipc.getSpeakers(this.projectId());
-        if (job?.total) this.detectProgress.set({ done: job.done, total: job.total });
-        if (!job || job.state === 'running') continue;
-        if (job.state === 'failed') throw new Error(job.error ?? 'Speaker detection failed.');
+        await new Promise((r) => setTimeout(r, DETECT_POLL_MS));
+        if (this.disposed) return false;
+        let job: SpeakerJobState | undefined;
+        try {
+          job = (await this.ipc.getSpeakers(this.projectId())).job;
+          misses = 0;
+        } catch {
+          // The backend may be restarting: give it a little while, then stop
+          // spinning and offer Retry (it resumes from the parts already done).
+          if (++misses < DETECT_MAX_MISSES) continue;
+          this.detectFailure.set({ kind: 'gone' });
+          return false;
+        }
+        // No job at all: the backend that ran it restarted (jobs live in its memory).
+        if (!job) {
+          this.detectFailure.set({ kind: 'gone' });
+          return false;
+        }
+        if (job.total) this.detectProgress.set({ done: job.done, total: job.total });
+        if (job.state === 'running') continue;
+        if (job.state === 'failed') {
+          this.showDetectFailure(job);
+          return false;
+        }
         break;
       }
       this.adopt(await this.ipc.getTimeline(this.projectId()));
-      const { project } = await this.ipc.getProject(this.projectId());
-      this.project.set(project);
+      await this.refreshProject();
       return true;
     } catch (err) {
-      this.error.set(toAppError(err));
+      this.fail(err);
       return false;
     } finally {
       this.detectingSpeakers.set(false);
       this.detectProgress.set(null);
+      // Left mid-way, the mark stays for the next editor of the project to find.
+      if (!this.disposed) this.markDetecting(false);
     }
+  }
+
+  /**
+   * On opening: follow a detection still running, or say how one ended while
+   * the editor was closed (failed, or lost with a backend restart).
+   */
+  private async resumeDetection(): Promise<void> {
+    let job: SpeakerJobState | undefined;
+    try {
+      job = (await this.ipc.getSpeakers(this.projectId())).job;
+    } catch {
+      return; // the Speakers section works without it
+    }
+    if (this.disposed) return;
+    if (job?.state === 'running') {
+      if (!this.detectingSpeakers()) void this.followDetection();
+      return;
+    }
+    const followed = this.wasDetecting();
+    this.markDetecting(false);
+    // Followed here before, and the backend has no job now: it restarted under it.
+    if (!job) {
+      if (followed) this.detectFailure.set({ kind: 'gone' });
+    } else if (job.state === 'failed' && !this.detectFailureSeen(job)) {
+      this.showDetectFailure(job);
+    }
+  }
+
+  /** A detection is being followed in this session (survives leaving the editor, not the app). */
+  private markDetecting(on: boolean): void {
+    try {
+      if (on) sessionStorage.setItem(this.detectingKey(), '1');
+      else sessionStorage.removeItem(this.detectingKey());
+    } catch {
+      /* storage disabled: a lost job is then only noticed while the editor is open */
+    }
+  }
+
+  private wasDetecting(): boolean {
+    try {
+      return sessionStorage.getItem(this.detectingKey()) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  private detectingKey(): string {
+    return `vd.studio.detecting.${this.projectId()}`;
+  }
+
+  private showDetectFailure(job: SpeakerJobState): void {
+    this.detectFailure.set({ kind: 'failed', ...(job.error ? { detail: job.error } : {}) });
+    try {
+      sessionStorage.setItem(this.detectSeenKey(), job.finishedAt ?? job.startedAt ?? 'failed');
+    } catch {
+      /* storage disabled: the failure may show once more */
+    }
+  }
+
+  /** A failure already shown in this session is not shown again on every visit. */
+  private detectFailureSeen(job: SpeakerJobState): boolean {
+    try {
+      return sessionStorage.getItem(this.detectSeenKey()) === (job.finishedAt ?? job.startedAt ?? 'failed');
+    } catch {
+      return false;
+    }
+  }
+
+  private detectSeenKey(): string {
+    return `vd.studio.detectSeen.${this.projectId()}`;
   }
 
   /** One person detected as two: give every line of `from` to `into` (one undo step). */
@@ -564,6 +856,7 @@ export class StudioStore {
 
   /** Replace translations in bulk (subtitle import) as one undo step. */
   importTexts(texts: Map<string, string>): number {
+    if (this.dubRunning()) return 0;
     const changes: LineChange[] = [];
     for (const [id, text] of texts) {
       const seg = this.byId(id);
@@ -581,18 +874,21 @@ export class StudioStore {
 
   // ---------------------------------------------------------- persistence
 
-  hasUnsavedChanges(): boolean {
-    return this.pending.size > 0 || this.inFlight !== null;
-  }
-
-  /** Save now and wait (before regenerating, rendering or leaving). */
+  /**
+   * Save now and wait (before regenerating, rendering or leaving). True when
+   * everything it waited for reached the disk. It answers for THESE saves
+   * only: it used to answer from the sticky save state, so after one refused
+   * save Render, Regenerate, Tighten and Detect did nothing at all until the
+   * message was dismissed.
+   */
   async flushNow(): Promise<boolean> {
     clearTimeout(this.timer);
+    let saved = true;
     while (this.inFlight || this.pending.size > 0) {
-      if (this.inFlight) await this.inFlight;
-      else await this.flush();
+      // The request on the wire, else what is queued.
+      if (!(await (this.inFlight ?? this.flush()))) saved = false;
     }
-    return this.saveState() !== 'error';
+    return saved;
   }
 
   private applyAndQueue(items: { id: string; fields: LineFields }[]): void {
@@ -607,11 +903,11 @@ export class StudioStore {
     this.timer = setTimeout(() => void this.flush(), SAVE_DEBOUNCE_MS);
   }
 
-  private flush(): Promise<void> {
+  private flush(): Promise<boolean> {
     if (this.inFlight) return this.inFlight;
     if (this.pending.size === 0) {
       this.saveState.set('saved');
-      return Promise.resolve();
+      return Promise.resolve(true);
     }
     const batch = [...this.pending.values()];
     this.pending = new Map();
@@ -626,9 +922,12 @@ export class StudioStore {
           clearTimeout(this.timer);
           this.timer = setTimeout(() => void this.flush(), SAVE_DEBOUNCE_MS);
         }
+        return true;
       } catch (err) {
         this.inFlight = null;
-        this.error.set(toAppError(err));
+        this.fail(err);
+        // Says "not saved" until the next save or the message is dismissed;
+        // flushNow() no longer reads it, so it blocks nothing.
         this.saveState.set('error');
         // Never drift from disk: drop the refused batch AND everything queued
         // behind it, and show what the server actually holds.
@@ -636,6 +935,7 @@ export class StudioStore {
         this.history.clear();
         this.historyTick.update((n) => n + 1);
         await this.reload();
+        return false;
       }
     })();
     return this.inFlight;
@@ -643,70 +943,67 @@ export class StudioStore {
 
   // ------------------------------------------------------------- actions
 
-  /** Re-synthesize lines (sequentially — the TTS engine is one worker). */
-  async regenerate(ids: readonly string[]): Promise<void> {
-    if (!(await this.flushNow())) return;
-    for (const id of ids) {
-      this.markBusy(id, true);
-      try {
-        const res = await this.ipc.synthesizeSingleSegment(this.projectId(), id, {});
-        this.bumpAudio(res.alignment.segmentId);
-      } catch (err) {
-        this.error.set(toAppError(err));
-        break;
-      } finally {
-        this.markBusy(id, false);
+  /**
+   * Re-voice the clips of these lines, one after another (the TTS engine is
+   * one worker): each clip once, none already being voiced. They are marked
+   * busy before the save below, so a second click meanwhile finds them busy
+   * instead of queueing them again.
+   */
+  async regenerate(segmentIds: readonly string[], limit?: number): Promise<void> {
+    if (this.dubRunning()) return;
+    const clips = clipsToVoice(segmentIds, this.unitBySegment(), this.busy(), limit);
+    if (clips.length === 0) return;
+    for (const id of clips) this.markBusy(id, true);
+    try {
+      if (!(await this.flushNow())) return;
+      for (const id of clips) {
+        try {
+          const res = await this.ipc.synthesizeSingleSegment(this.projectId(), id, {});
+          this.bumpAudio(res.alignment.segmentId);
+        } catch (err) {
+          this.fail(err);
+          break;
+        } finally {
+          this.markBusy(id, false);
+        }
       }
+      if (!this.disposed) await this.reload();
+    } finally {
+      for (const id of clips) this.markBusy(id, false);
     }
-    await this.reload();
   }
 
   /**
-   * Voice every line whose text/voice/rate changed. Regenerating one member of
-   * a merged clip re-voices ALL its members (it degroups), so the stale list is
-   * re-read after each line instead of being fixed up front.
+   * Voice every line whose text/voice/rate changed. The batch belongs to the
+   * app, not to this screen (StudioJobsService): leaving the editor no longer
+   * hides it, and asking again while it runs joins it.
    */
   async regenerateStale(): Promise<void> {
+    if (this.dubRunning()) return;
     if (!(await this.flushNow())) return;
-    const total = this.staleCount();
-    if (total === 0) return;
-    this.batch.set({ done: 0, total });
-    try {
-      for (let guard = 0; guard < total + 5; guard++) {
-        const next = this.segments().find((s) => s.ttsStale === true);
-        if (!next) break;
-        this.markBusy(next.id, true);
-        try {
-          const res = await this.ipc.synthesizeSingleSegment(this.projectId(), next.id, {});
-          this.bumpAudio(res.alignment.segmentId);
-        } finally {
-          this.markBusy(next.id, false);
-        }
-        await this.reload();
-        this.batch.set({ done: total - this.staleCount(), total });
-      }
-    } catch (err) {
-      this.error.set(toAppError(err));
-      await this.reload();
-    } finally {
-      this.batch.set(null);
-    }
+    const pid = this.projectId();
+    if (this.staleCount() === 0 && !this.jobs.voicing(pid)) return;
+    await this.jobs.voiceStale(pid, this.staleCount());
+    if (!this.disposed) await this.reload();
   }
 
   /** Re-translate one overflowing line shorter, then re-voice it. */
   async tighten(id: string): Promise<void> {
-    if (!(await this.flushNow())) return;
-    this.markBusy(id, true);
+    if (this.dubRunning()) return;
+    const clip = this.clipOf(id);
+    if (this.busy().has(clip)) return;
+    this.markBusy(clip, true);
     try {
+      if (!(await this.flushNow())) return;
       const res = await this.ipc.refitSegment(this.projectId(), id);
       this.bumpAudio(res.alignment.segmentId);
       const n = this.lines().find((l) => l.seg.id === id)?.n ?? 0;
       this.tightenKept.set(res.shortened === false && res.reason ? { line: n, reason: res.reason } : null);
-      await this.reload();
+      if (!this.disposed) await this.reload();
     } catch (err) {
-      this.error.set(toAppError(err));
+      this.fail(err);
     } finally {
-      this.markBusy(id, false);
+      this.markBusy(clip, false);
     }
   }
 
@@ -750,7 +1047,28 @@ export class StudioStore {
     return this.history.peekUndo();
   }
 
+  ngOnDestroy(): void {
+    // The editor is gone: stop asking about the run and following jobs. A
+    // detection or a voicing batch goes on without it and is picked up again
+    // by the next editor of the project.
+    this.disposed = true;
+    clearTimeout(this.runTimer);
+    this.unwatchJobs?.();
+    this.unwatchJobs = null;
+  }
+
   // -------------------------------------------------------------- helpers
+
+  /**
+   * Show an error. A refusal because a dub started (from the queue, a series
+   * or Claude) re-reads the run at once, so the editor turns read-only now
+   * rather than at its next poll.
+   */
+  private fail(err: unknown): void {
+    const error = toAppError(err);
+    this.error.set(error);
+    if (error.code === 'RUN_IN_PROGRESS' && !this.disposed) void this.refreshProject().catch(() => undefined);
+  }
 
   private byId(id: string): TimelineSegment | undefined {
     const i = this.indexById().get(id);
@@ -758,7 +1076,8 @@ export class StudioStore {
   }
 
   private markBusy(id: string, on: boolean): void {
-    this.busy.update((set) => {
+    this.ownBusy.update((set) => {
+      if (set.has(id) === on) return set;
       const next = new Set(set);
       if (on) next.add(id);
       else next.delete(id);

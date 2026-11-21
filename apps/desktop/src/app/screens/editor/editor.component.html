@@ -3,7 +3,7 @@
     <a class="icon-btn" routerLink="/" [title]="'studio.back' | translate" [attr.aria-label]="'studio.back' | translate">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
     </a>
-    <button type="button" class="icon-btn" [class.active]="linesOpen()" (click)="toggleLines()" [title]="'studio.toggle-lines' | translate" [attr.aria-pressed]="linesOpen()">
+    <button type="button" class="icon-btn" [class.active]="linesOpen()" (click)="toggleLines()" [title]="'studio.toggle-lines' | translate" [attr.aria-label]="'studio.toggle-lines' | translate" [attr.aria-pressed]="linesOpen()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
     </button>
     <div class="title">
@@ -15,32 +15,66 @@
   </div>
 
   <div class="right">
-    <button type="button" class="icon-btn" (click)="store.undo()" [disabled]="!store.canUndo()" [title]="(store.undoLabel() ? ('studio.undo-x' | translate: { x: (store.undoLabel()! | translate) }) : ('studio.undo' | translate))" [attr.aria-label]="'studio.undo' | translate">
+    <button type="button" class="icon-btn" (click)="store.undo()" [disabled]="!store.canUndo() || store.dubRunning()" [title]="(store.undoLabel() ? ('studio.undo-x' | translate: { x: (store.undoLabel()! | translate) }) : ('studio.undo' | translate))" [attr.aria-label]="'studio.undo' | translate">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></svg>
     </button>
-    <button type="button" class="icon-btn" (click)="store.redo()" [disabled]="!store.canRedo()" [title]="(store.redoLabel() ? ('studio.redo-x' | translate: { x: (store.redoLabel()! | translate) }) : ('studio.redo' | translate))" [attr.aria-label]="'studio.redo' | translate">
+    <button type="button" class="icon-btn" (click)="store.redo()" [disabled]="!store.canRedo() || store.dubRunning()" [title]="(store.redoLabel() ? ('studio.redo-x' | translate: { x: (store.redoLabel()! | translate) }) : ('studio.redo' | translate))" [attr.aria-label]="'studio.redo' | translate">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h4"/></svg>
     </button>
     <button type="button" class="icon-btn" (click)="showHelp.set(!showHelp())" [class.active]="showHelp()" [title]="'studio.shortcuts' | translate" [attr.aria-label]="'studio.shortcuts' | translate">?</button>
 
     @if (store.batch(); as b) {
-      <span class="badge badge-running">{{ 'studio.voicing-progress' | translate: { done: b.done, total: b.total } }}</span>
+      <span class="badge badge-running" role="status">{{ 'studio.voicing-progress' | translate: { done: b.done, total: b.total } }}</span>
     } @else if (store.staleCount() > 0) {
-      <button type="button" class="btn btn-sm" (click)="store.regenerateStale()" [disabled]="store.busy().size > 0" [title]="'studio.voice-changed-title' | translate">
+      <button type="button" class="btn btn-sm" (click)="store.regenerateStale()" [disabled]="store.busy().size > 0 || store.dubRunning()" [title]="'studio.voice-changed-title' | translate">
         {{ 'studio.voice-changed' | translate: { n: store.staleCount() } }}
       </button>
     }
     <a class="btn btn-sm btn-ghost" [routerLink]="['/project', store.projectId(), 'export']">{{ 'editor.export-options' | translate }}</a>
-    <button type="button" class="btn btn-primary btn-sm" (click)="render()" [disabled]="!canRender()" [title]="'studio.render-title' | translate">
-      {{ (rendering() ? 'studio.rendering' : 'studio.render') | translate }}
-    </button>
+    @if (store.awaitingReview()) {
+      <!-- The review checkpoint: no voice yet, so Render could do nothing. The
+           way forward takes its place, whichever side tab is open. -->
+      <button type="button" class="btn btn-primary btn-sm" (click)="continueDubbing()" [disabled]="store.continuing()" [title]="'studio.continue-title' | translate">
+        {{ (store.continuing() ? 'editor.continuing' : 'editor.continue-dubbing') | translate }}
+      </button>
+    } @else {
+      @switch (renderWhy()) {
+        @case ('running') {
+          <span id="vd-render-why" class="render-why">{{ 'studio.render-why-running' | translate }}</span>
+        }
+        @case ('no-voices') {
+          <span id="vd-render-why" class="render-why" [title]="'studio.render-why-no-voices-title' | translate">{{ 'studio.render-why-no-voices' | translate }}</span>
+        }
+      }
+      <!-- The tooltip sits on a wrapper: not every webview shows one on a disabled button. -->
+      <span class="render-slot" [title]="(renderWhy() === 'no-voices' ? 'studio.render-why-no-voices-title' : renderWhy() === 'running' ? 'studio.running-note' : 'studio.render-title') | translate">
+        <button type="button" class="btn btn-primary btn-sm" (click)="render()" [disabled]="!canRender()" [attr.aria-describedby]="renderWhy() ? 'vd-render-why' : null">
+          {{ (rendering() ? 'studio.rendering' : 'studio.render') | translate }}
+        </button>
+      </span>
+    }
   </div>
 </header>
 
+<!-- What the dub itself is doing. While it runs the editor is read-only (the
+     server refuses every edit then); at the review checkpoint it waits for
+     the user. -->
+@if (store.dubRunning()) {
+  <div class="notice running" role="status">
+    <span class="pulse" aria-hidden="true"></span>
+    <span class="text">{{ 'studio.running-note' | translate }}</span>
+    <a class="btn btn-sm" [routerLink]="['/project', store.projectId(), 'processing']">{{ 'studio.running-see-progress' | translate }}</a>
+  </div>
+} @else if (store.awaitingReview()) {
+  <div class="notice review" role="status">
+    <span class="text"><strong>{{ 'editor.review-title' | translate }}</strong> {{ 'editor.review-hint' | translate }}</span>
+  </div>
+}
+
 <vd-error-banner [error]="store.error()" (dismiss)="store.dismissError()" />
-@if (store.tightenKept(); as kept) {
+@if (tightenText(); as text) {
   <div class="tighten-kept" role="status">
-    <span>{{ 'studio.tighten-kept' | translate: { n: kept.line, reason: kept.reason } }}</span>
+    <span>{{ text }}</span>
     <button type="button" class="btn btn-ghost btn-sm" (click)="store.tightenKept.set(null)">
       {{ 'common.dismiss' | translate }}
     </button>

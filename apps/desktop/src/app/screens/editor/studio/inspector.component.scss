@@ -4,6 +4,23 @@
   min-height: 0;
 }
 
+/* Groups the editing controls only to disable them all while a dub runs: no
+   frame of its own (the global fieldset style draws one). */
+.edit-lock {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.read-only-note {
+  margin: 0;
+  padding: var(--vd-sp-2) var(--vd-sp-4);
+  border-bottom: 1px solid var(--vd-border);
+  background: var(--vd-info-bg);
+  font-size: 0.8rem;
+}
+
 .block {
   padding: var(--vd-sp-3) var(--vd-sp-4);
   border-bottom: 1px solid var(--vd-border);

@@ -75,6 +75,7 @@ import { StudioStore } from './studio.store';
           class="icon-btn"
           (click)="stepLine(-1)"
           [title]="'studio.prev-line' | translate"
+          [attr.aria-label]="'studio.prev-line' | translate"
         >
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z" /></svg>
         </button>
@@ -83,6 +84,7 @@ import { StudioStore } from './studio.store';
           class="icon-btn"
           (click)="playback.skip(-frameMs())"
           [title]="'studio.frame-back' | translate"
+          [attr.aria-label]="'studio.frame-back' | translate"
         >
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M11 6v12l-8-6zM21 6v12l-8-6z" />
@@ -108,6 +110,7 @@ import { StudioStore } from './studio.store';
           class="icon-btn"
           (click)="playback.skip(frameMs())"
           [title]="'studio.frame-forward' | translate"
+          [attr.aria-label]="'studio.frame-forward' | translate"
         >
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 6v12l8-6zM3 6v12l8-6z" /></svg>
         </button>
@@ -116,6 +119,7 @@ import { StudioStore } from './studio.store';
           class="icon-btn"
           (click)="stepLine(1)"
           [title]="'studio.next-line' | translate"
+          [attr.aria-label]="'studio.next-line' | translate"
         >
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M16 5h2v14h-2zM4 5v14l11-7z" />
@@ -187,6 +191,7 @@ import { StudioStore } from './studio.store';
           [class.active]="showSource()"
           (click)="toggleSource()"
           [title]="'studio.show-source' | translate"
+          [attr.aria-label]="'studio.show-source' | translate"
           [attr.aria-pressed]="showSource()"
         >
           <svg

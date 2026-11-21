@@ -1,5 +1,5 @@
 import { BrandingPanelComponent } from './branding-panel.component';
-import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, type OnDestroy, type OnInit } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, viewChild, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { speakerNumber, VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
@@ -38,6 +38,8 @@ import type {
 } from '../../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, WhisperModelInfo } from '../../../core/models/setup';
 import { OutputFolderComponent } from '../../../shared/output-folder/output-folder.component';
+import { describeCastNote } from './notes';
+import { handLockedCount, retranslates } from './redub';
 import { StudioStore } from './studio.store';
 
 /** Fully-populated editable copy of the translation character sheet. */
@@ -67,10 +69,12 @@ const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libret
 
 /**
  * The studio's "Project" side panel: the final video, every applied setting
- * with change-and-re-dub (reusing the earlier stages' outputs), the review
- * checkpoint, and the translation character sheet. This is the previous
- * editor's settings surface, kept intact — the timeline replaced only the
- * transcript table.
+ * with change-and-re-dub (reusing the earlier stages' outputs), and the
+ * translation character sheet. This is the previous editor's settings
+ * surface, kept intact — the timeline replaced only the transcript table.
+ * The review checkpoint's "Continue dubbing" moved to the editor's toolbar:
+ * here, on a tab the editor does not open on, it was the only way forward
+ * and nobody found it.
  */
 @Component({
   selector: 'vd-project-panel',
@@ -94,6 +98,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly confirm = inject(ConfirmService);
   protected readonly store = inject(StudioStore);
+  private readonly branding = viewChild(BrandingPanelComponent);
 
   /** "Voice from this video" dialog (the whole track). */
   protected readonly voiceDialogOpen = signal(false);
@@ -116,13 +121,6 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     effect(() => {
       if (this.store.voicesVersion() === 0) return;
       untracked(() => void this.refreshVoiceLists());
-    });
-    // Speaker voices apply at once (store.setSpeakerVoice), not through this
-    // draft: keep the draft in step, or every speaker voice would show here as
-    // an unsaved change asking for a re-dub.
-    effect(() => {
-      const voices = this.store.settings()?.speakerVoices;
-      untracked(() => this.draft.update((d) => (d ? { ...d, speakerVoices: voices } : d)));
     });
   }
 
@@ -157,6 +155,10 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   protected readonly cast = signal<Awaited<ReturnType<IpcService['castVoices']>> | null>(null);
   protected readonly casting = signal(false);
   protected readonly castWithoutClones = signal(false);
+  /** The proposal's notes in the user's language (the server writes them in English). */
+  protected readonly castNotes = computed(() =>
+    (this.cast()?.notes ?? []).map((note) => describeCastNote(note, (key, params) => this.translate.instant(key, params))),
+  );
 
   protected async proposeCast(): Promise<void> {
     await this.castCall({});
@@ -167,8 +169,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     if (done?.applied) {
       this.cast.set(null);
       // The speakers' voices changed (project settings), and lines were marked for re-voicing (the timeline).
-      const { project } = await this.ipc.getProject(this.store.projectId());
-      this.store.project.set(project);
+      await this.store.refreshProject().catch(() => undefined);
       await this.store.reload();
     }
   }
@@ -212,8 +213,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   protected async onSpeakerVoicesMade(): Promise<void> {
     await this.refreshVoiceLists();
     await this.store.reload();
-    const { project } = await this.ipc.getProject(this.store.projectId());
-    this.store.project.set(project);
+    await this.store.refreshProject().catch(() => undefined);
   }
 
   ngOnDestroy(): void {
@@ -234,16 +234,31 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   protected readonly subtitlePositionLabels = SUBTITLE_POSITION_LABELS;
   protected readonly subtitleModes: readonly SubtitleExportMode[] = ALL_SUBTITLE_EXPORT_MODES;
 
-  protected readonly draft = signal<ProjectSettings | null>(null);
+  /**
+   * The settings the user changed in this card and has not applied with a
+   * re-dub; the card shows the applied settings with these on top. The draft
+   * used to be a full copy taken at load: anything applied at once afterwards
+   * (logo & greeting, speaker detection, voices by gender) then read as an
+   * unsaved change in it, recommended a re-dub (from speech-to-text, after a
+   * detection) and the re-dub wrote the stale copy back over it.
+   */
+  private readonly edits = signal<Partial<ProjectSettings>>({});
+  protected readonly draft = computed<ProjectSettings | null>(() => {
+    const applied = this.store.settings();
+    return applied ? { ...applied, ...this.edits() } : null;
+  });
   protected readonly providers = signal<ProvidersResponse | null>(null);
   protected readonly whisperModels = signal<WhisperModelInfo[]>([]);
   protected readonly languageLabels = signal<ReadonlyMap<string, string>>(new Map());
   protected readonly draftVoices = signal<PiperVoiceInfo[]>([]);
   protected readonly offeredPacks = signal<ReadonlySet<string>>(new Set<string>());
   protected readonly redubbing = signal(false);
-  readonly awaitingReview = signal(false);
-  protected readonly continuing = signal(false);
-  readonly rendered = signal(false);
+  /** The render step has produced the video (it follows the store's pipeline, read again after a dub). */
+  readonly rendered = computed(
+    () =>
+      this.store.pipeline()?.steps.some((s) => s.id === 'render' && s.status === 'completed') === true ||
+      this.store.project()?.status === 'completed',
+  );
   protected readonly resultPreviewFailed = signal(false);
 
   protected readonly originalAudioModes = computed<readonly OriginalAudioMode[]>(() =>
@@ -258,7 +273,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     const base = this.store.settings();
     const next = this.draft();
     if (!base || !next) return [];
-    return (Object.keys(next) as (keyof ProjectSettings)[]).filter((k) => JSON.stringify(next[k]) !== JSON.stringify(base[k]));
+    return (Object.keys(this.edits()) as (keyof ProjectSettings)[]).filter((k) => JSON.stringify(next[k]) !== JSON.stringify(base[k]));
   });
   protected readonly settingsDirty = computed(() => this.changedKeys().length > 0);
   protected readonly recommendedStep = computed<PipelineStepId | null>(() => earliestStepForChanges(this.changedKeys()));
@@ -290,12 +305,9 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   async load(projectId: string): Promise<void> {
     try {
       const { project, pipeline } = await this.ipc.getProject(projectId);
-      this.store.project.set(project);
-      this.draft.set({ ...project.settings });
+      this.store.adoptProject(project, pipeline ?? null);
+      this.edits.set({});
       this.detectCount.set(project.settings.diarizeSpeakers ?? 0);
-      const renderDone = pipeline?.steps.some((s) => s.id === 'render' && s.status === 'completed');
-      this.rendered.set(renderDone === true || project.status === 'completed');
-      this.awaitingReview.set(pipeline?.awaitingReview === true);
       const [providers, catalog, engines] = await Promise.all([
         this.ipc.getProviders().catch(() => null),
         this.ipc.setupGetCatalog().catch(() => null),
@@ -416,7 +428,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
    */
   protected async onVoiceMade(profile: VoiceProfile): Promise<void> {
     const provider = VOICE_ENGINE_PROVIDER[profile.engine] ?? VOICE_ENGINE_PROVIDER.vieneu;
-    this.draft.update((d) => (d ? { ...d, ttsProviderId: provider, ttsVoiceId: profile.id } : d));
+    this.edits.update((e) => ({ ...e, ttsProviderId: provider, ttsVoiceId: profile.id }));
     await this.refreshVoiceLists();
   }
 
@@ -444,7 +456,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     try {
       await this.ipc.deleteVoiceProfile(p.id);
       // A deleted voice must not stay proposed as the project's voice.
-      if (this.draft()?.ttsVoiceId === p.id) this.draft.update((d) => (d ? { ...d, ttsVoiceId: undefined } : d));
+      if (this.draft()?.ttsVoiceId === p.id) this.edits.update((e) => ({ ...e, ttsVoiceId: undefined }));
       await this.refreshVoiceLists();
     } catch (err) {
       this.store.error.set(toAppError(err));
@@ -452,19 +464,19 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   }
 
   protected onSettingChange<K extends keyof ProjectSettings>(key: K, value: ProjectSettings[K]): void {
-    this.draft.update((d) => (d ? { ...d, [key]: value } : d));
+    this.edits.update((e) => ({ ...e, [key]: value }));
     if (key === 'ttsProviderId') {
-      this.draft.update((d) => (d ? { ...d, ttsVoiceId: undefined } : d));
+      this.edits.update((e) => ({ ...e, ttsVoiceId: undefined }));
       void this.reloadVoices(value as string, this.draft()?.targetLanguage ?? '', false).then(() => {
         const rec = this.draftVoices().find((v) => v.recommended) ?? this.draftVoices()[0];
-        if (rec) this.draft.update((d) => (d ? { ...d, ttsVoiceId: rec.id } : d));
+        if (rec) this.edits.update((e) => ({ ...e, ttsVoiceId: rec.id }));
       });
     }
   }
 
   /** Burned-in subtitle placement / the band that hides a source's own subtitles. */
   protected onBurnStyleChange(patch: Partial<SubtitleStyle>): void {
-    this.draft.update((d) => (d ? { ...d, burnSubtitleStyle: { ...d.burnSubtitleStyle, ...patch } } : d));
+    this.edits.update((e) => ({ ...e, burnSubtitleStyle: { ...this.draft()?.burnSubtitleStyle, ...patch } }));
   }
 
   protected onNumberSettingChange<K extends keyof ProjectSettings>(key: K, value: unknown): void {
@@ -499,11 +511,59 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     return this.recommendedStep() === step;
   }
 
-  /** Persist changed settings, then re-run from `step` (earlier stages reused). */
+  /** The re-dub from `step` translates every line again (its tooltip says what that replaces). */
+  protected retranslatesFrom(step: PipelineStepId): boolean {
+    return retranslates(step);
+  }
+
+  /**
+   * The drafts here that only their own button saves, in words, for the
+   * leave-page prompt. Line edits are not among them: they save themselves.
+   */
+  unsavedDrafts(): string[] {
+    const out: string[] = [];
+    if (this.settingsDirty()) out.push(this.translate.instant('studio.draft-settings'));
+    if (this.ctxDirty()) out.push(this.translate.instant('studio.draft-sheet'));
+    if (this.branding()?.dirty()) out.push(this.translate.instant('studio.draft-greeting'));
+    return out;
+  }
+
+  /** Re-dub from `step`, once the user agreed to what it replaces or stops. */
   async redubFrom(step: PipelineStepId): Promise<void> {
+    if (this.redubbing()) return;
+    if (!(await this.confirmRedub(step))) return;
+    await this.runRedub(step);
+  }
+
+  /**
+   * Ask before a re-dub throws away work: the lines the user wrote or locked
+   * (a re-translation replaces them: the translation step does not keep
+   * locked lines), or a dub in progress (stopped first, what it finished
+   * kept). With nothing to lose there is no question.
+   */
+  private async confirmRedub(step: PipelineStepId): Promise<boolean> {
+    const locked = retranslates(step) ? handLockedCount(this.store.segments()) : 0;
+    const running = this.store.dubRunning();
+    if (locked === 0 && !running) return true;
+    const parts: string[] = [];
+    if (running) parts.push(this.translate.instant('studio.stop-dub-body'));
+    if (locked > 0) {
+      parts.push(this.translate.instant('editor.redub-locked-body', { n: locked, step: this.translate.instant(this.stepLabels[step]) }));
+    }
+    return this.confirm.confirm({
+      title: locked > 0 ? this.translate.instant('editor.redub-locked-title') : this.translate.instant('studio.stop-dub-title'),
+      message: parts.join(' '),
+      confirmLabel: locked > 0 ? this.translate.instant('editor.redub-locked-confirm') : this.translate.instant('editor.redub-stop-confirm'),
+    });
+  }
+
+  /** Persist changed settings, then re-run from `step` (earlier stages reused). */
+  private async runRedub(step: PipelineStepId): Promise<void> {
     if (this.redubbing()) return;
     this.redubbing.set(true);
     try {
+      // A running dub refuses new settings, and the user agreed to stop it.
+      if (this.store.dubRunning() && !(await this.store.stopRunningDub())) return;
       if (!(await this.store.flushNow())) return;
       const base = this.store.settings();
       const next = this.draft();
@@ -511,8 +571,8 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
         const patch: Partial<ProjectSettings> = {};
         for (const key of this.changedKeys()) (patch as Record<string, unknown>)[key] = next[key];
         const updated = await this.ipc.updateProjectSettings(this.store.projectId(), patch);
-        this.store.project.set(updated.project);
-        this.draft.set({ ...updated.project.settings });
+        this.store.adoptProject(updated.project, updated.pipeline ?? null);
+        this.edits.set({});
       }
       await this.ipc.retryPipelineStep(this.store.projectId(), step);
       await this.router.navigate(['/project', this.store.projectId(), 'processing']);
@@ -520,21 +580,6 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
       this.store.error.set(toAppError(err));
     } finally {
       this.redubbing.set(false);
-    }
-  }
-
-  /** Leave the review checkpoint: save edits, resume at synthesis. */
-  async continueDubbing(): Promise<void> {
-    if (this.continuing()) return;
-    this.continuing.set(true);
-    try {
-      if (!(await this.store.flushNow())) return;
-      await this.ipc.retryPipelineStep(this.store.projectId(), 'tts');
-      await this.router.navigate(['/project', this.store.projectId(), 'processing']);
-    } catch (err) {
-      this.store.error.set(toAppError(err));
-    } finally {
-      this.continuing.set(false);
     }
   }
 
@@ -581,6 +626,8 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   protected async saveCtx(retranslate: boolean): Promise<void> {
     const draft = this.ctxDraft();
     if (!draft || this.ctxSaving()) return;
+    // Asked before anything is saved: "Cancel" leaves the sheet as typed, for Save sheet.
+    if (retranslate && !(await this.confirmRedub('translation'))) return;
     this.ctxSaving.set(true);
     try {
       const ctx: TranslationDocContext = {
@@ -592,7 +639,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
       const { context } = await this.ipc.saveTranslationContext(this.store.projectId(), ctx);
       this.ctxDraft.set(toCtxDraft(context));
       this.ctxDirty.set(false);
-      if (retranslate) await this.redubFrom('translation');
+      if (retranslate) await this.runRedub('translation');
     } catch (err) {
       this.store.error.set(toAppError(err));
     } finally {

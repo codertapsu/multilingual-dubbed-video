@@ -68,7 +68,7 @@ import { UpdateService, formatMegabytes } from '../../core/update/update.service
       }
     }
     @if (failure(); as f) {
-      <div class="up up-failed" role="alert">
+      <div class="up" [class.up-failed]="!f.busy" [attr.role]="f.busy ? 'status' : 'alert'">
         <strong>{{ (f.busy ? 'update.progress.busy-title' : 'update.progress.failed-title') | translate }}</strong>
         <span>{{ (f.busy ? 'update.progress.busy' : 'update.progress.failed-hint') | translate }}</span>
         @if (!f.busy) {
@@ -206,8 +206,9 @@ export class UpdateProgressComponent {
 
   /**
    * Why the update stopped, if it did: the shell's own failure (download or
-   * installer), or the request refused (a dub is running). A dub that started
-   * during the download is not a failure: the update waits (`ready`).
+   * installer), or the request refused because a dub is running. That one is
+   * a wait, not a failure, and reads as one (no red): the update stays
+   * downloaded (`ready`) until the dub ends.
    */
   protected readonly failure = computed<{ busy: boolean; detail: string | null } | null>(() => {
     const s = this.update.status();
@@ -215,7 +216,7 @@ export class UpdateProgressComponent {
     if (s.phase === 'downloading' || s.phase === 'installing') return null;
     if (s.phase === 'failed') return { busy: false, detail: s.error ?? err?.message ?? null };
     if (!err) return null;
-    if (err.code === 'RUN_IN_PROGRESS') return s.phase === 'ready' ? null : { busy: true, detail: null };
+    if (err.code === 'RUN_IN_PROGRESS') return { busy: true, detail: null };
     return { busy: false, detail: err.message };
   });
 }

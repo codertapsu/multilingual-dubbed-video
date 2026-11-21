@@ -98,7 +98,13 @@ export interface ErrorView {
   advice?: string;
   /** Folded under "Technical details": whatever is not already shown above. */
   details: { message?: string; remediation?: string; cause?: string; docsRef?: string };
-  /** Changes exactly when what the banner says changes: it then comes into view again. */
+  /**
+   * Which error this is: its code and message, nothing else. The banner comes
+   * into view again only when this changes (or after no error at all). Screens
+   * that poll pass the same failure every few seconds, as a new object, and a
+   * cause carrying a time or an attempt count would otherwise pull the page
+   * back to the banner on every poll (Series reads every 3 s).
+   */
   signature: string;
 }
 
@@ -127,7 +133,7 @@ export function describeError(err: unknown): ErrorView | null {
     ...(shownMessage ? { message: shownMessage } : {}),
     ...(shownAdvice ? { advice: shownAdvice } : {}),
     details,
-    signature: JSON.stringify([e.code, e.message, e.remediation ?? '', e.cause ?? '', e.docsRef ?? '']),
+    signature: JSON.stringify([e.code, e.message]),
   };
 }
 

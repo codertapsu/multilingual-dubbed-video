@@ -115,12 +115,15 @@ describe('describeError', () => {
     expect(describeError({ nothing: 1 })).toMatchObject({ code: 'UNKNOWN', titleKey: 'error.codes.unknown.title' });
   });
 
-  it('the signature follows the content, not the object identity', () => {
+  it('the signature is the code and message: a polled error passed again stays the same error', () => {
     const a = describeError({ code: 'WORKER_TIMEOUT', message: 'Translation timed out.' })!;
-    const b = describeError({ code: 'WORKER_TIMEOUT', message: 'Translation timed out.' })!;
+    // A new object every poll, its cause or advice reworded: still the same error.
+    const b = describeError({ code: 'WORKER_TIMEOUT', message: 'Translation timed out.', cause: 'attempt 3 at 10:42:07', remediation: 'Retry.' })!;
     const c = describeError({ code: 'WORKER_TIMEOUT', message: 'Voice timed out.' })!;
+    const d = describeError({ code: 'ENGINE_BUSY', message: 'Translation timed out.' })!;
     expect(a.signature).toBe(b.signature);
     expect(a.signature).not.toBe(c.signature);
+    expect(a.signature).not.toBe(d.signature);
   });
 });
 

@@ -202,7 +202,11 @@ export class ErrorBannerComponent {
   protected readonly view = computed(() => describeError(this.error()));
   protected readonly titleId = `vd-error-title-${++nextBannerId}`;
   private readonly banner = viewChild<ElementRef<HTMLElement>>('banner');
-  /** What the banner said when it last asked to be shown: the same error re-emitted stays put. */
+  /**
+   * The error (code and message) it last asked to be shown for. The same
+   * error passed again, as the same object or as a new one on every poll,
+   * stays put; a different one, or one after no error, asks again.
+   */
   private announced: string | null = null;
 
   constructor() {

@@ -2018,6 +2018,7 @@
     "placement-repeat": "Repeat",
     "placement-add": "Add at the playhead",
     "placement-remove": "Remove",
+    "placement-seek": "Go to this time in the video",
     "placement-save": "Save times",
     "placement-saved": "Saved. Render again to hear it.",
     "opening-skipped": "No quiet moment in the opening, so it does not play at the start.",

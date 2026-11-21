@@ -2018,6 +2018,7 @@
     "placement-repeat": "Lặp lại",
     "placement-add": "Thêm ở vị trí đang phát",
     "placement-remove": "Bỏ",
+    "placement-seek": "Chuyển tới thời điểm này trong video",
     "placement-save": "Lưu thời điểm",
     "placement-saved": "Đã lưu. Bấm Render lại để nghe.",
     "opening-skipped": "Phần mở đầu không có khoảng lặng nào nên lời chào không phát ở đầu video.",

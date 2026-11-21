@@ -229,6 +229,18 @@ with varied text is re-timed, text kept; the phrase filter also runs on the re-d
 count only in music/no-speech regions or as two hits; each chunk is checked right after decoding;
 over-long re-decoded lines are trimmed with the per-language speech rate.
 
+## Progress (2026-11-21): all phases in 0.17.0
+
+- **1** watchdog, crash evidence, recovered dubs resume; downloads gate (policy by hardware, Settings → Downloads).
+- **2** chunked detection (`/diarize-chunk`, `/link`, `/embed`), per-file thresholds, cannot-links, the seed-and-grow gender rule, line fallback marked low-confidence, failure as a warning; detection again as a job; speakers summary; casting by gender (clones first, pitch rank, print only past 2 std; unconfirmed clones named, applying without them needs `allowWithoutClones`); default voice per gender; clone gender asked, suggested from prints, confirmed by the user.
+- **3** loop detector (dense repeats, low diversity, whole credit phrases), re-decode without context, repair/keep/remove/left with `loopSuspect`; `replace_lines`, `retranscribe_range`, `export_transcript`; source corrections in the character sheet. Not done: restructuring lines of an already-translated standalone project (needs stable line ids; voice clips are named by index).
+- **4** review gate, cuts within bounds, sheet names in titles, AI retry, `rebuild_parts`, `applyToParts`, series-wide pause/continue.
+- **5** lane owners for previews and enrollment, stale lanes released, light lane, silence for wordless lines, step detail with pace and ETA, model advice for a user-chosen model off the GPU.
+- **6** MCP tools and instructions as listed in docs/MCP.md.
+- **7** structured log with MCP request ids, engine logs, warnings, Help/Settings → Diagnostics, support bundle.
+- **8** Settings in sections with search, explanations, resets and engine families.
+- Not run: the live soak (1.6) on this machine, to keep the installed app's production data untouched; the release sidecars are booted against a scratch folder instead, and the production agent watches Diagnostics on its next long run.
+
 ## Testing
 
 Each phase: unit tests for the pure parts (admission with the light lane, loop detector, cut path

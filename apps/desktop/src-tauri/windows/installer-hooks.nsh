@@ -1,7 +1,27 @@
 ; NSIS hooks for the VideoDubber Windows installer (tauri.conf.json ->
 ; bundle.windows.nsis.installerHooks). Keep this file pure ASCII.
+;
+; The installer is the NEW version's code even when the OLD app starts it, so
+; what is fixed here protects the very next update.
+
+; One line in <home>\VideoDubber\logs\installer.log (the app's logs folder):
+; an update that did not take leaves evidence. The 0.16.1 -> 0.17.0 update
+; failed twice on a user's machine with nothing written anywhere.
+!macro VD_LOG TEXT
+  CreateDirectory "$PROFILE\VideoDubber\logs"
+  ClearErrors
+  FileOpen $9 "$PROFILE\VideoDubber\logs\installer.log" a
+  ${IfNot} ${Errors}
+    FileSeek $9 0 END
+    ${GetTime} "" "L" $R0 $R1 $R2 $R3 $R4 $R5 $R6
+    FileWrite $9 "$R2-$R1-$R0 $R4:$R5:$R6 ${TEXT}$\r$\n"
+    FileClose $9
+  ${EndIf}
+!macroend
 
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro VD_LOG "installer started (update=$UpdateMode passive=$PassiveMode) into $INSTDIR"
+
   ; Close every VideoDubber background program before any file is copied.
   ; The app stops its own backend before an update (the updater's
   ; on_before_exit), but Claude Code and Claude Desktop run this same
@@ -36,13 +56,81 @@
   ${AndIfNot} ${Silent}
   ${AndIf} $PassiveMode != 1
     MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION "VideoDubber is still running in the background, perhaps as the VideoDubber connection of Claude Code or Claude Desktop. Click OK to close it and continue installing." IDOK vd_close_background
+    !insertmacro VD_LOG "installer cancelled by the user (background program running)"
     Abort
   ${EndIf}
   vd_close_background:
-  nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM videodubber-orchestrator.exe /IM vd-stt-worker.exe /IM vd-translation-worker.exe /IM vd-tts-worker.exe /IM vd-piper.exe /IM vd-uv.exe'
-  Pop $0
+
+  ; Stop them, and keep stopping them until none is left (up to ~30 s): a
+  ; killed process that holds graphics-card memory takes seconds to let go of
+  ; its files, and a Claude session can start its connection again meanwhile
+  ; (several were running when the 0.17.0 update failed). A fixed one-second
+  ; wait was not enough.
+  StrCpy $7 0
+  vd_stop_again:
+    nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM videodubber-orchestrator.exe /IM vd-stt-worker.exe /IM vd-translation-worker.exe /IM vd-tts-worker.exe /IM vd-piper.exe /IM vd-uv.exe'
+    Pop $0
+    Sleep 600
+    StrCpy $8 0
+    nsExec::ExecToStack '"$SYSDIR\tasklist.exe" /NH /FO CSV /FI "IMAGENAME eq videodubber-orchestrator.exe"'
+    Pop $0
+    Pop $1
+    ${StrLoc} $3 $1 ".exe" ">"
+    ${If} $3 != ""
+      StrCpy $8 1
+    ${EndIf}
+    nsExec::ExecToStack '"$SYSDIR\tasklist.exe" /NH /FO CSV /FI "IMAGENAME eq vd-*"'
+    Pop $0
+    Pop $1
+    ${StrLoc} $3 $1 ".exe" ">"
+    ${If} $3 != ""
+      StrCpy $8 1
+    ${EndIf}
+    ${If} $8 = 1
+    ${AndIf} $7 < 45
+      IntOp $7 $7 + 1
+      Goto vd_stop_again
+    ${EndIf}
+  ${If} $8 = 1
+    !insertmacro VD_LOG "background programs still running after 30 s; moving busy files aside"
+  ${Else}
+    !insertmacro VD_LOG "background programs stopped (rounds: $7)"
+  ${EndIf}
   ; Windows lets go of an ended program's file a moment after it exits.
-  Sleep 1000
+  Sleep 800
+
+  ; A program still running cannot be overwritten, but it CAN be renamed: move
+  ; any busy top-level program aside, so the new one is copied in its place
+  ; and the old process keeps running from the renamed file until it ends. The
+  ; app deletes these leftovers at its next start (sidecar.rs).
+  System::Call 'kernel32::GetTickCount()i.r6'
+  !insertmacro VD_MOVE_ASIDE_IF_BUSY "videodubber-orchestrator.exe"
+  !insertmacro VD_MOVE_ASIDE_IF_BUSY "vd-piper.exe"
+  !insertmacro VD_MOVE_ASIDE_IF_BUSY "vd-uv.exe"
+  !insertmacro VD_MOVE_ASIDE_IF_BUSY "ffmpeg.exe"
+  !insertmacro VD_MOVE_ASIDE_IF_BUSY "ffprobe.exe"
+!macroend
+
+; Delete a top-level program before the copy; when it is busy, rename it to
+; <name>.old-<ticks> instead. No labels inside: inserted several times.
+!macro VD_MOVE_ASIDE_IF_BUSY NAME
+  ${If} ${FileExists} "$INSTDIR\${NAME}"
+    ClearErrors
+    Delete "$INSTDIR\${NAME}"
+    ${If} ${Errors}
+      ClearErrors
+      Rename "$INSTDIR\${NAME}" "$INSTDIR\${NAME}.old-$6"
+      ${If} ${Errors}
+        !insertmacro VD_LOG "could not delete or move aside ${NAME}"
+      ${Else}
+        !insertmacro VD_LOG "moved busy ${NAME} aside"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  !insertmacro VD_LOG "installer finished: files copied into $INSTDIR"
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
@@ -57,6 +145,7 @@
   ${If} $UpdateMode <> 1
     RMDir /r "$INSTDIR\resources\python"
     RMDir /r "$INSTDIR\resources\engine-src"
+    Delete "$INSTDIR\*.old-*"
     RMDir "$INSTDIR\resources"
     RMDir "$INSTDIR"
   ${EndIf}

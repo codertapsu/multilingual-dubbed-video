@@ -1,13 +1,13 @@
-import { Injectable, computed, inject, signal, type OnDestroy } from '@angular/core';
+import { Injectable, computed, effect, inject, signal, untracked, type OnDestroy } from '@angular/core';
 import type { DownloadsWhileDubbing } from '@videodubber/shared';
 // Runtime helper (not a type), so it comes straight from the shared package per
 // the re-export note in core/models/index.ts. Shared with the orchestrator's
 // pack gate so the badge and the gate can never disagree about the same driver.
 import { outdatedNvidiaDriver } from '@videodubber/shared';
 
-import { environment } from '../../core/environment';
 import { DEFAULT_LOCALE, TranslateService } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
+import { ActivityService } from '../../core/activity/activity.service';
 import type {
   ActivePackSelection,
   AppError,
@@ -69,6 +69,7 @@ export interface EngineProgress {
 @Injectable()
 export class SettingsStore implements OnDestroy {
   private readonly ipc = inject(IpcService);
+  private readonly activity = inject(ActivityService);
   private readonly translate = inject(TranslateService);
   private readonly confirmSvc = inject(ConfirmService);
   private readonly theme = inject(ThemeService);
@@ -104,10 +105,20 @@ export class SettingsStore implements OnDestroy {
   /** Packs this machine's hardware can run (local-first fit check). null = the
    * backend didn't report fit (older build) -> assume everything fits. */
   readonly engineFits = signal<Set<string> | null>(null);
-  readonly engineProgress = signal<Record<string, EngineProgress>>({});
+  /**
+   * Install progress per pack, from the app-wide activity service: an
+   * install keeps showing after Settings is left and opened again (it used
+   * to follow a stream of its own that died with the page, 0.17.0).
+   */
+  readonly engineProgress = computed<Record<string, EngineProgress>>(() => {
+    const out: Record<string, EngineProgress> = {};
+    for (const t of this.activity.running()) {
+      if (t.kind === 'engine') out[t.id.slice('engine:'.length)] = { percent: t.percent, message: t.message };
+    }
+    return out;
+  });
   readonly prerequisites = signal<EnginePrerequisites | null>(null);
   readonly enginesLoaded = signal(false);
-  private engineEvents: EventSource | null = null;
 
   /** The packs as family cards (engine-families.ts). */
   readonly families = computed<EngineFamilyView[]>(() => groupEngineFamilies(this.enginePacks()));
@@ -131,9 +142,20 @@ export class SettingsStore implements OnDestroy {
     void this.loadEffective();
   }
 
+  constructor() {
+    // A pack finished (here or on another screen): the list, what can run and
+    // the defaults may all have changed.
+    let seen = this.activity.engineChanges();
+    effect(() => {
+      const n = this.activity.engineChanges();
+      if (n === seen) return;
+      seen = n;
+      untracked(() => this.afterEngineChange());
+    });
+  }
+
   ngOnDestroy(): void {
-    this.engineEvents?.close();
-    this.engineEvents = null;
+    /* the activity service keeps following installs */
   }
 
   // ========================================================================
@@ -499,56 +521,6 @@ export class SettingsStore implements OnDestroy {
     return this.engineProgress()[packId];
   }
 
-  /** Subscribe to /engines/events once; updates progress + refreshes on done. */
-  private ensureEngineEvents(): void {
-    if (this.engineEvents || !environment.orchestratorUrl) return;
-    const es = new EventSource(`${environment.orchestratorUrl}/engines/events`);
-    es.onmessage = (ev) => {
-      try {
-        const event = JSON.parse(ev.data) as
-          | { type: 'progress'; packId: string; percent: number | null; message: string }
-          | { type: 'done'; packId: string }
-          | { type: 'error'; packId: string; error: AppError }
-          | { type: 'log' };
-        if (event.type === 'progress') {
-          this.engineProgress.update((m) => ({ ...m, [event.packId]: { percent: event.percent, message: event.message } }));
-        } else if (event.type === 'done') {
-          this.clearProgress(event.packId);
-          this.afterEngineChange();
-        } else if (event.type === 'error') {
-          this.clearProgress(event.packId);
-          this.error.set(event.error);
-        }
-      } catch {
-        /* ignore malformed frame */
-      }
-    };
-    es.onerror = () => {
-      // EventSource auto-reconnects on transient blips; only act on a genuine
-      // close so an in-flight row doesn't sit at "Starting…" forever with no
-      // feedback. Clear progress, surface a retryable error, and allow a reconnect.
-      if (es.readyState === EventSource.CLOSED) {
-        this.engineProgress.set({});
-        this.error.set({
-          code: 'WORKER_UNAVAILABLE',
-          message: this.translate.instant('misc.engine-stream-lost'),
-          remediation: this.translate.instant('misc.engine-stream-lost-fix'),
-        });
-        this.engineEvents = null;
-      }
-    };
-    this.engineEvents = es;
-  }
-
-  private clearProgress(packId: string): void {
-    this.engineProgress.update((m) => {
-      const next = { ...m };
-      delete next[packId];
-      return next;
-    });
-  }
-
-  /** What an installed or removed pack changes: the list, what can run, what Automatic picks. */
   private afterEngineChange(): void {
     void this.loadEngines();
     void this.loadProcessingSetup(); // availability flips once a pack lands
@@ -557,15 +529,12 @@ export class SettingsStore implements OnDestroy {
 
   async installEngine(packId: string): Promise<void> {
     this.error.set(null);
-    this.ensureEngineEvents();
-    this.engineProgress.update((m) => ({
-      ...m,
-      [packId]: { percent: 0, message: this.translate.instant('common.working') },
-    }));
+    // Listed as starting at once (and in the top bar), before the first progress event.
+    this.activity.markStarting('engine', packId, this.enginePacks().find((p) => p.id === packId)?.displayName);
     try {
       await this.ipc.installEngine(packId);
     } catch (err) {
-      this.clearProgress(packId);
+      this.activity.markFailed('engine', packId, toAppError(err));
       this.error.set(toAppError(err));
     }
   }

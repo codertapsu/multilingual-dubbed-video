@@ -2,16 +2,18 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  effect,
   inject,
   input,
   signal,
+  untracked,
   type OnDestroy,
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 
-import { environment } from '../../core/environment';
+import { ActivityService } from '../../core/activity/activity.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
 import type {
@@ -88,7 +90,20 @@ export class VoicesComponent implements OnInit, OnDestroy {
   protected readonly playing = signal<string | null>(null);
   protected readonly previewError = signal<string | null>(null);
   /** Install progress, by voice id (Piper) or pack id (engines). */
-  protected readonly progress = signal<Record<string, Progress>>({});
+  /**
+   * Install progress per engine pack and per Piper voice, from the app-wide
+   * activity service (it keeps following an install after this screen is
+   * left; the top bar lists it).
+   */
+  protected readonly progress = computed<Record<string, Progress>>(() => {
+    const out: Record<string, Progress> = {};
+    for (const t of this.activity.running()) {
+      if (t.id.startsWith('engine:')) out[t.id.slice('engine:'.length)] = { percent: t.percent, message: t.message };
+      else if (t.id.startsWith('setup:piper:')) out[t.id.slice('setup:piper:'.length)] = { percent: t.percent, message: t.message };
+    }
+    return out;
+  });
+  private readonly activity = inject(ActivityService);
   protected readonly showLicenseHelp = signal(false);
 
   // ---- my voices (cloning) ---------------------------------------------------
@@ -127,13 +142,10 @@ export class VoicesComponent implements OnInit, OnDestroy {
   });
 
   private audio: HTMLAudioElement | null = null;
-  private engineEvents: EventSource | null = null;
-  private setupEvents: EventSource | null = null;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   async ngOnInit(): Promise<void> {
     this.applyLinkFilters();
-    this.followInstalls();
     await this.reload();
   }
 
@@ -145,8 +157,6 @@ export class VoicesComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.stopPreview();
-    this.engineEvents?.close();
-    this.setupEvents?.close();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
   }
 
@@ -345,23 +355,17 @@ export class VoicesComponent implements OnInit, OnDestroy {
   }
 
   private async start(voiceId: string, packId?: string): Promise<void> {
-    const key = packId ?? voiceId;
-    this.progress.update((p) => ({ ...p, [key]: { percent: null, message: this.i18n.instant('voices.starting') } }));
+    // Answered at once (and listed in the top bar), before the first progress event.
+    if (packId) this.activity.markStarting('engine', packId);
+    else this.activity.markStarting('model', `piper:${voiceId}`, this.library().find((v) => v.id === voiceId)?.name);
     try {
       await this.ipc.installLibraryVoice(voiceId, packId);
       this.scheduleRefresh(1500);
     } catch (err) {
-      this.clearProgress(key);
+      if (packId) this.activity.markFailed('engine', packId, err as AppError);
+      else this.activity.markFailed('model', `piper:${voiceId}`, err as AppError);
       this.error.set(err as AppError);
     }
-  }
-
-  private clearProgress(key: string): void {
-    this.progress.update((p) => {
-      const next = { ...p };
-      delete next[key];
-      return next;
-    });
   }
 
   private scheduleRefresh(ms = 400): void {
@@ -369,61 +373,12 @@ export class VoicesComponent implements OnInit, OnDestroy {
     this.refreshTimer = setTimeout(() => void this.reload(), ms);
   }
 
-  /** Follow both install streams: engine packs (/engines/events), Piper voices (/setup/events). */
-  private followInstalls(): void {
-    const engines = new EventSource(`${environment.orchestratorUrl}/engines/events`);
-    engines.onmessage = (msg) => {
-      const e = safeParse(msg.data) as
-        | { type: 'progress'; packId: string; percent: number | null; message: string }
-        | { type: 'done'; packId: string }
-        | { type: 'error'; packId: string; error: AppError }
-        | undefined;
-      if (!e || !('packId' in e)) return;
-      if (e.type === 'progress') {
-        this.progress.update((p) => ({ ...p, [e.packId]: { percent: e.percent, message: e.message } }));
-      } else if (e.type === 'done') {
-        this.clearProgress(e.packId);
-        this.scheduleRefresh();
-      } else if (e.type === 'error') {
-        this.clearProgress(e.packId);
-        this.error.set(e.error);
-        this.scheduleRefresh();
-      }
-    };
-    this.engineEvents = engines;
-
-    const setup = new EventSource(`${environment.orchestratorUrl}/setup/events`);
-    setup.onmessage = (msg) => {
-      const e = safeParse(msg.data) as
-        | { type: 'progress'; item: string; percent: number | null; message: string }
-        | { type: 'item-done'; item: string }
-        | { type: 'done' }
-        | { type: 'error'; error: AppError }
-        | undefined;
-      if (!e) return;
-      const voiceOf = (item: string) => (item.startsWith('piper:') ? item.slice('piper:'.length) : null);
-      if (e.type === 'progress') {
-        const id = voiceOf(e.item);
-        if (id) this.progress.update((p) => ({ ...p, [id]: { percent: e.percent, message: e.message } }));
-      } else if (e.type === 'item-done') {
-        const id = voiceOf(e.item);
-        if (id) this.clearProgress(id);
-        this.scheduleRefresh();
-      } else if (e.type === 'error') {
-        // A Piper download failed: clear every pending Piper row and say why.
-        this.progress.update((p) => Object.fromEntries(Object.entries(p).filter(([k]) => !this.isPiperModel(k))));
-        this.error.set(e.error);
-        this.scheduleRefresh();
-      } else if (e.type === 'done') {
-        this.scheduleRefresh();
-      }
-    };
-    this.setupEvents = setup;
-  }
-
-  private isPiperModel(id: string): boolean {
-    return this.library().some((v) => v.id === id && v.engine === 'piper');
-  }
+  /** Installs that finished, here or anywhere, change what is installed: reload. */
+  private readonly reloadOnFinished = effect(() => {
+    this.activity.engineChanges();
+    this.activity.setupChanges();
+    untracked(() => this.scheduleRefresh());
+  });
 
   /** "Runs on the NVIDIA GPU" / "Runs on the CPU" (the full pack name is its tooltip). */
   protected packLabel(pack: VoicePackState): string {
@@ -557,13 +512,5 @@ export class VoicesComponent implements OnInit, OnDestroy {
 
   protected trackById(_: number, item: VoiceLibraryItem): string {
     return item.id;
-  }
-}
-
-function safeParse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
   }
 }

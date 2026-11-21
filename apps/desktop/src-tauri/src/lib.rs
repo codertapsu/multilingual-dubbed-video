@@ -20,6 +20,7 @@ mod commands;
 mod logging;
 mod orchestrator_client;
 mod sidecar;
+mod update;
 mod watchdog;
 
 use std::time::Duration;
@@ -79,6 +80,12 @@ pub fn run() {
         .manage(SidecarManager::default())
         // --- Setup ------------------------------------------------------
         .setup(|app| {
+            // Did the last update take? Decided before anything else runs, so
+            // the window can say so (update.rs). Then, off the startup path,
+            // delete the programs an update had to move aside (Windows).
+            update::settle_last_attempt(&app.package_info().version.to_string());
+            std::thread::spawn(update::remove_moved_aside);
+
             // Auto-start the backend (orchestrator + workers) when the app opens.
             // ON by default; disable with VIDEODUBBER_MANAGE_SERVICES=0. Never
             // fails startup — the UI reports availability via GET /workers/health.
@@ -152,6 +159,9 @@ pub fn run() {
             commands::get_app_version,
             commands::check_for_update,
             commands::download_and_install_update,
+            commands::update_status,
+            commands::cancel_update,
+            commands::update_outcome,
             // backend recovery (offered when the sidecar never came up)
             commands::restart_app,
         ])
@@ -173,9 +183,10 @@ pub fn run() {
 ///
 /// Honours the user's `autoUpdate` preference (read from the orchestrator's
 /// `/preferences`, the UI's source of truth). When enabled and a newer release
-/// is published, this downloads + installs it and relaunches. Every failure is
-/// swallowed (logged only) — auto-update must never disrupt normal startup, and
-/// the user can always update manually from the Settings/Updates screen.
+/// is published, this downloads + installs it and relaunches (update.rs
+/// `install_in_background`, where the window follows it). Every failure is
+/// logged to shell.log, never raised: auto-update must never disrupt startup,
+/// and the user can always update from Settings → General.
 async fn maybe_auto_update(app: AppHandle) {
     // Give the orchestrator sidecar a moment to start answering /preferences.
     // (In dev/source mode the backend may take a few seconds to boot.)
@@ -189,86 +200,38 @@ async fn maybe_auto_update(app: AppHandle) {
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
         Err(_) => {
-            // Orchestrator not reachable yet (or no preferences saved). Skip the
-            // auto-check; the user can still update manually.
-            println!("[videodubber:update] preferences unavailable; skipping auto-update check.");
+            update::log("preferences unavailable; no background update check this launch");
             return;
         }
     };
-
     if !auto_update {
-        println!("[videodubber:update] autoUpdate is disabled; skipping background check.");
         return;
     }
 
-    // 2) Check the updater endpoint. `app.updater()` only succeeds in a release
-    //    bundle with plugins.updater configured; in dev it errors -> we skip.
     // Never auto-install an update this OS cannot launch — the background path
     // is the dangerous one, since the user isn't watching (see
     // commands::unsupported_host_reason).
     if let Some(reason) = commands::unsupported_host_reason() {
-        println!("[videodubber:update] skipping auto-update: {reason}");
+        update::log(&format!("no background update: {reason}"));
         return;
     }
 
     // Never start an unattended update on top of a running dub. Checked again
-    // after the download, immediately before the install — see below.
+    // after the download, immediately before the install (update.rs).
     if let Some(reason) = commands::busy_with_a_run_reason().await {
-        println!("[videodubber:update] skipping auto-update: {reason}.");
+        update::log(&format!("no background update now: {reason}"));
         return;
     }
 
-    // Same builder as the manual path: the pre-install teardown must run here
-    // too, or a background Windows update hits locked sidecar files.
-    let updater = match crate::commands::updater_with_teardown(&app) {
+    // The updater only exists in a release bundle with plugins.updater set.
+    let updater = match update::updater(&app) {
         Ok(u) => u,
         Err(e) => {
-            println!("[videodubber:update] updater unavailable (likely dev build): {e}");
+            update::log(&format!("updater unavailable (likely a dev build): {e}"));
             return;
         }
     };
-
-    match updater.check().await {
-        Ok(Some(update)) => {
-            println!(
-                "[videodubber:update] update {} available; downloading…",
-                update.version
-            );
-            // DOWNLOAD and INSTALL are deliberately split rather than using
-            // `download_and_install`. Installing tears the backend down
-            // (`updater_with_teardown`'s `on_before_exit`) and relaunches, and
-            // the payload here is large enough that the download takes minutes
-            // — long enough for the user to have started a dub since the check.
-            // Splitting gives us a second idleness check at the only moment that
-            // matters: after the bytes are on disk, immediately before the
-            // install. If they are busy we simply drop the download and try
-            // again on the next launch.
-            let bytes = match update.download(|_chunk, _total| {}, || {}).await {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    println!("[videodubber:update] auto-download failed: {e}");
-                    return;
-                }
-            };
-            if let Some(reason) = commands::busy_with_a_run_reason().await {
-                println!("[videodubber:update] deferring install to the next launch — {reason}.");
-                return;
-            }
-            // On success `restart()` diverges so nothing below runs; on failure
-            // we just log and leave the running app untouched.
-            match update.install(bytes) {
-                Ok(()) => {
-                    println!("[videodubber:update] installed; relaunching.");
-                    app.restart();
-                }
-                Err(e) => {
-                    println!("[videodubber:update] auto-install failed: {e}");
-                }
-            }
-        }
-        Ok(None) => println!("[videodubber:update] already up to date."),
-        Err(e) => println!("[videodubber:update] update check failed: {e}"),
-    }
+    update::install_in_background(&app, updater).await;
 }
 
 /// Config invariants that are easy to regress and impossible to notice.

@@ -2043,5 +2043,24 @@
     "transcribing": "Transcribing part {{done}}/{{total}}",
     "speakers": "Detecting speakers {{done}}/{{total}}",
     "loops": "Checking transcription loops {{done}}/{{total}}"
+  },
+  "activity": {
+    "heading": "Downloads and installs",
+    "hint": "They keep going while you use the rest of the app. You can close this list.",
+    "starting": "Starting…",
+    "working": "Working…",
+    "installed": "Installed",
+    "installed-title": "{{name}} is installed",
+    "downloaded": "Downloaded",
+    "downloaded-title": "{{name}} is downloaded",
+    "failed": "Failed",
+    "failed-title": "{{name}} could not be installed",
+    "download-failed-title": "A download failed",
+    "open": "Open",
+    "dismiss": "Dismiss",
+    "clear": "Clear finished",
+    "label-whisper": "Speech model {{model}}",
+    "label-argos": "Translation pack {{from}} → {{to}}",
+    "label-piper": "Voice {{voice}}"
   }
 }

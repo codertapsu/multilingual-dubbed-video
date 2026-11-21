@@ -1591,7 +1591,7 @@ fn pipe_command_events_to_log(
 /// `windows_subsystem = "windows"` in release, so a packaged build has no
 /// console and every one of these lines used to vanish — including the ones
 /// that say a sidecar could not be resolved or failed to launch.
-fn log_info(msg: &str) {
+pub(crate) fn log_info(msg: &str) {
     println!("[videodubber:services] {msg}");
     if let Ok(mut guard) = shell_log().lock() {
         if let Some(sink) = guard.as_mut() {

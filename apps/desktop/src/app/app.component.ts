@@ -4,6 +4,9 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { IpcService } from './core/ipc/ipc.service';
 import { ConfirmDialogComponent } from './shared/confirm-dialog/confirm-dialog.component';
 import { UpdateNoticeComponent } from './shared/update-notice/update-notice.component';
+import { ActivityIndicatorComponent } from './shared/activity/activity-indicator.component';
+import { ToastsComponent } from './shared/activity/toasts.component';
+import { ActivityService } from './core/activity/activity.service';
 import { TranslatePipe, TranslateService } from './core/i18n';
 import { ThemeService, type ThemePreference } from './core/theme/theme.service';
 
@@ -17,7 +20,7 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
   selector: 'vd-root',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, ConfirmDialogComponent, UpdateNoticeComponent, TranslatePipe],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, ConfirmDialogComponent, UpdateNoticeComponent, TranslatePipe, ActivityIndicatorComponent, ToastsComponent],
   template: `
     <header class="topnav">
       <a class="brand" routerLink="/" [attr.aria-label]="'nav.home-aria' | translate">
@@ -42,6 +45,9 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
         <a routerLink="/help" routerLinkActive="active">{{ 'nav.help' | translate }}</a>
         <a routerLink="/support" routerLinkActive="active">{{ 'nav.support' | translate }}</a>
       </nav>
+
+      <!-- What is downloading, from any screen (core/activity/activity.service.ts). -->
+      <vd-activity-indicator />
 
       <button
         type="button"
@@ -134,6 +140,7 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
     </main>
 
     <vd-confirm-dialog />
+    <vd-toasts />
   `,
   styles: [
     `
@@ -228,9 +235,13 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
 export class AppComponent {
   protected readonly restarting = signal(false);
 
+  private readonly activity = inject(ActivityService);
+
   constructor() {
     // The shell's watchdog says when the backend crashed and is restarting.
     void this.ipc.watchBackendState();
+    // What downloads in the background, followed for the app's life (top bar, notices).
+    this.activity.start();
   }
 
   /** When the backend last stopped, as a clock time. */

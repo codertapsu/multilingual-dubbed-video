@@ -2043,5 +2043,24 @@
     "transcribing": "Đang chuyển giọng nói thành chữ, phần {{done}}/{{total}}",
     "speakers": "Đang nhận diện người nói {{done}}/{{total}}",
     "loops": "Đang kiểm tra các đoạn lặp do chép lời {{done}}/{{total}}"
+  },
+  "activity": {
+    "heading": "Đang tải và cài đặt",
+    "hint": "Việc tải vẫn tiếp tục khi bạn dùng các phần khác của ứng dụng. Bạn có thể đóng danh sách này.",
+    "starting": "Đang bắt đầu…",
+    "working": "Đang xử lý…",
+    "installed": "Đã cài đặt",
+    "installed-title": "Đã cài đặt xong {{name}}",
+    "downloaded": "Đã tải về",
+    "downloaded-title": "Đã tải xong {{name}}",
+    "failed": "Thất bại",
+    "failed-title": "Không cài đặt được {{name}}",
+    "download-failed-title": "Một lượt tải bị lỗi",
+    "open": "Mở",
+    "dismiss": "Ẩn",
+    "clear": "Xoá mục đã xong",
+    "label-whisper": "Mô hình giọng nói {{model}}",
+    "label-argos": "Gói dịch {{from}} → {{to}}",
+    "label-piper": "Giọng đọc {{voice}}"
   }
 }

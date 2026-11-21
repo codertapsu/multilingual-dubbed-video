@@ -18,14 +18,8 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
-// Self-update plumbing:
-//   * `UpdaterExt` adds `app.updater()` -> a `Updater` whose `.check().await`
-//     returns `Result<Option<Update>, Error>` (Some when a newer version is on
-//     the endpoint). `Update` carries `.version`, `.current_version`, `.body`
-//     (release notes), `.date`, and `.download_and_install(on_chunk, on_done)`.
-//   * `tauri_plugin_process` exposes `app.restart()` (via `ProcessExt`-less free
-//     fn on AppHandle once the plugin is initialised) to relaunch after install.
-use tauri_plugin_updater::UpdaterExt;
+// Self-update plumbing lives in update.rs (the updater, the download the window
+// follows, the record of each attempt); the commands here are its doors.
 
 use crate::orchestrator_client as orch;
 
@@ -392,8 +386,13 @@ pub async fn setup_get_catalog() -> Result<Value, String> {
 /// the webview over the `/setup/events` SSE channel. `options` is forwarded
 /// verbatim so the UI can send any subset of the fields.
 #[tauri::command]
-pub async fn setup_install_models(options: Option<Value>) -> Result<Value, String> {
-    let body = options.unwrap_or_else(|| json!({}));
+pub async fn setup_install_models(request: Option<Value>) -> Result<Value, String> {
+    // `request`, as the webview sends it (IpcService.setupInstallModels). This
+    // was `options` from the start: Tauri matches arguments by name, so every
+    // install from the desktop app posted `{}`, the installer had nothing to
+    // do, and Settings' "Download" for a speech model did nothing at all
+    // (0.17.0). scripts/check-tauri-commands.mjs now fails on such a mismatch.
+    let body = request.unwrap_or_else(|| json!({}));
     orch::post_json("/setup/install", &body).await
 }
 
@@ -480,35 +479,6 @@ pub fn get_app_version(app: AppHandle) -> Result<Value, String> {
 // progress, never the network call.
 // ---------------------------------------------------------------------------
 
-/// Build the updater with our pre-install teardown attached.
-///
-/// `on_before_exit` runs immediately before the plugin launches the platform
-/// installer. On Windows that installer (NSIS) writes over the install
-/// directory while our four backend sidecars — the orchestrator and the three
-/// Python workers — are still alive holding their `.exe`/`.dll` files open,
-/// which makes it fail with "Error opening file for writing" and can leave a
-/// half-updated install. Stopping the backend first is what makes a Windows
-/// update reliable; on macOS the `.app` is replaced wholesale, so it is simply
-/// a clean shutdown.
-///
-/// Used by BOTH update paths (this command and the background auto-update in
-/// lib.rs) so they cannot drift apart.
-pub fn updater_with_teardown(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
-    app.updater_builder()
-        .on_before_exit(|| {
-            println!("[videodubber:update] stopping backend sidecars before the installer runs…");
-            crate::sidecar::shutdown_all();
-        })
-        .build()
-        .map_err(|e| {
-            app_error_json(
-                "UNKNOWN",
-                &format!("updater is not configured: {e}"),
-                Some("Ensure plugins.updater (endpoints + pubkey) is set in tauri.conf.json and the app is a release bundle."),
-            )
-        })
-}
-
 /// The macOS version this build requires (`bundle.macOS.minimumSystemVersion`).
 ///
 /// Kept in sync with tauri.conf.json by a unit test — see `min_macos_matches_config`.
@@ -558,7 +528,7 @@ pub fn unsupported_host_reason() -> Option<String> {
 /// Why installing an update right now would destroy work, or `None` when the
 /// backend is idle.
 ///
-/// Installing is destructive by construction: `updater_with_teardown`'s
+/// Installing is destructive by construction: the updater's (update.rs)
 /// `on_before_exit` stops the whole backend and the app then relaunches. Nothing
 /// used to consult pipeline state, and the payload is large enough (bundled
 /// models, a CPython runtime, three one-dir worker trees) that the download
@@ -600,7 +570,7 @@ fn busy_reason_from_queue(queue: &Value) -> Option<String> {
 /// `UpdateInfo` (`{ available, version?, currentVersion, notes?, date? }`).
 ///
 /// API shape (tauri-plugin-updater 2.x):
-///   `app.updater()? -> Updater`
+///   `update::updater(&app)? -> Updater`
 ///   `updater.check().await? -> Option<Update>`
 ///   `Update { version: String, current_version: String, body: Option<String>,
 ///             date: Option<OffsetDateTime>, .. }`
@@ -622,7 +592,9 @@ pub async fn check_for_update(app: AppHandle) -> Result<Value, String> {
         }));
     }
 
-    let updater = app.updater().map_err(|e| {
+    // The same client as the download (update.rs): a server that stops
+    // answering fails the check after a minute instead of never.
+    let updater = crate::update::updater(&app).map_err(|e| {
         app_error_json(
             "UNKNOWN",
             &format!("updater is not configured: {e}"),
@@ -653,16 +625,12 @@ pub async fn check_for_update(app: AppHandle) -> Result<Value, String> {
 }
 
 /// `download_and_install_update` -> downloads + installs the pending update,
-/// then relaunches the app.
+/// then relaunches the app (update.rs `install_now`).
 ///
-/// API shape:
-///   `Update::download_and_install(on_chunk: Fn(usize, Option<u64>),
-///                                 on_download_finished: Fn()) -> Result<()>`
-///   then `app.restart()` (provided by tauri-plugin-process; this fn diverges /
-///   never returns on success).
-///
-/// We don't stream chunk progress to the webview here (the closures just total
-/// the bytes for logging); the UI shows an indeterminate "installing…" state.
+/// Returns only when it did not install: an error, a cancel
+/// (`{ ok: false, cancelled: true }`), or an update the background is already
+/// downloading (`{ ok: true, following: true }`). The window follows the
+/// download through `update_status` and the `update-status` event.
 #[tauri::command]
 pub async fn download_and_install_update(app: AppHandle) -> Result<Value, String> {
     // Belt-and-braces: check_for_update already withholds the offer, but this
@@ -687,58 +655,28 @@ pub async fn download_and_install_update(app: AppHandle) -> Result<Value, String
             Some("Wait for the current dub to finish (or cancel it), then install the update."),
         ));
     }
-    let updater = updater_with_teardown(&app)?;
+    crate::update::install_now(&app).await
+}
 
-    let update = match updater.check().await {
-        Ok(Some(u)) => u,
-        Ok(None) => {
-            return Err(app_error_json(
-                "UNKNOWN",
-                "no update is available to install",
-                Some("Run check_for_update first; install only when `available` is true."),
-            ))
-        }
-        Err(e) => {
-            return Err(app_error_json(
-                "UNKNOWN",
-                &format!("failed to re-check for the update: {e}"),
-                None,
-            ))
-        }
-    };
+/// `update_status` -> how far an update is: `{ phase, version, downloaded,
+/// total, bytesPerSecond, error, auto }`, phase one of idle / downloading /
+/// ready / installing / failed. The `update-status` event carries the same.
+#[tauri::command]
+pub fn update_status() -> Result<Value, String> {
+    Ok(crate::update::status_json())
+}
 
-    // Download + install. The two callbacks are:
-    //   - on_chunk(chunk_len, content_length)  — bound `Fn`, so we use an
-    //     atomic running total instead of a captured `&mut` (an FnMut closure
-    //     would NOT satisfy the `Fn` bound).
-    //   - on_download_finished()               — bound `FnOnce`.
-    let downloaded = std::sync::atomic::AtomicUsize::new(0);
-    update
-        .download_and_install(
-            move |chunk_len, _content_length| {
-                let total = downloaded
-                    .fetch_add(chunk_len, std::sync::atomic::Ordering::Relaxed)
-                    + chunk_len;
-                // Lightweight stdout trace; the UI shows an indeterminate state.
-                println!("[videodubber:update] downloaded {total} bytes");
-            },
-            || {
-                println!("[videodubber:update] download complete, installing…");
-            },
-        )
-        .await
-        .map_err(|e| {
-            app_error_json(
-                "UNKNOWN",
-                &format!("failed to download/install the update: {e}"),
-                Some("The update could not be applied. Try again, or download the latest installer manually."),
-            )
-        })?;
+/// `cancel_update` -> stop the update download in progress.
+#[tauri::command]
+pub fn cancel_update() -> Result<Value, String> {
+    Ok(json!({ "ok": crate::update::cancel() }))
+}
 
-    // Relaunch into the freshly-installed version. `AppHandle::restart()`
-    // terminates the current process and returns `!` (never), which coerces to
-    // this fn's `Result<Value, String>` return type. Nothing after it runs.
-    app.restart()
+/// `update_outcome` -> what the last update attempt came to (`{ outcome:
+/// "updated" | "failed", from, to, at }`, or null), once per launch.
+#[tauri::command]
+pub fn update_outcome() -> Result<Value, String> {
+    Ok(crate::update::take_outcome())
 }
 
 /// `restart_app` -> relaunch VideoDubber.

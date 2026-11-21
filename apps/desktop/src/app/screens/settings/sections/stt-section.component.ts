@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 
 import { TranslatePipe } from '../../../core/i18n';
 import { IpcService } from '../../../core/ipc/ipc.service';
-import { SetupEventsService } from '../../../core/ipc/setup-events.service';
+import { ActivityService } from '../../../core/activity/activity.service';
 import type { WhisperModelInfo } from '../../../core/models/setup';
 import { toAppError } from '../../../core/state/project.store';
 import { DefaultEngineComponent } from '../components/default-engine.component';
@@ -34,7 +34,7 @@ import { SettingsStore } from '../settings.store';
 export class SttSectionComponent implements OnInit, OnDestroy {
   protected readonly store = inject(SettingsStore);
   private readonly ipc = inject(IpcService);
-  private readonly setupEvents = inject(SetupEventsService);
+  private readonly activity = inject(ActivityService);
 
   protected readonly speechModels = SPEECH_MODELS;
   protected readonly builtInModels = SPEECH_MODELS.filter((m) => !m.phoWhisper);
@@ -55,36 +55,35 @@ export class SttSectionComponent implements OnInit, OnDestroy {
   // ---- built-in (faster-whisper) models: the setup catalog and what is on disk
   protected readonly catalog = signal<WhisperModelInfo[]>([]);
   protected readonly downloaded = signal<Set<string> | null>(null);
-  /** The model being downloaded now (from the click on). */
-  protected readonly downloading = signal<string | null>(null);
-  /** The model whose install run is being followed (from the moment the stream is connected). */
-  private readonly following = signal<string | null>(null);
+
+  /**
+   * The model downloading now, and how far: from the app-wide activity service,
+   * so it is still shown after Settings was left and opened again, and a click
+   * is answered at once ("Starting…"). Before, a stream of this page's own
+   * followed it and died with the page.
+   */
+  protected readonly downloading = computed<string | null>(() => {
+    const t = this.activity.running().find((x) => x.id.startsWith('setup:whisper:'));
+    return t ? t.id.slice('setup:whisper:'.length) : null;
+  });
   protected readonly downloadProgress = computed(() => {
-    const id = this.following();
-    return id ? (this.setupEvents.items().find((i) => i.item === `whisper:${id}`) ?? null) : null;
+    const id = this.downloading();
+    return id ? (this.activity.setupItem(`whisper:${id}`) ?? null) : null;
   });
 
   constructor() {
-    // The download ends on its item's completion, the run's end, or an error.
-    // Followed only once connected: until then the stream still holds the
-    // previous run's `done`, which would end this one before it began.
+    // A download run ended (here or anywhere): what is on disk changed.
+    let seen = this.activity.setupChanges();
     effect(() => {
-      if (!this.following()) return;
-      const finished = this.downloadProgress()?.done || this.setupEvents.done();
-      const failed = this.setupEvents.error();
-      if (!finished && !failed) return;
-      untracked(() => {
-        if (failed) this.store.error.set(failed);
-        this.following.set(null);
-        this.downloading.set(null);
-        void this.loadModels();
-      });
+      const n = this.activity.setupChanges();
+      if (n === seen) return;
+      seen = n;
+      untracked(() => void this.loadModels());
     });
   }
 
   ngOnDestroy(): void {
-    // The download goes on in the background; only the progress stream stops.
-    if (this.following()) this.setupEvents.disconnect();
+    /* the activity service keeps following the download */
   }
 
   ngOnInit(): void {
@@ -118,16 +117,11 @@ export class SttSectionComponent implements OnInit, OnDestroy {
   protected async download(id: string): Promise<void> {
     if (this.downloading()) return;
     this.store.error.set(null);
-    this.downloading.set(id);
+    this.activity.markStarting('model', `whisper:${id}`);
     try {
-      // Start the install first, then follow it: the POST resets the setup
-      // bus, so connecting afterwards can't replay a finished earlier run
-      // (the wizard's reasoning, new-project-wizard.component.ts).
       await this.ipc.setupInstallModels({ whisperModel: id });
-      this.setupEvents.connect();
-      this.following.set(id);
     } catch (err) {
-      this.downloading.set(null);
+      this.activity.markFailed('model', `whisper:${id}`, toAppError(err));
       this.store.error.set(toAppError(err));
     }
   }

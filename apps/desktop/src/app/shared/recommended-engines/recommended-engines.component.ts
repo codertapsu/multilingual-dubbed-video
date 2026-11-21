@@ -8,9 +8,11 @@ import {
   signal,
   type OnDestroy,
   type OnInit,
+  effect,
+  untracked,
 } from '@angular/core';
 
-import { environment } from '../../core/environment';
+import { ActivityService } from '../../core/activity/activity.service';
 import { IpcService } from '../../core/ipc/ipc.service';
 import type { AppError, EnginePackInfo, EnginePackRecommendation } from '../../core/models';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
@@ -149,11 +151,27 @@ export class RecommendedEnginesComponent implements OnInit, OnDestroy {
   private readonly recs = signal<EnginePackRecommendation[]>([]);
   private readonly packs = signal<EnginePackInfo[]>([]);
   private readonly installed = signal<Set<string>>(new Set());
-  protected readonly progress = signal<Record<string, { percent: number | null; message: string }>>(
-    {},
-  );
-  protected readonly errors = signal<Record<string, AppError>>({});
-  private events: EventSource | null = null;
+  /**
+   * Install progress per pack, from the app-wide activity service: it keeps
+   * showing after the user leaves and comes back (a stream of this panel's own
+   * used to die with it).
+   */
+  protected readonly progress = computed<Record<string, { percent: number | null; message: string }>>(() => {
+    const out: Record<string, { percent: number | null; message: string }> = {};
+    for (const t of this.activity.running()) {
+      if (t.kind === 'engine') out[t.id.slice('engine:'.length)] = { percent: t.percent, message: t.message };
+    }
+    return out;
+  });
+  protected readonly errors = computed<Record<string, AppError>>(() => {
+    const out: Record<string, AppError> = {};
+    for (const t of this.activity.failed()) {
+      if (t.kind === 'engine' && t.error && !this.cleared().has(t.id)) out[t.id.slice('engine:'.length)] = t.error;
+    }
+    return out;
+  });
+  private readonly cleared = signal<Set<string>>(new Set());
+  private readonly activity = inject(ActivityService);
 
   protected readonly rows = computed<Row[]>(() => {
     const byId = new Map(this.packs().map((p) => [p.id, p]));
@@ -171,9 +189,24 @@ export class RecommendedEnginesComponent implements OnInit, OnDestroy {
     void this.load();
   }
 
+  constructor() {
+    // A pack finished installing (here or anywhere): mark it, tell the parent.
+    const finished = new Set<string>();
+    effect(() => {
+      for (const t of this.activity.tasks()) {
+        if (t.kind !== 'engine' || t.state !== 'done' || finished.has(t.id)) continue;
+        finished.add(t.id);
+        const packId = t.id.slice('engine:'.length);
+        untracked(() => {
+          this.installed.update((s) => new Set([...s, packId]));
+          this.changed.emit(packId);
+        });
+      }
+    });
+  }
+
   ngOnDestroy(): void {
-    this.events?.close();
-    this.events = null;
+    /* the activity service keeps following installs */
   }
 
   private async load(): Promise<void> {
@@ -213,67 +246,20 @@ export class RecommendedEnginesComponent implements OnInit, OnDestroy {
   }
 
   protected clearError(packId: string): void {
-    this.errors.update((m) => {
-      const next = { ...m };
-      delete next[packId];
-      return next;
-    });
+    this.cleared.update((c) => new Set([...c, `engine:${packId}`]));
   }
 
   protected async install(packId: string): Promise<void> {
-    this.clearError(packId);
-    this.follow();
-    this.progress.update((m) => ({ ...m, [packId]: { percent: null, message: '…' } }));
+    this.cleared.update((c) => {
+      const next = new Set(c);
+      next.delete(`engine:${packId}`);
+      return next;
+    });
+    this.activity.markStarting('engine', packId, this.packs().find((p) => p.id === packId)?.displayName);
     try {
       await this.ipc.installEngine(packId);
     } catch (err) {
-      this.done(packId);
-      this.errors.update((m) => ({ ...m, [packId]: err as AppError }));
+      this.activity.markFailed('engine', packId, err as AppError);
     }
-  }
-
-  private done(packId: string): void {
-    this.progress.update((m) => {
-      const next = { ...m };
-      delete next[packId];
-      return next;
-    });
-  }
-
-  /** Follow /engines/events (once) for progress, completion and failures. */
-  private follow(): void {
-    if (this.events || !environment.orchestratorUrl) return;
-    const es = new EventSource(`${environment.orchestratorUrl}/engines/events`);
-    es.onmessage = (ev) => {
-      try {
-        const event = JSON.parse(ev.data) as
-          | { type: 'progress'; packId: string; percent: number | null; message: string }
-          | { type: 'done'; packId: string }
-          | { type: 'error'; packId: string; error: AppError }
-          | { type: 'log' };
-        if (event.type === 'progress') {
-          this.progress.update((m) => ({
-            ...m,
-            [event.packId]: { percent: event.percent, message: event.message },
-          }));
-        } else if (event.type === 'done') {
-          this.done(event.packId);
-          this.installed.update((s) => new Set([...s, event.packId]));
-          this.changed.emit(event.packId);
-        } else if (event.type === 'error') {
-          this.done(event.packId);
-          this.errors.update((m) => ({ ...m, [event.packId]: event.error }));
-        }
-      } catch {
-        /* ignore a malformed frame */
-      }
-    };
-    es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) {
-        this.progress.set({});
-        this.events = null;
-      }
-    };
-    this.events = es;
   }
 }

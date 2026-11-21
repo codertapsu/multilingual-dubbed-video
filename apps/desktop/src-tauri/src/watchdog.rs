@@ -34,6 +34,12 @@ pub fn shutting_down() -> bool {
     SHUTTING_DOWN.load(Ordering::SeqCst)
 }
 
+/// The update that stopped the backend did not start its installer, so the app
+/// keeps running and needs its backend back (update.rs `install`).
+pub fn clear_shutting_down() {
+    SHUTTING_DOWN.store(false, Ordering::SeqCst);
+}
+
 /// What the UI is told about the backend.
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

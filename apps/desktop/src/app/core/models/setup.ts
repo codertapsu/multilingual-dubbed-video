@@ -370,3 +370,27 @@ export interface UpdateInfo {
   notes?: string;
   date?: string;
 }
+
+/**
+ * How far an app update is (`update_status` / the `update-status` event,
+ * src-tauri/src/update.rs). `ready`: downloaded and verified, not installed
+ * because a dub started meanwhile.
+ */
+export interface UpdateStatus {
+  phase: 'idle' | 'downloading' | 'ready' | 'installing' | 'failed';
+  version: string | null;
+  downloaded: number;
+  total: number | null;
+  bytesPerSecond: number | null;
+  error: string | null;
+  /** Started by the background update at launch, not by a button. */
+  auto: boolean;
+}
+
+/** What the last update attempt came to, read once at launch (`update_outcome`). */
+export interface UpdateOutcome {
+  outcome: 'updated' | 'failed';
+  from: string;
+  to: string;
+  at?: string;
+}

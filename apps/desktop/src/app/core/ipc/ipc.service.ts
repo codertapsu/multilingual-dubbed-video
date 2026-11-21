@@ -46,7 +46,9 @@ import type {
   QueueState,
   SystemProfileResponse,
   UpdateInfo,
+  UpdateOutcome,
   UpdatePreferences,
+  UpdateStatus,
 } from '../models/setup';
 import type { BrandAsset, GreetingPlacement, GreetingPlan, SeriesAiOption, SeriesView, DownloadsWhileDubbing } from '@videodubber/shared';
 import type {
@@ -1195,14 +1197,45 @@ export class IpcService {
   }
 
   /**
-   * Download + install the pending update then relaunch. Tauri-only; resolves
-   * `{ ok: false }` in the browser (the UI disables this control there).
+   * Download + install the pending update, then relaunch (src-tauri update.rs).
+   * Resolves only when it did not install: `{ ok: false, cancelled: true }`
+   * after Cancel, `{ ok: true, following: true }` when the background update
+   * is already downloading it (follow `onUpdateStatus`). A failure rejects.
+   * Tauri-only; resolves `{ ok: false }` in the browser.
    */
-  async downloadAndInstallUpdate(): Promise<{ ok: boolean }> {
+  async downloadAndInstallUpdate(): Promise<{ ok: boolean; cancelled?: boolean; following?: boolean }> {
     if (!this.tauri) {
       return { ok: false };
     }
-    return this.invoke<{ ok: boolean }>('download_and_install_update');
+    return this.invoke<{ ok: boolean; cancelled?: boolean; following?: boolean }>('download_and_install_update');
+  }
+
+  /** How far an app update is. Idle in the browser. */
+  async updateStatus(): Promise<UpdateStatus> {
+    if (!this.tauri) {
+      return { phase: 'idle', version: null, downloaded: 0, total: null, bytesPerSecond: null, error: null, auto: false };
+    }
+    return this.invoke<UpdateStatus>('update_status');
+  }
+
+  /** Follow the shell's `update-status` event (desktop only). */
+  async onUpdateStatus(handler: (status: UpdateStatus) => void): Promise<void> {
+    if (!this.tauri) return;
+    const { listen } = await import('@tauri-apps/api/event');
+    await listen<UpdateStatus>('update-status', (e) => handler(e.payload));
+  }
+
+  /** Stop the update download in progress; `false` when none was downloading. */
+  async cancelUpdate(): Promise<boolean> {
+    if (!this.tauri) return false;
+    const res = await this.invoke<{ ok: boolean }>('cancel_update');
+    return res?.ok === true;
+  }
+
+  /** What the last update attempt came to, once per launch (null: nothing to say). */
+  async takeUpdateOutcome(): Promise<UpdateOutcome | null> {
+    if (!this.tauri) return null;
+    return (await this.invoke<UpdateOutcome | null>('update_outcome')) ?? null;
   }
 
   /**

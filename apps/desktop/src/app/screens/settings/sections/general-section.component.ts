@@ -7,8 +7,9 @@ import type { ProjectsFolderInfo } from '../../../core/models';
 import type { UpdateInfo } from '../../../core/models/setup';
 import { toAppError } from '../../../core/state/project.store';
 import { ThemeService, type ThemePreference } from '../../../core/theme/theme.service';
-import { BusyIndicatorComponent } from '../../../shared/busy-indicator/busy-indicator.component';
+import { UpdateService } from '../../../core/update/update.service';
 import { ConfirmService } from '../../../shared/confirm-dialog/confirm.service';
+import { UpdateProgressComponent } from '../../../shared/update-notice/update-progress.component';
 import { SettingsStore } from '../settings.store';
 
 /** Outcome of the most recent "Check for updates" action. */
@@ -22,7 +23,7 @@ type CheckOutcome = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error';
 @Component({
   selector: 'vd-settings-general',
   standalone: true,
-  imports: [FormsModule, TranslatePipe, BusyIndicatorComponent],
+  imports: [FormsModule, TranslatePipe, UpdateProgressComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './general-section.component.html',
   styleUrls: ['../settings-shared.scss', './general-section.component.scss'],
@@ -57,7 +58,8 @@ export class GeneralSectionComponent implements OnInit, OnDestroy {
   // -------- update check / install --------
   protected readonly checkOutcome = signal<CheckOutcome>('idle');
   protected readonly updateInfo = signal<UpdateInfo | null>(null);
-  protected readonly installing = signal(false);
+  /** The download and install, shared with the update dialog (UpdateService). */
+  protected readonly update = inject(UpdateService);
   /** Installed app version (network-free, via get_app_version in Tauri). */
   protected readonly appVersion = signal<string | null>(null);
   protected readonly updateAvailable = computed(() => this.updateInfo()?.available === true);
@@ -187,22 +189,15 @@ export class GeneralSectionComponent implements OnInit, OnDestroy {
     }
   }
 
-  protected async installUpdate(): Promise<void> {
-    if (this.installing() || !this.updateAvailable()) return;
-    this.installing.set(true);
-    this.store.error.set(null);
-    try {
-      // On success the app relaunches; this promise typically never resolves in
-      // the running window. We still clear `installing` for the edge case where
-      // install completes without an immediate relaunch.
-      const res = await this.ipc.downloadAndInstallUpdate();
-      if (!res.ok) {
-        this.installing.set(false);
-      }
-    } catch (err) {
-      this.installing.set(false);
-      this.store.error.set(toAppError(err));
-    }
+  /**
+   * Download and install. The progress, a cancel, and on a failure Try again
+   * and the installer from GitHub are the update panel's (vd-update-progress),
+   * next to this button, never the page-top banner: the update is at the
+   * bottom of the page, and an error up there is one the user does not see.
+   */
+  protected installUpdate(): void {
+    if (this.update.busy() || !this.updateAvailable()) return;
+    void this.update.install();
   }
 
   protected async openReleaseNotes(): Promise<void> {

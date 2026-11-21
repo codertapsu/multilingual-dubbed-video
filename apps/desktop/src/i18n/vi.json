@@ -54,7 +54,30 @@
     "install-now": "Cài đặt ngay",
     "installing": "Đang cài đặt…",
     "installing-label": "Đang tải xuống và cài đặt…",
-    "install-failed": "Không thể cài đặt bản cập nhật. Bạn có thể thử lại trong Cài đặt → Cập nhật."
+    "install-failed": "Không thể cài đặt bản cập nhật. Bạn có thể thử lại trong Cài đặt → Cập nhật.",
+    "auto-waiting-title": "Đã có VideoDubber {{ version }}.",
+    "auto-waiting-body": "Bản này sẽ tự cài ở chế độ nền vào lần tới VideoDubber mở lên mà không có video nào đang lồng tiếng, hoặc bạn có thể cài ngay bây giờ.",
+    "progress": {
+      "downloading": "Đang tải VideoDubber {{ version }}…",
+      "keep-working": "Khi tải xong, VideoDubber sẽ tự đóng, cài bản cập nhật rồi mở lại, mất khoảng một phút.",
+      "cancel": "Hủy",
+      "installing-title": "Đang cài VideoDubber {{ version }}…",
+      "installing": "VideoDubber sẽ tự đóng, cài bản cập nhật rồi mở lại.",
+      "ready-title": "Đã tải xong VideoDubber {{ version }}.",
+      "ready": "Khi cài, VideoDubber sẽ đóng khoảng một phút, nên bản cập nhật chờ trong lúc có video đang lồng tiếng. Hãy cài khi video của bạn đã xong.",
+      "busy-title": "Đang có video được lồng tiếng.",
+      "busy": "Cài bản cập nhật sẽ đóng VideoDubber và làm video đó dừng lại. Hãy cài khi video đã lồng tiếng xong, hoặc tạm dừng nó trước.",
+      "failed-title": "Chưa cập nhật được.",
+      "failed-hint": "Hãy kiểm tra kết nối mạng rồi thử lại. Nếu vẫn không được, hãy tải trình cài đặt từ GitHub và chạy nó: dự án và cài đặt của bạn vẫn giữ nguyên.",
+      "retry": "Thử lại",
+      "github": "Tải trình cài đặt",
+      "details": "Chi tiết kỹ thuật"
+    },
+    "outcome": {
+      "failed-title": "Bản cập nhật {{ to }} chưa cài xong.",
+      "failed-body": "VideoDubber vẫn đang là bản {{ from }}. Hãy thử lại, hoặc tải trình cài đặt từ GitHub: dự án và cài đặt của bạn vẫn giữ nguyên.",
+      "updated-title": "VideoDubber đã được cập nhật lên bản {{ to }}."
+    }
   },
   "error": {
     "dismiss-aria": "Bỏ qua lỗi",

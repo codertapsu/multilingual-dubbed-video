@@ -54,7 +54,30 @@
     "install-now": "Install now",
     "installing": "Installing…",
     "installing-label": "Downloading and installing…",
-    "install-failed": "The update could not be installed. You can retry from Settings → Updates."
+    "install-failed": "The update could not be installed. You can retry from Settings → Updates.",
+    "auto-waiting-title": "VideoDubber {{ version }} is available.",
+    "auto-waiting-body": "It installs in the background the next time VideoDubber opens with no dub running, or you can install it now.",
+    "progress": {
+      "downloading": "Downloading VideoDubber {{ version }}…",
+      "keep-working": "When the download is done, VideoDubber closes, installs the update and opens again by itself, in about a minute.",
+      "cancel": "Cancel",
+      "installing-title": "Installing VideoDubber {{ version }}…",
+      "installing": "VideoDubber will close, install the update and open again by itself.",
+      "ready-title": "VideoDubber {{ version }} is downloaded.",
+      "ready": "Installing closes VideoDubber for about a minute, so the update waits while a dub is running. Install it when your dub is done.",
+      "busy-title": "A dub is running.",
+      "busy": "Installing an update closes VideoDubber, which would stop the dub. Install the update when the dub has finished, or pause the dub first.",
+      "failed-title": "The update could not be completed.",
+      "failed-hint": "Check the internet connection and try again. If it keeps failing, download the installer from GitHub and run it: your projects and settings stay as they are.",
+      "retry": "Try again",
+      "github": "Download the installer",
+      "details": "Technical details"
+    },
+    "outcome": {
+      "failed-title": "The update to {{ to }} did not finish.",
+      "failed-body": "VideoDubber is still version {{ from }}. Try again, or download the installer from GitHub: your projects and settings stay as they are.",
+      "updated-title": "VideoDubber is now version {{ to }}."
+    }
   },
   "error": {
     "dismiss-aria": "Dismiss error",

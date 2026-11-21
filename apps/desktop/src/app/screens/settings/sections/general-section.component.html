@@ -151,13 +151,15 @@
       {{ (checkOutcome() === 'checking' ? 'settings.updates.checking' : 'settings.updates.check') | translate }}
     </button>
 
-    @if (updateAvailable()) {
-      <button type="button" class="btn btn-primary" (click)="installUpdate()" [disabled]="installing()">
-        {{ (installing() ? 'settings.updates.installing' : 'settings.updates.install') | translate }}
+    @if (updateAvailable() && update.status().phase !== 'installing') {
+      <button type="button" class="btn btn-primary" (click)="installUpdate()" [disabled]="update.busy()">
+        {{ (update.busy() ? 'settings.updates.installing' : 'settings.updates.install') | translate }}
       </button>
-      <vd-busy-indicator [active]="installing()" [label]="'settings.updates.installing-label' | translate" />
     }
   </div>
+
+  <!-- The download, the installer starting, a wait for a dub, or what went wrong. -->
+  <vd-update-progress />
 
   <!-- Outcome / details -->
   @switch (checkOutcome()) {

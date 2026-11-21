@@ -1,10 +1,12 @@
 import type { OnInit } from '@angular/core';
-import { ChangeDetectionStrategy, Component, HostListener, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, HostListener, effect, inject, signal, untracked } from '@angular/core';
 import { updateNoticeFor, type UpdateNotice } from '@videodubber/shared';
 
+import { ActivityService } from '../../core/activity/activity.service';
 import { IpcService } from '../../core/ipc/ipc.service';
-import { BusyIndicatorComponent } from '../busy-indicator/busy-indicator.component';
+import { UpdateService } from '../../core/update/update.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { UpdateProgressComponent } from './update-progress.component';
 
 /** Resolve after `ms`. */
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -20,36 +22,78 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
  * and with it OFF nothing happened at all — the user had to know to visit
  * Settings → Updates and press a button. So the two states differ on purpose:
  *
- *   auto-installing — a status strip. The install is already running in the
- *                     background (see `maybe_auto_update` in lib.rs); the user
- *                     gets told the app will restart, not offered a button that
- *                     would race it.
+ *   auto-installing — a status strip. The install runs in the background (see
+ *                     `maybe_auto_update` in lib.rs); the strip shows how far it
+ *                     is (update-progress), not a button that would race it.
  *   available       — a modal with the release notes and a real choice. Shown
  *                     ONCE per version: nagging every launch is how people learn
  *                     to dismiss dialogs without reading them.
  *
- * The decision of which to show is {@link updateNoticeFor} in the shared
+ * It also says what the LAST update came to: an installer that did not finish
+ * left no trace in the app, and the user just saw the old version again
+ * (0.16.1 -> 0.17.0). A finished update gets a short toast.
+ *
+ * The decision of which notice to show is {@link updateNoticeFor} in the shared
  * package, where it is unit-tested — this component only renders it.
  */
 @Component({
   selector: 'vd-update-notice',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [BusyIndicatorComponent, TranslatePipe],
+  imports: [TranslatePipe, UpdateProgressComponent],
   template: `
+    @if (update.outcome(); as o) {
+      @if (o.outcome === 'failed') {
+        <div class="update-strip update-strip-failed" role="alert">
+          <span class="update-strip-text">
+            <strong>{{ 'update.outcome.failed-title' | translate: { to: o.to } }}</strong>
+            {{ 'update.outcome.failed-body' | translate: { from: o.from } }}
+          </span>
+          <button type="button" class="btn btn-primary btn-sm" (click)="retryFailed()" [disabled]="update.busy()">
+            {{ 'update.progress.retry' | translate }}
+          </button>
+          <button type="button" class="btn btn-sm" (click)="update.openReleases()">
+            {{ 'update.progress.github' | translate }}
+          </button>
+          <button type="button" class="btn btn-ghost btn-sm" (click)="update.dismissOutcome()" [attr.aria-label]="'common.close' | translate">
+            {{ 'common.close' | translate }}
+          </button>
+        </div>
+      }
+    }
+    @if (retrying()) {
+      <div class="update-strip-body">
+        <vd-update-progress />
+      </div>
+    }
     @if (notice(); as n) {
       @switch (n.kind) {
         @case ('auto-installing') {
           <div class="update-strip" role="status" aria-live="polite">
             <span class="update-dot" aria-hidden="true"></span>
-            <span>
-              <strong>{{ 'update.installing-title' | translate: { version: n.version } }}</strong>
-              {{ 'update.installing-body' | translate }}
+            <span class="update-strip-text">
+              @if (update.status().phase === 'idle') {
+                <strong>{{ 'update.auto-waiting-title' | translate: { version: n.version } }}</strong>
+                {{ 'update.auto-waiting-body' | translate }}
+              } @else {
+                <strong>{{ 'update.installing-title' | translate: { version: n.version } }}</strong>
+                {{ 'update.installing-body' | translate }}
+              }
             </span>
+            @if (update.status().phase === 'idle') {
+              <button type="button" class="btn btn-primary btn-sm" (click)="update.install()">
+                {{ 'update.install-now' | translate }}
+              </button>
+            }
             <button type="button" class="btn btn-ghost btn-sm" (click)="dismiss()" [attr.aria-label]="'common.hide' | translate">
               {{ 'common.hide' | translate }}
             </button>
           </div>
+          @if (update.status().phase !== 'idle' || update.error()) {
+            <div class="update-strip-body">
+              <vd-update-progress />
+            </div>
+          }
         }
         @case ('available') {
           <div class="update-overlay" role="presentation" (click)="dismiss()">
@@ -69,17 +113,16 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
               } @else {
                 <p class="update-notes-empty">{{ 'update.no-notes' | translate }}</p>
               }
-              @if (error(); as e) {
-                <p class="update-error" role="alert">{{ e }}</p>
-              }
-              <vd-busy-indicator [active]="installing()" [label]="'update.installing-label' | translate" />
+              <vd-update-progress />
               <div class="update-actions">
-                <button type="button" class="btn btn-ghost" (click)="dismiss()" [disabled]="installing()">
-                  {{ 'common.later' | translate }}
+                <button type="button" class="btn btn-ghost" (click)="dismiss()">
+                  {{ (update.busy() ? 'common.hide' : 'common.later') | translate }}
                 </button>
-                <button type="button" class="btn btn-primary" (click)="install()" [disabled]="installing()">
-                  {{ (installing() ? 'update.installing' : 'update.install-now') | translate }}
-                </button>
+                @if (update.status().phase !== 'installing') {
+                  <button type="button" class="btn btn-primary" (click)="update.install()" [disabled]="update.busy()">
+                    {{ (update.busy() ? 'update.installing' : 'update.install-now') | translate }}
+                  </button>
+                }
               </div>
             </div>
           </div>
@@ -92,14 +135,26 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
       .update-strip {
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: var(--vd-sp-3);
         padding: var(--vd-sp-2) var(--vd-sp-4);
         background: var(--vd-surface-2, var(--vd-surface));
         border-bottom: 1px solid var(--vd-border);
         font-size: 0.9rem;
       }
-      .update-strip > span:nth-of-type(2) {
+      .update-strip-failed {
+        border-bottom-color: var(--vd-danger);
+      }
+      .update-strip-failed strong {
+        color: var(--vd-danger);
+      }
+      .update-strip-text {
         flex: 1;
+        min-width: 16rem;
+      }
+      .update-strip-body {
+        padding: var(--vd-sp-2) var(--vd-sp-4);
+        border-bottom: 1px solid var(--vd-border);
       }
       .update-dot {
         width: 8px;
@@ -162,10 +217,6 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
       .update-notes-empty {
         color: var(--vd-text-muted);
       }
-      .update-error {
-        color: var(--vd-danger);
-        font-size: 0.9rem;
-      }
       .update-actions {
         display: flex;
         justify-content: flex-end;
@@ -177,15 +228,30 @@ const DISMISSED_KEY = 'vd.update.dismissedVersion';
 })
 export class UpdateNoticeComponent implements OnInit {
   protected readonly ipc = inject(IpcService);
+  protected readonly update = inject(UpdateService);
+  private readonly activity = inject(ActivityService);
   private readonly translate = inject(TranslateService);
   protected readonly notice = signal<UpdateNotice | null>(null);
-  protected readonly installing = signal(false);
-  protected readonly error = signal<string | null>(null);
+  /** "Try again" from the failed-update strip: show the progress under it. */
+  protected readonly retrying = signal(false);
+
+  constructor() {
+    // A finished update: say so briefly, once.
+    effect(() => {
+      const o = this.update.outcome();
+      if (o?.outcome !== 'updated') return;
+      untracked(() => {
+        this.activity.toast({ tone: 'success', title: this.translate.instant('update.outcome.updated-title', { to: o.to }) });
+        this.update.dismissOutcome();
+      });
+    });
+  }
 
   async ngOnInit(): Promise<void> {
     // Desktop only: the browser dev session has no updater, and checking there
     // would surface an offer the user cannot act on.
     if (!this.ipc.inTauri) return;
+    void this.update.start();
 
     // Wait before asking. `autoUpdate` lives in the orchestrator's
     // /preferences, and the orchestrator is a ~100 MB sidecar still booting at
@@ -220,18 +286,18 @@ export class UpdateNoticeComponent implements OnInit {
     // updater. Settings → Updates still works, and the next launch retries.
   }
 
-  /** Escape closes the modal, matching the confirm dialog. */
+  /** Escape closes the modal (the download, if any, goes on), matching the confirm dialog. */
   @HostListener('document:keydown.escape')
   protected onEscape(): void {
-    if (this.notice()?.kind === 'available' && !this.installing()) this.dismiss();
+    if (this.notice()?.kind === 'available') this.dismiss();
   }
 
   protected dismiss(): void {
     const n = this.notice();
-    // Only a MANUAL notice is remembered. The auto-installing strip is
-    // transient — it is gone on the next launch anyway, because the update it
-    // describes will have been installed.
-    if (n?.kind === 'available') {
+    // Only a MANUAL notice is remembered, and only when the user declined it:
+    // hiding a download in progress is not saying no to the update. The
+    // auto-installing strip is transient — gone on the next launch anyway.
+    if (n?.kind === 'available' && this.update.status().phase === 'idle') {
       try {
         localStorage.setItem(DISMISSED_KEY, n.version);
       } catch {
@@ -242,20 +308,11 @@ export class UpdateNoticeComponent implements OnInit {
     this.notice.set(null);
   }
 
-  protected async install(): Promise<void> {
-    this.installing.set(true);
-    this.error.set(null);
-    try {
-      // Diverges on success — the app relaunches into the new version.
-      await this.ipc.downloadAndInstallUpdate();
-    } catch (err) {
-      this.installing.set(false);
-      this.error.set(
-        err instanceof Error
-          ? err.message
-          : this.translate.instant('update.install-failed'),
-      );
-    }
+  /** The failed-update strip's Try again: same install, progress shown under the strip. */
+  protected retryFailed(): void {
+    this.update.dismissOutcome();
+    this.retrying.set(true);
+    void this.update.install();
   }
 
   private dismissedVersion(): string | null {

@@ -6,7 +6,7 @@ import { speakerNumber, VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
 
 import { IpcService } from '../../../core/ipc/ipc.service';
 import { toAppError } from '../../../core/state/project.store';
-import { TranslatePipe, TranslateService } from '../../../core/i18n';
+import { TranslatePipe, TranslateService, languageName } from '../../../core/i18n';
 import { ConfirmService } from '../../../shared/confirm-dialog/confirm.service';
 import { SpeakerVoicesDialogComponent } from '../../../shared/voice-library/speaker-voices-dialog.component';
 import { VoiceCloneDialogComponent } from '../../../shared/voice-library/voice-clone-dialog.component';
@@ -500,7 +500,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   }
 
   protected languageLabel(code: string | undefined): string {
-    return code ? (this.languageLabels().get(code) ?? code) : '—';
+    return code ? languageName(code, this.translate.locale(), this.languageLabels().get(code) ?? code) : '—';
   }
 
   protected modelLabel(id: string | undefined): string {

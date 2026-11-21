@@ -6,8 +6,8 @@
         @if (project(); as proj) {
           {{ proj.name }} ·
           <span class="mono"
-            >{{ proj.settings.sourceLanguage }} →
-            {{ proj.settings.targetLanguage }}</span
+            >{{ proj.settings.sourceLanguage | languageName }} →
+            {{ proj.settings.targetLanguage | languageName }}</span
           >
         }
       </p>

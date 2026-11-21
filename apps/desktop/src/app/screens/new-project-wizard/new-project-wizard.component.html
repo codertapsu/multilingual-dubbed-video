@@ -32,7 +32,7 @@
             >
               <option value="">{{ 'wizard.preset-none' | translate }}</option>
               @for (p of presets(); track p.id) {
-                <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage }})</option>
+                <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage | languageName }})</option>
               }
             </select>
             @if (presetId()) {
@@ -122,7 +122,7 @@
                 (ngModelChange)="patchSettings('sourceLanguage', $event)"
               >
                 @for (lang of languages(); track lang.code) {
-                  <option [value]="lang.code">{{ lang.label }}</option>
+                  <option [value]="lang.code">{{ lang.code | languageName: lang.label }}</option>
                 }
               </select>
             </div>
@@ -135,7 +135,7 @@
                 (ngModelChange)="setTargetLanguage($event)"
               >
                 @for (lang of languages(); track lang.code) {
-                  <option [value]="lang.code">{{ lang.label }}</option>
+                  <option [value]="lang.code">{{ lang.code | languageName: lang.label }}</option>
                 }
               </select>
             </div>

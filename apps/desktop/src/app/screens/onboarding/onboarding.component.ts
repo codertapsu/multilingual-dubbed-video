@@ -33,7 +33,7 @@ import type {
   SetupInstallRequest,
   WhisperModelInfo,
 } from '../../core/models/setup';
-import { TranslatePipe } from '../../core/i18n';
+import { LanguageNamePipe, TranslatePipe, TranslateService, languageName } from '../../core/i18n';
 
 /** Wizard step index (1..4). */
 type OnboardingStep = 1 | 2 | 3 | 4;
@@ -61,6 +61,7 @@ type OnboardingStep = 1 | 2 | 3 | 4;
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    LanguageNamePipe,
     FormsModule,
     ErrorBannerComponent,
     DownloadProgressListComponent,
@@ -492,8 +493,9 @@ export class OnboardingComponent implements OnInit, OnDestroy {
 
   /** Human label for a language code, falling back to the raw code. */
   protected languageLabel(code: LanguageCode): string {
-    return this.languages().find((l) => l.code === code)?.label ?? code;
+    return languageName(code, this.translateService.locale(), this.languages().find((l) => l.code === code)?.label ?? code);
   }
+  private readonly translateService = inject(TranslateService);
 
 }
 

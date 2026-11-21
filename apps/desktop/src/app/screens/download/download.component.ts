@@ -15,7 +15,7 @@ import { Router, RouterLink } from '@angular/router';
 import { DownloadEventsService } from '../../core/ipc/download-events.service';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { defaultSeriesAi, rememberSeriesAi } from '../../shared/series-ai';
-import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { LanguageNamePipe, TranslatePipe, TranslateService } from '../../core/i18n';
 import { QUALITY_LADDER, pickClosestHeight } from '@videodubber/shared';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
@@ -50,7 +50,7 @@ import { sourceErrorKeys } from './source-errors';
 @Component({
   selector: 'vd-download',
   standalone: true,
-  imports: [FormsModule, RouterLink, TranslatePipe, ErrorBannerComponent],
+  imports: [LanguageNamePipe, FormsModule, RouterLink, TranslatePipe, ErrorBannerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './download.component.html',
   styleUrl: './download.component.scss',

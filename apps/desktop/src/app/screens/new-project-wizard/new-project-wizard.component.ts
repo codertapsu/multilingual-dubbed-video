@@ -60,7 +60,7 @@ import type { DubPreset } from '../../core/models/download';
 import type { BrandAsset, SeriesAiOption } from '@videodubber/shared';
 import { BrandingFormComponent } from '../../shared/branding/branding-form.component';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
-import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { LanguageNamePipe, TranslatePipe, TranslateService, languageName } from '../../core/i18n';
 import { baseLanguage, describeVoice } from '../../shared/voice-library/voice-filter';
 import { keptVoice, libraryEngineFor, voiceOptions } from '../../shared/voice-library/voice-options';
 import { previewSource, sampleSentence } from '../../shared/voice-library/voice-preview';
@@ -143,6 +143,7 @@ function defaultSettings(): ProjectSettings {
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
+    LanguageNamePipe,
     FormsModule,
     NgTemplateOutlet,
     RouterLink,
@@ -1255,7 +1256,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   /** Human label for the current target language (falls back to the raw code). */
   protected targetLanguageLabel(): string {
     const code = this.settings().targetLanguage;
-    return this.languages().find((l) => l.code === code)?.label ?? code;
+    return languageName(code, this.translate.locale(), this.languages().find((l) => l.code === code)?.label ?? code);
   }
 
   /**

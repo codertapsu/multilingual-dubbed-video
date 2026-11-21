@@ -1,4 +1,5 @@
 export { TranslatePipe } from './translate.pipe';
+export { LanguageNamePipe, languageName } from './language-name';
 export {
   DEFAULT_LOCALE,
   FALLBACK_LOCALE,

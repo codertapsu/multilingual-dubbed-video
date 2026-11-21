@@ -291,7 +291,7 @@
           <span class="label">{{ 'source-video.dub-preset' | translate }}</span>
           <select class="input" [ngModel]="presetId()" (ngModelChange)="presetId.set($event)">
             @for (p of presets(); track p.id) {
-              <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage }})</option>
+              <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage | languageName }})</option>
             }
           </select>
         </label>

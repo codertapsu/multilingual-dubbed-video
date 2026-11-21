@@ -31,7 +31,7 @@ import type {
   ProjectWarning,
   StepDetail,
 } from '../../core/models';
-import { TranslatePipe, TranslateService } from '../../core/i18n';
+import { LanguageNamePipe, TranslatePipe, TranslateService } from '../../core/i18n';
 import { isNeverStarted } from './never-started';
 
 /** How often to re-probe the bundled services' health while on this screen. */
@@ -52,7 +52,7 @@ const QUEUE_POLL_MS = 3000;
   selector: 'vd-processing',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ErrorBannerComponent, StatusBadgeComponent, BusyIndicatorComponent, TranslatePipe, RouterLink],
+  imports: [LanguageNamePipe, ErrorBannerComponent, StatusBadgeComponent, BusyIndicatorComponent, TranslatePipe, RouterLink],
   templateUrl: './processing.component.html',
   styleUrl: './processing.component.scss',
 })

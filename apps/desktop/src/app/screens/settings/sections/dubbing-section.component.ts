@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal, type OnInit } from 
 import { RouterLink } from '@angular/router';
 import type { DubPreset } from '@videodubber/shared';
 
-import { TranslatePipe, TranslateService } from '../../../core/i18n';
+import { LanguageNamePipe, TranslatePipe, TranslateService } from '../../../core/i18n';
 import { IpcService } from '../../../core/ipc/ipc.service';
 import { toAppError } from '../../../core/state/project.store';
 import { BrandKitComponent } from '../../../shared/branding/brand-kit.component';
@@ -21,7 +21,7 @@ import { SettingsStore } from '../settings.store';
 @Component({
   selector: 'vd-settings-dubbing',
   standalone: true,
-  imports: [RouterLink, TranslatePipe, BrandKitComponent],
+  imports: [LanguageNamePipe, RouterLink, TranslatePipe, BrandKitComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrl: '../settings-shared.scss',
   styles: `
@@ -76,7 +76,7 @@ import { SettingsStore } from '../settings.store';
                 <div class="stack-sm">
                   <span class="preset-name">{{ p.name }}</span>
                   <span class="hint">
-                    {{ 'settings.dubbing.preset-languages' | translate: { from: p.sourceLanguage || ('settings.dubbing.detect' | translate), to: p.targetLanguage } }}
+                    {{ 'settings.dubbing.preset-languages' | translate: { from: p.sourceLanguage ? (p.sourceLanguage | languageName) : ('settings.dubbing.detect' | translate), to: (p.targetLanguage | languageName) } }}
                     @if (p.settings.ttsProviderId) {
                       · {{ store.providerLabel(p.settings.ttsProviderId) }}
                     }

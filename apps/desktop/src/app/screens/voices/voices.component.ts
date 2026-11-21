@@ -470,6 +470,17 @@ export class VoicesComponent implements OnInit, OnDestroy {
     }
   }
 
+  /** The user says whose voice it is (confirmed: casting uses it). */
+  protected async setGender(p: VoiceProfile, value: string): Promise<void> {
+    if (value !== 'male' && value !== 'female') return;
+    try {
+      await this.ipc.renameVoiceProfile(p.id, { gender: value });
+      await this.reload();
+    } catch (err) {
+      this.error.set(err as AppError);
+    }
+  }
+
   protected async deleteProfile(p: VoiceProfile): Promise<void> {
     const ok = await this.confirm.confirm({
       title: this.i18n.instant('voices.my-delete-title', { name: p.name }),

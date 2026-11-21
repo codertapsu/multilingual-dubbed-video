@@ -125,6 +125,8 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
 
   // save
   protected readonly name = signal('');
+  /** Whose voice it is, as the user says (casting by gender uses it). */
+  protected readonly gender = signal<'' | 'male' | 'female'>('');
   protected readonly note = signal('');
   protected readonly keepRecording = signal(true);
   protected readonly profile = signal<VoiceProfile | null>(null);
@@ -439,6 +441,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
         window: this.window(),
         name: this.name().trim(),
         ...(this.note().trim() ? { note: this.note().trim() } : {}),
+        ...(this.gender() ? { gender: this.gender() as 'male' | 'female' } : {}),
         consent: { relation: this.relation(), statementVersion: consent.version, locale: this.i18n.locale(), accepted: true },
         keepRecording: this.keepRecording(),
         denoise: this.denoise(),

@@ -232,6 +232,16 @@
       <span>{{ 'voice-clone.name' | translate }}</span>
       <input type="text" maxlength="80" [ngModel]="name()" (ngModelChange)="name.set($event)" />
     </label>
+    <!-- Asked, never guessed from pitch: casting speakers by gender relies on it. -->
+    <label class="field">
+      <span>{{ 'voice-clone.gender' | translate }}</span>
+      <select [ngModel]="gender()" (ngModelChange)="gender.set($event)">
+        <option value="">{{ 'voice-clone.gender-choose' | translate }}</option>
+        <option value="male">{{ 'voices.male' | translate }}</option>
+        <option value="female">{{ 'voices.female' | translate }}</option>
+      </select>
+    </label>
+    <p class="hint">{{ 'voice-clone.gender-help' | translate }}</p>
     <label class="field">
       <span>{{ 'voice-clone.note' | translate }}</span>
       <input type="text" maxlength="500" [ngModel]="note()" (ngModelChange)="note.set($event)" [placeholder]="'voice-clone.note-placeholder' | translate" />

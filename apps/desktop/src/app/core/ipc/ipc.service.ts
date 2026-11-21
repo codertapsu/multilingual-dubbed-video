@@ -662,11 +662,12 @@ export class IpcService {
     denoise: boolean;
     projectId?: string;
     source?: { kind: 'recording' | 'file'; fileName?: string };
+    gender?: 'female' | 'male';
   }): Promise<VoiceProfile> {
     return this.http('POST', '/voice-profiles', { engine: 'vieneu', ...body });
   }
 
-  renameVoiceProfile(id: string, patch: { name?: string; note?: string }): Promise<VoiceProfile> {
+  renameVoiceProfile(id: string, patch: { name?: string; note?: string; gender?: 'female' | 'male' }): Promise<VoiceProfile> {
     return this.http('PATCH', `/voice-profiles/${encodeURIComponent(id)}`, patch);
   }
 

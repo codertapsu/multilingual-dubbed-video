@@ -216,3 +216,18 @@
     text-align: left;
   }
 }
+
+/* A cloned voice's gender: the user's word, asked until confirmed. */
+.gender-line {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+  margin-top: var(--vd-sp-1);
+}
+.gender-line select {
+  width: auto;
+}
+.chip-warn {
+  background: var(--vd-warning-bg, #fef3c7);
+  color: var(--vd-warning, #92400e);
+}

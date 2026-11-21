@@ -230,6 +230,7 @@ export type {
   VoiceLicenseCategory,
   VoicePreview,
   VoiceProfile,
+  VoiceProfileGender,
   VoiceReferenceChecks,
   VoiceReferencePolicy,
   VoiceCheckWarning,

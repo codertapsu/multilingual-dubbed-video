@@ -53,6 +53,8 @@ export interface CreateProfileInput {
   denoise?: boolean;
   /** Make the voice private to this project (e.g. from its source video). */
   projectId?: string;
+  /** Whose voice it is, as the user said when cloning it (confirmed). */
+  gender?: 'female' | 'male';
   source?: VoiceProfile['source'];
   referenceLanguage?: string;
   locale?: string;
@@ -201,6 +203,7 @@ export class VoiceProfileService implements VoiceRefResolver {
           },
         },
         ...(input.note?.trim() ? { note: input.note.trim().slice(0, 500) } : {}),
+        ...(input.gender === 'female' || input.gender === 'male' ? { gender: { value: input.gender, confirmed: true } } : {}),
       };
       await this.deps.store.save(profile);
       if (!keep) await fsp.rm(reference, { force: true });
@@ -245,13 +248,16 @@ export class VoiceProfileService implements VoiceRefResolver {
     }
   }
 
-  async rename(id: string, patch: { name?: string; note?: string }): Promise<VoiceProfile> {
+  async rename(id: string, patch: { name?: string; note?: string; gender?: 'female' | 'male' }): Promise<VoiceProfile> {
     const profile = await this.deps.store.require(id);
     const name = patch.name?.trim().slice(0, NAME_MAX);
+    const gender = patch.gender === 'female' || patch.gender === 'male' ? patch.gender : undefined;
     const next: VoiceProfile = {
       ...profile,
       ...(name ? { name } : {}),
       ...(patch.note !== undefined ? { note: patch.note.trim().slice(0, 500) } : {}),
+      // The user's word: confirmed, whatever a suggestion said.
+      ...(gender ? { gender: { value: gender, confirmed: true } } : {}),
       updatedAt: this.now().toISOString(),
     };
     if (patch.note !== undefined && !next.note) delete next.note;

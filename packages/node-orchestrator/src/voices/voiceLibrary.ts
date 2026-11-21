@@ -94,6 +94,8 @@ export function libraryItems(
       engineAvailable: engineAvailable(engine, state),
       favorite: state.favorites.has(p.id),
       scope: p.scope,
+      ...(p.gender ? { gender: p.gender.value } : {}),
+      genderConfirmed: p.gender?.confirmed === true,
     });
   }
   return items;

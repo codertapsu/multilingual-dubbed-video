@@ -242,6 +242,25 @@ export interface VoiceProfile {
   enrollments: Partial<Record<VoiceEngineId, VoiceEnrollment>>;
   /** Free-form note. */
   note?: string;
+  /**
+   * Whose voice it is, for casting speakers by gender (cast_voices). Never
+   * taken from pitch, never set silently: the user's clones overlap (a male
+   * clone at 194 Hz sits above a female one at 174 Hz, claude-dubber
+   * 2026-11-21). A suggestion comes from comparing its voice print with
+   * built-in voices whose gender is known; the user confirms it. Profiles made
+   * before this have none: unconfirmed, and casting asks about them.
+   */
+  gender?: VoiceProfileGender;
+  /** Its voice print and pitch, measured on its preview (speaker detection's embedding model). */
+  voicePrint?: { print: number[]; f0Hz?: number; model?: string };
+}
+
+/** A cloned voice's gender: the user's word (`confirmed`), or a suggestion waiting for it. */
+export interface VoiceProfileGender {
+  value: 'female' | 'male';
+  confirmed: boolean;
+  /** How sure the suggestion was (0..1), when it came from voice prints. */
+  confidence?: number;
 }
 
 /** A row of the voice library: a preset, or a profile, with its state here. */
@@ -273,6 +292,8 @@ export interface VoiceLibraryItem {
   favorite: boolean;
   /** Profiles: library or project, and which project. */
   scope?: VoiceProfile['scope'];
+  /** Profiles: the gender is the user's word (false: a suggestion, or not set). */
+  genderConfirmed?: boolean;
 }
 
 /** GET /voices. */

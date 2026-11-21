@@ -1404,7 +1404,12 @@
     "my-export-with": "Include the recording",
     "my-export-without": "Voice data only",
     "my-export-folder": "Where to save the voice file",
-    "my-exported": "Saved to {{ path }}"
+    "my-exported": "Saved to {{ path }}",
+    "my-gender": "Gender",
+    "my-gender-unset": "choose…",
+    "my-gender-unconfirmed": "not confirmed",
+    "my-gender-unconfirmed-help": "Choosing voices for the speakers of a video by gender uses this. Pick it once: it is never guessed from how high the voice is.",
+    "my-gender-confirm": "Confirm"
   },
   "voice-clone": {
     "title": "Make a cloned voice",
@@ -1490,7 +1495,10 @@
     "import-voice-help": "Choose a .vdvoice file exported from VideoDubber. It becomes a new voice in My voices, under the declaration you just made.",
     "choose-voice-file": "Choose a .vdvoice file…",
     "importing": "Importing the voice…",
-    "import-not-voice": "This file is not a VideoDubber voice file."
+    "import-not-voice": "This file is not a VideoDubber voice file.",
+    "gender": "Whose voice is it?",
+    "gender-choose": "Choose…",
+    "gender-help": "Used to give this voice to the men or the women of a video when its speakers are cast. You can change it later in My voices."
   },
   "speaker-voices": {
     "title": "A voice for every speaker",

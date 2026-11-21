@@ -63,6 +63,21 @@
                   <span class="chip" [title]="'voices.my-no-recording-help' | translate">{{ 'voices.my-no-recording' | translate }}</span>
                 }
               </div>
+              <!-- Whose voice it is, for casting speakers by gender: the user's word, never guessed from pitch. -->
+              <label class="gender-line small">
+                <span class="muted">{{ 'voices.my-gender' | translate }}</span>
+                <select [ngModel]="p.gender?.value ?? ''" (ngModelChange)="setGender(p, $event)" [attr.aria-label]="'voices.my-gender' | translate">
+                  <option value="" disabled>{{ 'voices.my-gender-unset' | translate }}</option>
+                  <option value="male">{{ 'voices.male' | translate }}</option>
+                  <option value="female">{{ 'voices.female' | translate }}</option>
+                </select>
+                @if (!p.gender?.confirmed) {
+                  <span class="chip chip-warn" [title]="'voices.my-gender-unconfirmed-help' | translate">{{ 'voices.my-gender-unconfirmed' | translate }}</span>
+                  @if (p.gender) {
+                    <button type="button" class="btn btn-ghost btn-sm" (click)="setGender(p, p.gender.value)">{{ 'voices.my-gender-confirm' | translate }}</button>
+                  }
+                }
+              </label>
               <div class="meta muted small">
                 <span>{{ 'voices.my-made' | translate: { date: dateLabel(p.createdAt) } }}</span>
                 <span [title]="p.consent.statementText">· {{ relationLabel(p) }}</span>

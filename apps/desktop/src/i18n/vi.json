@@ -1404,7 +1404,12 @@
     "my-export-with": "Kèm bản ghi",
     "my-export-without": "Chỉ dữ liệu giọng",
     "my-export-folder": "Lưu tệp giọng vào đâu",
-    "my-exported": "Đã lưu vào {{ path }}"
+    "my-exported": "Đã lưu vào {{ path }}",
+    "my-gender": "Giới tính",
+    "my-gender-unset": "chọn…",
+    "my-gender-unconfirmed": "chưa xác nhận",
+    "my-gender-unconfirmed-help": "Thông tin này được dùng khi chọn giọng cho người nói trong video theo giới tính. Hãy chọn một lần: ứng dụng không bao giờ đoán giới tính từ độ cao của giọng.",
+    "my-gender-confirm": "Xác nhận"
   },
   "voice-clone": {
     "title": "Tạo giọng nhân bản",
@@ -1490,7 +1495,10 @@
     "import-voice-help": "Chọn một tệp .vdvoice được xuất từ VideoDubber. Tệp sẽ thành một giọng mới trong Giọng của tôi, kèm cam kết bạn vừa xác nhận.",
     "choose-voice-file": "Chọn tệp .vdvoice…",
     "importing": "Đang nhập giọng…",
-    "import-not-voice": "Tệp này không phải tệp giọng của VideoDubber."
+    "import-not-voice": "Tệp này không phải tệp giọng của VideoDubber.",
+    "gender": "Đây là giọng của ai?",
+    "gender-choose": "Chọn…",
+    "gender-help": "Dùng để giao giọng này cho nhân vật nam hay nữ trong video khi chọn giọng cho từng người nói. Bạn có thể đổi lại sau trong mục Giọng của tôi."
   },
   "speaker-voices": {
     "title": "Giọng riêng cho từng người nói",

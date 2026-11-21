@@ -1,9 +1,9 @@
 <section class="page stack">
   <div class="row row-between">
     <div>
-      <h1>{{ 'processing.title' | translate }}</h1>
+      <h1>{{ (showReady() ? 'processing.title-done' : 'processing.title') | translate }}</h1>
       <p class="muted">
-        @if (store.current(); as proj) {
+        @if (project(); as proj) {
           {{ proj.name }} ·
           <span class="mono"
             >{{ proj.settings.sourceLanguage }} →
@@ -24,12 +24,71 @@
 
   <vd-error-banner [error]="displayError()" (dismiss)="dismissError()" />
 
+  <!-- The project could not be loaded: said, with a way out, instead of a
+       step list that waits forever for a pipeline that will not come. -->
+  @if (loadFailed()) {
+    <div class="card stack load-failed" role="alert">
+      <div>
+        <strong>{{ 'processing.load-failed-title' | translate }}</strong>
+        <p class="muted">{{ 'processing.load-failed-body' | translate }}</p>
+      </div>
+      <div class="row">
+        <button type="button" class="btn btn-primary" (click)="load()" [disabled]="reloading()">
+          {{ (reloading() ? 'processing.load-retrying' : 'processing.load-retry') | translate }}
+        </button>
+        <a class="btn btn-ghost" routerLink="/">{{ 'processing.back-to-projects' | translate }}</a>
+      </div>
+    </div>
+  }
+
+  <!-- The dub is finished: the video, and what to do with it next. -->
+  @if (showReady()) {
+    <div class="card ready-card" role="status">
+      <span class="ready-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      </span>
+      <div class="stack-sm ready-main">
+        <h2>{{ 'processing.ready-title' | translate }}</h2>
+        <p class="muted">{{ 'processing.ready-body' | translate }}</p>
+        @if (outputVideoPath(); as path) {
+          <p class="ready-path">
+            <span class="label">{{ 'processing.ready-saved' | translate }}</span> <span class="mono">{{ path }}</span>
+          </p>
+        }
+        <div class="row ready-actions">
+          <button type="button" class="btn btn-primary" (click)="playVideo()" [disabled]="!project() || opening()">
+            {{ 'processing.ready-play' | translate }}
+          </button>
+          <button type="button" class="btn" (click)="showInFolder()" [disabled]="!project() || opening()">
+            {{ 'processing.ready-folder' | translate }}
+          </button>
+          <button type="button" class="btn" (click)="goToEditor()">{{ 'processing.ready-edit' | translate }}</button>
+          <button type="button" class="btn btn-ghost" (click)="goToExport()">{{ 'processing.go-export' | translate }}</button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Never started (the wizard was left at step 2, or a series' "Open it to
+       start"): Start is here, not only in the wizard. -->
+  @if (neverStarted()) {
+    <div class="card banner-info start-card stack" role="status">
+      <strong>{{ 'processing.start-title' | translate }}</strong>
+      <p class="muted">{{ 'processing.start-body' | translate }}</p>
+      <div class="row">
+        <button type="button" class="btn btn-primary" (click)="start()" [disabled]="starting()">
+          {{ (starting() ? 'processing.starting' : 'processing.start') | translate }}
+        </button>
+      </div>
+    </div>
+  }
+
   <!-- A series: this run only transcribes the whole video; the parts dub the rest. -->
-  @if (store.current()?.series; as s) {
+  @if (project()?.series; as s) {
     <div class="card stack">
       @if (s.role === 'parent') {
         <p>{{ 'series.processing-parent' | translate }}</p>
-        <a class="btn" [routerLink]="['/project', store.current()?.id, 'series']">{{ 'series.open' | translate }}</a>
+        <a class="btn" [routerLink]="['/project', id(), 'series']">{{ 'series.open' | translate }}</a>
       } @else {
         <p>{{ 'series.processing-part' | translate: { n: s.index, count: s.count, name: s.seriesName } }}</p>
         <a class="btn" [routerLink]="['/project', s.parentId, 'series']">{{ 'series.open' | translate }}</a>
@@ -41,7 +100,21 @@
   @if (queueEntry(); as entry) {
     <div class="card banner-info stack" role="status">
       <strong>{{ 'processing.queued-title' | translate: { position: entry.position } }}</strong>
-      <p class="muted">{{ entry.message }}</p>
+      <!-- Why it waits, in the user's language (the server's sentence is English). -->
+      <p class="muted">
+        @switch (entry.reason) {
+          @case ('heavy-busy') {
+            {{ 'processing.queue-reason-heavy-busy' | translate }}
+          }
+          @case ('paused') {
+            {{ 'processing.queue-reason-paused' | translate }}
+            <a routerLink="/settings/performance" fragment="opt-pause-queue">{{ 'processing.queue-resume' | translate }}</a>
+          }
+          @default {
+            {{ 'processing.queue-reason-no-slot' | translate }}
+          }
+        }
+      </p>
       @if (queue(); as q) {
         <p class="hint">
           {{ 'processing.queue-capacity' | translate: { max: q.maxProjects } }}
@@ -51,7 +124,7 @@
         </p>
       }
       <div class="row">
-        <button type="button" class="btn" (click)="runNext()">{{ 'processing.run-next' | translate }}</button>
+        <button type="button" class="btn" (click)="runNext()" [disabled]="runningNext()">{{ 'processing.run-next' | translate }}</button>
         <button type="button" class="btn btn-danger" (click)="cancel()" [disabled]="cancelling()">
           {{ (cancelling() ? 'processing.removing' : 'processing.remove-from-queue') | translate }}
         </button>
@@ -122,20 +195,22 @@
       <span [style.width.%]="overallPercent()"></span>
     </div>
 
-    <div class="row">
-      @if (isRunning()) {
+    @if (isRunning()) {
+      <div class="row">
         <button type="button" class="btn" (click)="pause()" [disabled]="pausing()">
           {{ (pausing() ? 'processing.pausing' : 'processing.pause') | translate }}
         </button>
         <span class="hint">{{ 'processing.pause-hint' | translate }}</span>
-      }
-      @if (isComplete()) {
+      </div>
+    }
+    <!-- A series' analysis makes no video: its transcript is fixed in the editor. -->
+    @if (isComplete() && isSeriesParent()) {
+      <div class="row">
         <button type="button" class="btn btn-primary" (click)="goToEditor()">
           {{ 'processing.open-editor' | translate }}
         </button>
-        <button type="button" class="btn" (click)="goToExport()">{{ 'processing.go-export' | translate }}</button>
-      }
-    </div>
+      </div>
+    }
   </div>
 
   @if (warnings().length > 0) {
@@ -181,16 +256,18 @@
 
         @if (step.status === 'failed') {
           <div>
-            <button type="button" class="btn btn-sm" (click)="retry(step.id)">
-              {{ 'processing.retry-step' | translate }}
+            <button type="button" class="btn btn-sm" (click)="retry(step.id)" [disabled]="retrying() !== null">
+              {{ (retrying() === step.id ? 'processing.retrying' : 'processing.retry-step') | translate }}
             </button>
           </div>
         }
       </li>
     } @empty {
-      <li class="muted">
-        <vd-busy-indicator [active]="true" [label]="'processing.waiting-start' | translate" />
-      </li>
+      @if (!loadFailed()) {
+        <li class="muted">
+          <vd-busy-indicator [active]="true" [label]="'processing.waiting-start' | translate" />
+        </li>
+      }
     }
   </ol>
 

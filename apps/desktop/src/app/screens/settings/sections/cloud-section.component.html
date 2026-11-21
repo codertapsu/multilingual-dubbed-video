@@ -83,11 +83,13 @@
           } @else {
             <span class="hint test-ok grow">✓ {{ 'settings.keys.mc.status-up' | translate: { url: st.url } }}</span>
           }
+        } @else if (motherClaudeCheckFailed() && !motherClaudeChecking()) {
+          <span class="hint test-fail grow">✗ {{ 'settings.keys.mc.check-failed' | translate }}</span>
         } @else {
           <span class="hint grow">{{ 'settings.keys.mc.checking' | translate }}</span>
         }
         <button type="button" class="btn btn-ghost btn-sm" (click)="checkMotherClaude()" [disabled]="motherClaudeChecking()">
-          {{ motherClaudeChecking() ? '…' : ('settings.keys.mc.check' | translate) }}
+          {{ (motherClaudeChecking() ? 'settings.keys.mc.check-busy' : 'settings.keys.mc.check') | translate }}
         </button>
       </div>
 
@@ -101,7 +103,7 @@
 
       <div class="cred-controls">
         <button type="button" class="btn btn-sm" (click)="testKey('anthropic')" [disabled]="credBusy() !== null">
-          {{ testing() === 'anthropic' ? '…' : ('settings.keys.test' | translate) }}
+          {{ (testing() === 'anthropic' ? 'settings.keys.testing' : 'settings.keys.test') | translate }}
         </button>
         @if (testing() === 'anthropic') {
           <span class="hint">{{ 'settings.keys.mc.testing' | translate }}</span>
@@ -130,7 +132,7 @@
                 (click)="saveMotherClaudeUrl()"
                 [disabled]="credBusy() !== null || motherClaudeUrlInput() === null"
               >
-                {{ 'settings.keys.save' | translate }}
+                {{ (isWorking('mc-url', 'save') ? 'settings.keys.saving' : 'settings.keys.save') | translate }}
               </button>
               @if (motherClaudeUrl() !== defaultMotherClaudeUrl) {
                 <button type="button" class="btn btn-ghost btn-sm" (click)="resetMotherClaudeUrl()" [disabled]="credBusy() !== null">
@@ -159,11 +161,11 @@
                 (click)="saveMotherClaudeKey()"
                 [disabled]="credBusy() !== null || motherClaudeKeyInput().trim().length === 0"
               >
-                {{ 'settings.keys.save' | translate }}
+                {{ (isWorking('mc-key', 'save') ? 'settings.keys.saving' : 'settings.keys.save') | translate }}
               </button>
               @if (motherClaudeKeySet()) {
                 <button type="button" class="btn btn-ghost btn-sm" (click)="clearMotherClaudeKey()" [disabled]="credBusy() !== null">
-                  {{ 'settings.keys.remove' | translate }}
+                  {{ (isWorking('mc-key', 'remove') ? 'settings.keys.removing' : 'settings.keys.remove') | translate }}
                 </button>
               }
             </span>
@@ -196,7 +198,7 @@
         [disabled]="credBusy() !== null || keyInputFor(svc).trim().length === 0"
         [title]="keyInputFor(svc).trim().length === 0 ? ('settings.cloud.save-title' | translate) : ''"
       >
-        {{ 'settings.keys.save' | translate }}
+        {{ (isWorking(svc, 'save') ? 'settings.keys.saving' : 'settings.keys.save') | translate }}
       </button>
       <button
         type="button"
@@ -205,11 +207,11 @@
         [disabled]="credBusy() !== null || !(credentialFor(svc)?.configured ?? false)"
         [title]="(credentialFor(svc)?.configured ?? false) ? '' : ('settings.cloud.test-title' | translate)"
       >
-        {{ credBusy() === svc ? '…' : ('settings.keys.test' | translate) }}
+        {{ (testing() === svc ? 'settings.keys.testing' : 'settings.keys.test') | translate }}
       </button>
       @if (credentialFor(svc)?.configured && !credentialFor(svc)?.fromEnv) {
         <button type="button" class="btn btn-ghost btn-sm" (click)="clearKey(svc)" [disabled]="credBusy() !== null">
-          {{ 'settings.keys.remove' | translate }}
+          {{ (isWorking(svc, 'remove') ? 'settings.keys.removing' : 'settings.keys.remove') | translate }}
         </button>
       }
     </div>

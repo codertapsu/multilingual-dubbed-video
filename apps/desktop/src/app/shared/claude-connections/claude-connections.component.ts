@@ -171,7 +171,7 @@ const CLAUDE_CODE_INSTALL_URL = 'https://code.claude.com/docs/en/setup';
         }
       }
     } @else if (claude.unavailable()) {
-      <p class="hint">{{ 'settings.defaults.unavailable' | translate }}</p>
+      <p class="hint">{{ 'settings.claude.unavailable' | translate }}</p>
     }
   `,
 })

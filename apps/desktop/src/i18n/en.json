@@ -247,7 +247,7 @@
       "render": "Rendering",
       "render-value": "Local FFmpeg — always on this machine (your video never leaves it).",
       "saved": "✓ Saved — applies to new projects",
-      "unavailable": "Provider list unavailable — is the local backend running?"
+      "unavailable": "Couldn't load the engines to choose from: VideoDubber's background service isn't answering. If this lasts, restart the app."
     },
     "claude": {
       "heading": "Claude (AI assistant)",
@@ -262,7 +262,8 @@
       "copy": "Copy",
       "copied": "Copied ✓",
       "try": "Then ask Claude, for example: \"Dub the video in my Downloads folder into Vietnamese with the best quality.\"",
-      "no-server": "This build cannot start the MCP server. In a source checkout, run pnpm build first.",
+      "no-server": "This copy of VideoDubber is missing the part that Claude connects to, so Claude can't be connected. Quit and reopen VideoDubber; if this message is still here, reinstall the app.",
+      "unavailable": "Couldn't check whether Claude is connected: VideoDubber's background service isn't answering. If this lasts, restart the app.",
       "guide": "Step-by-step guide",
       "code": {
         "other-copy": "Points to another copy of VideoDubber",
@@ -278,14 +279,17 @@
       }
     },
     "keys": {
-      "intro": "Optional. Keys are stored only on this machine (~/VideoDubber/credentials.json, owner-only permissions) and are sent only to the service they belong to. Nothing is uploaded anywhere unless you select a cloud provider for a phase.",
+      "intro": "Optional. Keys are saved only on this computer, in a file only your user account can open (~/VideoDubber/credentials.json), and are sent only to the service they belong to. Nothing is sent anywhere unless you choose a cloud engine for a step.",
       "from-env": "from environment",
       "key-set": "key {{ masked }}",
       "not-configured": "not configured",
       "api-key-aria": "{{ service }} API key",
       "save": "Save",
+      "saving": "Saving…",
       "test": "Test",
+      "testing": "Testing…",
       "remove": "Remove",
+      "removing": "Removing…",
       "claude-model": "Claude model for translation and review",
       "claude-model-hint": "Opus gives the most natural, consistent translation; Sonnet costs about half as much; Haiku is the cheapest and fastest. Roughly, a 30-minute video costs a few cents with Haiku and one to two US dollars with Opus.",
       "claude": {
@@ -306,6 +310,8 @@
         "status-down": "Mother Claude's HTTP API is not running at {{ url }}. Follow the steps below.",
         "status-key": "Mother Claude answered, but its HTTP API has a key: paste that key below.",
         "check": "Check again",
+        "check-busy": "Checking…",
+        "check-failed": "Couldn't check Mother Claude: VideoDubber's background service didn't answer. Try again in a moment.",
         "download": "Download Mother Claude",
         "steps-intro": "Set it up once:",
         "step-install": "Install Mother Claude and open it. It uses the Claude account Claude Code is signed in with.",
@@ -331,7 +337,12 @@
       "uv-bundled": " (uses the bundled runtime)",
       "uv-download": "Python engines (neural voices, separation, alignment) need uv. It isn't bundled in this build, so the first install downloads it automatically (~20 MB, verified) — just click Install.",
       "uv-missing": "⚠ Python engines (neural voices, separation, alignment) need uv, and no build is published for this platform. Install it from https://docs.astral.sh/uv/ and reopen.",
-      "none": "No engine packs are available for this platform, or the backend is offline.",
+      "none": "None of these engines are offered for this computer's operating system.",
+      "load-failed": "Couldn't load the engines",
+      "load-failed-hint": "VideoDubber's background service didn't send the list of engines, so this page can't show what is installed or what you can install. It may still be starting: try again in a moment. If it keeps failing, restart the app.",
+      "load-retrying": "Loading…",
+      "retry": "Try again",
+      "retry-size": "Try again ({{ size }})",
       "recommended": "recommended",
       "installed": "installed",
       "in-use": "in use",
@@ -348,7 +359,12 @@
       "update-title": "A newer version is available — reinstall to update",
       "reinstall": "Reinstall",
       "reinstall-title": "Re-download the latest version",
+      "reinstall-confirm-title": "Download {{ name }} again?",
+      "reinstall-confirm-body": "Reinstalling downloads all {{ size }} again and replaces the copy on this computer. It is only needed when this engine has stopped working. You can keep using the app while it downloads.",
+      "reinstall-confirm": "Download again ({{ size }})",
       "remove": "Remove",
+      "removing": "Removing…",
+      "switching": "Switching…",
       "install": "Install",
       "needs-uv-title": "This engine needs uv, which has no build for this platform"
     },
@@ -364,6 +380,7 @@
       "installed": "installed",
       "remove": "Remove",
       "removing": "Removing…",
+      "remove-failed": "Couldn't remove the {{ from }} → {{ to }} pack. Try again; if it keeps failing, restart VideoDubber.",
       "install": "Install",
       "installing": "Installing…",
       "downloading": "Downloading…"
@@ -543,6 +560,7 @@
       "presets": "Presets",
       "presets-hint": "A preset keeps the languages, engines, voice, subtitles and audio mix of a dub, to dub the next videos the same way (in New project, or many downloads at once on the Download screen). Make one in New project: set everything up, then “Save as preset”.",
       "presets-empty": "No presets yet. New projects start from the settings recommended for this computer.",
+      "presets-unavailable": "Your presets couldn't be loaded: VideoDubber's background service isn't answering. If this lasts, restart the app.",
       "preset-languages": "{{ from }} → {{ to }}",
       "detect": "detect the language",
       "preset-starts": "starts dubbing by itself",
@@ -617,6 +635,10 @@
       "phowhisper-hint": "Whisper trained further on Vietnamese by VinAI: the most accurate choice for videos spoken in Vietnamese. Runs on the built-in faster-whisper.",
       "models-unavailable": "Could not tell which models are downloaded: is the background service running?",
       "downloaded": "downloaded",
+      "not-downloaded": "not downloaded",
+      "downloading-pct": "downloading {{ percent }}%",
+      "downloading-badge": "downloading…",
+      "download-failed": "download failed",
       "default-model": "default model",
       "downloading": "Downloading…",
       "download": "Download",
@@ -753,11 +775,13 @@
       "paused-now": "Paused: waiting dubs will not start until you untick “Pause”.",
       "tier-constrained": "Modest computer",
       "tier-balanced": "Mid-range computer",
-      "tier-performance": "Powerful computer"
+      "tier-performance": "Powerful computer",
+      "unavailable": "Couldn't read this computer's hardware: VideoDubber's background service isn't answering. If this lasts, restart the app."
     },
     "advanced": {
       "uv": "Python engines (uv)",
       "uv-hint": "The voice and helper engines install into Python environments of their own, made with uv. Nothing to do here unless an install says uv is missing.",
+      "uv-unavailable": "Couldn't check whether the Python engines can be installed: VideoDubber's background service isn't answering. If this lasts, restart the app.",
       "reset-all": "Reset all settings",
       "reset-all-hint": "Every page's settings back to their defaults at once. API keys, site logins, presets, logos and greetings, installed engines and your projects are kept.",
       "reset-all-button": "Reset all settings…"

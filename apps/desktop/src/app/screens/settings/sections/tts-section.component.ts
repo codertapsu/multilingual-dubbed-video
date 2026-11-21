@@ -4,6 +4,7 @@ import { RouterLink } from '@angular/router';
 import { TranslatePipe } from '../../../core/i18n';
 import { DefaultEngineComponent } from '../components/default-engine.component';
 import { EngineFamilyCardComponent } from '../components/engine-family-card.component';
+import { EnginesLoadErrorComponent } from '../components/engines-load-error.component';
 import { ProviderRowComponent } from '../components/provider-row.component';
 import { familiesForPage, familyOfProvider } from '../engine-families';
 import { SettingsStore } from '../settings.store';
@@ -18,7 +19,7 @@ import { SettingsStore } from '../settings.store';
 @Component({
   selector: 'vd-settings-tts',
   standalone: true,
-  imports: [RouterLink, TranslatePipe, DefaultEngineComponent, EngineFamilyCardComponent, ProviderRowComponent],
+  imports: [RouterLink, TranslatePipe, DefaultEngineComponent, EngineFamilyCardComponent, EnginesLoadErrorComponent, ProviderRowComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrls: ['../settings-shared.scss', './engine-page.scss'],
   template: `
@@ -27,7 +28,7 @@ import { SettingsStore } from '../settings.store';
       <h3 class="card-title">{{ 'settings.fn.defaults-heading' | translate }}</h3>
       <vd-default-engine id="opt-tts-default" phase="tts" titleKey="settings.fn.tts-engine" hintKey="settings.fn.tts-engine-hint" />
       @if (store.defaultsSaved()) {
-        <p class="hint test-ok saved" role="status">{{ 'settings.defaults.saved' | translate }}</p>
+        <p class="hint test-ok saved" role="status" animate.leave="fade-out">{{ 'settings.defaults.saved' | translate }}</p>
       }
       <div class="row-actions voices-link">
         <a routerLink="/voices" class="btn btn-sm">{{ 'settings.fn.open-voices' | translate }}</a>
@@ -36,6 +37,7 @@ import { SettingsStore } from '../settings.store';
     </div>
 
     <!-- ===================== Families (VieNeu first) ===================== -->
+    <vd-engines-load-error />
     @for (family of families(); track family.id) {
       <vd-engine-family-card [familyId]="family.id" [family]="family" />
     }

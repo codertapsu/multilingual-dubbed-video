@@ -98,8 +98,8 @@ import { SettingsStore } from '../settings.store';
         <div class="row-actions">
           <a routerLink="/new" class="btn btn-sm">{{ 'settings.dubbing.preset-new' | translate }}</a>
         </div>
-      } @else {
-        <p class="hint">{{ 'settings.defaults.unavailable' | translate }}</p>
+      } @else if (presetsFailed()) {
+        <p class="hint warn-text">{{ 'settings.dubbing.presets-unavailable' | translate }}</p>
       }
     </div>
 
@@ -131,6 +131,12 @@ export class DubbingSectionComponent implements OnInit {
 
   /** null until loaded, or when the backend cannot be reached. */
   protected readonly presets = signal<DubPreset[] | null>(null);
+  /**
+   * The list could not be read. Told apart from "still loading": the card
+   * used to say "Provider list unavailable" for both, the wrong list and a
+   * false alarm every time the page opened.
+   */
+  protected readonly presetsFailed = signal(false);
   protected readonly busy = signal(false);
 
   ngOnInit(): void {
@@ -140,8 +146,10 @@ export class DubbingSectionComponent implements OnInit {
   private async load(): Promise<void> {
     try {
       this.presets.set(await this.ipc.listPresets());
+      this.presetsFailed.set(false);
     } catch {
       this.presets.set(null);
+      this.presetsFailed.set(true);
     }
   }
 

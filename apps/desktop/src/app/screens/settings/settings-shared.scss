@@ -106,6 +106,18 @@
   color: var(--vd-warning);
 }
 
+// "✓ Saved" fades as it goes (animate.leave): SettingsStore takes it down a
+// few seconds after the save. Reduced motion makes it a plain disappearance
+// (styles.scss shortens every animation).
+.fade-out {
+  animation: vd-fade-out 0.5s ease-in forwards;
+}
+@keyframes vd-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
 details > summary {
   cursor: pointer;
 }

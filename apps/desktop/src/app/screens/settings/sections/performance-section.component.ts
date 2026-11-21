@@ -109,9 +109,13 @@ import { SettingsStore } from '../settings.store';
           }
         </details>
       </div>
+    } @else if (store.processingSetupLoaded()) {
+      <div class="card">
+        <p class="hint warn-text">{{ 'settings.performance.unavailable' | translate }}</p>
+      </div>
     } @else {
       <div class="card">
-        <p class="hint">{{ 'settings.defaults.unavailable' | translate }}</p>
+        <p class="hint">{{ 'common.loading' | translate }}</p>
       </div>
     }
   `,

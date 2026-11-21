@@ -3,6 +3,7 @@ import { RouterLink } from '@angular/router';
 
 import { TranslatePipe } from '../../../core/i18n';
 import { RecommendedEnginesComponent } from '../../../shared/recommended-engines/recommended-engines.component';
+import { EnginesLoadErrorComponent } from '../components/engines-load-error.component';
 import type { DefaultPhase } from '../settings.store';
 import { SettingsStore } from '../settings.store';
 
@@ -15,7 +16,7 @@ import { SettingsStore } from '../settings.store';
 @Component({
   selector: 'vd-settings-engines',
   standalone: true,
-  imports: [RouterLink, TranslatePipe, RecommendedEnginesComponent],
+  imports: [RouterLink, TranslatePipe, RecommendedEnginesComponent, EnginesLoadErrorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styleUrl: '../settings-shared.scss',
   styles: `
@@ -78,34 +79,41 @@ import { SettingsStore } from '../settings.store';
         </div>
       }
       @if (store.defaultsSaved()) {
-        <p class="hint test-ok" role="status">{{ 'settings.defaults.saved' | translate }}</p>
+        <p class="hint test-ok" role="status" animate.leave="fade-out">{{ 'settings.defaults.saved' | translate }}</p>
       }
     </div>
 
     <!-- ===================== Recommended for this computer ===================== -->
-    <div class="card stack" id="engine-recommended">
-      <!-- What this machine's hardware would gain, in plain words, with the
-           download size; each step's page has the full families. -->
-      <vd-recommended-engines (changed)="store.onRecommendedInstalled()" />
-      @if (store.system(); as sys) {
-        <div class="stack-sm">
-          <h4>{{ 'settings.overview.why' | translate }}</h4>
-          <p class="hint">
-            {{ 'settings.computer.rec-model' | translate }}
-            <strong class="mono">{{ sys.recommendation.whisperModel }}</strong>
-          </p>
-          @for (reason of sys.recommendation.reasons; track reason.key) {
-            <p class="hint">{{ reason.key | translate: reason.params }}</p>
-          }
-          @if (sys.recommendation.suggestCloud.stt || sys.recommendation.suggestCloud.translation) {
+    <vd-engines-load-error />
+    @if (!store.enginesError() || store.system()) {
+      <div class="card stack" id="engine-recommended">
+        <!-- What this machine's hardware would gain, in plain words, with the
+             download size; each step's page has the full families. The panel
+             loads its own list and shows nothing when that fails, so while the
+             list is failing it waits: made again after Try again, it loads. -->
+        @if (!store.enginesError()) {
+          <vd-recommended-engines (changed)="store.onRecommendedInstalled()" />
+        }
+        @if (store.system(); as sys) {
+          <div class="stack-sm">
+            <h4>{{ 'settings.overview.why' | translate }}</h4>
             <p class="hint">
-              {{ 'settings.computer.cloud-suggest' | translate: { phases: store.cloudSuggestPhases() } }}
-              <a routerLink="/settings/cloud">{{ 'settings.sections.cloud.title' | translate }}</a>
+              {{ 'settings.computer.rec-model' | translate }}
+              <strong class="mono">{{ sys.recommendation.whisperModel }}</strong>
             </p>
-          }
-        </div>
-      }
-    </div>
+            @for (reason of sys.recommendation.reasons; track reason.key) {
+              <p class="hint">{{ reason.key | translate: reason.params }}</p>
+            }
+            @if (sys.recommendation.suggestCloud.stt || sys.recommendation.suggestCloud.translation) {
+              <p class="hint">
+                {{ 'settings.computer.cloud-suggest' | translate: { phases: store.cloudSuggestPhases() } }}
+                <a routerLink="/settings/cloud">{{ 'settings.sections.cloud.title' | translate }}</a>
+              </p>
+            }
+          </div>
+        }
+      </div>
+    }
   `,
 })
 export class EnginesSectionComponent {

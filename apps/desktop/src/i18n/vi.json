@@ -247,7 +247,7 @@
       "render": "Xuất video (render)",
       "render-value": "FFmpeg cục bộ — luôn chạy trên máy này (video của bạn không rời khỏi máy).",
       "saved": "✓ Đã lưu — áp dụng cho dự án mới",
-      "unavailable": "Chưa lấy được danh sách nhà cung cấp — dịch vụ nền đã chạy chưa?"
+      "unavailable": "Chưa tải được danh sách engine để chọn: dịch vụ nền của VideoDubber không phản hồi. Nếu tình trạng này kéo dài, hãy khởi động lại ứng dụng."
     },
     "claude": {
       "heading": "Claude (trợ lý AI)",
@@ -262,7 +262,8 @@
       "copy": "Sao chép",
       "copied": "Đã sao chép ✓",
       "try": "Sau đó, hãy nhờ Claude, ví dụ: \"Lồng tiếng video trong thư mục Tải xuống sang tiếng Việt với chất lượng tốt nhất.\"",
-      "no-server": "Bản dựng này không khởi động được máy chủ MCP. Nếu chạy từ mã nguồn, hãy chạy pnpm build trước.",
+      "no-server": "Bản VideoDubber này thiếu phần mà Claude dùng để kết nối, nên chưa kết nối được Claude. Hãy thoát rồi mở lại VideoDubber; nếu vẫn thấy thông báo này, hãy cài lại ứng dụng.",
+      "unavailable": "Chưa kiểm tra được Claude đã kết nối hay chưa: dịch vụ nền của VideoDubber không phản hồi. Nếu tình trạng này kéo dài, hãy khởi động lại ứng dụng.",
       "guide": "Hướng dẫn từng bước",
       "code": {
         "other-copy": "Đang trỏ tới bản VideoDubber khác",
@@ -278,14 +279,17 @@
       }
     },
     "keys": {
-      "intro": "Không bắt buộc. Khoá chỉ được lưu trên máy này (~/VideoDubber/credentials.json, chỉ chủ sở hữu truy cập được) và chỉ gửi tới đúng dịch vụ tương ứng. Không có gì được tải lên ở đâu trừ khi bạn chọn nhà cung cấp đám mây cho một bước.",
+      "intro": "Không bắt buộc. Khoá chỉ được lưu trên máy này, trong một tệp mà chỉ tài khoản người dùng của bạn mở được (~/VideoDubber/credentials.json), và chỉ được gửi tới đúng dịch vụ của khoá đó. Không có gì được gửi đi đâu cả, trừ khi bạn chọn một engine đám mây cho một bước.",
       "from-env": "từ biến môi trường",
       "key-set": "khoá {{ masked }}",
       "not-configured": "chưa cấu hình",
       "api-key-aria": "Khoá API {{ service }}",
       "save": "Lưu",
+      "saving": "Đang lưu…",
       "test": "Kiểm tra",
+      "testing": "Đang kiểm tra…",
       "remove": "Xoá",
+      "removing": "Đang xoá…",
       "claude-model": "Mô hình Claude dùng để dịch và rà soát",
       "claude-model-hint": "Opus dịch tự nhiên và nhất quán nhất; Sonnet tốn khoảng một nửa; Haiku rẻ và nhanh nhất. Ước chừng một video 30 phút tốn vài xu với Haiku và một đến hai đô la Mỹ với Opus.",
       "claude": {
@@ -306,6 +310,8 @@
         "status-down": "HTTP API của Mother Claude chưa chạy tại {{ url }}. Hãy làm theo các bước bên dưới.",
         "status-key": "Mother Claude có phản hồi, nhưng HTTP API của nó đang đặt khoá: hãy dán khoá đó vào ô bên dưới.",
         "check": "Kiểm tra lại",
+        "check-busy": "Đang kiểm tra…",
+        "check-failed": "Chưa kiểm tra được Mother Claude: dịch vụ nền của VideoDubber không phản hồi. Hãy thử lại sau giây lát.",
         "download": "Tải Mother Claude",
         "steps-intro": "Chỉ cần thiết lập một lần:",
         "step-install": "Cài Mother Claude rồi mở nó. Mother Claude dùng tài khoản Claude mà Claude Code đang đăng nhập.",
@@ -331,7 +337,12 @@
       "uv-bundled": " (dùng runtime đi kèm)",
       "uv-download": "Các engine Python (giọng neural, tách giọng, căn chỉnh) cần uv. Bản dựng này không kèm sẵn, nên lần cài đầu tiên sẽ tự tải về (~20 MB, có xác thực) — chỉ cần bấm Cài đặt.",
       "uv-missing": "⚠ Các engine Python (giọng neural, tách giọng, căn chỉnh) cần uv, nhưng chưa có bản dựng cho nền tảng này. Hãy cài từ https://docs.astral.sh/uv/ rồi mở lại ứng dụng.",
-      "none": "Không có gói engine nào cho nền tảng này, hoặc dịch vụ nền đang ngoại tuyến.",
+      "none": "Chưa có engine nào loại này cho hệ điều hành của máy này.",
+      "load-failed": "Không tải được danh sách engine",
+      "load-failed-hint": "Dịch vụ nền của VideoDubber chưa gửi được danh sách engine, nên trang này chưa hiện được những gì đã cài và những gì có thể cài. Có thể dịch vụ vẫn đang khởi động: hãy thử lại sau giây lát. Nếu vẫn không được, hãy khởi động lại ứng dụng.",
+      "load-retrying": "Đang tải…",
+      "retry": "Thử lại",
+      "retry-size": "Thử lại ({{ size }})",
       "recommended": "khuyến nghị",
       "installed": "đã cài",
       "in-use": "đang dùng",
@@ -348,7 +359,12 @@
       "update-title": "Đã có phiên bản mới — cài lại để cập nhật",
       "reinstall": "Cài lại",
       "reinstall-title": "Tải lại phiên bản mới nhất",
+      "reinstall-confirm-title": "Tải lại {{ name }}?",
+      "reinstall-confirm-body": "Cài lại sẽ tải lại toàn bộ {{ size }} và thay bản đang có trên máy. Chỉ cần làm việc này khi engine không còn chạy được. Bạn vẫn dùng ứng dụng bình thường trong lúc tải.",
+      "reinstall-confirm": "Tải lại ({{ size }})",
       "remove": "Xoá",
+      "removing": "Đang xoá…",
+      "switching": "Đang đổi…",
       "install": "Cài đặt",
       "needs-uv-title": "Engine này cần uv, nhưng chưa có bản dựng cho nền tảng này"
     },
@@ -364,6 +380,7 @@
       "installed": "đã cài",
       "remove": "Xoá",
       "removing": "Đang xoá…",
+      "remove-failed": "Không xoá được gói {{ from }} → {{ to }}. Hãy thử lại; nếu vẫn không được, hãy khởi động lại VideoDubber.",
       "install": "Cài đặt",
       "installing": "Đang cài…",
       "downloading": "Đang tải…"
@@ -543,6 +560,7 @@
       "presets": "Mẫu lồng tiếng",
       "presets-hint": "Mẫu lồng tiếng ghi nhớ ngôn ngữ, engine, giọng đọc, phụ đề và cách trộn âm của một bản lồng tiếng, để lồng tiếng các video tiếp theo y như vậy (trong Dự án mới, hoặc nhiều video đã tải cùng lúc ở màn hình Tải video). Tạo mẫu trong Dự án mới: chọn mọi thứ xong rồi bấm “Lưu thành mẫu”.",
       "presets-empty": "Chưa có mẫu nào. Dự án mới sẽ bắt đầu từ các cài đặt được khuyến nghị cho máy này.",
+      "presets-unavailable": "Chưa tải được các mẫu lồng tiếng của bạn: dịch vụ nền của VideoDubber không phản hồi. Nếu tình trạng này kéo dài, hãy khởi động lại ứng dụng.",
       "preset-languages": "{{ from }} → {{ to }}",
       "detect": "tự nhận diện ngôn ngữ",
       "preset-starts": "tự bắt đầu lồng tiếng",
@@ -616,7 +634,11 @@
       "phowhisper": "PhoWhisper (giọng nói tiếng Việt)",
       "phowhisper-hint": "Whisper được VinAI huấn luyện thêm cho tiếng Việt: lựa chọn chính xác nhất cho video nói tiếng Việt. Chạy bằng faster-whisper có sẵn.",
       "models-unavailable": "Chưa biết mô hình nào đã được tải: dịch vụ nền đã chạy chưa?",
-      "downloaded": "đã tải",
+      "downloaded": "đã tải về",
+      "not-downloaded": "chưa tải về",
+      "downloading-pct": "đang tải {{ percent }}%",
+      "downloading-badge": "đang tải…",
+      "download-failed": "tải không thành công",
       "default-model": "mô hình mặc định",
       "downloading": "Đang tải…",
       "download": "Tải về",
@@ -753,11 +775,13 @@
       "paused-now": "Đang tạm dừng: các bản đang chờ sẽ chưa bắt đầu cho tới khi bạn bỏ chọn “Tạm dừng”.",
       "tier-constrained": "Máy cấu hình thấp",
       "tier-balanced": "Máy cấu hình vừa",
-      "tier-performance": "Máy cấu hình mạnh"
+      "tier-performance": "Máy cấu hình mạnh",
+      "unavailable": "Chưa đọc được thông tin phần cứng của máy: dịch vụ nền của VideoDubber không phản hồi. Nếu tình trạng này kéo dài, hãy khởi động lại ứng dụng."
     },
     "advanced": {
       "uv": "Engine Python (uv)",
       "uv-hint": "Các engine giọng đọc và công cụ phụ trợ được cài vào môi trường Python riêng, tạo bằng uv. Không cần làm gì ở đây, trừ khi việc cài đặt báo thiếu uv.",
+      "uv-unavailable": "Chưa kiểm tra được các engine Python có cài được hay không: dịch vụ nền của VideoDubber không phản hồi. Nếu tình trạng này kéo dài, hãy khởi động lại ứng dụng.",
       "reset-all": "Khôi phục mọi cài đặt",
       "reset-all-hint": "Đưa cài đặt của mọi trang về mặc định cùng lúc. Khoá API, đăng nhập trang web, mẫu lồng tiếng, logo và lời chào, các engine đã cài và dự án của bạn vẫn được giữ.",
       "reset-all-button": "Khôi phục mọi cài đặt…"

@@ -860,6 +860,24 @@
     "s2-how-to-fix": "Cách khắc phục:",
     "s2-running": "Đang chạy kiểm tra…",
     "s2-unavailable": "Chưa chạy được các bước kiểm tra. Hãy đảm bảo các dịch vụ cục bộ đã khởi động, rồi kiểm tra lại.",
+    "check": {
+      "ffmpeg": "Công cụ xử lý video (FFmpeg)",
+      "ffprobe": "Công cụ đọc thông tin video (FFprobe)",
+      "stt-worker": "Dịch vụ nhận dạng giọng nói",
+      "translation-worker": "Dịch vụ dịch",
+      "tts-worker": "Dịch vụ đọc lời thoại",
+      "network": "Kết nối internet",
+      "disk": "Dung lượng trống trên ổ đĩa",
+      "media-tool-fix": "Thiếu một công cụ video đi kèm VideoDubber. Hãy cài lại VideoDubber để khôi phục.",
+      "service-fix": "Dịch vụ nền này chưa khởi động được. Hãy đóng VideoDubber rồi mở lại; nếu vẫn lỗi, mục Trợ giúp có phần tự kiểm tra và báo cáo để bạn gửi đi.",
+      "network-fix": "VideoDubber chưa kết nối được tới nơi tải mô hình. Bạn vẫn tiếp tục được, nhưng bước tải cần có internet.",
+      "disk-fix": "Ổ đĩa có thể không đủ chỗ cho các mô hình. Hãy giải phóng vài GB (nên còn trống từ 5 GB trở lên) trước khi tải các mô hình lớn."
+    },
+    "check-status": {
+      "ok": "Ổn",
+      "warn": "Cần lưu ý",
+      "fail": "Có lỗi"
+    },
     "back": "← Quay lại",
     "continue": "Tiếp tục →",
     "s3-heading": "Chọn ngôn ngữ & mô hình",

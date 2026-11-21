@@ -11,10 +11,13 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
 import { argosPivotLegs } from '@videodubber/shared';
+import { ActivityService } from '../../core/activity/activity.service';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { SetupEventsService } from '../../core/ipc/setup-events.service';
 import { FirstRunService } from '../../core/guards/first-run.guard';
 import { toAppError } from '../../core/state/project.store';
+import { OnboardingSessionService, type OnboardingChoices } from './onboarding-session.service';
+import { setupCheckView } from './setup-checks';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { DownloadProgressListComponent } from '../../shared/download-progress-list/download-progress-list.component';
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
@@ -47,8 +50,11 @@ type OnboardingStep = 1 | 2 | 3 | 4;
  *      and whether to fetch a Piper voice for the target.
  *   4. Download — POST {@link IpcService.setupInstallModels}, subscribe to the
  *      setup SSE stream ({@link SetupEventsService}), show per-item progress +
- *      a live log; on `done` call {@link IpcService.setupComplete} and navigate
- *      home.
+ *      a live log; on `done` call {@link IpcService.setupComplete} and open
+ *      New project.
+ *
+ * The rest of the app stays reachable meanwhile; coming back reopens step 4 on
+ * the download it started ({@link OnboardingSessionService}).
  */
 @Component({
   selector: 'vd-onboarding',
@@ -69,12 +75,16 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   private readonly ipc = inject(IpcService);
   private readonly router = inject(Router);
   private readonly firstRun = inject(FirstRunService);
+  private readonly activity = inject(ActivityService);
+  private readonly session = inject(OnboardingSessionService);
   protected readonly setupEvents = inject(SetupEventsService);
 
   protected readonly inTauri = this.ipc.inTauri;
 
   // -------- navigation --------
   protected readonly step = signal<OnboardingStep>(1);
+  /** Reopened on a download started earlier: its choices stand (loadCatalog must not reset them). */
+  private resumed = false;
 
   // -------- shared state --------
   protected readonly error = signal<AppError | null>(null);
@@ -82,6 +92,8 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   // -------- step 2: preflight --------
   protected readonly preflight = signal<PreflightResult | null>(null);
   protected readonly preflightLoading = signal(false);
+  /** Each check named and explained in the user's language (setup-checks.ts). */
+  protected readonly checks = computed(() => (this.preflight()?.checks ?? []).map(setupCheckView));
 
   // -------- step 3: catalog + choices --------
   protected readonly catalog = signal<SetupCatalog | null>(null);
@@ -164,18 +176,51 @@ export class OnboardingComponent implements OnInit, OnDestroy {
   /** True once the SSE stream reports completion. */
   protected readonly installDone = computed(() => this.setupEvents.done());
 
+  /**
+   * The download runs: started from this screen, or seen running in the
+   * stream's replay after the screen was reopened (between two items the
+   * activity service can briefly list nothing running).
+   */
+  protected readonly downloading = computed(
+    () =>
+      this.installing() ||
+      (!this.setupEvents.done() && !this.setupEvents.error() && this.setupEvents.items().some((i) => !i.done)),
+  );
+
   /** Surface an SSE error over an action error. */
   protected readonly displayError = computed<AppError | null>(
     () => this.setupEvents.error() ?? this.error(),
   );
 
   ngOnInit(): void {
+    const kept = this.session.get();
+    if (kept) this.resume(kept);
     void this.init();
   }
 
   private async init(): Promise<void> {
     await this.loadCatalog();
     await this.loadVoicesForTarget();
+  }
+
+  /**
+   * Back on the welcome screen after its download was started: step 4, with
+   * the choices it was started with, following it again. The setup stream
+   * replays the run's state to a new subscriber (setupBus.ts), so a download
+   * still running shows its progress, and one that ended while the user was
+   * away shows how it ended. Whether it still runs, the activity service knows
+   * (it follows the stream for the whole app).
+   */
+  private resume(kept: OnboardingChoices): void {
+    this.resumed = true;
+    this.sourceLanguage.set(kept.sourceLanguage);
+    this.targetLanguage.set(kept.targetLanguage);
+    this.whisperModel.set(kept.whisperModel);
+    this.fetchPiperVoice.set(kept.fetchPiperVoice);
+    this.selectedVoiceId.set(kept.selectedVoiceId);
+    this.step.set(4);
+    this.installing.set(this.activity.running().some((t) => t.kind === 'model'));
+    this.setupEvents.connect();
   }
 
   ngOnDestroy(): void {
@@ -246,7 +291,8 @@ export class OnboardingComponent implements OnInit, OnDestroy {
         if (offered) this.recommendedModelId.set(offered.id);
         const preselect =
           offered ?? cat.whisperModels.find((m) => m.recommended) ?? cat.whisperModels[0];
-        this.whisperModel.set(preselect.id);
+        // Reopened on a running download: the model is the one it downloads.
+        if (!this.resumed) this.whisperModel.set(preselect.id);
       }
     } catch {
       // Offline / orchestrator not up yet: keep fallback languages; the user
@@ -326,6 +372,14 @@ export class OnboardingComponent implements OnInit, OnDestroy {
     if (this.installing() || !this.step3Valid()) return;
     this.installing.set(true);
     this.error.set(null);
+    // Coming back from elsewhere in the app reopens on this download.
+    this.session.keep({
+      sourceLanguage: this.sourceLanguage(),
+      targetLanguage: this.targetLanguage(),
+      whisperModel: this.whisperModel(),
+      fetchPiperVoice: this.fetchPiperVoice(),
+      selectedVoiceId: this.selectedVoiceId(),
+    });
 
     // Connect before kicking off so we don't miss the first progress frames.
     this.setupEvents.connect();
@@ -370,7 +424,11 @@ export class OnboardingComponent implements OnInit, OnDestroy {
       .catch(() => undefined);
   }
 
-  /** Finish: persist the model choice, mark first-run complete, go Home. */
+  /**
+   * Finish: persist the model choice, mark first-run complete, and open New
+   * project. The button says "Finish & start dubbing", and it used to land on
+   * an empty Projects list that only said there was nothing there yet.
+   */
   protected async finish(): Promise<void> {
     if (this.completing()) return;
     this.completing.set(true);
@@ -379,10 +437,11 @@ export class OnboardingComponent implements OnInit, OnDestroy {
       await this.persistModelChoice();
       await this.ipc.setupComplete();
       this.setupEvents.disconnect();
+      this.session.clear();
       // Invalidate the cached first-run status so the guard sees the new state
       // and lets Home render instead of bouncing back to the wizard.
       this.firstRun.invalidate();
-      await this.router.navigate(['/']);
+      await this.router.navigate(['/new']);
     } catch (err) {
       this.error.set(toAppError(err));
     } finally {
@@ -415,6 +474,7 @@ export class OnboardingComponent implements OnInit, OnDestroy {
       await this.persistModelChoice();
       await this.ipc.setupComplete();
       this.setupEvents.disconnect();
+      this.session.clear();
       this.firstRun.invalidate();
       await this.router.navigate(['/']);
     } catch (err) {

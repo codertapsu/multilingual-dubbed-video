@@ -860,6 +860,24 @@
     "s2-how-to-fix": "How to fix:",
     "s2-running": "Running checks…",
     "s2-unavailable": "Couldn't run the checks yet. Make sure the local services have started, then re-check.",
+    "check": {
+      "ffmpeg": "Video tools (FFmpeg)",
+      "ffprobe": "Video reader (FFprobe)",
+      "stt-worker": "Speech-to-text service",
+      "translation-worker": "Translation service",
+      "tts-worker": "Voice service (text to speech)",
+      "network": "Internet connection",
+      "disk": "Free disk space",
+      "media-tool-fix": "A video tool that comes with VideoDubber is missing. Reinstall VideoDubber to bring it back.",
+      "service-fix": "This background service did not start. Close VideoDubber and open it again; if it still fails, Help has a self-check and a report you can send.",
+      "network-fix": "VideoDubber could not reach the site the models download from. You can continue, but the download needs an internet connection.",
+      "disk-fix": "There may not be enough room for the models. Free up a few GB (5 GB or more is comfortable) before downloading the larger models."
+    },
+    "check-status": {
+      "ok": "OK",
+      "warn": "Needs a look",
+      "fail": "Not working"
+    },
     "back": "← Back",
     "continue": "Continue →",
     "s3-heading": "Choose your languages & model",

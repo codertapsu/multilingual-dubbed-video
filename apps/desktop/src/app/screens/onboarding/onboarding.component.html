@@ -65,8 +65,10 @@
           </div>
         }
 
+        <!-- Each check by its name and advice in the user's language; the
+             server's own words stay as the small detail line. -->
         <ul class="check-list" role="list">
-          @for (check of pf.checks; track check.id) {
+          @for (check of checks(); track check.id) {
             <li class="check-row" [attr.data-status]="check.status">
               <span class="check-icon" aria-hidden="true">
                 @switch (check.status) {
@@ -82,14 +84,18 @@
                 }
               </span>
               <span class="check-body">
-                <span class="check-label">{{ check.label }}</span>
-                @if (check.detail) {
-                  <span class="hint">{{ check.detail }}</span>
-                }
-                @if (check.remediation) {
+                <span class="check-label">{{ check.labelKey ? (check.labelKey | translate) : check.label }}</span>
+                @if (check.fixKey) {
+                  <span class="check-remedy">
+                    <span class="label">{{ 'onboarding.s2-how-to-fix' | translate }}</span> {{ check.fixKey | translate }}
+                  </span>
+                } @else if (check.remediation) {
                   <span class="check-remedy">
                     <span class="label">{{ 'onboarding.s2-how-to-fix' | translate }}</span> {{ check.remediation }}
                   </span>
+                }
+                @if (check.detail) {
+                  <span class="hint">{{ check.detail }}</span>
                 }
               </span>
               <span
@@ -98,7 +104,17 @@
                 [class.badge-warning]="check.status === 'warn'"
                 [class.badge-failed]="check.status === 'fail'"
               >
-                {{ check.status }}
+                @switch (check.status) {
+                  @case ('ok') {
+                    {{ 'onboarding.check-status.ok' | translate }}
+                  }
+                  @case ('warn') {
+                    {{ 'onboarding.check-status.warn' | translate }}
+                  }
+                  @default {
+                    {{ 'onboarding.check-status.fail' | translate }}
+                  }
+                }
               </span>
             </li>
           }
@@ -302,7 +318,10 @@
         </p>
       }
 
-      @if (displayError() && !installDone()) {
+      <!-- Retry once the transfer has stopped without finishing: it failed, or
+           the screen was reopened on a download that no longer runs and whose
+           end the stream could not replay (the backend restarted). -->
+      @if (!installDone() && (displayError() || (!downloading() && setupEvents.status() !== 'connecting'))) {
         <div class="row">
           <button
             type="button"
@@ -320,7 +339,7 @@
 
       @if (setupEvents.items().length > 0) {
         <vd-download-progress-list [items]="setupEvents.items()" />
-      } @else if (!installDone() && !displayError()) {
+      } @else if (!installDone() && !displayError() && (downloading() || setupEvents.status() === 'connecting')) {
         <vd-busy-indicator
           [active]="true"
           [label]="
@@ -368,7 +387,7 @@
                user disconnect the SSE while the orchestrator kept downloading:
                the progress UI vanished, and Home then asserted "models not
                downloaded yet" over an install that was still running. -->
-          @if (!installDone() && !installing()) {
+          @if (!installDone() && !downloading()) {
             <button
               type="button"
               class="btn btn-ghost"

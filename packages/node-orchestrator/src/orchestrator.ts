@@ -652,6 +652,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       throw new AppErrorException('RUN_IN_PROGRESS', 'This project is waiting in the dubbing queue: take it out of the queue first.');
     }
     if (this.speakerJobs.get(projectId)?.state === 'running') return { started: false, running: true };
+    await this.deps.store.getProject(projectId);
     const service = this.deps.diarization;
     if (!service || !(await service.available().catch(() => false))) {
       throw new AppErrorException('ENGINE_PACK_MISSING', 'Speaker detection is not installed.', {
@@ -830,6 +831,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   ): Promise<{ replaced: number; lines: { id: string; startMs: number; endMs: number; text: string; speakerId?: string }[] }> {
     this.assertNotRunning(projectId, 'replace lines');
     if (!(toMs > fromMs)) throw new AppErrorException('INVALID_EDIT', 'The range must end after it starts.');
+    // A project that exists, before anything is written: a mistyped id made
+    // a stray <projects>/<id>/subtitles/source.json (found booting 0.17.0's
+    // own build before release).
+    await this.deps.store.getProject(projectId);
     const paths = this.deps.store.paths(projectId);
     if (await fileExistsNonEmpty(paths.translatedJson)) {
       throw new AppErrorException('INVALID_EDIT', 'This project is already translated: its lines can no longer be restructured.', {

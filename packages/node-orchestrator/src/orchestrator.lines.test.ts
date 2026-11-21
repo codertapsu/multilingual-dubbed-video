@@ -71,6 +71,12 @@ describe('replacing the lines of a range (replace_lines)', () => {
     expect(doc.segments.some((s) => s.loopSuspect)).toBe(false);
   });
 
+  it('refuses a project that does not exist, and writes nothing for it', async () => {
+    const { orchestrator } = await setup();
+    await expect(orchestrator.replaceSourceLines('proj_missing', 0, 1000, [])).rejects.toThrow(/not found/i);
+    await expect(fsp.stat(store.paths('proj_missing').sourceJson)).rejects.toThrow();
+  });
+
   it('refuses overlapping lines, and any restructuring once the project is translated', async () => {
     const { orchestrator, id } = await setup();
     await expect(

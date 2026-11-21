@@ -2,16 +2,22 @@ import {
   ChangeDetectionStrategy,
   Component,
   computed,
+  effect,
+  ElementRef,
   inject,
   input,
   output,
   signal,
+  untracked,
+  viewChild,
+  type AfterViewInit,
   type OnDestroy,
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { speakerNumber } from '@videodubber/shared';
 
+import { ActivityService, type ActivityTask } from '../../core/activity/activity.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
 import type {
@@ -19,10 +25,13 @@ import type {
   TimeRange,
   VoiceConsentStatements,
   VoiceEngineState,
+  VoicePackState,
   VoiceProfile,
   VoiceReferenceAnalysis,
   VoiceReferenceChecks,
 } from '../../core/models';
+import { toAppError } from '../../core/state/project.store';
+import { ConfirmService } from '../confirm-dialog/confirm.service';
 import { ErrorBannerComponent } from '../error-banner/error-banner.component';
 import { VoiceRecorder } from './recorder';
 
@@ -31,6 +40,17 @@ type Step = 'engine' | 'rights' | 'source' | 'check' | 'save' | 'done';
 /** The policy of the cloning engine (VieNeu 3.8): it uses up to 8 s of speech. */
 const MIN_MS = 3000;
 const MAX_MS = 8000;
+
+/** What Tab can land on inside the dialog. */
+const FOCUSABLE = 'a[href], button, input, select, textarea, audio[controls], [tabindex]:not([tabindex="-1"])';
+
+/** The engine's install as the app follows it: the pack, and its task in core/activity. */
+interface EngineInstall {
+  pack: VoicePackState;
+  state: 'running' | 'failed';
+  /** Absent for an install the server reports that the app has not heard of yet. */
+  task?: ActivityTask;
+}
 
 /**
  * "Tạo giọng nhân bản": make a voice from a recording or a file.
@@ -51,6 +71,10 @@ const MAX_MS = 8000;
  * whole track, or `segmentIds`: one speaker's lines chosen in the editor).
  * There is no source step, the only declaration is the source-video one, and
  * the voice stays in that project; the server enforces all three.
+ *
+ * It is a real modal: focus moves in on open and stays inside (Tab wraps),
+ * goes back to the opener on close, and Escape or a click beside it close it
+ * only when that loses nothing (requestClose).
  */
 @Component({
   selector: 'vd-voice-clone-dialog',
@@ -59,10 +83,19 @@ const MAX_MS = 8000;
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './voice-clone-dialog.component.html',
   styleUrl: './voice-clone-dialog.component.scss',
+  host: { '(document:keydown)': 'onKeydown($event)' },
 })
-export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
+export class VoiceCloneDialogComponent implements OnInit, AfterViewInit, OnDestroy {
   private readonly ipc = inject(IpcService);
   private readonly i18n = inject(TranslateService);
+  private readonly activity = inject(ActivityService);
+  private readonly confirm = inject(ConfirmService);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly dialog = viewChild<ElementRef<HTMLElement>>('dialog');
+  /** What had focus when the dialog opened: it gets it back on close. */
+  private readonly opener = typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  /** True from "Discard the recording?" until just after its answer (see onKeydown). */
+  private asking = false;
 
   /** Make the voice private to this project (its speakers' voices). */
   readonly projectId = input<string | undefined>(undefined);
@@ -90,13 +123,48 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
     this.mode() === 'import' ? ['rights', 'source'] : this.mode() === 'project' ? ['rights', 'check', 'save'] : ['rights', 'source', 'check', 'save'],
   );
   protected readonly error = signal<AppError | null>(null);
-  protected readonly busy = signal<'' | 'upload' | 'analyze' | 'check' | 'create' | 'install'>('');
+  /** Work whose result the dialog shows: it cannot be closed meanwhile. */
+  protected readonly busy = signal<'' | 'upload' | 'analyze' | 'check' | 'create'>('');
 
   // engine
   protected readonly engine = signal<VoiceEngineState | null>(null);
   protected readonly enginePack = computed(() => {
     const packs = this.engine()?.packs ?? [];
     return packs.find((p) => p.available && p.fits) ?? packs.find((p) => p.available);
+  });
+  /**
+   * The engine's install, read from the app-wide activity service. The dialog
+   * used to poll an install of its own every 3 s, showed no percentage for a
+   * download of several GB, stopped without a word when it failed, and offered
+   * "Install" again when reopened while the first one was still running.
+   */
+  protected readonly install = computed<EngineInstall | null>(() => {
+    const packs = this.engine()?.packs ?? [];
+    let failed: EngineInstall | null = null;
+    for (const pack of packs) {
+      const task = this.activity.engine(pack.id);
+      if (task?.state === 'running') return { pack, state: 'running', task };
+      if (task?.state === 'failed' && !failed) failed = { pack, state: 'failed', task };
+    }
+    // Started where the app could not see it yet (Claude, another window): the server knows.
+    const elsewhere = packs.find((p) => p.installing);
+    if (elsewhere) return { pack: elsewhere, state: 'running' };
+    return failed;
+  });
+  /** Why the last install failed, until dismissed or tried again. */
+  protected readonly installError = computed(() => {
+    const install = this.install();
+    if (install?.state !== 'failed' || !install.task?.error) return null;
+    return install.task.updatedAt === this.dismissedFailure() ? null : install.task.error;
+  });
+  private readonly dismissedFailure = signal(0);
+  /** Installs end anywhere in the app (engineChanges): look again, and go on once it is in. */
+  private seenEngineChanges = this.activity.engineChanges();
+  private readonly followInstalls = effect(() => {
+    const changes = this.activity.engineChanges();
+    if (changes === this.seenEngineChanges) return;
+    this.seenEngineChanges = changes;
+    untracked(() => void this.refreshEngine());
   });
 
   // rights
@@ -113,6 +181,10 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
   private recordingBlob: Blob | null = null;
   protected readonly fileName = signal<string | null>(null);
   private sourceKind: 'recording' | 'file' = 'recording';
+  /** A recording made here (or being made) that is not a voice yet: closing would lose it. */
+  private readonly holdsRecording = computed(
+    () => this.step() !== 'done' && (this.recordingUrl() !== null || this.recorder.state() === 'recording' || this.recorder.state() === 'starting'),
+  );
 
   // check
   protected readonly analysis = signal<VoiceReferenceAnalysis | null>(null);
@@ -166,8 +238,13 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
       // Importing needs no engine yet (the voice data comes made); cloning does.
       if (!this.engine()?.installed && this.mode() !== 'import') this.step.set('engine');
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     }
+  }
+
+  ngAfterViewInit(): void {
+    // Into the dialog at once: keyboard and screen-reader users were left on the page behind it.
+    this.dialog()?.nativeElement.focus();
   }
 
   ngOnDestroy(): void {
@@ -176,6 +253,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
     if (this.checkTimer) clearTimeout(this.checkTimer);
     const url = this.recordingUrl();
     if (url) URL.revokeObjectURL(url);
+    if (this.opener?.isConnected) this.opener.focus();
   }
 
   protected close(): void {
@@ -183,30 +261,103 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
     this.closed.emit();
   }
 
+  /**
+   * Close, unless that loses something. One click beside the dialog closed
+   * it, mid-recording or while the voice was being made (UX audit, 2026-11).
+   * Now nothing closes it while it works on something whose result it shows,
+   * and a recording not made into a voice yet is thrown away only once the
+   * user says so.
+   */
+  protected async requestClose(): Promise<void> {
+    if (this.busy() || this.asking) return;
+    if (this.holdsRecording()) {
+      this.asking = true;
+      // Never rejects: a prompt that is replaced or dismissed answers false.
+      const discard = await this.confirm.confirm({
+        title: this.i18n.instant('voice-clone.discard-title'),
+        message: this.i18n.instant('voice-clone.discard-body'),
+        confirmLabel: this.i18n.instant('voice-clone.discard-confirm'),
+        cancelLabel: this.i18n.instant('voice-clone.discard-keep'),
+      });
+      // Only once this keypress is over: the prompt's own Escape must not reach onKeydown as a new one.
+      setTimeout(() => (this.asking = false));
+      if (!discard) return;
+    }
+    this.close();
+  }
+
+  /**
+   * Escape, and Tab kept inside. Document-wide, because focus can fall to the
+   * page body when the step it was on is replaced; but a key pressed in the
+   * prompt above this dialog (ConfirmDialogComponent) belongs to the prompt.
+   */
+  protected onKeydown(event: KeyboardEvent): void {
+    if (this.asking || this.confirm.request()) return;
+    const target = event.target instanceof Node ? event.target : null;
+    if (target && target !== document.body && !this.host.nativeElement.contains(target)) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      void this.requestClose();
+    } else if (event.key === 'Tab') {
+      this.keepTabInside(event);
+    }
+  }
+
+  private keepTabInside(event: KeyboardEvent): void {
+    const dialog = this.dialog()?.nativeElement;
+    if (!dialog) return;
+    const items = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+      (el) => !el.hasAttribute('disabled') && el.getClientRects().length > 0,
+    );
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (!first || !last) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const active = document.activeElement;
+    const outside = !dialog.contains(active) || active === dialog;
+    if (event.shiftKey && (outside || active === first)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (outside || active === last)) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   // ---- engine ----------------------------------------------------------------
 
+  /**
+   * Start the install and leave it to the app: core/activity follows it from
+   * here on (progress, failure, the top bar's list), so the dialog can be
+   * closed meanwhile and finds it again when reopened.
+   */
   protected async installEngine(): Promise<void> {
     const pack = this.enginePack();
-    if (!pack) return;
-    this.busy.set('install');
+    if (!pack || this.install()?.state === 'running') return;
     this.error.set(null);
+    this.activity.markStarting('engine', pack.id, pack.displayName);
     try {
       await this.ipc.installLibraryVoice('vieneu38-hai-dang', pack.id);
-      // Follow the install until the engine reports installed (or fails).
-      for (let i = 0; i < 1200; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const engine = (await this.ipc.voiceEngines()).find((e) => e.id === 'vieneu') ?? null;
-        this.engine.set(engine);
-        if (engine?.installed) {
-          this.step.set('rights');
-          return;
-        }
-        if (engine && !engine.packs.some((p) => p.installing)) break;
-      }
     } catch (err) {
-      this.error.set(err as AppError);
-    } finally {
-      this.busy.set('');
+      this.activity.markFailed('engine', pack.id, toAppError(err));
+    }
+  }
+
+  protected dismissInstallError(): void {
+    this.dismissedFailure.set(this.install()?.task?.updatedAt ?? 0);
+  }
+
+  /** The engine's state again, after an install ended; on to the declaration once it is in. */
+  private async refreshEngine(): Promise<void> {
+    try {
+      const engine = (await this.ipc.voiceEngines()).find((e) => e.id === 'vieneu') ?? null;
+      this.engine.set(engine);
+      if (engine?.installed && this.step() === 'engine') this.step.set('rights');
+    } catch {
+      /* the next install event, or opening the dialog again, looks again */
     }
   }
 
@@ -238,7 +389,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
       const analysis = await this.ipc.analyzeProjectVoice(projectId, speakerId ? { speakerId } : segmentIds ? { segmentIds } : {});
       this.showAnalysis(analysis);
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.busy.set('');
     }
@@ -274,7 +425,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
       this.step.set('done');
       this.created.emit(profile);
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.busy.set('');
     }
@@ -337,7 +488,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
       const analysis = await this.ipc.analyzeVoiceReference({ uploadId, ...(sourceName ? { sourceName } : {}) });
       this.showAnalysis(analysis, sourceName);
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.busy.set('');
     }
@@ -391,7 +542,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
       const res = await this.ipc.checkVoiceWindow(a.analysisId, this.window());
       this.checks.set(res.checks);
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.busy.set('');
     }
@@ -460,7 +611,7 @@ export class VoiceCloneDialogComponent implements OnInit, OnDestroy {
       this.step.set('done');
       this.created.emit(profile);
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.busy.set('');
     }

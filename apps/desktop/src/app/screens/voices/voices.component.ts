@@ -16,6 +16,7 @@ import { RouterLink } from '@angular/router';
 import { ActivityService } from '../../core/activity/activity.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
+import { toAppError } from '../../core/state/project.store';
 import type {
   AppError,
   VoiceEngineId,
@@ -160,6 +161,9 @@ export class VoicesComponent implements OnInit, OnDestroy {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
   }
 
+  /** The error the last failed load put up (taken down by the next load that works). */
+  private loadError: AppError | null = null;
+
   protected async reload(): Promise<void> {
     try {
       const [lib, engines, profiles] = await Promise.all([
@@ -170,9 +174,15 @@ export class VoicesComponent implements OnInit, OnDestroy {
       this.library.set(lib.voices);
       this.engines.set(engines);
       this.profiles.set(profiles);
-      this.error.set(null);
+      // Only a failed load's own banner goes: any other message stays until it
+      // is dismissed or the user does something else. This ran after every
+      // install anywhere in the app and cleared whatever was showing, so an
+      // error could vanish before anyone read it (UX audit, 2026-11).
+      if (this.loadError && this.error() === this.loadError) this.error.set(null);
+      this.loadError = null;
     } catch (err) {
-      this.error.set(err as AppError);
+      this.loadError = toAppError(err);
+      this.error.set(this.loadError);
     } finally {
       this.loading.set(false);
     }
@@ -243,16 +253,27 @@ export class VoicesComponent implements OnInit, OnDestroy {
 
   /** The sentence installed voices say when played (the user's own, or a default). */
   protected readonly sentence = signal('');
+  /** The voice whose sample is being made right now (it takes seconds the first time). */
   protected readonly speaking = signal<string | null>(null);
   private objectUrl: string | null = null;
+  /**
+   * Bumped by every start and stop, so a sample that arrives after another ▶
+   * (or after a stop) is dropped rather than played. The button showed "…"
+   * and stayed clickable while a sample was made, and two clicks, or two
+   * voices, played on top of each other (UX audit, 2026-11).
+   */
+  private previewRun = 0;
 
   protected async togglePreview(item: VoiceLibraryItem): Promise<void> {
-    if (this.playing() === item.id) {
+    // The same button is ■ while the sample is made and while it plays.
+    if (this.playing() === item.id || this.speaking() === item.id) {
       this.stopPreview();
       return;
     }
     this.stopPreview();
+    this.error.set(null);
     this.previewError.set(null);
+    const run = this.previewRun;
     // An installed voice says the user's sentence (or, without a sample, a
     // default one); a voice not installed plays the catalog's sample.
     const own = this.sentence().trim();
@@ -261,32 +282,41 @@ export class VoicesComponent implements OnInit, OnDestroy {
       this.speaking.set(item.id);
       try {
         url = await this.ipc.speakVoice(item.id, own || this.defaultSentence(item));
-        this.objectUrl = url;
       } catch (err) {
-        this.error.set(err as AppError);
+        if (run === this.previewRun) {
+          this.speaking.set(null);
+          this.error.set(toAppError(err));
+        }
         return;
-      } finally {
-        this.speaking.set(null);
       }
+      if (run !== this.previewRun) {
+        URL.revokeObjectURL(url);
+        return;
+      }
+      this.speaking.set(null);
+      this.objectUrl = url;
     }
     const audio = new Audio(url);
     this.audio = audio;
     this.playing.set(item.id);
-    audio.onended = () => this.playing.set(null);
-    audio.onerror = () => {
+    const ended = (failed: boolean): void => {
+      if (this.audio !== audio) return; // stopped, or replaced by a later one
       this.playing.set(null);
-      this.previewError.set(item.id);
+      if (failed) this.previewError.set(item.id);
     };
-    void audio.play().catch(() => {
-      this.playing.set(null);
-      this.previewError.set(item.id);
-    });
+    audio.onended = () => ended(false);
+    audio.onerror = () => ended(true);
+    void audio.play().catch(() => ended(true));
   }
 
+  /** Stop whatever plays or is being made, library sample or one of My voices. */
   private stopPreview(): void {
+    this.previewRun++;
     this.audio?.pause();
     this.audio = null;
     this.playing.set(null);
+    this.playingProfile.set(null);
+    this.speaking.set(null);
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
     this.objectUrl = null;
   }
@@ -300,12 +330,13 @@ export class VoicesComponent implements OnInit, OnDestroy {
 
   protected async toggleFavorite(item: VoiceLibraryItem): Promise<void> {
     const next = !item.favorite;
+    this.error.set(null);
     this.library.update((all) => all.map((v) => (v.id === item.id ? { ...v, favorite: next } : v)));
     try {
       await this.ipc.setVoiceFavorite(item.id, next);
     } catch (err) {
       this.library.update((all) => all.map((v) => (v.id === item.id ? { ...v, favorite: !next } : v)));
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     }
   }
 
@@ -355,6 +386,7 @@ export class VoicesComponent implements OnInit, OnDestroy {
   }
 
   private async start(voiceId: string, packId?: string): Promise<void> {
+    this.error.set(null);
     // Answered at once (and listed in the top bar), before the first progress event.
     if (packId) this.activity.markStarting('engine', packId);
     else this.activity.markStarting('model', `piper:${voiceId}`, this.library().find((v) => v.id === voiceId)?.name);
@@ -362,9 +394,10 @@ export class VoicesComponent implements OnInit, OnDestroy {
       await this.ipc.installLibraryVoice(voiceId, packId);
       this.scheduleRefresh(1500);
     } catch (err) {
-      if (packId) this.activity.markFailed('engine', packId, err as AppError);
-      else this.activity.markFailed('model', `piper:${voiceId}`, err as AppError);
-      this.error.set(err as AppError);
+      const error = toAppError(err);
+      if (packId) this.activity.markFailed('engine', packId, error);
+      else this.activity.markFailed('model', `piper:${voiceId}`, error);
+      this.error.set(error);
     }
   }
 
@@ -396,16 +429,18 @@ export class VoicesComponent implements OnInit, OnDestroy {
   protected toggleProfilePreview(p: VoiceProfile): void {
     if (this.playingProfile() === p.id) {
       this.stopPreview();
-      this.playingProfile.set(null);
       return;
     }
     this.stopPreview();
     const audio = new Audio(this.ipc.voiceProfileAudioUrl(p.id, 'preview', p.updatedAt));
     this.audio = audio;
     this.playingProfile.set(p.id);
-    audio.onended = () => this.playingProfile.set(null);
-    audio.onerror = () => this.playingProfile.set(null);
-    void audio.play().catch(() => this.playingProfile.set(null));
+    const ended = (): void => {
+      if (this.audio === audio) this.playingProfile.set(null);
+    };
+    audio.onended = ended;
+    audio.onerror = ended;
+    void audio.play().catch(ended);
   }
 
   protected startRename(p: VoiceProfile): void {
@@ -417,28 +452,33 @@ export class VoicesComponent implements OnInit, OnDestroy {
     const name = this.editName().trim();
     this.editingId.set(null);
     if (!name || name === p.name) return;
+    this.error.set(null);
     try {
       await this.ipc.renameVoiceProfile(p.id, { name });
       await this.reload();
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     }
   }
 
   /** The profile a gender suggestion is being measured for. */
   protected readonly suggesting = signal<string | null>(null);
+  /** The profile the voice prints could not suggest a gender for: a note under it. */
+  protected readonly noSuggestion = signal<string | null>(null);
 
   /** A suggestion from voice prints (saved unconfirmed: the user still confirms it). */
   protected async suggestGender(p: VoiceProfile): Promise<void> {
+    this.error.set(null);
+    this.noSuggestion.set(null);
     this.suggesting.set(p.id);
     try {
       const res = await this.ipc.suggestVoiceGender(p.id);
-      if (!res.suggested && !res.confirmed) {
-        this.error.set({ code: 'UNKNOWN', message: this.i18n.instant('voices.my-gender-no-suggestion') } as AppError);
-      }
+      // "Too close to call" is an answer, not a failure. It was put up as an
+      // UNKNOWN error, which the reload just below then took down at once.
+      if (!res.suggested && !res.confirmed) this.noSuggestion.set(p.id);
       await this.reload();
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.suggesting.set(null);
     }
@@ -447,11 +487,13 @@ export class VoicesComponent implements OnInit, OnDestroy {
   /** The user says whose voice it is (confirmed: casting uses it). */
   protected async setGender(p: VoiceProfile, value: string): Promise<void> {
     if (value !== 'male' && value !== 'female') return;
+    this.error.set(null);
+    if (this.noSuggestion() === p.id) this.noSuggestion.set(null);
     try {
       await this.ipc.renameVoiceProfile(p.id, { gender: value });
       await this.reload();
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     }
   }
 
@@ -462,17 +504,19 @@ export class VoicesComponent implements OnInit, OnDestroy {
       confirmLabel: this.i18n.instant('voices.my-delete-confirm'),
     });
     if (!ok) return;
+    this.error.set(null);
     try {
       await this.ipc.deleteVoiceProfile(p.id);
       await this.reload();
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     }
   }
 
   /** Save a .vdvoice file: into a folder the user picks (app), or as a download (browser). */
   protected async exportProfile(p: VoiceProfile): Promise<void> {
     this.notice.set(null);
+    this.error.set(null);
     const includeRecording =
       Boolean(p.reference) &&
       (await this.confirm.confirm({
@@ -489,7 +533,7 @@ export class VoicesComponent implements OnInit, OnDestroy {
       if (res.path) this.notice.set(this.i18n.instant('voices.my-exported', { path: res.path }));
       else if (res.url) window.open(res.url, '_blank');
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     }
   }
 

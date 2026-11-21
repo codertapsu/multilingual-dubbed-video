@@ -4,11 +4,13 @@ import {
   computed,
   inject,
   signal,
+  viewChild,
+  type ElementRef,
   type OnDestroy,
   type OnInit,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 
 import { DownloadEventsService } from '../../core/ipc/download-events.service';
 import { IpcService } from '../../core/ipc/ipc.service';
@@ -17,6 +19,7 @@ import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { QUALITY_LADDER, pickClosestHeight } from '@videodubber/shared';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
+import { toAppError } from '../../core/state/project.store';
 import type { AppError } from '../../core/models';
 import type { SeriesAiOption } from '@videodubber/shared';
 import type {
@@ -28,6 +31,9 @@ import type {
   SessionCheck,
   SessionInfo,
 } from '../../core/models/download';
+import { bilibiliLoginFrom, MAX_COOKIE_FILE_BYTES, type CookieFileProblem } from './cookie-file';
+import { dubResultRows, type DubResultRow } from './dub-results';
+import { sourceErrorKeys } from './source-errors';
 
 /**
  * DownloadComponent (route "download") — fetch source videos to dub.
@@ -44,7 +50,7 @@ import type {
 @Component({
   selector: 'vd-download',
   standalone: true,
-  imports: [FormsModule, TranslatePipe, ErrorBannerComponent],
+  imports: [FormsModule, RouterLink, TranslatePipe, ErrorBannerComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './download.component.html',
   styleUrl: './download.component.scss',
@@ -92,6 +98,12 @@ export class DownloadComponent implements OnInit, OnDestroy {
   protected readonly presetId = signal('');
   protected readonly dubStart = signal(true);
   protected readonly dubbing = signal(false);
+  /** What the last "Dub N videos" did, one line per video, shown under the button. */
+  protected readonly dubResults = signal<DubResultRow[] | null>(null);
+  /** The dub request itself failed: shown in the dub card, where the button is. */
+  protected readonly dubError = signal<AppError | null>(null);
+  protected readonly dubMade = computed(() => (this.dubResults() ?? []).filter((r) => r.outcome !== 'failed').length);
+  protected readonly dubParts = computed(() => (this.dubResults() ?? []).filter((r) => r.outcome === 'series').length);
   protected readonly selected = signal<ReadonlySet<string>>(new Set());
   protected readonly selectedDone = computed(() => this.doneItems().filter((i) => this.selected().has(i.id)));
   /**
@@ -141,6 +153,11 @@ export class DownloadComponent implements OnInit, OnDestroy {
   protected readonly sessionCheck = signal<SessionCheck | null>(null);
   protected readonly sessionOpen = signal(false);
   protected readonly sessionProviders = computed(() => this.providers().filter((p) => p.supportsSession));
+  /** Why the chosen cookie file cannot sign the app in (never anything from inside it). */
+  protected readonly cookieProblem = signal<CookieFileProblem | 'too-big' | null>(null);
+  /** A sign-in action failed: shown in the sign-in card, not at the top of the screen. */
+  protected readonly sessionError = signal<AppError | null>(null);
+  private readonly sessionCard = viewChild<ElementRef<HTMLElement>>('sessionCard');
 
   ngOnInit(): void {
     // The server replays every download on connect: the list is right after a
@@ -204,15 +221,49 @@ export class DownloadComponent implements OnInit, OnDestroy {
   protected async saveSession(providerId: string): Promise<void> {
     const value = this.sessionInput().trim();
     if (!value || this.sessionBusy()) return;
+    await this.storeSession(providerId, value);
+    // Drop the plaintext from the form as soon as it is stored.
+    if (!this.sessionError()) this.sessionInput.set('');
+  }
+
+  /**
+   * "Choose the cookie file": the sign-in from a browser's cookie export. The
+   * file is read here and only Bilibili's two cookies leave this function, to
+   * the orchestrator; nothing from it is shown or kept, and a file that cannot
+   * sign the app in is answered with the reason (cookie-file.ts).
+   */
+  protected async onCookieFile(event: Event, providerId: string): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || this.sessionBusy()) return;
+    this.cookieProblem.set(null);
+    this.sessionError.set(null);
+    this.sessionCheck.set(null);
+    if (file.size > MAX_COOKIE_FILE_BYTES) {
+      this.cookieProblem.set('too-big');
+      return;
+    }
+    const login = bilibiliLoginFrom(await file.text());
+    if (!login.ok) {
+      this.cookieProblem.set(login.problem);
+      return;
+    }
+    await this.storeSession(providerId, login.cookie);
+  }
+
+  /** Save a sign-in, then ask the site at once whether it works: the user should not have to. */
+  private async storeSession(providerId: string, cookie: string): Promise<void> {
     this.sessionBusy.set(providerId);
     this.sessionCheck.set(null);
+    this.sessionError.set(null);
+    this.cookieProblem.set(null);
     try {
-      await this.ipc.setProviderSession(providerId, value);
-      // Drop the plaintext from the form as soon as it is stored.
-      this.sessionInput.set('');
+      await this.ipc.setProviderSession(providerId, cookie);
       await this.loadProviders();
+      this.sessionCheck.set(await this.ipc.testProviderSession(providerId).catch(() => null));
     } catch (err) {
-      this.error.set(err as AppError);
+      this.sessionError.set(toAppError(err));
     } finally {
       this.sessionBusy.set(null);
     }
@@ -221,13 +272,15 @@ export class DownloadComponent implements OnInit, OnDestroy {
   protected async clearSession(providerId: string): Promise<void> {
     if (this.sessionBusy()) return;
     this.sessionBusy.set(providerId);
+    this.sessionError.set(null);
+    this.cookieProblem.set(null);
     try {
       await this.ipc.clearProviderSession(providerId);
       this.sessionInput.set('');
       this.sessionCheck.set(null);
       await this.loadProviders();
     } catch (err) {
-      this.error.set(err as AppError);
+      this.sessionError.set(toAppError(err));
     } finally {
       this.sessionBusy.set(null);
     }
@@ -238,13 +291,34 @@ export class DownloadComponent implements OnInit, OnDestroy {
     if (this.sessionBusy()) return;
     this.sessionBusy.set(providerId);
     this.sessionCheck.set(null);
+    this.sessionError.set(null);
     try {
       this.sessionCheck.set(await this.ipc.testProviderSession(providerId));
     } catch (err) {
-      this.error.set(err as AppError);
+      this.sessionError.set(toAppError(err));
     } finally {
       this.sessionBusy.set(null);
     }
+  }
+
+  /** From a download that needs a signed-in account: open the sign-in card and bring it into view. */
+  protected openSignIn(): void {
+    this.sessionOpen.set(true);
+    setTimeout(() => this.sessionCard()?.nativeElement.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }
+
+  /** The sign-in card's own open state (the summary toggles it too). */
+  protected onSessionToggle(event: Event): void {
+    this.sessionOpen.set((event.target as HTMLDetailsElement).open);
+  }
+
+  /** A download failure the user can act on, in their language; null keeps the server's words. */
+  protected readonly sourceError = sourceErrorKeys;
+
+  /** A failure in a sentence or two: what happened and what to do when the code is known, else the server's message. */
+  private errorLine(error: AppError): string {
+    const keys = sourceErrorKeys(error);
+    return keys ? `${this.translate.instant(keys.message)} ${this.translate.instant(keys.fix)}` : error.message;
   }
 
   /** Look one link up without downloading anything. */
@@ -270,7 +344,7 @@ export class DownloadComponent implements OnInit, OnDestroy {
       const wanted = info.parts.find((p) => p.page === info.requestedPage);
       this.selectedPage.set(wanted?.page ?? info.parts[0]?.page ?? 1);
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.resolving.set(false);
     }
@@ -295,7 +369,8 @@ export class DownloadComponent implements OnInit, OnDestroy {
       const lines = [
         ...(res.added.length > 0 ? [this.translate.instant('source-video.added', { n: res.added.length })] : []),
         ...(res.existing.length > 0 ? [this.translate.instant('source-video.already', { n: res.existing.length })] : []),
-        ...res.rejected.map((r) => this.translate.instant('source-video.rejected', { input: r.input })),
+        // The reason the server gave: every refusal used to read "Not a supported link".
+        ...res.rejected.map((r) => this.translate.instant('source-video.rejected-why', { input: r.input, why: this.errorLine(r.error) })),
       ];
       this.notice.set(lines.join(' '));
       if (res.rejected.length === 0) {
@@ -306,7 +381,7 @@ export class DownloadComponent implements OnInit, OnDestroy {
         this.input.set(res.rejected.map((r) => r.input).join('\n'));
       }
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.adding.set(false);
     }
@@ -358,7 +433,7 @@ export class DownloadComponent implements OnInit, OnDestroy {
     try {
       await fn();
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     }
   }
 
@@ -392,13 +467,16 @@ export class DownloadComponent implements OnInit, OnDestroy {
     this.selected.set(new Set(this.doneItems().map((i) => i.id)));
   }
 
-  /** A project per ticked video, from the chosen preset. */
+  /**
+   * A project per ticked video, from the chosen preset. The result is listed
+   * under the button, a line per video with the way to its progress.
+   */
   protected async dubSelected(): Promise<void> {
     const ids = this.selectedDone().map((i) => i.id);
     if (ids.length === 0 || !this.presetId() || this.dubbing()) return;
     this.dubbing.set(true);
-    this.error.set(null);
-    this.notice.set(null);
+    this.dubError.set(null);
+    this.dubResults.set(null);
     try {
       const split = this.dubSplit() && this.dubSplitAi();
       if (split) rememberSeriesAi(this.dubSplitAi());
@@ -411,18 +489,12 @@ export class DownloadComponent implements OnInit, OnDestroy {
           ? { series: { minMinutes: min!, maxMinutes: max!, aiProviderId: this.dubSplitAi(), longerThanMinutes: this.dubSplitAbove(), autoStart: true } }
           : {}),
       });
-      const made = results.filter((r) => r.projectId).length;
-      const parts = results.filter((r) => r.series).length;
-      const failed = results.find((r) => r.error)?.error;
-      this.notice.set(
-        parts > 0
-          ? this.translate.instant('source-video.dub-done-split', { n: made, s: parts })
-          : this.translate.instant('source-video.dub-done', { n: made }),
-      );
-      if (failed) this.error.set(failed);
-      this.selected.set(new Set());
+      this.dubResults.set(dubResultRows(results, this.items()));
+      // Untick what was made; a video that failed stays ticked, to try again.
+      const failed = new Set(results.filter((r) => r.error || !r.projectId).map((r) => r.downloadId));
+      this.selected.update((s) => new Set([...s].filter((id) => failed.has(id))));
     } catch (err) {
-      this.error.set(err as AppError);
+      this.dubError.set(toAppError(err));
     } finally {
       this.dubbing.set(false);
     }

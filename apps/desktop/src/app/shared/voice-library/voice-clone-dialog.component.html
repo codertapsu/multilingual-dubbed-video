@@ -1,8 +1,9 @@
-<div class="backdrop" (click)="close()"></div>
-<div class="dialog card stack" role="dialog" aria-modal="true" [attr.aria-label]="titleKey() | translate">
+<!-- A click beside the dialog closes it only when that loses nothing (requestClose). -->
+<div class="backdrop" (click)="requestClose()"></div>
+<div #dialog class="dialog card stack" role="dialog" aria-modal="true" tabindex="-1" [attr.aria-label]="titleKey() | translate">
   <div class="row-between">
     <h2>{{ titleKey() | translate }}</h2>
-    <button type="button" class="btn btn-ghost btn-sm" (click)="close()" [attr.aria-label]="'voice-clone.close' | translate">✕</button>
+    <button type="button" class="btn btn-ghost btn-sm" [disabled]="!!busy()" (click)="requestClose()" [attr.aria-label]="'voice-clone.close' | translate">✕</button>
   </div>
 
   <ol class="steps" aria-hidden="true">
@@ -16,15 +17,49 @@
   <!-- ===================== The engine ===================== -->
   @if (step() === 'engine') {
     <p>{{ 'voice-clone.engine-needed' | translate }}</p>
-    @if (enginePack(); as pack) {
-      <p class="hint">{{ 'voice-clone.engine-size' | translate: { pack: pack.displayName, size: (pack.approxSizeMb / 1024).toFixed(1) } }}</p>
-      <div class="row">
-        <button type="button" class="btn btn-primary" [disabled]="busy() === 'install'" (click)="installEngine()">
-          {{ (busy() === 'install' ? 'voice-clone.engine-installing' : 'voice-clone.engine-install') | translate }}
-        </button>
-      </div>
-    } @else {
-      <p class="muted">{{ 'voice-clone.engine-unavailable' | translate }}</p>
+    @if (install(); as inst) {
+      @if (inst.state === 'running') {
+        <!-- Followed app-wide (core/activity): it goes on if this dialog is closed. -->
+        @let percent = inst.task?.percent ?? null;
+        <div class="install stack-sm">
+          <div class="install-head">
+            <strong>{{ 'voice-clone.engine-installing-pack' | translate: { pack: inst.pack.displayName } }}</strong>
+            @if (percent !== null) {
+              <span class="mono">{{ percent }}%</span>
+            }
+          </div>
+          <div
+            class="progress"
+            [class.indeterminate]="percent === null"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            [attr.aria-valuenow]="percent"
+            [attr.aria-label]="'voice-clone.engine-installing-pack' | translate: { pack: inst.pack.displayName }"
+          >
+            <span [style.width.%]="percent ?? 0"></span>
+          </div>
+          @if (inst.task?.message; as message) {
+            <span class="muted small">{{ message }}</span>
+          }
+          <p class="hint">{{ 'voice-clone.engine-background' | translate }}</p>
+        </div>
+      }
+    }
+    @if (install()?.state !== 'running') {
+      @if (installError(); as e) {
+        <vd-error-banner [error]="e" (dismiss)="dismissInstallError()" />
+      }
+      @if (enginePack(); as pack) {
+        <p class="hint">{{ 'voice-clone.engine-size' | translate: { pack: pack.displayName, size: (pack.approxSizeMb / 1024).toFixed(1) } }}</p>
+        <div class="row">
+          <button type="button" class="btn btn-primary" (click)="installEngine()">
+            {{ (install()?.state === 'failed' ? 'voice-clone.engine-retry' : 'voice-clone.engine-install') | translate }}
+          </button>
+        </div>
+      } @else {
+        <p class="muted">{{ 'voice-clone.engine-unavailable' | translate }}</p>
+      }
     }
   }
 

@@ -125,6 +125,13 @@ const DYNAMIC_KEY_PREFIXES = [
   'storage-loc.',
   'reason.',
   'capacity.',
+  // Window titles, download errors and Help's checks, fixes and services are
+  // looked up from tables by id (their specs check both locales have them).
+  'nav.title.',
+  'source-video.error.',
+  'help.check.',
+  'help.fix.',
+  'help.service.',
 ];
 
 /**

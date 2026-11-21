@@ -84,6 +84,10 @@
                   }
                 }
               </label>
+              <!-- An answer, not an error: it stays under the voice until a gender is picked. -->
+              @if (noSuggestion() === p.id && !p.gender?.confirmed) {
+                <p class="note small" role="status">{{ 'voices.my-gender-no-suggestion' | translate }}</p>
+              }
               <div class="meta muted small">
                 <span>{{ 'voices.my-made' | translate: { date: dateLabel(p.createdAt) } }}</span>
                 <span [title]="p.consent.statementText">· {{ relationLabel(p) }}</span>
@@ -287,15 +291,18 @@
           >
             {{ v.favorite ? '★' : '☆' }}
           </button>
+          <!-- ■ while the sample is made and while it plays: pressing it again stops it. -->
+          @let active = playing() === v.id || speaking() === v.id;
           <button
             type="button"
             class="icon-btn play"
+            [class.active]="active"
             [disabled]="!v.hasPreview"
-            [attr.aria-label]="(playing() === v.id ? 'voices.stop' : 'voices.play') | translate: { name: v.name }"
-            [title]="(v.hasPreview ? (playing() === v.id ? 'voices.stop' : 'voices.play') : 'voices.no-preview') | translate: { name: v.name }"
+            [attr.aria-label]="(active ? 'voices.stop' : 'voices.play') | translate: { name: v.name }"
+            [title]="(v.hasPreview ? (active ? 'voices.stop' : 'voices.play') : 'voices.no-preview') | translate: { name: v.name }"
             (click)="togglePreview(v)"
           >
-            {{ speaking() === v.id ? '…' : playing() === v.id ? '■' : '▶' }}
+            {{ active ? '■' : '▶' }}
           </button>
           <div class="who">
             <div class="name-line">
@@ -326,6 +333,9 @@
               <span>· {{ engineName(v.engine) }}</span>
               @if (v.sizeMb > 0) {
                 <span>· {{ sizeLabel(v.sizeMb) }}</span>
+              }
+              @if (speaking() === v.id) {
+                <span role="status">· {{ 'voices.making-sample' | translate }}</span>
               }
               @if (previewError() === v.id) {
                 <span class="warn">· {{ 'voices.preview-failed' | translate }}</span>

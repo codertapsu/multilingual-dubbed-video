@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, inject, signal, type OnInit } from '@angular/core';
 
 import { IpcService } from '../../core/ipc/ipc.service';
-import { TranslatePipe } from '../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 import type { AppError } from '../../core/models';
+import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../error-banner/error-banner.component';
 
 /** GET /diagnostics/summary (node-orchestrator diagnostics/diagnosticsService.ts). */
@@ -31,6 +32,13 @@ export interface DiagnosticsSummaryView {
  * plan): what the backend, the GPU, the queue and the engines are doing, what
  * the disk holds, the recent warnings and errors, crash reports, and a support
  * bundle to send. Shown on Help and in Settings → Diagnostics.
+ *
+ * In two layers. The facts a user can act on come first, in plain words: is
+ * the app running, what is dubbing, how much room is left, did anything go
+ * wrong. The numbers only support reads (memory and heap limit, event-loop
+ * lag, who holds the GPU lane, engine ids and output, the log lines
+ * themselves) are folded under Technical details: they led the panel, and read
+ * like telemetry to the people it is for (UX audit, 2026-11).
  */
 @Component({
   selector: 'vd-diagnostics-panel',
@@ -57,37 +65,19 @@ export interface DiagnosticsSummaryView {
       }
       @if (summary(); as s) {
         <dl class="facts">
-          <dt>{{ 'diagnostics.backend' | translate }}</dt>
+          <dt>{{ 'diagnostics.app' | translate }}</dt>
           <dd>
-            {{ s.health.version }}{{ s.health.commit ? ' (' + s.health.commit + ')' : '' }} ·
-            {{ 'diagnostics.uptime' | translate: { time: duration(s.health.uptimeSec) } }}
-            @if (s.health.latest; as l) {
-              · {{ 'diagnostics.memory' | translate: { mb: round(l.rssMb), peak: round(s.health.peak.rssMb), limit: s.health.heapLimitMb } }}
-              · {{ 'diagnostics.lag' | translate: { p99: round(l.lagP99Ms), worst: round(s.health.peak.lagMaxMs) } }}
-              · {{ 'diagnostics.free-ram' | translate: { pct: round(l.freeRamShare * 100) } }}
+            {{ 'diagnostics.app-running' | translate: { version: s.health.version, time: duration(s.health.uptimeSec) } }}
+            @if (s.health.recoveredFrom; as c) {
+              <div class="warn-text">{{ 'diagnostics.recovered-plain' | translate: { time: time(c.at) } }}</div>
             }
-          </dd>
-          @if (s.health.recoveredFrom; as c) {
-            <dt>{{ 'diagnostics.recovered' | translate }}</dt>
-            <dd class="warn-text">{{ 'diagnostics.recovered-at' | translate: { time: time(c.at), code: c.codeHex ?? '?' } }} {{ c.meaning }}</dd>
-          }
-          <dt>{{ 'diagnostics.gpu' | translate }}</dt>
-          <dd>
-            @if (s.gpu) {
-              @for (g of s.gpu; track g.name) {
-                <div>{{ g.name }}: {{ 'diagnostics.gpu-use' | translate: { used: g.memoryUsedMb, total: g.memoryTotalMb, busy: g.utilizationPct } }}</div>
-              }
-            } @else {
-              {{ 'diagnostics.gpu-none' | translate }}
-            }
-            <div class="muted">{{ s.laneOwner ? ('diagnostics.lane-held' | translate: { owner: s.laneOwner }) : ('diagnostics.lane-free' | translate) }}</div>
           </dd>
           <dt>{{ 'diagnostics.queue' | translate }}</dt>
           <dd>
             @if (s.queue; as q) {
               @for (r of q.running; track r.projectId) {
                 <div>
-                  ▶ {{ r.name }}{{ r.step ? ' · ' + r.step : '' }}{{ r.progressPercent !== undefined ? ' · ' + r.progressPercent + '%' : '' }}
+                  ▶ {{ r.name }}{{ r.step ? ' · ' + stepName(r.step) : '' }}{{ r.progressPercent !== undefined ? ' · ' + r.progressPercent + '%' : '' }}
                   @if (r.etaSec !== undefined) { · {{ 'diagnostics.eta' | translate: { time: duration(r.etaSec) } }} }
                 </div>
               }
@@ -99,19 +89,21 @@ export interface DiagnosticsSummaryView {
               }
             }
           </dd>
-          <dt>{{ 'diagnostics.engines' | translate }}</dt>
+          <dt>{{ 'diagnostics.gpu' | translate }}</dt>
           <dd>
-            {{ s.engines.running.length ? s.engines.running.join(', ') : ('diagnostics.engines-none' | translate) }}
-            @if (s.engines.unusable.length) {
-              <div class="warn-text">{{ 'diagnostics.engines-failed' | translate: { list: s.engines.unusable.join(', ') } }}</div>
-            }
-            @for (id of outputIds(s); track id) {
-              <details>
-                <summary>{{ 'diagnostics.engine-output' | translate: { id } }}</summary>
-                <pre class="mono small">{{ s.engines.lastOutput[id] }}</pre>
-              </details>
+            @if (s.gpu) {
+              @for (g of s.gpu; track g.name) {
+                <div>{{ g.name }}</div>
+              }
+              <div class="muted">{{ (s.laneOwner ? 'diagnostics.gpu-busy' : 'diagnostics.lane-free') | translate }}</div>
+            } @else {
+              {{ 'diagnostics.gpu-none' | translate }}
             }
           </dd>
+          @if (s.engines.unusable.length) {
+            <dt>{{ 'diagnostics.engines' | translate }}</dt>
+            <dd class="warn-text">{{ 'diagnostics.engines-failed' | translate: { list: s.engines.unusable.join(', ') } }}</dd>
+          }
           <dt>{{ 'diagnostics.disk' | translate }}</dt>
           <dd>
             {{ s.disk.freeBytes !== undefined ? ('diagnostics.disk-free' | translate: { gb: gb(s.disk.freeBytes) }) : '' }}
@@ -121,26 +113,81 @@ export interface DiagnosticsSummaryView {
           </dd>
           <dt>{{ 'diagnostics.recent' | translate }}</dt>
           <dd>
-            @for (r of s.recent.errors.slice(-8); track $index) {
-              <div class="test-fail small">{{ time(r.t) }} {{ r.msg }}{{ r.mcpRequestId ? ' (' + r.mcpRequestId + ')' : '' }}</div>
-            }
-            @for (r of s.recent.warnings.slice(-8); track $index) {
-              <div class="warn-text small">{{ time(r.t) }} {{ r.msg }}</div>
-            }
             @if (s.recent.errors.length === 0 && s.recent.warnings.length === 0) {
               {{ 'diagnostics.recent-none' | translate }}
+            } @else {
+              <span [class.test-fail]="s.recent.errors.length > 0" [class.warn-text]="s.recent.errors.length === 0">
+                {{ 'diagnostics.recent-count' | translate: { errors: s.recent.errors.length, warnings: s.recent.warnings.length } }}
+              </span>
             }
           </dd>
           <dt>{{ 'diagnostics.crashes' | translate }}</dt>
           <dd>
-            @for (c of s.crashes.slice(0, 5); track c.file) {
-              <div class="small">{{ time(c.at) }} {{ c.kind }}</div>
-            }
-            @if (s.crashes.length === 0) {
-              {{ 'diagnostics.crashes-none' | translate }}
-            }
+            {{ s.crashes.length === 0 ? ('diagnostics.crashes-none' | translate) : ('diagnostics.crashes-count' | translate: { n: s.crashes.length }) }}
           </dd>
         </dl>
+
+        <!-- For support: kept whole, one click away. -->
+        <details class="tech">
+          <summary>{{ 'diagnostics.technical' | translate }}</summary>
+          <dl class="facts small">
+            <dt>{{ 'diagnostics.backend' | translate }}</dt>
+            <dd>
+              {{ s.health.version }}{{ s.health.commit ? ' (' + s.health.commit + ')' : '' }} ·
+              {{ 'diagnostics.uptime' | translate: { time: duration(s.health.uptimeSec) } }}
+              @if (s.health.latest; as l) {
+                · {{ 'diagnostics.memory' | translate: { mb: round(l.rssMb), peak: round(s.health.peak.rssMb), limit: s.health.heapLimitMb } }}
+                · {{ 'diagnostics.lag' | translate: { p99: round(l.lagP99Ms), worst: round(s.health.peak.lagMaxMs) } }}
+                · {{ 'diagnostics.free-ram' | translate: { pct: round(l.freeRamShare * 100) } }}
+              }
+            </dd>
+            @if (s.health.recoveredFrom; as c) {
+              <dt>{{ 'diagnostics.recovered' | translate }}</dt>
+              <dd class="warn-text">{{ 'diagnostics.recovered-at' | translate: { time: time(c.at), code: c.codeHex ?? '?' } }} {{ c.meaning }}</dd>
+            }
+            <dt>{{ 'diagnostics.gpu' | translate }}</dt>
+            <dd>
+              @for (g of s.gpu ?? []; track g.name) {
+                <div>{{ g.name }}: {{ 'diagnostics.gpu-use' | translate: { used: g.memoryUsedMb, total: g.memoryTotalMb, busy: g.utilizationPct } }}</div>
+              }
+              <div class="muted">{{ s.laneOwner ? ('diagnostics.lane-held' | translate: { owner: s.laneOwner }) : ('diagnostics.lane-free' | translate) }}</div>
+            </dd>
+            <dt>{{ 'diagnostics.engines' | translate }}</dt>
+            <dd>
+              {{ s.engines.running.length ? s.engines.running.join(', ') : ('diagnostics.engines-none' | translate) }}
+              @if (s.engines.unusable.length) {
+                <div class="warn-text">{{ 'diagnostics.engines-failed' | translate: { list: s.engines.unusable.join(', ') } }}</div>
+              }
+              @for (id of outputIds(s); track id) {
+                <details>
+                  <summary>{{ 'diagnostics.engine-output' | translate: { id } }}</summary>
+                  <pre class="mono small">{{ s.engines.lastOutput[id] }}</pre>
+                </details>
+              }
+            </dd>
+            <dt>{{ 'diagnostics.recent' | translate }}</dt>
+            <dd>
+              @for (r of s.recent.errors.slice(-8); track $index) {
+                <div class="test-fail">{{ time(r.t) }} {{ r.msg }}{{ r.mcpRequestId ? ' (' + r.mcpRequestId + ')' : '' }}</div>
+              }
+              @for (r of s.recent.warnings.slice(-8); track $index) {
+                <div class="warn-text">{{ time(r.t) }} {{ r.msg }}</div>
+              }
+              @if (s.recent.errors.length === 0 && s.recent.warnings.length === 0) {
+                {{ 'diagnostics.recent-none' | translate }}
+              }
+            </dd>
+            <dt>{{ 'diagnostics.crashes' | translate }}</dt>
+            <dd>
+              @for (c of s.crashes.slice(0, 5); track c.file) {
+                <div>{{ time(c.at) }} {{ c.kind }}</div>
+              }
+              @if (s.crashes.length === 0) {
+                {{ 'diagnostics.crashes-none' | translate }}
+              }
+            </dd>
+          </dl>
+        </details>
       }
     </div>
   `,
@@ -164,11 +211,27 @@ export interface DiagnosticsSummaryView {
         max-height: 14rem;
         overflow: auto;
       }
+      .small {
+        font-size: 0.85rem;
+      }
+      .warn-text {
+        color: var(--vd-warning);
+      }
+      .test-fail {
+        color: var(--vd-danger);
+      }
+      .tech > summary {
+        cursor: pointer;
+        font-size: 0.85rem;
+        color: var(--vd-text-muted);
+        margin-bottom: var(--vd-sp-2);
+      }
     `,
   ],
 })
 export class DiagnosticsPanelComponent implements OnInit {
   private readonly ipc = inject(IpcService);
+  private readonly i18n = inject(TranslateService);
   protected readonly summary = signal<DiagnosticsSummaryView | null>(null);
   protected readonly loading = signal(false);
   protected readonly bundling = signal(false);
@@ -184,7 +247,7 @@ export class DiagnosticsPanelComponent implements OnInit {
     try {
       this.summary.set(await this.ipc.diagnosticsSummary());
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.loading.set(false);
     }
@@ -196,14 +259,21 @@ export class DiagnosticsPanelComponent implements OnInit {
     try {
       this.bundlePath.set((await this.ipc.diagnosticsBundle()).path);
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.bundling.set(false);
     }
   }
 
   protected async reveal(file: string): Promise<void> {
-    await this.ipc.openManagedFolder(file.replace(/[\\/][^\\/]+$/, '')).catch((err: unknown) => this.error.set(err as AppError));
+    await this.ipc.openManagedFolder(file.replace(/[\\/][^\\/]+$/, '')).catch((err: unknown) => this.error.set(toAppError(err)));
+  }
+
+  /** A pipeline step's name ("Translate"), or its id for a step this build has no name for. */
+  protected stepName(step: string): string {
+    const key = `opt.step.${step}`;
+    const name = this.i18n.instant(key);
+    return name === key ? step : name;
   }
 
   protected outputIds(s: DiagnosticsSummaryView): string[] {

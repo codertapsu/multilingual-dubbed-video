@@ -16,17 +16,32 @@
     </div>
     <p class="hint">{{ 'help.selfcheck-hint' | translate }}</p>
 
-    @if (preflight(); as pf) {
-      <div
-        class="badge summary-badge"
-        [class.badge-completed]="pf.ok"
-        [class.badge-warning]="!pf.ok"
-        role="status"
-      >
-        {{ (pf.ok ? 'help.selfcheck-ok' : 'help.selfcheck-warn') | translate }}
+    <!-- One line first: all good, something to look at, or problems. -->
+    @if (summary(); as s) {
+      <div class="summary" [attr.data-tone]="s.tone" role="status">
+        <span class="check-icon" aria-hidden="true">
+          @switch (s.tone) {
+            @case ('ok') { ✓ }
+            @case ('warn') { ! }
+            @case ('fail') { ✕ }
+          }
+        </span>
+        <span class="check-body">
+          <strong>
+            @switch (s.tone) {
+              @case ('ok') { {{ 'help.summary-ok' | translate }} }
+              @case ('warn') { {{ (s.warnings === 1 ? 'help.summary-warn-one' : 'help.summary-warn-many') | translate: { n: s.warnings } }} }
+              @case ('fail') { {{ (s.problems === 1 ? 'help.summary-fail-one' : 'help.summary-fail-many') | translate: { n: s.problems } }} }
+            }
+          </strong>
+          <span>{{ (s.tone === 'ok' ? 'help.summary-ok-hint' : 'help.summary-todo-hint') | translate }}</span>
+        </span>
       </div>
+    }
+
+    @if (preflight()) {
       <ul class="check-list" role="list">
-        @for (check of pf.checks; track check.id) {
+        @for (check of checks(); track check.id) {
           <li class="check-row" [attr.data-status]="check.status">
             <span class="check-icon" aria-hidden="true">
               @switch (check.status) {
@@ -36,20 +51,39 @@
               }
             </span>
             <span class="check-body">
-              <span class="check-label">{{ check.label }}</span>
-              @if (check.detail) {
-                <span class="hint">{{ check.detail }}</span>
-              }
-              @if (check.remediation) {
+              <span class="check-label">{{ check.nameKey ? (check.nameKey | translate) : check.label }}</span>
+              @if (check.status !== 'ok' && (check.fixKey || check.remediation)) {
                 <span class="check-remedy">
-                  <span class="label">{{ 'onboarding.s2-how-to-fix' | translate }}</span>
-                  {{ check.remediation }}
+                  <span class="label">{{ 'help.what-to-do' | translate }}</span>
+                  {{ check.fixKey ? (check.fixKey | translate) : check.remediation }}
                 </span>
+              }
+            </span>
+            <span class="badge" [class.badge-completed]="check.status === 'ok'" [class.badge-warning]="check.status === 'warn'" [class.badge-failed]="check.status === 'fail'">
+              @switch (check.status) {
+                @case ('ok') { {{ 'help.state-ok' | translate }} }
+                @case ('warn') { {{ 'help.state-warn' | translate }} }
+                @case ('fail') { {{ 'help.state-fail' | translate }} }
               }
             </span>
           </li>
         }
       </ul>
+      <!-- What the backend said, word for word: support asks for exactly this. -->
+      <details class="tech">
+        <summary>{{ 'help.technical' | translate }}</summary>
+        <dl class="tech-list mono">
+          @for (check of checks(); track check.id) {
+            <dt>{{ check.label }} · {{ check.status }}</dt>
+            <dd>
+              {{ check.detail ?? '' }}
+              @if (check.remediation) {
+                <div>{{ check.remediation }}</div>
+              }
+            </dd>
+          }
+        </dl>
+      </details>
     } @else if (preflightLoading()) {
       <p class="muted">{{ 'help.checking' | translate }}</p>
     } @else {
@@ -61,23 +95,40 @@
   <div class="card stack">
     <h2>{{ 'help.services' | translate }}</h2>
     <p class="hint">{{ 'help.services-hint' | translate }}</p>
-    @if (serviceRows().length > 0) {
+    @if (services().length > 0) {
       <ul class="check-list" role="list">
-        @for (row of serviceRows(); track row.name) {
-          <li class="check-row">
+        @for (row of services(); track row.id) {
+          <li class="check-row" [attr.data-status]="row.available ? 'ok' : 'fail'">
             <span class="check-icon" aria-hidden="true">{{ row.available ? '✓' : '✕' }}</span>
             <span class="check-body">
-              <span class="check-label mono">{{ row.name }}</span>
-              @if (row.detail) {
-                <span class="hint">{{ row.detail }}</span>
+              <span class="check-label">{{ row.nameKey ? (row.nameKey | translate) : row.id }}</span>
+              @if (!row.available) {
+                <span class="check-remedy">
+                  <span class="label">{{ 'help.what-to-do' | translate }}</span>
+                  {{ (row.kind === 'tool' ? 'help.fix.tools' : 'help.fix.service') | translate }}
+                </span>
               }
             </span>
+            <!-- A service runs or not; FFmpeg is a tool, which is there or not. -->
             <span class="badge" [class.badge-completed]="row.available" [class.badge-failed]="!row.available">
-              {{ (row.available ? 'status.completed' : 'status.failed') | translate }}
+              @if (row.kind === 'tool') {
+                {{ (row.available ? 'help.tool-ready' : 'help.tool-missing') | translate }}
+              } @else {
+                {{ (row.available ? 'help.service-running' : 'help.service-down') | translate }}
+              }
             </span>
           </li>
         }
       </ul>
+      <details class="tech">
+        <summary>{{ 'help.technical' | translate }}</summary>
+        <dl class="tech-list mono">
+          @for (row of services(); track row.id) {
+            <dt>{{ row.id }} · {{ row.available ? '✓' : '✕' }}</dt>
+            <dd>{{ row.detail ?? '' }}</dd>
+          }
+        </dl>
+      </details>
     } @else {
       <p class="muted">{{ 'help.services-unavailable' | translate }}</p>
     }

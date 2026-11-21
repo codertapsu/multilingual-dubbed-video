@@ -5,6 +5,7 @@ import { speakerNumber, type SpeakerSummary } from '@videodubber/shared';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
 import type { AppError, VoiceConsentStatements, VoiceProfile } from '../../core/models';
+import { toAppError } from '../../core/state/project.store';
 import { ErrorBannerComponent } from '../error-banner/error-banner.component';
 
 export interface SpeakerVoicesOutcome {
@@ -188,7 +189,7 @@ export class SpeakerVoicesDialogComponent implements OnInit {
       this.engineMissing.set(!engines.find((e) => e.id === 'vieneu')?.installed);
       this.consent.set(consent);
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     }
   }
 
@@ -215,7 +216,7 @@ export class SpeakerVoicesDialogComponent implements OnInit {
       this.outcome.set(outcome);
       this.done.emit(outcome);
     } catch (err) {
-      this.error.set(err as AppError);
+      this.error.set(toAppError(err));
     } finally {
       this.busy.set(false);
     }

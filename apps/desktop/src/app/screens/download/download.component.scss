@@ -73,6 +73,72 @@
   min-width: 220px;
 }
 
+/* The steps to a cookie file, in order: numbered, roomy enough to follow. */
+.how-to {
+  margin: 0;
+  padding-left: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-1);
+  line-height: 1.45;
+}
+
+/* A label styled as a button around a hidden file input. */
+.file-btn {
+  margin: 0;
+  cursor: pointer;
+}
+.file-btn.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.paste summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--vd-text-muted);
+}
+.paste[open] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-2);
+}
+
+/* A failure's way out (sign in), under its explanation. */
+.fix-btn {
+  align-self: flex-start;
+}
+
+/* A list link's video: the whole row is the checkbox's label. */
+.list-pick {
+  margin: 0;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+/* "Dub N videos", answered under the button: a line per video. */
+.dub-results {
+  padding: var(--vd-sp-3);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+  background: var(--vd-surface-2);
+}
+.dub-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-2);
+
+  li {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--vd-sp-2);
+  }
+}
+
 .test-ok {
   color: var(--vd-success);
 }

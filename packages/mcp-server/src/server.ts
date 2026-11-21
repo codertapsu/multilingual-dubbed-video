@@ -1689,6 +1689,140 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     }),
   );
 
+  // ------------------------------------------------------------------ speakers
+
+  type SpeakerRow = {
+    speakerId: string;
+    minutes: number;
+    lines: number;
+    f0Hz?: number;
+    gender?: 'male' | 'female' | 'unknown';
+    genderConfidence?: number;
+    samples: { id: string; text: string }[];
+    voiceId?: string;
+  };
+  type SpeakersDoc = {
+    speakers: SpeakerRow[];
+    detected?: { at?: string; model?: string };
+    job?: { state: 'running' | 'done' | 'failed'; done?: number; total?: number; error?: string; message?: string };
+    defaults?: { male?: string; female?: string };
+  };
+
+  server.registerTool(
+    'get_speakers',
+    {
+      title: 'Who speaks in a project',
+      description:
+        'The detected speakers of a project, most-heard first: minutes and lines, median pitch, gender (male/female/unknown) with how sure it is, a few sample lines, and the voice each one has. Also whether a detect_speakers job is running. Use it to cast voices (cast_voices) and to map speaker ids to characters in the character sheet.',
+      inputSchema: z.object({ projectId: z.string(), limit: z.number().int().min(1).max(200).default(40) }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, limit }, ctx) => {
+      const doc = await api.get<SpeakersDoc>(`/projects/${encodeURIComponent(projectId)}/speakers`, { signal: ctx.mcpReq.signal });
+      const job = doc.job;
+      const lines = [
+        ...(job?.state === 'running'
+          ? [`Speaker detection is running${job.total ? ` (${job.done ?? 0}/${job.total})` : ''}: call again later.`]
+          : job?.state === 'failed'
+            ? [`The last speaker detection failed: ${job.error ?? 'unknown error'}.`]
+            : []),
+        doc.speakers.length === 0
+          ? 'No speakers detected: the lines have no speaker ids. detect_speakers finds them (settings.diarize does it during speech-to-text).'
+          : `${doc.speakers.length} speaker(s)${doc.detected?.at ? `, detected ${doc.detected.at}` : ''}:`,
+        ...doc.speakers.slice(0, limit).map(
+          (s) =>
+            `- ${s.speakerId}: ${s.minutes.toFixed(1)} min, ${s.lines} line(s)` +
+            `${s.f0Hz ? `, ${Math.round(s.f0Hz)} Hz` : ''}${s.gender ? `, ${s.gender}${s.genderConfidence !== undefined ? ` (${Math.round(s.genderConfidence * 100)}%)` : ''}` : ''}` +
+            `, voice ${s.voiceId ?? '(project voice)'}` +
+            `${s.samples.length ? ` | e.g. ${s.samples.map((x) => `${x.id} "${x.text}"`).join('; ')}` : ''}`,
+        ),
+        ...(doc.speakers.length > limit ? [`(${doc.speakers.length - limit} more: raise limit)`] : []),
+        ...(doc.defaults?.male || doc.defaults?.female
+          ? [`Default voices for speakers without one: male ${doc.defaults.male ?? '-'}, female ${doc.defaults.female ?? '-'}.`]
+          : []),
+      ];
+      return text(lines.join('\n'));
+    }),
+  );
+
+  server.registerTool(
+    'detect_speakers',
+    {
+      title: 'Detect who speaks again',
+      description:
+        'Run speaker detection again over the project\'s existing transcript and give every line its speaker: never speech-to-text again, never re-timing. Starts a job and returns at once (it can take long on hours of audio): follow it with get_project (sub-step "Detecting speakers k/n") or get_speakers. Voices chosen per line are kept; voices chosen per speaker follow their speakers to the new ids (matched by voice print). Not while the project is being dubbed.',
+      inputSchema: z.object({
+        projectId: z.string(),
+        numSpeakers: z.number().int().min(2).max(50).optional().describe('When you know exactly how many people speak.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    guarded(async ({ projectId, numSpeakers }, ctx) => {
+      await api.post(`/projects/${encodeURIComponent(projectId)}/speakers/detect`, numSpeakers ? { numSpeakers } : {}, { signal: ctx.mcpReq.signal });
+      return text('Speaker detection started. Follow it with get_speakers or get_project; when it is done, cast_voices (and set_translation_context cast[].speakerId) use the new speakers. If the project was translated, redo it from "translation": the speakers decide the forms of address.');
+    }),
+  );
+
+  server.registerTool(
+    'cast_voices',
+    {
+      title: 'Choose a voice for each speaker',
+      description:
+        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones; within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance; speakers past the voices share a default voice of their gender. Refuses while a cloned voice\'s gender is unconfirmed (ask the user to confirm it in Voices → My voices) unless ignoreUnconfirmed=true (they are then left out). Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
+      inputSchema: z.object({
+        projectId: z.string(),
+        apply: z.boolean().default(false),
+        applyToParts: z.boolean().default(false),
+        ignoreUnconfirmed: z.boolean().default(false),
+        swaps: z
+          .array(z.object({ speakerId: z.string(), voiceId: z.string() }))
+          .optional()
+          .describe('Changes to the proposal (from the user), applied before saving.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, apply, applyToParts, ignoreUnconfirmed, swaps }, ctx) => {
+      type Cast = {
+        refused?: boolean;
+        message?: string;
+        unconfirmed: { voiceId: string; name: string }[];
+        assignments: { speakerId: string; voiceId: string; voiceName: string; by: string }[];
+        defaults: { male?: string; female?: string };
+        unassigned: string[];
+        notes: string[];
+        applied?: boolean;
+        parts?: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[];
+      };
+      const res = await api.post<Cast>(
+        `/projects/${encodeURIComponent(projectId)}/speakers/cast`,
+        { apply, applyToParts, ignoreUnconfirmed, ...(swaps?.length ? { swaps } : {}) },
+        { signal: ctx.mcpReq.signal },
+      );
+      if (res.refused) {
+        return text(
+          [
+            res.message ?? 'Some cloned voices have no confirmed gender.',
+            ...res.unconfirmed.map((v) => `- ${v.voiceId} "${v.name}"`),
+            'Ask the user to set or confirm their gender in Voices → My voices, or call again with ignoreUnconfirmed=true to leave them out.',
+          ].join('\n'),
+        );
+      }
+      return text(
+        [
+          `${res.applied ? 'Saved' : 'Proposed'} cast (${res.assignments.length} speaker(s)):`,
+          ...res.assignments.map((a) => `- ${a.speakerId} -> ${a.voiceName} (${a.voiceId}, ${a.by})`),
+          ...(res.unassigned.length ? [`Project voice (gender unknown): ${res.unassigned.join(', ')}`] : []),
+          ...(res.unconfirmed.length ? [`Left out, gender not confirmed: ${res.unconfirmed.map((v) => v.name).join(', ')}`] : []),
+          ...res.notes.map((n) => `Note: ${n}`),
+          ...(res.parts ?? []).map((p) => `- part ${p.index} (${p.projectId}): ${p.ok ? 'saved' : p.skipped ? `skipped, ${p.skipped}` : `failed: ${p.error ?? '?'}`}`),
+          res.applied
+            ? 'To hear it, redo from "tts" (start_dubbing fromStep="tts"), or regenerate_voices for an edited project.'
+            : 'Show this to the user; apply with apply=true (swaps for any change they want).',
+        ].join('\n'),
+      );
+    }),
+  );
+
   server.registerTool(
     'export_transcript',
     {

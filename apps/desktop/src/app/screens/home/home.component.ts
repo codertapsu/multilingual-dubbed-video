@@ -59,6 +59,13 @@ export class HomeComponent implements OnInit, OnDestroy {
   private queueTimer: ReturnType<typeof setInterval> | null = null;
 
   /**
+   * The list could not be read. An empty list then said "No projects yet",
+   * which reads as "my projects are gone" to someone whose backend was only
+   * still starting.
+   */
+  protected readonly listFailed = signal(false);
+
+  /**
    * True when no speech-recognition model is installed.
    *
    * The onboarding wizard can now be SKIPPED (offline, blocked mirror, out of
@@ -90,7 +97,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
-    void this.store.refreshProjects();
+    void this.loadList();
     void this.refreshQueue();
     void this.refreshSetupStatus();
     if (!this.claudeTipDismissed()) void this.claude.refresh();
@@ -111,7 +118,13 @@ export class HomeComponent implements OnInit, OnDestroy {
       this.queue.set(null);
       return;
     }
-    if (this.activeKey() !== before) void this.store.refreshProjects();
+    if (this.activeKey() !== before) void this.loadList();
+  }
+
+  /** Refresh the list, and remember whether reading it failed. */
+  private async loadList(): Promise<void> {
+    await this.store.refreshProjects();
+    this.listFailed.set(this.store.lastError() !== null);
   }
 
   /** Check whether any Whisper model is on disk. Best-effort: an unreachable
@@ -175,7 +188,7 @@ export class HomeComponent implements OnInit, OnDestroy {
   }
 
   protected refresh(): void {
-    void this.store.refreshProjects();
+    void this.loadList();
   }
 
   /**
@@ -183,7 +196,7 @@ export class HomeComponent implements OnInit, OnDestroy {
    *  - running/paused  -> processing
    *  - completed       -> editor (review/export from there)
    *  - failed          -> processing (to see error + retry)
-   *  - created         -> processing (run will start there or via wizard)
+   *  - created         -> processing (its Start dubbing card)
    */
   protected open(project: Project): void {
     const id = project.id;

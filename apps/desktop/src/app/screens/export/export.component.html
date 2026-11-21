@@ -3,7 +3,7 @@
     <div>
       <h1>{{ 'export.title' | translate }}</h1>
       <p class="muted">
-        @if (store.current(); as proj) {
+        @if (project(); as proj) {
           {{ proj.name }}
         }
       </p>
@@ -12,7 +12,7 @@
       type="button"
       class="btn"
       (click)="openFolder()"
-      [disabled]="opening()"
+      [disabled]="opening() || !project()"
     >
       {{ (opening() ? 'export.opening' : 'export.open-folder') | translate }}
     </button>
@@ -20,37 +20,65 @@
 
   <vd-error-banner [error]="error()" (dismiss)="dismissError()" />
 
+  <!-- The project could not be loaded: said, with a way out. -->
+  @if (loadFailed()) {
+    <div class="card stack load-failed" role="alert">
+      <div>
+        <strong>{{ 'export.load-failed-title' | translate }}</strong>
+        <p class="muted">{{ 'export.load-failed-body' | translate }}</p>
+      </div>
+      <div class="row">
+        <button type="button" class="btn btn-primary" (click)="load()" [disabled]="reloading()">
+          {{ (reloading() ? 'export.load-retrying' : 'export.load-retry') | translate }}
+        </button>
+        <a class="btn btn-ghost" routerLink="/">{{ 'export.back-to-projects' | translate }}</a>
+      </div>
+    </div>
+  }
+
   <!-- Output summary -->
   <div class="card stack">
     <h2>{{ 'export.final-video' | translate }}</h2>
-    @if (outputPath(); as path) {
-      <p>
-        <span class="label">{{ 'export.output-label' | translate }}</span> <span class="mono">{{ path }}</span>
-      </p>
-    } @else {
-      <p class="muted">{{ 'export.no-output' | translate }}</p>
-    }
-
-    <!-- Best-effort preview -->
-    @if (previewUrl(); as url) {
-      @if (!previewFailed()) {
-        <video
-          class="video-preview"
-          controls
-          preload="metadata"
-          [src]="url"
-          (error)="onPreviewError()"
-        ></video>
+    @if (project()) {
+      @if (videoMade()) {
+        @if (previewUrl(); as url) {
+          @if (!previewFailed()) {
+            <video
+              class="video-preview"
+              controls
+              preload="metadata"
+              [src]="url"
+              (error)="onPreviewFailed(url)"
+            ></video>
+          } @else {
+            <!-- Made, but the in-app player cannot play it (or it was moved or deleted since). -->
+            <p class="soft-note" role="status">{{ 'export.preview-unavailable' | translate }}</p>
+          }
+        }
+        <p class="file-line">
+          <span class="label">{{ 'export.output-label' | translate }}</span> <span class="mono">{{ outputPath() }}</span>
+        </p>
+        <div>
+          <button type="button" class="btn btn-primary" (click)="play()" [disabled]="opening()">
+            {{ 'export.play' | translate }}
+          </button>
+        </div>
       } @else {
-        <div class="badge badge-pending preview-note">
-          {{ 'export.preview-unavailable' | translate }}
+        <div class="soft-note stack-sm" role="status">
+          <strong>{{ 'export.not-made-title' | translate }}</strong>
+          <p class="muted">{{ 'export.not-made-body' | translate }}</p>
+          <div>
+            <a class="btn btn-sm" [routerLink]="['/project', id(), 'processing']">{{ 'export.see-progress' | translate }}</a>
+          </div>
         </div>
       }
+    } @else if (!loadFailed()) {
+      <p class="muted">{{ 'common.loading' | translate }}</p>
     }
   </div>
 
   <!-- Where the finished files go; changing it moves the ones already made. -->
-  @if (store.current(); as proj) {
+  @if (project(); as proj) {
     <div class="card stack">
       <h2>{{ 'output-folder.title' | translate }}</h2>
       <vd-output-folder
@@ -62,7 +90,7 @@
   }
 
   <!-- Logo & greeting: saved at once, used by Render again -->
-  @if (store.current(); as proj) {
+  @if (project(); as proj) {
     <div class="card stack">
       <h2>{{ 'branding.heading' | translate }}</h2>
       <p class="muted">{{ 'branding.intro' | translate }}</p>
@@ -101,7 +129,7 @@
         type="button"
         class="btn btn-primary"
         (click)="rerender()"
-        [disabled]="rendering()"
+        [disabled]="rendering() || busy() !== null || !project()"
       >
         {{ (rendering() ? 'export.rendering' : 'export.rerender') | translate }}
       </button>
@@ -110,5 +138,19 @@
         [label]="'export.rendering-label' | translate"
       />
     </div>
+
+    <!-- A dub runs or waits: Render again is off until it stops, and the
+         pause that frees it is right here. -->
+    @if (busy(); as state) {
+      <div class="busy-note stack-sm" role="status">
+        <p>{{ (state === 'running' ? 'export.busy-running' : 'export.busy-queued') | translate }}</p>
+        <div class="row">
+          <button type="button" class="btn btn-sm" (click)="pauseDub()" [disabled]="pausing()">
+            {{ (pausing() ? 'export.pausing' : state === 'running' ? 'export.pause-dub' : 'export.leave-queue') | translate }}
+          </button>
+          <a class="btn btn-sm btn-ghost" [routerLink]="['/project', id(), 'processing']">{{ 'export.see-progress' | translate }}</a>
+        </div>
+      </div>
+    }
   </div>
 </section>

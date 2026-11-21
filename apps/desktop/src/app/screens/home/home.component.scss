@@ -8,6 +8,15 @@
   padding: var(--vd-sp-6);
 }
 
+/* A dub in the "Now dubbing" summary: a link to its progress, one per line. */
+.queue-row {
+  display: block;
+  color: var(--vd-text-muted);
+}
+.queue-row:hover {
+  color: var(--vd-primary);
+}
+
 .project-list {
   list-style: none;
   margin: 0;

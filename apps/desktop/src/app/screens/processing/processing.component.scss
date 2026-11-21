@@ -130,3 +130,64 @@
     margin: 0;
   }
 }
+
+/* A dub that never started: Start is the one thing to do here. */
+.start-card {
+  border-color: var(--vd-primary);
+  background: var(--vd-primary-soft);
+}
+
+/* The project could not be loaded (the backend is down, the project is gone). */
+.load-failed {
+  border-color: var(--vd-danger);
+
+  p {
+    margin: var(--vd-sp-1) 0 0;
+  }
+}
+
+/* The finished dub: the success moment, with what a user wants next. */
+.ready-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--vd-sp-4);
+  border-color: var(--vd-success);
+  background: var(--vd-success-bg);
+
+  h2,
+  p {
+    margin: 0;
+  }
+}
+.ready-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--vd-success);
+  color: var(--vd-surface);
+
+  svg {
+    width: 22px;
+    height: 22px;
+  }
+}
+.ready-main {
+  flex: 1;
+  min-width: 0;
+}
+.ready-path {
+  .label {
+    font-weight: 650;
+    color: var(--vd-text-muted);
+  }
+  .mono {
+    overflow-wrap: anywhere;
+  }
+}
+.ready-actions {
+  flex-wrap: wrap;
+  margin-top: var(--vd-sp-2);
+}

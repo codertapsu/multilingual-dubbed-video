@@ -61,11 +61,16 @@
   ${EndIf}
   vd_close_background:
 
-  ; Stop them, and keep stopping them until none is left (up to ~30 s): a
-  ; killed process that holds graphics-card memory takes seconds to let go of
-  ; its files, and a Claude session can start its connection again meanwhile
-  ; (several were running when the 0.17.0 update failed). A fixed one-second
-  ; wait was not enough.
+  ; Stop them, and keep stopping them until none is left (about 30 s at most):
+  ; a killed process that holds graphics-card memory takes seconds to let go
+  ; of its files, and a Claude session can start its connection again
+  ; meanwhile (several were running when the 0.17.0 update failed). A fixed
+  ; one-second wait was not enough.
+  ;
+  ; "None is left" means none of THESE names: the check looks for each name it
+  ; kills, never for anything matching vd-*. A wildcard check also matched the
+  ; installer running the check (a test installer named vdtest-...), and would
+  ; hold an update for its whole half minute over any unrelated vd- program.
   StrCpy $7 0
   vd_stop_again:
     nsExec::Exec '"$SYSDIR\taskkill.exe" /F /T /IM videodubber-orchestrator.exe /IM vd-stt-worker.exe /IM vd-translation-worker.exe /IM vd-tts-worker.exe /IM vd-piper.exe /IM vd-uv.exe'
@@ -75,26 +80,25 @@
     nsExec::ExecToStack '"$SYSDIR\tasklist.exe" /NH /FO CSV /FI "IMAGENAME eq videodubber-orchestrator.exe"'
     Pop $0
     Pop $1
-    ${StrLoc} $3 $1 ".exe" ">"
-    ${If} $3 != ""
-      StrCpy $8 1
-    ${EndIf}
+    !insertmacro VD_FLAG_IF_LISTED "videodubber-orchestrator.exe"
+    ; One listing of vd-* (a few short lines), searched for each exact name.
     nsExec::ExecToStack '"$SYSDIR\tasklist.exe" /NH /FO CSV /FI "IMAGENAME eq vd-*"'
     Pop $0
     Pop $1
-    ${StrLoc} $3 $1 ".exe" ">"
-    ${If} $3 != ""
-      StrCpy $8 1
-    ${EndIf}
+    !insertmacro VD_FLAG_IF_LISTED "vd-stt-worker.exe"
+    !insertmacro VD_FLAG_IF_LISTED "vd-translation-worker.exe"
+    !insertmacro VD_FLAG_IF_LISTED "vd-tts-worker.exe"
+    !insertmacro VD_FLAG_IF_LISTED "vd-piper.exe"
+    !insertmacro VD_FLAG_IF_LISTED "vd-uv.exe"
     ${If} $8 = 1
-    ${AndIf} $7 < 45
+    ${AndIf} $7 < 25
       IntOp $7 $7 + 1
       Goto vd_stop_again
     ${EndIf}
   ${If} $8 = 1
-    !insertmacro VD_LOG "background programs still running after 30 s; moving busy files aside"
+    !insertmacro VD_LOG "background programs still running after $7 rounds; moving busy files aside"
   ${Else}
-    !insertmacro VD_LOG "background programs stopped (rounds: $7)"
+    !insertmacro VD_LOG "background programs stopped (extra rounds: $7)"
   ${EndIf}
   ; Windows lets go of an ended program's file a moment after it exits.
   Sleep 800
@@ -109,6 +113,14 @@
   !insertmacro VD_MOVE_ASIDE_IF_BUSY "vd-uv.exe"
   !insertmacro VD_MOVE_ASIDE_IF_BUSY "ffmpeg.exe"
   !insertmacro VD_MOVE_ASIDE_IF_BUSY "ffprobe.exe"
+!macroend
+
+; $8 = 1 when the tasklist output in $1 lists NAME (a CSV line starts with it).
+!macro VD_FLAG_IF_LISTED NAME
+  ${StrLoc} $3 $1 '"${NAME}"' ">"
+  ${If} $3 != ""
+    StrCpy $8 1
+  ${EndIf}
 !macroend
 
 ; Delete a top-level program before the copy; when it is busy, rename it to

@@ -6,6 +6,14 @@
  * writes, the run queue) apply to Claude exactly as to a click.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+/**
+ * The tool call an API request belongs to: sent as X-Request-Id, so the app's
+ * structured log ties its lines to the call, and a tool's error can name them.
+ */
+export const requestContext = new AsyncLocalStorage<{ requestId: string }>();
+
 /** The orchestrator's error envelope (sendError in node-orchestrator/src/server.ts). */
 interface ErrorEnvelope {
   error?: { code?: string; message?: string; remediation?: string; docsRef?: string };
@@ -94,12 +102,15 @@ export class VideoDubberApi {
     const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     let res: Response;
     try {
+      const requestId = requestContext.getStore()?.requestId;
       res = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         signal,
-        ...(body !== undefined
-          ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
-          : {}),
+        headers: {
+          ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
+          ...(requestId ? { 'x-request-id': requestId } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
     } catch (err) {
       if (isConnectionRefused(err)) throw new AppNotRunningError(this.baseUrl);

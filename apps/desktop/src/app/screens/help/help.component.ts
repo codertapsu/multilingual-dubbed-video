@@ -1,3 +1,4 @@
+import { DiagnosticsPanelComponent } from '../../shared/diagnostics/diagnostics-panel.component';
 import type { OnDestroy, OnInit } from '@angular/core';
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
@@ -43,7 +44,7 @@ const NEW_ISSUE_URL =
   selector: 'vd-help',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ErrorBannerComponent, RouterLink, TranslatePipe],
+  imports: [ErrorBannerComponent, RouterLink, TranslatePipe, DiagnosticsPanelComponent],
   templateUrl: './help.component.html',
   styleUrl: './help.component.scss',
 })

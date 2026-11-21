@@ -26,6 +26,8 @@ import type {
   PipelineState,
   PipelineStepId,
   PipelineStepState,
+  ProjectWarning,
+  StepDetail,
 } from '../../core/models';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 
@@ -96,6 +98,25 @@ export class ProcessingComponent implements OnInit, OnDestroy {
   protected readonly steps = computed<PipelineStepState[]>(
     () => this.pipeline()?.steps ?? [],
   );
+
+  /**
+   * What the run decided on its own that the result depends on (a CPU
+   * fallback, speakers not detected, transcription loops repaired): shown,
+   * never only in the log, since the field report found each one by accident.
+   */
+  protected readonly warnings = computed<ProjectWarning[]>(() => this.pipeline()?.warnings ?? []);
+
+  /** A warning in the UI's language; the server's English when the key is new to this build. */
+  protected warningText(w: ProjectWarning): string {
+    const t = this.translate.instant(w.key, w.params);
+    return t === w.key ? w.message : t;
+  }
+
+  /** Where a running step is ("Detecting speakers 3/12"), in the UI's language. */
+  protected detailText(d: StepDetail): string {
+    const t = this.translate.instant(d.key, d.params);
+    return t === d.key ? d.text : t;
+  }
 
   protected readonly overallPercent = computed(() => {
     const p = this.pipeline();

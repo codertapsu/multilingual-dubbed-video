@@ -53,6 +53,14 @@
 .step-progress {
   height: 6px;
 }
+.step-detail {
+  margin: 0;
+  font-size: 0.85rem;
+}
+.warning-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
 .step-error {
   color: var(--vd-danger);
   background: var(--vd-danger-bg);

@@ -198,11 +198,29 @@ export function renderTranslationReport(doc: TranslationReportDoc): string {
 }
 
 /** The pipeline as a short status block. */
-export function renderPipeline(p: PipelineState): string {
-  const lines = [`Pipeline: ${p.status}, ${Math.round(p.progressPercent)}%${p.currentStep ? `, at "${p.currentStep}"` : ''}`];
+export function renderPipeline(p: PipelineState, now = Date.now()): string {
+  // A rough time left (steps do not take equal time): what the field report
+  // asked for after a 10-hour dub the agent could only guess the end of.
+  const started = p.steps.find((s) => s.startedAt)?.startedAt;
+  const elapsedSec = started ? (now - Date.parse(started)) / 1000 : NaN;
+  const eta =
+    p.status === 'running' && Number.isFinite(elapsedSec) && elapsedSec > 0 && p.progressPercent >= 3 && p.progressPercent < 100
+      ? Math.round((elapsedSec * (100 - p.progressPercent)) / p.progressPercent)
+      : undefined;
+  const lines = [
+    `Pipeline: ${p.status}, ${Math.round(p.progressPercent)}%${p.currentStep ? `, at "${p.currentStep}"` : ''}` +
+      `${eta !== undefined ? `, about ${eta >= 3600 ? `${Math.floor(eta / 3600)} h ${String(Math.round((eta % 3600) / 60)).padStart(2, '0')} min` : `${Math.max(1, Math.round(eta / 60))} min`} left` : ''}`,
+  ];
   for (const s of p.steps) {
     const pct = s.status === 'running' ? ` ${Math.round(s.progressPercent)}%` : '';
-    lines.push(`  ${s.id.padEnd(13)} ${s.status}${pct}${s.error ? ` — ${s.error.split('\n')[0]}` : ''}`);
+    // The step's own words for where it is ("Detecting speakers 3/12").
+    const detail = s.status === 'running' && s.detail?.text ? ` (${s.detail.text})` : '';
+    lines.push(`  ${s.id.padEnd(13)} ${s.status}${pct}${detail}${s.error ? ` — ${s.error.split('\n')[0]}` : ''}`);
+  }
+  // What the run did on its own that the result depends on (a CPU fallback,
+  // speakers not detected, repaired transcription loops): never only in a log.
+  if (p.warnings && p.warnings.length > 0) {
+    lines.push('Warnings:', ...p.warnings.map((w) => `  - [${w.code}${w.step ? `, ${w.step}` : ''}] ${w.message}`));
   }
   if (p.awaitingReview) {
     lines.push(

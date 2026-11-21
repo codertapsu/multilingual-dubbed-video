@@ -464,6 +464,11 @@ export interface RunningEntry {
   name: string;
   /** True when this run holds the exclusive heavy-engine lane. */
   heavy: boolean;
+  /** The step it is in, and how far the whole dub is (0..100). */
+  step?: string;
+  progressPercent?: number;
+  /** Seconds left, estimated from the time so far; absent too early to tell. */
+  etaSec?: number;
 }
 
 /** GET /queue — the live scheduler state. */
@@ -480,6 +485,11 @@ export interface QueueState {
   entries: QueueEntry[];
   /** The hardware recommendation, so the UI can explain the limit. */
   capacity: CapacityRecommendation;
+  /**
+   * Who holds the heavy (GPU) lane: a project id, `editor:<project>`,
+   * `preview:<voice>`, or `anonymous` (work outside any run).
+   */
+  laneOwner?: string;
 }
 
 /** Result of an update check via the Tauri updater plugin. */

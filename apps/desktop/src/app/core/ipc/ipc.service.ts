@@ -1,3 +1,4 @@
+import type { DiagnosticsSummaryView } from '../../shared/diagnostics/diagnostics-panel.component';
 import { Injectable, signal } from '@angular/core';
 
 import { environment } from '../environment';
@@ -1065,6 +1066,16 @@ export class IpcService {
   /** PUT /storage/projects-folder — move every project to `<root>/projects` (null: VideoDubber's own folder). */
   moveProjectsFolder(root: string | null): Promise<ProjectsFolderInfo> {
     return this.http<ProjectsFolderInfo>('PUT', '/storage/projects-folder', { root });
+  }
+
+  /** GET /diagnostics/summary — the app's own health and evidence (Help, Settings → Diagnostics). */
+  diagnosticsSummary(): Promise<DiagnosticsSummaryView> {
+    return this.http('GET', '/diagnostics/summary');
+  }
+
+  /** POST /diagnostics/bundle — write a support bundle (zip of logs and reports, no keys) and return its path. */
+  diagnosticsBundle(): Promise<{ path: string; sizeBytes: number }> {
+    return this.http('POST', '/diagnostics/bundle', {});
   }
 
   /**

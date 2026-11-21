@@ -8,6 +8,9 @@
  * `createServer()` is exported for tests/embedding; a main guard starts the
  * server when this file is run directly.
  */
+import { DiagnosticsService } from './diagnostics/diagnosticsService.js';
+import { StructuredLog } from './diagnostics/logFiles.js';
+import { WarningInbox } from './diagnostics/warningInbox.js';
 import { createReadStream, mkdirSync, writeFileSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
@@ -285,7 +288,14 @@ function sanitizeDownloadPrefs(raw: Partial<DownloadPreferences> | undefined): D
 }
 
 export async function createServer(options: CreateServerOptions = {}): Promise<FastifyInstance> {
+  // Warnings raised outside a run (engine fallbacks), kept with the run's step.
+  const warningInbox = new WarningInbox();
   const config = options.config ?? loadConfig();
+  // The app's own logs (diagnostics/logFiles.ts): engines' output, and one
+  // JSON record per line for what matters later (requests that failed or
+  // changed something, runs, warnings, engine fallbacks).
+  const logsDir = join(config.configDir, 'logs');
+  const structured = new StructuredLog(logsDir);
 
   // The projects folder chosen in Settings wins over VIDEODUBBER_PROJECTS_DIR,
   // which the desktop shell always sets to the default (projectsFolder.ts).
@@ -315,6 +325,26 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       },
       ...(onWindows ? { vcRuntimeState: () => systemVcDeps(() => undefined).detect() } : {}),
       cpuThreads: performanceCoresFromSttWorker(config.sttWorkerUrl),
+      logsDir,
+      // A run that fell back to the CPU build says so (a warning on its step).
+      onFallback: (f) => {
+        structured.write({
+          level: f.reason === 'busy' ? 'info' : 'warn',
+          msg: `engine fallback: ${f.packId} (${f.reason}${f.busyWith ? `, GPU held by ${f.busyWith}` : ''})`,
+          ...(f.ownerId ? { projectId: f.ownerId } : {}),
+          event: 'engine-fallback',
+        });
+        if (!f.ownerId || f.ownerId.includes(':') || f.ownerId === 'anonymous') return;
+        warningInbox.push(f.ownerId, {
+          code: 'gpu-fallback',
+          message:
+            f.reason === 'busy'
+              ? `The GPU was busy (${f.busyWith ?? 'another job'}), so "${f.packId}" ran on the next installed runtime, usually the CPU build (slower).`
+              : `"${f.packId}" could not start, so the next installed runtime was used (usually the CPU build). If it keeps happening, reinstall it in Settings → Engines.`,
+          key: f.reason === 'busy' ? 'warning.gpu-fallback-busy' : 'warning.gpu-fallback-failed',
+          params: { pack: f.packId },
+        });
+      },
     });
   const engineBus = options.engineBus ?? new EngineEventBus();
   const engineInstaller =
@@ -387,13 +417,40 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const health =
     options.health ??
     new HealthMonitor({
-      logger: { info: (m) => console.info(m), warn: (m) => console.warn(m) },
+      logger: {
+        info: (m) => console.info(m),
+        warn: (m) => {
+          console.warn(m);
+          structured.write({ level: 'warn', msg: m, event: 'health' });
+        },
+      },
       busy: () => runActivity.anyRunning(),
     });
   health.start();
+  const lastWarningKey = new Map<string, string>();
   // Which step each dub is in (the download gate pauses downloads in heavy ones).
   bus.observe((projectId, event) => {
     runActivity.onEvent(projectId, event);
+    if (event.type === 'step' && event.step.status !== 'running') {
+      structured.write({
+        level: event.step.status === 'failed' ? 'error' : 'info',
+        msg: `step ${event.step.id} ${event.step.status}${event.step.error ? `: ${event.step.error}` : ''}`,
+        projectId,
+        event: 'step',
+      });
+    } else if (event.type === 'error') {
+      structured.write({ level: 'error', msg: `run failed: ${event.error.code} ${event.error.message}`, projectId, event: 'run' });
+    } else if (event.type === 'done') {
+      structured.write({ level: 'info', msg: 'run completed', projectId, event: 'run' });
+    } else if (event.type === 'state' && event.pipeline.warnings?.length) {
+      const key = `${projectId}:${event.pipeline.warnings.map((w) => `${w.step}/${w.code}`).join(',')}`;
+      if (key !== lastWarningKey.get(projectId)) {
+        lastWarningKey.set(projectId, key);
+        for (const w of event.pipeline.warnings) {
+          structured.write({ level: 'warn', msg: w.message, projectId, step: w.step, code: w.code, event: 'warning' });
+        }
+      }
+    }
     if (event.type === 'step' || event.type === 'done' || event.type === 'error') downloads.reconsider();
   });
   // Downloads while dubbing (providers/download/downloadGate.ts): the user's
@@ -504,6 +561,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     options.orchestrator ??
     new LocalJobOrchestrator({
       config,
+      warningInbox,
       store,
       media,
       registry,
@@ -548,6 +606,16 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // After a crash the shell restarted the backend for, the dubs it interrupted
   // continue by themselves (the user's call, 2026-11-21); after a quit they wait.
   void orchestrator.reconcileQueue({ resumeInterrupted: options.recoveredCrash !== undefined });
+  if (options.recoveredCrash) {
+    // The crash belongs in the same timeline as the run events around it, so
+    // the support bundle shows what was running when the backend died.
+    const c = options.recoveredCrash;
+    structured.write({
+      level: 'error',
+      msg: `backend restarted after it stopped at ${c.at}${c.codeHex ? ` (${c.codeHex}${c.meaning ? `: ${c.meaning}` : ''})` : ''}`,
+      event: 'crash',
+    });
+  }
 
   // Settings → Projects folder (where the projects live, and moving them).
   const projectsFolder = new ProjectsFolderService({
@@ -630,6 +698,70 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       ...(origin && allowedOrigin.test(origin) ? { 'Access-Control-Allow-Origin': origin } : {}),
     };
   };
+
+  // What a request did, for the structured log: failures, slow ones, and every
+  // change (not the screens' polling). The plugin sends its tool call's id as
+  // X-Request-Id, so its errors can point at these lines.
+  app.addHook('onResponse', async (req, reply) => {
+    const ms = Math.round(reply.elapsedTime);
+    const changed = req.method !== 'GET' && req.method !== 'OPTIONS' && req.method !== 'HEAD';
+    if (!changed && reply.statusCode < 400 && ms < 5000) return;
+    const mcpRequestId = req.headers['x-request-id'];
+    structured.write({
+      level: reply.statusCode >= 500 ? 'error' : reply.statusCode >= 400 ? 'warn' : 'info',
+      msg: `${req.method} ${req.url.split('?')[0]} ${reply.statusCode} ${ms} ms`,
+      requestId: req.id,
+      ...(typeof mcpRequestId === 'string' ? { mcpRequestId } : {}),
+      event: 'http',
+    });
+  });
+
+  // Settings → Diagnostics, Help → Export support bundle, the plugin's get_diagnostics.
+  const diagnostics = new DiagnosticsService({
+    logsDir,
+    structured,
+    health: (): BackendHealth => {
+      const build = buildInfo();
+      return {
+        version: build.version,
+        ...(build.commit ? { commit: build.commit } : {}),
+        startedAt: health.startedAt.toISOString(),
+        uptimeSec: Math.round(process.uptime()),
+        heapLimitMb: health.heapLimitMb,
+        ...(health.latest() ? { latest: health.latest()! } : {}),
+        peak: health.peak(),
+        samples: health.samples(),
+        ...(options.recoveredCrash ? { recoveredFrom: options.recoveredCrash } : {}),
+      };
+    },
+    queueState: () => orchestrator.queueState(),
+    laneOwner: () => engineManager.heavyLaneOwner(),
+    runningEngines: () => engineManager.runningPackIds(),
+    unusableEngines: () => engineManager.unusablePackIds(),
+    projectsDir: () => store.projectsDir,
+    listProjects: () => store.listProjects(),
+    extras: async () => ({
+      versions: { ...buildInfo(), node: process.version, platform: `${process.platform}-${process.arch}` },
+      system: (await getSystemProfile().catch(() => undefined)) ?? {},
+      // Preferences hold no secrets; keys and site logins are never included.
+      preferences: await setupStore.getPreferences().catch(() => ({})),
+      downloads: { policy: downloadPolicy, gate: downloadGateNow() },
+    }),
+  });
+  app.get('/diagnostics/summary', async (_req, reply) => {
+    try {
+      return await diagnostics.summary();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+  app.post('/diagnostics/bundle', async (_req, reply) => {
+    try {
+      return await diagnostics.bundle();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
 
   // While the projects move to another folder, nothing may change one: a write
   // would land in the folder they are leaving, or in one half-moved. Reading

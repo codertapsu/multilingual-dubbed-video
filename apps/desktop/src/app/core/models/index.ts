@@ -72,6 +72,8 @@ export type {
   // Pipeline
   PipelineStepState,
   PipelineState,
+  ProjectWarning,
+  StepDetail,
   // Media service IO
   AudioExtractResult,
   RenderFinalVideoInput,

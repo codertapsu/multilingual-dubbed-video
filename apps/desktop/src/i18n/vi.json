@@ -520,7 +520,8 @@
     "pause-hint": "Tiến độ được lưu lại: bạn có thể đóng VideoDubber hoặc tắt máy, rồi tiếp tục sau.",
     "paused-title": "⏸ Đã tạm dừng",
     "paused-title-at": "⏸ Đã tạm dừng ở bước “{{ step }}”",
-    "paused-body": "Mọi phần đã làm đều được lưu, kể cả khi bạn đóng VideoDubber hay tắt máy. Bấm Tiếp tục lồng tiếng để làm tiếp từ chỗ đã dừng: các bước đã xong không phải làm lại, và bước đang dở vẫn giữ phần đã hoàn thành (các dòng đã dịch, các đoạn giọng đọc)."
+    "paused-body": "Mọi phần đã làm đều được lưu, kể cả khi bạn đóng VideoDubber hay tắt máy. Bấm Tiếp tục lồng tiếng để làm tiếp từ chỗ đã dừng: các bước đã xong không phải làm lại, và bước đang dở vẫn giữ phần đã hoàn thành (các dòng đã dịch, các đoạn giọng đọc).",
+    "warnings": "Những việc bản lồng tiếng này đã tự xử lý"
   },
   "onboarding": {
     "title": "Chào mừng đến với VideoDubber",
@@ -1635,5 +1636,45 @@
     "ai": "AI chọn chỗ cắt",
     "recap": "Lặp lại từ phần trước (giây)",
     "auto-start": "Tạo và lồng tiếng các phần ngay, không dừng lại để kiểm tra chỗ cắt"
+  },
+  "warning": {
+    "gpu-fallback-busy": "Card đồ hoạ đang bận việc khác nên một bước đã chạy bằng bản dùng CPU, chậm hơn ({{pack}}).",
+    "gpu-fallback-failed": "Không khởi động được bộ máy GPU ({{pack}}) nên một bước đã chạy bằng bản dùng CPU, chậm hơn. Nếu lặp lại, hãy cài lại nó trong Cài đặt → Engine."
+  },
+  "diagnostics": {
+    "heading": "Chẩn đoán",
+    "intro": "Ứng dụng đang làm gì và đã có lỗi gì: tình trạng của chính nó, card đồ hoạ, hàng đợi, các bộ máy và thông báo cuối của chúng, dung lượng ổ đĩa, các cảnh báo và lỗi gần đây, và báo cáo khi ứng dụng gặp sự cố.",
+    "refresh": "Làm mới",
+    "loading": "Đang tải…",
+    "bundle": "Xuất gói hỗ trợ",
+    "bundling": "Đang ghi…",
+    "bundle-hint": "Một tệp zip gồm nhật ký, báo cáo sự cố và thông tin ở trên, để đính kèm khi báo lỗi. Gói không bao giờ chứa khoá API hay thông tin đăng nhập trang web, và thư mục người dùng được ghi là ~.",
+    "bundle-done": "Đã ghi:",
+    "open-folder": "Mở thư mục",
+    "backend": "Phần nền",
+    "uptime": "đã chạy {{time}}",
+    "memory": "bộ nhớ {{mb}} MB (cao nhất {{peak}}, giới hạn {{limit}})",
+    "lag": "độ phản hồi: trễ {{p99}} ms (tệ nhất {{worst}} ms)",
+    "free-ram": "còn trống {{pct}}% RAM",
+    "recovered": "Đã khởi động lại",
+    "recovered-at": "sau khi phần nền dừng lúc {{time}} (mã {{code}}).",
+    "gpu": "Card đồ hoạ",
+    "gpu-use": "đã dùng {{used}}/{{total}} MB, bận {{busy}}%",
+    "gpu-none": "Không có card đồ hoạ NVIDIA nào phản hồi.",
+    "lane-held": "Đang được dùng bởi: {{owner}}",
+    "lane-free": "Đang rảnh cho bản lồng tiếng tiếp theo.",
+    "queue": "Hàng đợi",
+    "eta": "còn khoảng {{time}}",
+    "queue-empty": "Không có bản lồng tiếng nào đang chạy hay chờ.",
+    "engines": "Bộ máy",
+    "engines-none": "Không có bộ máy nào đang chạy.",
+    "engines-failed": "Không khởi động được trong phiên này: {{list}}",
+    "engine-output": "Thông báo cuối của {{id}}",
+    "disk": "Ổ đĩa",
+    "disk-free": "Còn trống {{gb}} GB ở ổ chứa dự án.",
+    "recent": "Sự cố gần đây",
+    "recent-none": "Không có cảnh báo hay lỗi nào gần đây.",
+    "crashes": "Báo cáo sự cố",
+    "crashes-none": "Không có."
   }
 }

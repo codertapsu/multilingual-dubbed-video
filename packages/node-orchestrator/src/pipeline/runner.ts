@@ -46,6 +46,8 @@ import {
   projectOutputVideoPath,
   projectOutputThumbnailPath,
   type AlignedSegment,
+  type ProjectWarning,
+  type StepDetail,
   type PipelineState,
   type PipelineStepId,
   type Project,
@@ -119,6 +121,7 @@ import { rangedMediaInfo } from '../series/seriesRange.js';
 import { reuseRecapTranslations } from '../series/recap.js';
 import { siteTranscript } from '../providers/download/siteSubtitles.js';
 import { thumbnailMomentMs } from './thumbnailMoment.js';
+import type { WarningInbox } from '../diagnostics/warningInbox.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
 import { describeStretch } from '../media.js';
@@ -178,6 +181,8 @@ export interface RunnerDeps {
    * no copy of its branding yet fails at the mix/render with how to fix it.
    */
   brandKit?: Pick<BrandKit, 'get'>;
+  /** Warnings raised outside the run (engine fallbacks), picked up when a step ends. */
+  warningInbox?: WarningInbox;
 }
 
 /** Options controlling a single run. */
@@ -339,7 +344,13 @@ function toGroupInputs(segments: readonly TranscriptSegment[]): {
 }
 
 /** Progress callback for a long-running step (fraction in 0..1). */
-export type StepProgress = (fraction: number) => Promise<void>;
+export type StepProgress = ((fraction: number, detail?: StepDetail) => Promise<void>) & {
+  /**
+   * Record something that went worse than asked (models/diagnostics.ts): kept
+   * with this step in the pipeline, shown in the app and get_project.
+   */
+  warn?: (warning: Omit<ProjectWarning, 'at' | 'step'>) => void;
+};
 
 /**
  * Above this time-stretch ratio a fitted line audibly changes delivery (rushed
@@ -614,15 +625,39 @@ export class PipelineRunner {
         // "running" — or after a pause was saved, with nothing running.
         let progressWrite: Promise<unknown> = Promise.resolve();
         let stepReturned = false;
-        const onProgress: StepProgress = (fraction) => {
-          if (options.signal.aborted || stepReturned) return Promise.resolve();
-          const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
-          const write = progressWrite.then(async () => {
-            if (stepReturned) return;
-            state = await transition(this.deps, state, stepId, 'running', { progressPercent: pct });
-          });
-          progressWrite = write.catch(() => undefined);
-          return write;
+        const stepWarnings: ProjectWarning[] = [];
+        const onProgress: StepProgress = Object.assign(
+          (fraction: number, detail?: StepDetail) => {
+            if (options.signal.aborted || stepReturned) return Promise.resolve();
+            const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+            const write = progressWrite.then(async () => {
+              if (stepReturned) return;
+              state = await transition(this.deps, state, stepId, 'running', {
+                progressPercent: pct,
+                ...(detail !== undefined ? { detail } : {}),
+              });
+            });
+            progressWrite = write.catch(() => undefined);
+            return write;
+          },
+          {
+            warn: (w: Omit<ProjectWarning, 'at' | 'step'>) => {
+              stepWarnings.push({ ...w, step: stepId, at: new Date().toISOString() });
+              this.deps.logger.warn(w.message);
+            },
+          },
+        );
+        // This step's warnings replace the ones an earlier run of it left.
+        const settleWarnings = (): void => {
+          const fromInbox = (this.deps.warningInbox?.drain(project.id) ?? []).map((w) => ({
+            ...w,
+            step: stepId,
+            at: w.at ?? new Date().toISOString(),
+          }));
+          const mine = [...stepWarnings, ...fromInbox];
+          const others = (state.warnings ?? []).filter((w) => w.step !== stepId);
+          const warnings = [...others, ...mine];
+          state = warnings.length > 0 ? { ...state, warnings } : (({ warnings: _w, ...rest }) => rest)(state);
         };
 
         try {
@@ -643,6 +678,7 @@ export class PipelineRunner {
           await progressWrite;
           const appError = toAppError(err);
           logger.errorWithCause(`Step "${pipelineStepLabel(stepId)}" failed`, appError);
+          settleWarnings();
           state = await transition(this.deps, state, stepId, 'failed', { error: appError.message });
           bus.emit({ type: 'error', error: appError });
           // Reflect failure on the project record.
@@ -652,6 +688,7 @@ export class PipelineRunner {
 
         stepReturned = true;
         await progressWrite;
+        settleWarnings();
         state = await transition(this.deps, state, stepId, 'completed', { progressPercent: 100 });
         logger.info(`Step "${pipelineStepLabel(stepId)}" completed.`);
 

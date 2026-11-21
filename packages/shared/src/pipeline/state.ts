@@ -66,7 +66,7 @@ export function normalizePipelineState(state: PipelineState): PipelineState {
 
 /** Fields of a step that callers may patch alongside a status change. */
 export type StepPatch = Partial<
-  Pick<PipelineStepState, 'progressPercent' | 'startedAt' | 'finishedAt' | 'error'>
+  Pick<PipelineStepState, 'progressPercent' | 'startedAt' | 'finishedAt' | 'error' | 'detail'>
 >;
 
 /**
@@ -165,6 +165,13 @@ export function setStepStatus(
     } else if (status !== 'failed') {
       // Clear any stale error when leaving the failed state.
       next.error = undefined;
+    }
+
+    // Where a long step is inside itself: only while it runs.
+    if (status === 'running') {
+      if (patch && 'detail' in patch) next.detail = patch.detail;
+    } else {
+      delete next.detail;
     }
 
     // Reset transient fields when going back to pending.

@@ -25,7 +25,7 @@ import type {
   TimelineDocument,
   TranslationDocContext,
 } from '@videodubber/shared';
-import { AppNotRunningError, VideoDubberApiError, type VideoDubberApi } from './api.js';
+import { AppNotRunningError, VideoDubberApiError, requestContext, type VideoDubberApi } from './api.js';
 import { cookiesOfSite, takeCookieExport } from './cookies.js';
 import { ensureAppRunning, type LaunchTarget } from './launcher.js';
 import {
@@ -205,7 +205,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
 
   const text = (body: string): CallToolResult => ({ content: [{ type: 'text', text: body }] });
 
-  const failure = (err: unknown): CallToolResult => {
+  const failure = (err: unknown, requestId?: string): CallToolResult => {
     let message: string;
     if (err instanceof AppNotRunningError) {
       message = opts.launch
@@ -216,6 +216,10 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     } else {
       message = `Unexpected error: ${err instanceof Error ? err.message : String(err)}`;
     }
+    // Where to look: the app's log lines for this call carry the same id.
+    if (requestId && !(err instanceof AppNotRunningError)) {
+      message += `\nLog reference: ${requestId} (get_diagnostics shows recent errors and engine output).`;
+    }
     return { content: [{ type: 'text', text: message }], isError: true };
   };
 
@@ -223,22 +227,25 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
   const guarded =
     <A>(fn: (args: A, ctx: ServerContext) => Promise<CallToolResult>) =>
     async (args: A, ctx: ServerContext): Promise<CallToolResult> => {
-      try {
-        const state = await ensureAppRunning(api, {
-          ...(opts.launch ? { target: opts.launch } : {}),
-          signal: ctx.mcpReq.signal,
-        });
-        const result = await fn(args, ctx);
-        if (state === 'started' && result.content[0]?.type === 'text') {
-          result.content[0] = {
-            type: 'text',
-            text: `(VideoDubber was not running, so I started it.)\n${result.content[0].text}`,
-          };
+      const requestId = `mcp-${Math.random().toString(36).slice(2, 10)}`;
+      return requestContext.run({ requestId }, async () => {
+        try {
+          const state = await ensureAppRunning(api, {
+            ...(opts.launch ? { target: opts.launch } : {}),
+            signal: ctx.mcpReq.signal,
+          });
+          const result = await fn(args, ctx);
+          if (state === 'started' && result.content[0]?.type === 'text') {
+            result.content[0] = {
+              type: 'text',
+              text: `(VideoDubber was not running, so I started it.)\n${result.content[0].text}`,
+            };
+          }
+          return result;
+        } catch (err) {
+          return failure(err, requestId);
         }
-        return result;
-      } catch (err) {
-        return failure(err);
-      }
+      });
     };
 
   /** Report progress when the client asked for it (a progressToken in _meta). */
@@ -332,6 +339,98 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           ? `Claude through Mother Claude: reachable at ${motherClaude.url}${motherClaude.keyRejected ? ' (but its HTTP API refused the key)' : ''}.`
           : `Claude through Mother Claude: not reachable${motherClaude?.url ? ` at ${motherClaude.url}` : ''} (start Mother Claude's HTTP API to use it).`,
       ];
+      return text(lines.join('\n'));
+    }),
+  );
+
+  /** Seconds as "1 h 05 min" / "12 min" / "40 s". */
+  const duration = (sec: number): string =>
+    sec >= 3600 ? `${Math.floor(sec / 3600)} h ${String(Math.round((sec % 3600) / 60)).padStart(2, '0')} min` : sec >= 60 ? `${Math.round(sec / 60)} min` : `${Math.round(sec)} s`;
+
+  server.registerTool(
+    'get_queue',
+    {
+      title: 'The dubbing queue',
+      description:
+        'What is dubbing now (step, progress, estimated time left), what waits and why (no free slot, the GPU is busy, the queue is paused), who holds the GPU lane (a dub, an editor action or a voice preview), and the points budget.',
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async (_args, ctx) => {
+      type Q = {
+        maxProjects: number;
+        budgetPoints: number;
+        usedPoints: number;
+        paused: boolean;
+        laneOwner?: string;
+        running: { projectId: string; name: string; heavy: boolean; step?: string; progressPercent?: number; etaSec?: number }[];
+        entries: { projectId: string; name: string; position: number; reason: string; message: string }[];
+      };
+      const q = await api.get<Q>('/queue', { signal: ctx.mcpReq.signal });
+      const lines = [
+        `Dubs at once: ${q.maxProjects} (points ${q.usedPoints}/${q.budgetPoints})${q.paused ? '; the queue is PAUSED (Settings)' : ''}.`,
+        `GPU lane: ${q.laneOwner ? `held by ${q.laneOwner}` : 'free'}.`,
+        q.running.length > 0 ? 'Dubbing now:' : 'Nothing is dubbing.',
+        ...q.running.map(
+          (r) =>
+            `- ${r.projectId} "${r.name}"${r.step ? `, ${r.step}` : ''}${r.progressPercent !== undefined ? `, ${r.progressPercent}%` : ''}${r.etaSec !== undefined ? `, about ${duration(r.etaSec)} left` : ''}${r.heavy ? ' (uses the GPU lane)' : ''}`,
+        ),
+        ...(q.entries.length > 0 ? ['Waiting:'] : []),
+        ...q.entries.map((e) => `- ${e.position}. ${e.projectId} "${e.name}": ${e.reason} (${e.message})`),
+      ];
+      return text(lines.join('\n'));
+    }),
+  );
+
+  server.registerTool(
+    'get_diagnostics',
+    {
+      title: 'What went wrong, and where',
+      description:
+        'The app\'s own health and evidence: uptime, memory and event-loop delay; GPU memory and who holds the GPU lane; the queue; engines running or failed, with their last output; disk used per project and free disk; recent warnings and errors (with the log references tool errors give); crash reports. bundle=true also writes a support bundle (a zip of logs and reports, no keys or logins) and returns its path.',
+      inputSchema: z.object({ bundle: z.boolean().optional() }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    guarded(async ({ bundle }, ctx) => {
+      type R = { t?: string; level: string; msg: string; projectId?: string; mcpRequestId?: string };
+      type D = {
+        health: { version: string; commit?: string; uptimeSec: number; heapLimitMb: number; latest?: { rssMb: number; heapUsedMb: number; lagP99Ms: number; lagMaxMs: number; freeRamShare: number }; peak: { rssMb: number; lagMaxMs: number }; recoveredFrom?: { at: string; codeHex?: string; meaning?: string } };
+        gpu: { name: string; memoryUsedMb: number; memoryTotalMb: number; utilizationPct: number }[] | null;
+        laneOwner?: string;
+        queue: { running: { projectId: string }[]; entries: { projectId: string; reason: string }[] } | null;
+        engines: { running: string[]; unusable: string[]; lastOutput: Record<string, string> };
+        disk: { freeBytes?: number; projectsDir: string; projects: { id: string; name: string; bytes: number }[] };
+        recent: { warnings: R[]; errors: R[] };
+        crashes: { file: string; at: string; kind: string }[];
+      };
+      const d = await api.get<D>('/diagnostics/summary', { signal: ctx.mcpReq.signal, timeoutMs: 120_000 });
+      const gb = (b: number): string => `${(b / 1024 ** 3).toFixed(1)} GB`;
+      const h = d.health;
+      const lines = [
+        `VideoDubber ${h.version}${h.commit ? ` (${h.commit})` : ''}, up ${duration(h.uptimeSec)}.`,
+        ...(h.recoveredFrom ? [`Restarted after a crash at ${h.recoveredFrom.at}${h.recoveredFrom.codeHex ? ` (${h.recoveredFrom.codeHex}: ${h.recoveredFrom.meaning ?? ''})` : ''}.`] : []),
+        h.latest
+          ? `Memory ${Math.round(h.latest.rssMb)} MB (peak ${Math.round(h.peak.rssMb)}, heap limit ${h.heapLimitMb} MB); event-loop delay p99 ${h.latest.lagP99Ms} ms (worst ${h.peak.lagMaxMs} ms); free RAM ${Math.round(h.latest.freeRamShare * 100)}%.`
+          : 'No health sample yet (one is taken every minute).',
+        d.gpu
+          ? `GPU: ${d.gpu.map((g) => `${g.name} ${g.memoryUsedMb}/${g.memoryTotalMb} MB, ${g.utilizationPct}% busy`).join('; ')}.`
+          : 'GPU: no NVIDIA card answered.',
+        `GPU lane: ${d.laneOwner ? `held by ${d.laneOwner}` : 'free'}.`,
+        d.queue ? `Queue: ${d.queue.running.length} dubbing, ${d.queue.entries.length} waiting${d.queue.entries.length ? ` (${[...new Set(d.queue.entries.map((e) => e.reason))].join(', ')})` : ''}.` : 'Queue: unavailable.',
+        `Engines running: ${d.engines.running.join(', ') || 'none'}${d.engines.unusable.length ? `; failed to start this session: ${d.engines.unusable.join(', ')}` : ''}.`,
+        ...Object.entries(d.engines.lastOutput)
+          .filter(([, t]) => t.trim())
+          .map(([id, t]) => `Last output of ${id}:\n${t.trim().split('\n').slice(-12).join('\n')}`),
+        `Disk: ${d.disk.freeBytes !== undefined ? `${gb(d.disk.freeBytes)} free` : 'free space unknown'} where the projects are (${d.disk.projectsDir}).`,
+        ...d.disk.projects.slice(0, 10).map((p) => `- ${p.id} "${p.name}": ${gb(p.bytes)}`),
+        ...(d.recent.errors.length ? ['Recent errors:', ...d.recent.errors.slice(-10).map((r) => `- ${r.t ?? ''} ${r.msg}${r.projectId ? ` [${r.projectId}]` : ''}${r.mcpRequestId ? ` (ref ${r.mcpRequestId})` : ''}`)] : ['No recent errors.']),
+        ...(d.recent.warnings.length ? ['Recent warnings:', ...d.recent.warnings.slice(-10).map((r) => `- ${r.t ?? ''} ${r.msg}${r.projectId ? ` [${r.projectId}]` : ''}`)] : []),
+        ...(d.crashes.length ? ['Crash reports:', ...d.crashes.slice(0, 5).map((c) => `- ${c.at} ${c.kind}: ${c.file}`)] : ['No crash reports.']),
+      ];
+      if (bundle) {
+        const b = await api.post<{ path: string; sizeBytes: number }>('/diagnostics/bundle', {}, { signal: ctx.mcpReq.signal, timeoutMs: 300_000 });
+        lines.push(`Support bundle: ${b.path} (${(b.sizeBytes / 1024 ** 2).toFixed(1)} MB). It has logs and reports, no keys or logins.`);
+      }
       return text(lines.join('\n'));
     }),
   );

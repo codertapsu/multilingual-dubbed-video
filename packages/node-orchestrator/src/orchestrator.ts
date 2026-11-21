@@ -8,6 +8,7 @@
  * It owns the running-jobs map (one active run per project, each with its own
  * AbortController) and composes the {@link PipelineRunner} from injected deps.
  */
+import type { WarningInbox } from './diagnostics/warningInbox.js';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -103,8 +104,20 @@ import {
 } from './workspace/timelineEdit.js';
 
 /** Injected dependencies for the orchestrator (all mockable in tests). */
+/**
+ * Seconds left in a run, from the time so far and how far it is: rough (steps
+ * do not take equal time), and absent before 3 % when it would only guess. Pure.
+ */
+export function etaSeconds(startedAtIso: string, progressPercent: number, now = Date.now()): number | undefined {
+  const elapsed = (now - Date.parse(startedAtIso)) / 1000;
+  if (!Number.isFinite(elapsed) || elapsed <= 0 || progressPercent < 3 || progressPercent >= 100) return undefined;
+  return Math.round((elapsed * (100 - progressPercent)) / progressPercent);
+}
+
 export interface OrchestratorDeps {
   config: OrchestratorConfig;
+  /** Warnings raised outside a run (engine fallbacks), for its steps to keep. */
+  warningInbox?: WarningInbox;
   store: ProjectStore;
   media: PipelineMediaService;
   registry: ProviderRegistry;
@@ -340,6 +353,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       // between runs, so the next translation budgets lines at the voice's pace.
       voiceRates: voiceRateBookFor(this.deps.config.configDir),
       ...(this.deps.brandKit ? { brandKit: this.deps.brandKit } : {}),
+      ...(this.deps.warningInbox ? { warningInbox: this.deps.warningInbox } : {}),
     };
     return { runner: new PipelineRunner(deps), bus, logger };
   }
@@ -1891,11 +1905,22 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       usedPoints: this.runningRuns().reduce((sum, r) => sum + r.points, 0),
       paused,
       capacity,
-      running: [...this.running.keys()].map((projectId) => ({
-        projectId,
-        name: names.get(projectId) ?? projectId,
-        heavy: this.workloads.get(projectId)?.needsHeavyEngine === true,
-      })),
+      running: await Promise.all(
+        [...this.running.keys()].map(async (projectId) => {
+          const pipeline = await this.deps.store.getPipeline(projectId).catch(() => undefined);
+          const started = pipeline?.steps.find((s) => s.startedAt)?.startedAt;
+          const eta = pipeline && started ? etaSeconds(started, pipeline.progressPercent) : undefined;
+          return {
+            projectId,
+            name: names.get(projectId) ?? projectId,
+            heavy: this.workloads.get(projectId)?.needsHeavyEngine === true,
+            ...(pipeline?.currentStep ? { step: pipeline.currentStep } : {}),
+            ...(pipeline ? { progressPercent: Math.round(pipeline.progressPercent) } : {}),
+            ...(eta !== undefined ? { etaSec: eta } : {}),
+          };
+        }),
+      ),
+      ...(this.deps.engines?.heavyLaneOwner() ? { laneOwner: this.deps.engines.heavyLaneOwner()! } : {}),
       entries: this.queue.map((projectId, i) => ({
         projectId,
         name: names.get(projectId) ?? projectId,

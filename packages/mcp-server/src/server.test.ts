@@ -163,6 +163,8 @@ describe('VideoDubber MCP server', () => {
         'follow_jobs_command', 'list_presets', 'dub_downloads', 'get_outputs', 'mark_published',
         'set_download_login', 'get_download_login', 'delete_project', 'list_brand_kit', 'get_series',
         'set_split_plan', 'start_series',
+        // Production hardening (0.17.0).
+        'get_queue', 'get_diagnostics',
       ].sort(),
     );
     for (const t of tools) {
@@ -172,6 +174,7 @@ describe('VideoDubber MCP server', () => {
     const ro = (n: string) => tools.find((t) => t.name === n)!.annotations?.readOnlyHint;
     expect(ro('get_transcript')).toBe(true);
     expect(ro('set_translations')).toBe(false);
+    expect(ro('get_queue')).toBe(true);
     const { prompts } = await client.listPrompts();
     expect(prompts.map((p) => p.name).sort()).toEqual(['dub_video', 'improve_translation']);
   });

@@ -138,6 +138,17 @@
     </div>
   </div>
 
+  @if (warnings().length > 0) {
+    <div class="card banner-warning stack" role="status">
+      <strong>{{ 'processing.warnings' | translate }}</strong>
+      <ul class="stack-sm warning-list">
+        @for (w of warnings(); track $index) {
+          <li>{{ warningText(w) }}@if (w.step) { <span class="muted"> · {{ stepLabels[w.step] | translate }}</span> }</li>
+        }
+      </ul>
+    </div>
+  }
+
   <!-- Step list -->
   <ol class="step-list" [attr.aria-label]="'processing.steps-aria' | translate">
     @for (step of steps(); track step.id) {
@@ -158,6 +169,10 @@
           >
             <span [style.width.%]="stepPercent(step)"></span>
           </div>
+        }
+
+        @if (step.status === 'running' && step.detail; as d) {
+          <p class="hint muted step-detail">{{ detailText(d) }}</p>
         }
 
         @if (step.error) {

@@ -520,7 +520,8 @@
     "pause-hint": "Your progress is saved: you can close VideoDubber or turn off the computer, and continue later.",
     "paused-title": "⏸ Paused",
     "paused-title-at": "⏸ Paused at “{{ step }}”",
-    "paused-body": "Everything done so far is saved, even if you close VideoDubber or turn off the computer. Continue dubbing picks up where it stopped: finished steps are not redone, and the step that was running keeps the part it had finished (translated lines, voice clips)."
+    "paused-body": "Everything done so far is saved, even if you close VideoDubber or turn off the computer. Continue dubbing picks up where it stopped: finished steps are not redone, and the step that was running keeps the part it had finished (translated lines, voice clips).",
+    "warnings": "What this dub did on its own"
   },
   "onboarding": {
     "title": "Welcome to VideoDubber",
@@ -1635,5 +1636,45 @@
     "ai": "AI that chooses the cuts",
     "recap": "Repeat from the part before (s)",
     "auto-start": "Make and dub the parts right away, without stopping to check the cuts"
+  },
+  "warning": {
+    "gpu-fallback-busy": "The graphics card was busy with another job, so a step ran on the slower CPU build ({{pack}}).",
+    "gpu-fallback-failed": "A GPU engine ({{pack}}) could not start, so a step ran on the slower CPU build. If it keeps happening, reinstall it in Settings → Engines."
+  },
+  "diagnostics": {
+    "heading": "Diagnostics",
+    "intro": "What the app is doing and what went wrong: its own health, the graphics card, the queue, the engines and their last output, disk use, recent warnings and errors, and crash reports.",
+    "refresh": "Refresh",
+    "loading": "Loading…",
+    "bundle": "Export support bundle",
+    "bundling": "Writing…",
+    "bundle-hint": "A zip of the logs, crash reports and the state above, to attach to a bug report. It never contains API keys or site logins, and your home folder is written as ~.",
+    "bundle-done": "Written:",
+    "open-folder": "Open folder",
+    "backend": "Backend",
+    "uptime": "running for {{time}}",
+    "memory": "memory {{mb}} MB (peak {{peak}}, limit {{limit}})",
+    "lag": "responsiveness: delay {{p99}} ms (worst {{worst}} ms)",
+    "free-ram": "{{pct}}% of RAM free",
+    "recovered": "Restarted",
+    "recovered-at": "after the backend stopped at {{time}} (code {{code}}).",
+    "gpu": "Graphics card",
+    "gpu-use": "{{used}} of {{total}} MB used, {{busy}}% busy",
+    "gpu-none": "No NVIDIA graphics card answered.",
+    "lane-held": "In use by: {{owner}}",
+    "lane-free": "Free for the next dub.",
+    "queue": "Queue",
+    "eta": "about {{time}} left",
+    "queue-empty": "Nothing is dubbing or waiting.",
+    "engines": "Engines",
+    "engines-none": "None running.",
+    "engines-failed": "Could not start this session: {{list}}",
+    "engine-output": "Last output of {{id}}",
+    "disk": "Disk",
+    "disk-free": "{{gb}} GB free where the projects are.",
+    "recent": "Recent problems",
+    "recent-none": "No recent warnings or errors.",
+    "crashes": "Crash reports",
+    "crashes-none": "None."
   }
 }

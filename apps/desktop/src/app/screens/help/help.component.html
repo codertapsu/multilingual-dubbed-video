@@ -93,6 +93,13 @@
   </div>
 
   <!-- ===================== Report a problem ===================== -->
+  <!-- The app's own health and evidence, and a support bundle to send (diagnostics/). -->
+  <div class="card stack" id="diagnostics">
+    <h2>{{ 'diagnostics.heading' | translate }}</h2>
+    <p class="hint muted">{{ 'diagnostics.intro' | translate }}</p>
+    <vd-diagnostics-panel />
+  </div>
+
   <div class="card stack">
     <h2>{{ 'help.report' | translate }}</h2>
     <p class="hint">{{ 'help.report-hint' | translate }}</p>

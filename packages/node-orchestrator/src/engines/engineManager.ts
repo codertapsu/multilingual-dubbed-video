@@ -15,6 +15,7 @@
  * The process launcher and the health probe are injectable so the policy +
  * lifecycle are unit-testable without real binaries.
  */
+import { RotatingLog, engineLogFile, stampLines } from '../diagnostics/logFiles.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
@@ -470,6 +471,18 @@ export interface EngineManagerDeps {
    * system/performanceCores.ts); undefined leaves each engine's own default.
    */
   cpuThreads?: () => Promise<number | undefined>;
+  /**
+   * A preferred engine was passed over for the next installed one (the CPU
+   * build, usually): because the GPU was busy with another owner, or because it
+   * would not start. The owner is the run (project id) or editor action.
+   */
+  onFallback?: (info: { packId: string; ownerId?: string; reason: 'busy' | 'failed'; busyWith?: string }) => void;
+  /**
+   * `<config>/logs`: each engine's stderr goes to `engines/<pack>.log` there
+   * (diagnostics/logFiles.ts), so an engine that fails mid-request leaves its
+   * traceback. Absent (tests): kept in memory only, as before.
+   */
+  logsDir?: string;
 }
 
 export class EngineManager {
@@ -525,6 +538,16 @@ export class EngineManager {
     return this.running.has(packId);
   }
 
+  /** The engines running now (diagnostics). */
+  runningPackIds(): string[] {
+    return [...this.running.keys()];
+  }
+
+  /** The engines that failed to start in this session (diagnostics). */
+  unusablePackIds(): string[] {
+    return [...this.unusablePacks];
+  }
+
   /**
    * Ensure a pack's server is running and return its base URL. Idempotent: a
    * second call returns the existing instance. When `exclusive` is set, other
@@ -574,10 +597,27 @@ export class EngineManager {
         const busy = err instanceof AppErrorException && err.code === 'ENGINE_BUSY';
         if (!busy) this.unusablePacks.add(packId);
         if (order.length > 1) {
-          this.deps.logger?.warn(
-            `Engine pack "${packId}" could not start; falling back to the next installed runtime. ` +
-              'Remove or reinstall it in Settings → Engines if this persists.',
-          );
+          // Busy is not broken: telling the user to reinstall a working GPU
+          // engine because llama.cpp held the card (2026-11-21) sent them the
+          // wrong way. Say which is which.
+          const owner = opts.ownerId ?? currentEngineOwner();
+          if (busy) {
+            this.deps.logger?.info(
+              `Engine pack "${packId}" is waiting on the GPU, which ${this.heavyOwner ?? 'another job'} is using; ` +
+                'this step uses the next installed runtime (usually the CPU build, slower). Nothing needs reinstalling.',
+            );
+          } else {
+            this.deps.logger?.warn(
+              `Engine pack "${packId}" could not start; falling back to the next installed runtime. ` +
+                'Remove or reinstall it in Settings → Engines if this persists.',
+            );
+          }
+          this.deps.onFallback?.({
+            packId,
+            ...(owner ? { ownerId: owner } : {}),
+            reason: busy ? 'busy' : 'failed',
+            ...(busy && this.heavyOwner ? { busyWith: this.heavyOwner } : {}),
+          });
         }
       }
     }
@@ -712,14 +752,22 @@ export class EngineManager {
     // instead of the opaque "did not become healthy". Bounded so we never buffer
     // unboundedly. The exit handler also clears the running entry.
     let stderrTail = '';
+    // Everything the engine says, kept on disk with its start and exit: the
+    // traceback of a failure mid-request (speaker detection's HTTP 500 after
+    // three hours, 2026-11-21) is otherwise lost.
+    const engineLog = this.deps.logsDir ? new RotatingLog(engineLogFile(this.deps.logsDir, packId)) : undefined;
+    engineLog?.write(`${new Date().toISOString()} --- started on port ${port}${opts.model ? ` with ${opts.model}` : ''}\n`);
     child.stderr?.on('data', (d: Buffer) => {
-      stderrTail = (stderrTail + d.toString()).slice(-4000);
+      const text = d.toString();
+      stderrTail = (stderrTail + text).slice(-4000);
+      engineLog?.write(stampLines(text));
     });
     let exitNote = '';
     let exitCode: number | null = null;
     /** Died before ever answering: waiting out the start timeout cannot help. */
     let crashed = false;
     child.on?.('exit', (code: number | null, signal: string | null) => {
+      engineLog?.write(`${new Date().toISOString()} --- exited (${code ?? signal ?? 'no code'})\n`);
       exitCode = code;
       if (code != null && code !== 0) exitNote = ` (process exited with code ${code})`;
       else if (signal) exitNote = ` (process killed by ${signal})`;

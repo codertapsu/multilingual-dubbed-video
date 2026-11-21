@@ -41,6 +41,7 @@ export class FasterWhisperProvider implements SttProvider {
       language: input.language ? toWhisperLanguage(input.language) : undefined,
       model: input.model,
       wordTimestamps: input.wordTimestamps,
+      ...(input.noContext ? { noContext: true } : {}),
     };
 
     const data = await postWorkerJson<WorkerTranscribeResponse>(

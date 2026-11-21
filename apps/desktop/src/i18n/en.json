@@ -702,7 +702,9 @@
     "speakers-detecting": "Detecting…",
     "speakers-detect-hint": "Works out who says each line from the video's audio, in seconds, without transcribing again: your translations and timing stay. If you know how many people speak, choose the number — it is much more reliable. Lines whose voice changes are marked for re-voicing.",
     "speaker-merge": "Merge into…",
-    "speaker-merge-label": "Merge Speaker {{ n }} into another speaker"
+    "speaker-merge-label": "Merge Speaker {{ n }} into another speaker",
+    "loop-suspect": "Possible transcription loop",
+    "loop-suspect-title": "Speech-to-text may have repeated a phrase here that was not said (a known Whisper fault over music). The app tried to repair it and could not: listen to the original and fix or remove the line."
   },
   "studio": {
     "back": "Back to projects",
@@ -1659,7 +1661,9 @@
     "gpu-fallback-failed": "A GPU engine ({{pack}}) could not start, so a step ran on the slower CPU build. If it keeps happening, reinstall it in Settings → Engines.",
     "no-speech-lines": "{{count}} line(s) have no words to say ({{examples}}): they stay silent in the dub and keep their subtitle.",
     "speakers-failed": "Speaker detection failed ({{cause}}), so the dub uses one voice. Re-detect speakers in the editor.",
-    "speakers-low-confidence": "{{count}} line(s) were given the nearest speaker, not a sure one. Check them in the editor's Issues."
+    "speakers-low-confidence": "{{count}} line(s) were given the nearest speaker, not a sure one. Check them in the editor's Issues.",
+    "loops-repaired": "{{count}} transcription loop(s) or credit line(s) were repaired: decoded again, or removed where nothing was said.",
+    "loops-left": "{{count}} range(s) that look like transcription loops could not be repaired: their lines are marked in the editor (Problems). Check them before dubbing."
   },
   "diagnostics": {
     "heading": "Diagnostics",
@@ -1702,6 +1706,7 @@
     "translating-rate": "Translating {{done}}/{{total}} lines · {{rate}} lines/min",
     "voicing": "Voicing {{done}}/{{total}}",
     "transcribing": "Transcribing part {{done}}/{{total}}",
-    "speakers": "Detecting speakers {{done}}/{{total}}"
+    "speakers": "Detecting speakers {{done}}/{{total}}",
+    "loops": "Checking transcription loops {{done}}/{{total}}"
   }
 }

@@ -31,6 +31,7 @@
  * runner is fully testable without ffmpeg or live workers.
  */
 import fsp from 'node:fs/promises';
+import path from 'node:path';
 import {
   AppErrorException,
   pausePipelineState,
@@ -131,6 +132,8 @@ import type { AlignmentService } from '../providers/alignment/whisperxProvider.j
 import type { DiarizationService } from '../providers/diarization/sherpaDiarizationProvider.js';
 import { assignSpeakers, cachedSpeakerTurns } from './diarization.js';
 import { hasSpeakableText, writeSilentClip } from './speakable.js';
+import { findLoopRanges, repairLoops, type RepairedRange } from './loopRepair.js';
+import { expectedSpeechMs } from '../alignment/clipSpeech.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
 import { fileExistsNonEmpty, padSegmentIndex, segmentIdToIndex, type WorkspacePaths } from '../workspace/paths.js';
@@ -1012,6 +1015,13 @@ export class PipelineRunner {
       }
     }
 
+    // Transcription loops (pipeline/loopRepair.ts): found, decoded again
+    // without context, repaired; what is left is flagged and said. Before
+    // speaker detection, so the repaired lines get their speakers.
+    if (!fromSite) {
+      segments = await this.repairTranscriptLoops(paths, provider, model, detectedLanguage || explicitLanguage, segments, signal, onProgress);
+    }
+
     // Speaker detection: who says each line, before anchoring so a line it
     // splits keeps its speaker (pipeline/diarization.ts).
     if (project.settings.diarize) segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal);
@@ -1088,6 +1098,86 @@ export class PipelineRunner {
       ...fresh,
       settings: { ...settings, [field]: providerId, ...(auto.length > 0 ? { autoSelectedPhases: auto } : {}) },
     });
+  }
+
+  /**
+   * Find transcription loops and repair them (pipeline/loopRepair.ts). A
+   * range is decoded again without the previous text, from a clip of the
+   * audio; without the clip capability nothing can be decoded again, and the
+   * loops are only flagged. The report goes to audio/loop_ranges.json, the
+   * outcome to the project's warnings, and lines left in a loop carry
+   * `loopSuspect` for the editor and get_transcript.
+   */
+  private async repairTranscriptLoops(
+    paths: WorkspacePaths,
+    provider: SttProviderRef,
+    model: string,
+    language: string | undefined,
+    segments: TranscriptSegment[],
+    signal: AbortSignal,
+    onProgress: StepProgress,
+  ): Promise<TranscriptSegment[]> {
+    const ranges = findLoopRanges(segments);
+    if (ranges.length === 0) {
+      await fsp.rm(paths.loopRangesJson, { force: true }).catch(() => undefined);
+      return segments;
+    }
+    this.deps.logger.info(`Found ${ranges.length} range(s) that look like transcription loops or credit lines; checking them...`);
+    const clip = this.deps.media.clip16kMono?.bind(this.deps.media);
+    let done = 0;
+    const redecode = async (fromMs: number, toMs: number, s: AbortSignal): Promise<TranscriptSegment[]> => {
+      if (!clip) throw new Error('this build cannot cut the audio to decode a range again');
+      await fsp.mkdir(paths.sttChunksDir, { recursive: true });
+      const clipPath = path.join(paths.sttChunksDir, `loop_${fromMs}_${toMs}.wav`);
+      try {
+        await clip(paths.original16kMonoWav, clipPath, fromMs, toMs, s);
+        const res = await provider.transcribe({ audioPath: clipPath, language, model, wordTimestamps: true, noContext: true }, s);
+        return res.segments.map((x) => offsetSegment(x, fromMs));
+      } finally {
+        await fsp.rm(clipPath, { force: true }).catch(() => undefined);
+        done += 1;
+        await onProgress(1, { key: 'step-detail.loops', params: { done, total: ranges.length }, text: `Checking transcription loops ${done}/${ranges.length}` });
+      }
+    };
+    const outcome = await repairLoops(segments, ranges, { redecode, expectedSpeechMs }, signal);
+    // Lines still inside a range left as it was: a person must look at them.
+    const left = outcome.ranges.filter((r) => r.status === 'left');
+    const lines = outcome.lines.map((l) =>
+      left.some((r) => l.startMs < r.toMs && l.endMs > r.fromMs) ? { ...l, loopSuspect: true as const } : l,
+    );
+    await writeJsonAtomic(paths.loopRangesJson, { checkedAt: new Date().toISOString(), ranges: outcome.ranges });
+    this.reportLoops(outcome.ranges, onProgress);
+    return lines;
+  }
+
+  /** The loop check's outcome in the log and the project's warnings. */
+  private reportLoops(ranges: readonly RepairedRange[], onProgress: StepProgress): void {
+    const count = (s: RepairedRange['status']): number => ranges.filter((r) => r.status === s).length;
+    const repaired = count('replaced') + count('removed');
+    const left = count('left');
+    const kept = count('kept');
+    const clock = (ms: number): string => `${Math.floor(ms / 60_000)}:${String(Math.floor((ms % 60_000) / 1000)).padStart(2, '0')}`;
+    for (const r of ranges) {
+      this.deps.logger.info(
+        `Loop check ${clock(r.fromMs)}-${clock(r.toMs)} (${r.kind}${r.phrase ? `: "${r.phrase}"` : ''}): ${r.status}, ${r.before} -> ${r.after} line(s)${r.reason ? `; ${r.reason}` : ''}.`,
+      );
+    }
+    if (repaired > 0) {
+      onProgress.warn?.({
+        code: 'loops-repaired',
+        key: 'warning.loops-repaired',
+        params: { count: repaired },
+        message: `${repaired} transcription loop(s) or credit line(s) were repaired (decoded again, or removed where nothing was said).${kept > 0 ? ` ${kept} repetition(s) were real and kept.` : ''}`,
+      });
+    }
+    if (left > 0) {
+      onProgress.warn?.({
+        code: 'loops-left',
+        key: 'warning.loops-left',
+        params: { count: left },
+        message: `${left} range(s) that look like transcription loops could not be repaired: their lines are marked in the editor (Problems) and in get_transcript. Check them before dubbing.`,
+      });
+    }
   }
 
   /**

@@ -30,6 +30,13 @@ class TranscribeRequest(BaseModel):
         default=True,
         description="Whether to emit per-word timestamps.",
     )
+    noContext: bool = Field(
+        default=False,
+        description=(
+            "Decode without the previous text as a prompt (condition_on_previous_text=False): "
+            "how the orchestrator decodes a range where the model looped again."
+        ),
+    )
 
 
 class Word(BaseModel):

@@ -234,7 +234,8 @@ export class StudioStore {
         status,
         stale: seg.ttsStale === true,
         locked: seg.locked === true,
-        problem: untranslated || quality.length > 0 || long || status === 'timing-conflict' || status === 'needs-review',
+        problem:
+          untranslated || quality.length > 0 || long || status === 'timing-conflict' || status === 'needs-review' || seg.loopSuspect === true,
       };
     });
   });

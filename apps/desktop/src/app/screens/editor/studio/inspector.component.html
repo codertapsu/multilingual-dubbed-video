@@ -56,6 +56,10 @@
       @if (l.long) {
         <span class="badge badge-warning" [title]="'editor.long-subtitle-title' | translate">{{ 'editor.long-subtitle' | translate }}</span>
       }
+      <!-- A transcription loop the app could not repair (pipeline/loopRepair.ts). -->
+      @if (l.seg.loopSuspect) {
+        <span class="badge badge-failed" [title]="'editor.loop-suspect-title' | translate">{{ 'editor.loop-suspect' | translate }}</span>
+      }
     </div>
   </section>
 

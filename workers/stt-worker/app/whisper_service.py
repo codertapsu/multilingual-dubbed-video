@@ -627,6 +627,10 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
         "word_timestamps": request.wordTimestamps,
         "vad_filter": settings.vad_filter,
     }
+    # A loop's range decoded again (orchestrator pipeline/loopRepair.ts): the
+    # previous text is what carried the loop, so leave it out.
+    if getattr(request, "noContext", False):
+        transcribe_kwargs["condition_on_previous_text"] = False
 
     try:
         runner = model

@@ -15,6 +15,7 @@ import {
   AppErrorException,
   toAppError,
   segmentsToSrt,
+  toWhisperLanguage,
   segmentsToVtt,
   pausePipelineState,
   projectOutputFiles,
@@ -697,6 +698,114 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * Read the project's transcript segments, merged with alignment status if
    * alignment has run. Prefers `translated.json`, falling back to `source.json`.
    */
+  /**
+   * Replace the source lines in [fromMs, toMs) with `lines` (a loop the app
+   * could not repair, a range transcribed again): the line structure itself,
+   * which no other edit changes. Only before translation: the translated
+   * lines, their voices and their timing are keyed by these lines. Lines are
+   * renumbered; returns the new lines of the range with their ids.
+   */
+  async replaceSourceLines(
+    projectId: string,
+    fromMs: number,
+    toMs: number,
+    lines: readonly { startMs: number; endMs: number; text: string; speakerId?: string }[],
+  ): Promise<{ replaced: number; lines: { id: string; startMs: number; endMs: number; text: string; speakerId?: string }[] }> {
+    this.assertNotRunning(projectId, 'replace lines');
+    if (!(toMs > fromMs)) throw new AppErrorException('INVALID_EDIT', 'The range must end after it starts.');
+    const paths = this.deps.store.paths(projectId);
+    if (await fileExistsNonEmpty(paths.translatedJson)) {
+      throw new AppErrorException('INVALID_EDIT', 'This project is already translated: its lines can no longer be restructured.', {
+        remediation:
+          'Replace lines before translation. In a series, fix the series (parent) transcript, then rebuild the parts not translated yet (rebuild_parts).',
+      });
+    }
+    const fresh = lines
+      .map((l) => ({ startMs: Math.round(l.startMs), endMs: Math.round(l.endMs), text: String(l.text ?? '').trim(), speakerId: l.speakerId }))
+      .filter((l) => l.text && l.endMs > l.startMs && l.startMs >= fromMs - 1 && l.endMs <= toMs + 1)
+      .sort((a, b) => a.startMs - b.startMs);
+    for (let i = 1; i < fresh.length; i++) {
+      if (fresh[i]!.startMs < fresh[i - 1]!.endMs) {
+        throw new AppErrorException('INVALID_EDIT', `Lines ${i} and ${i + 1} overlap; each line must end before the next starts.`);
+      }
+    }
+    return this.artifactLock.run(projectId, async () => {
+      const current = (await this.tryReadSegments(paths.sourceJson)) ?? [];
+      const inside = (s: TranscriptSegment): boolean => s.startMs < toMs && s.endMs > fromMs;
+      const before = current.filter((s) => !inside(s) && s.endMs <= fromMs);
+      const after = current.filter((s) => !inside(s) && s.startMs >= toMs);
+      const replaced = current.length - before.length - after.length;
+      const made: TranscriptSegment[] = fresh.map((l) => ({
+        id: '',
+        index: 0,
+        startMs: l.startMs,
+        endMs: l.endMs,
+        sourceText: l.text,
+        ...(l.speakerId && /^SPEAKER_\d+$/.test(l.speakerId) ? { speakerId: l.speakerId } : {}),
+      }));
+      const all = [...before, ...made, ...after].map((s, i) => ({ ...s, index: i, id: `seg_${String(i + 1).padStart(4, '0')}` }));
+      await writeJsonAtomic(paths.sourceJson, { segments: all });
+      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(all)));
+      const first = before.length;
+      return {
+        replaced,
+        lines: all.slice(first, first + made.length).map((s) => ({
+          id: s.id,
+          startMs: s.startMs,
+          endMs: s.endMs,
+          text: s.sourceText,
+          ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+        })),
+      };
+    });
+  }
+
+  /**
+   * Transcribe [fromMs, toMs) of the project's audio again, by default
+   * without the previous text (what repairs a loop), with the project's own
+   * speech-to-text engine and model; `apply` replaces the range with it.
+   */
+  async retranscribeRange(
+    projectId: string,
+    fromMs: number,
+    toMs: number,
+    opts: { noContext?: boolean; model?: string; apply?: boolean } = {},
+  ): Promise<{ lines: { startMs: number; endMs: number; text: string }[]; applied?: { replaced: number; lines: { id: string; startMs: number; endMs: number; text: string }[] } }> {
+    this.assertNotRunning(projectId, 'transcribe a range');
+    if (!(toMs > fromMs) || toMs - fromMs > 15 * 60_000) {
+      throw new AppErrorException('INVALID_EDIT', 'Give a range of up to 15 minutes, ending after it starts.');
+    }
+    const project = await this.deps.store.getProject(projectId);
+    const paths = this.deps.store.paths(projectId);
+    const clip = this.deps.media.clip16kMono?.bind(this.deps.media);
+    if (!clip || !(await fileExistsNonEmpty(paths.original16kMonoWav))) {
+      throw new AppErrorException('INVALID_EDIT', 'This project has no extracted audio yet: start_dubbing transcribes it first.');
+    }
+    const stt = this.deps.registry.getStt(project.settings.sttProviderId);
+    const heard = await this.withEditorLane(projectId, async () => {
+      await fsp.mkdir(paths.sttChunksDir, { recursive: true });
+      const clipPath = path.join(paths.sttChunksDir, `range_${Math.round(fromMs)}_${Math.round(toMs)}.wav`);
+      try {
+        await clip(paths.original16kMonoWav, clipPath, fromMs, toMs);
+        const language = project.settings.sourceLanguage ? toWhisperLanguage(project.settings.sourceLanguage) : undefined;
+        return await stt.transcribe({
+          audioPath: clipPath,
+          language,
+          model: opts.model ?? project.settings.sttModel ?? 'small',
+          wordTimestamps: true,
+          noContext: opts.noContext !== false,
+        });
+      } finally {
+        await fsp.rm(clipPath, { force: true }).catch(() => undefined);
+      }
+    });
+    const lines = heard.segments
+      .map((s) => ({ startMs: Math.round(s.startMs + fromMs), endMs: Math.round(s.endMs + fromMs), text: s.sourceText.trim() }))
+      .filter((l) => l.text && l.endMs > l.startMs);
+    if (!opts.apply) return { lines };
+    return { lines, applied: await this.replaceSourceLines(projectId, fromMs, toMs, lines) };
+  }
+
   async getSegments(projectId: string): Promise<SegmentWithAlignment[]> {
     const paths = this.deps.store.paths(projectId);
     const segments =

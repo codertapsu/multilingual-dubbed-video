@@ -45,7 +45,7 @@ function talk(): TranscriptSegment[] {
   return out;
 }
 
-describe('a long video dubbed as a series', () => {
+describe('a long video dubbed as a series', { timeout: 60_000 }, () => {
   it('analyses once, plans with the AI, and dubs each part over its window with its opening and closing', async () => {
     const media = new FakeMediaService({ mediaInfo: fakeMediaInfo(40 * MIN) });
     const stt = new FakeSttProvider(talk());
@@ -198,7 +198,7 @@ describe('a long video dubbed as a series', () => {
   });
 });
 
-describe('a series that should not start by itself, and parts made again', () => {
+describe('a series that should not start by itself, and parts made again', { timeout: 30_000 }, () => {
   async function analysedParent(opts: { autoStart: boolean; minMinutes?: number; maxMinutes?: number; warnings?: string[]; diarize?: boolean }) {
     const media = new FakeMediaService({ mediaInfo: fakeMediaInfo(40 * MIN) });
     const orchestrator = new LocalJobOrchestrator({

@@ -7,7 +7,9 @@ import {
   type AlignedSegment,
   type CreateProjectInput,
   type Project,
+  type SttInput,
   type SttProvider,
+  type SttResult,
   type TranscriptSegment,
   type TranslationInput,
   type TranslationProvider,
@@ -709,6 +711,56 @@ describe('PipelineRunner — lines with nothing to say', () => {
     expect((await fsp.stat(paths.ttsSegment(3))).size).toBeGreaterThan(44);
     const pipeline = await store.getPipeline(project.id);
     expect(pipeline.warnings?.map((w) => w.code)).toContain('no-speech-lines');
+  });
+});
+
+describe('PipelineRunner — transcription loops', () => {
+  it('decodes a loop again without context, replaces it, and says so; what cannot be repaired is marked', async () => {
+    const video = await writeDummyVideo(tmp);
+    const project = await store.createProject(createProjectInput(video, { settings: defaultSettings({}) }));
+    const paths = store.paths(project.id);
+    const loop = makeSegments([
+      [0, 2000, 'Before'],
+      ...Array.from({ length: 25 }, (_, i) => [3000 + i * 1000, 3900 + i * 1000, 'over and over'] as [number, number, string]),
+      [40_000, 42_000, 'After'],
+    ]);
+    const asked: { audioPath: string; noContext?: boolean }[] = [];
+    const stt: SttProvider = {
+      id: 'faster-whisper',
+      displayName: 'loopy',
+      isLocal: true,
+      async transcribe(input: SttInput): Promise<SttResult> {
+        asked.push({ audioPath: input.audioPath, ...(input.noContext ? { noContext: true } : {}) });
+        if (!input.noContext) return { segments: loop, detectedLanguage: 'en', durationMs: 45_000 };
+        // The range decoded again: varied speech, in the clip's own time.
+        return {
+          segments: makeSegments([
+            [500, 4000, 'You know me'],
+            [4500, 9000, 'I saw you once'],
+          ]),
+          detectedLanguage: 'en',
+          durationMs: 25_000,
+        };
+      },
+    };
+    const bus = buses.get(project.id);
+    await new PipelineRunner({
+      store,
+      media: new FakeMediaService({ mediaInfo: fakeMediaInfo(45_000) }),
+      registry: fakeRegistry(stt, new FakeTranslationProvider(), new FakeTtsProvider(() => 800)),
+      bus,
+      logger: new ProjectLogger(paths.pipelineLog, bus),
+    }).run(project, { signal: new AbortController().signal });
+
+    expect(asked.filter((a) => a.noContext)).toHaveLength(1);
+    const source = JSON.parse(await fsp.readFile(paths.sourceJson, 'utf8')) as { segments: TranscriptSegment[] };
+    const texts = source.segments.map((s) => s.sourceText);
+    expect(texts).toContain('You know me');
+    expect(texts.filter((t) => t === 'over and over')).toHaveLength(0);
+    const report = JSON.parse(await fsp.readFile(paths.loopRangesJson, 'utf8')) as { ranges: { status: string }[] };
+    expect(report.ranges.map((r) => r.status)).toEqual(['replaced']);
+    const pipeline = await store.getPipeline(project.id);
+    expect(pipeline.warnings?.map((w) => w.code)).toContain('loops-repaired');
   });
 });
 

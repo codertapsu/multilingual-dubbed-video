@@ -192,7 +192,10 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         'VideoDubber dubs videos into another language on this computer: speech-to-text, translation, a synthetic voice, timing, mixing and rendering, with burned-in or separate subtitles.',
         'Typical flow: get_status -> (download_video) -> create_project -> start_dubbing -> get_project(waitSeconds) until done -> review with get_transcript (and get_translation_report for what the app itself flagged) -> fix with set_translations / adjust_lines -> regenerate_voices -> render_video.',
         'For the best translation, create the project with reviewBeforeSynthesis=true: the run pauses after a quick draft translation, you read the whole transcript, record names/terms/forms of address with set_translation_context, rewrite the lines with set_translations, then start_dubbing continues with your text.',
-        'Every line must be speakable in its own time slot: get_transcript shows each line\'s budget at the voice\'s pace (e.g. "≤13 syllables (aim 11)") and the current length in [brackets]. Aim for the target and never exceed the ceiling, but keep the full meaning: an over-short line is a worse dub than a slightly fast one. Never merge or split lines. Fix every line marked NEEDS FIX.',
+        'Every line must be speakable in its own time slot: get_transcript shows each line\'s budget at the voice\'s pace (e.g. "≤13 syllables (aim 11)") and the current length in [brackets]. Aim for the target and never exceed the ceiling, but keep the full meaning: an over-short line is a worse dub than a slightly fast one. Never merge or split lines while translating (replace_lines restructures a range before translation). Fix every line marked NEEDS FIX; lines marked LOOP? may be a transcription loop the app could not repair: check them with retranscribe_range.',
+        'Speakers: the speaker ids on the lines (SPEAKER_00...) decide the forms of address in the translation (Vietnamese xưng hô), so speakers must be detected before translating (settings.diarize). Map each speaker id to its character in the character sheet (set_translation_context cast[].speakerId) and fix what speech-to-text mishears with its corrections. get_project lists the warnings of a run (speaker detection failed, loops repaired or left, GPU busy so a step ran on the CPU): act on them.',
+        'Series (a long video in parts): even with autoStart the parts start by themselves only when the analysis is clean; otherwise the series stops at review and get_series says why. After fixing the series transcript, rebuild_parts; update_settings / set_translation_context take applyToParts; pause_dubbing / start_dubbing on the series act on all its parts in order.',
+        'When something fails: get_diagnostics (the app\'s health, GPU, queue, engine output, recent errors; bundle=true writes a support bundle) and get_queue (what waits and why, who holds the GPU lane). Every tool error ends with a log reference.',
         'Changing settings, engines or downloads is the user\'s machine: say what you are about to install (sizes are in list_engines) before doing it.',
         'Batches (Bilibili, Douyin): set_download_login with the path of a browser cookie export (never cookie values; optional, logged out gets up to 720p) -> download_videos -> follow_jobs_command (long batches) or wait_jobs -> dub_downloads (a preset from list_presets, or targetLanguage + settings) -> follow the projects -> get_outputs -> post -> mark_published.',
         'A long dub can be paused (pause_dubbing) and continued later with start_dubbing, also after the app was closed: nothing done is lost. get_project says when a dub is paused.',
@@ -1660,7 +1663,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const indexOf = new Map(all.map((s, i) => [s.id, i]));
       const needsWork = (s: (typeof all)[number]): boolean => {
         const f = flagsOf.get(s.id)!;
-        return !s.translatedText?.trim() || f.quality.length > 0 || f.overBudget || f.conflict || f.review || f.stale;
+        return !s.translatedText?.trim() || f.quality.length > 0 || f.overBudget || f.conflict || f.review || f.stale || s.loopSuspect === true;
       };
       const pool = filter === 'attention' ? all.filter(needsWork) : all;
       const page = pool.slice(offset, offset + limit);
@@ -1682,6 +1685,89 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const next = offset + page.length < pool.length ? `More: call again with offset=${offset + page.length}.` : '';
       return text(
         [...header, ...page.map((s) => renderLine(s, target, ctxOf(indexOf.get(s.id)!))), next].filter(Boolean).join('\n'),
+      );
+    }),
+  );
+
+  server.registerTool(
+    'export_transcript',
+    {
+      title: 'The whole transcript as a file',
+      description:
+        'Write every line (id, times, speaker, original, translation, flags) to a JSON or tab-separated file in the project\'s folder and return its path: for long videos, where get_transcript would take dozens of pages. Read the file with your own tools.',
+      inputSchema: z.object({ projectId: z.string(), format: z.enum(['json', 'tsv']).default('json') }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, format }, ctx) => {
+      const res = await api.post<{ path: string; lines: number; format: string }>(
+        `/projects/${encodeURIComponent(projectId)}/transcript/export`,
+        { format },
+        { signal: ctx.mcpReq.signal, timeoutMs: 120_000 },
+      );
+      return text(`Wrote ${res.lines} line(s) as ${res.format.toUpperCase()}: ${res.path}`);
+    }),
+  );
+
+  server.registerTool(
+    'replace_lines',
+    {
+      title: 'Replace the lines of a time range',
+      description:
+        'Change the line structure of a range before translation: remove a transcription loop, split or merge lines, add lines speech-to-text missed. Every line of the project inside [fromMs, toMs) is replaced by `lines` (times in ms of the video, each inside the range, no overlaps; speakerId like "SPEAKER_03" optional). Lines are renumbered: the new ids are returned. Refused once the project is translated; in a series, fix the series (parent) and then rebuild_parts. Get the audio\'s own words for a range with retranscribe_range.',
+      inputSchema: z.object({
+        projectId: z.string(),
+        fromMs: z.number().min(0),
+        toMs: z.number().min(1),
+        lines: z.array(z.object({ startMs: z.number().min(0), endMs: z.number().min(1), text: z.string(), speakerId: z.string().optional() })).max(500),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, fromMs, toMs, lines }, ctx) => {
+      const res = await api.post<{ replaced: number; lines: { id: string; startMs: number; endMs: number; text: string; speakerId?: string }[] }>(
+        `/projects/${encodeURIComponent(projectId)}/lines/replace`,
+        { fromMs, toMs, lines },
+        { signal: ctx.mcpReq.signal },
+      );
+      return text(
+        [
+          `Replaced ${res.replaced} line(s) in ${clock(fromMs)}-${clock(toMs)} with ${res.lines.length}:`,
+          ...res.lines.map((l) => `- ${l.id} ${clock(l.startMs)}-${clock(l.endMs)}${l.speakerId ? ` [${l.speakerId}]` : ''} ${l.text}`),
+          'Ids after this range moved too: read them again with get_transcript before using them.',
+        ].join('\n'),
+      );
+    }),
+  );
+
+  server.registerTool(
+    'retranscribe_range',
+    {
+      title: 'Transcribe a time range again',
+      description:
+        'Run the project\'s own speech-to-text again on [fromMs, toMs) (at most 15 minutes), by default without the previous text as a prompt (noContext), which is what breaks a transcription loop. Returns the lines it heard, in video time; apply=true also replaces the range with them (as replace_lines). The app already does this by itself for the loops it finds; use it for ranges it marked LOOP? or that sound wrong.',
+      inputSchema: z.object({
+        projectId: z.string(),
+        fromMs: z.number().min(0),
+        toMs: z.number().min(1),
+        noContext: z.boolean().default(true),
+        model: z.string().optional().describe('Another speech model of the same engine, e.g. "large-v3-turbo".'),
+        apply: z.boolean().default(false),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    guarded(async ({ projectId, fromMs, toMs, noContext, model, apply }, ctx) => {
+      const res = await api.post<{ lines: { startMs: number; endMs: number; text: string }[]; applied?: { replaced: number; lines: { id: string }[] } }>(
+        `/projects/${encodeURIComponent(projectId)}/lines/retranscribe`,
+        { fromMs, toMs, noContext, ...(model ? { model } : {}), apply },
+        { signal: ctx.mcpReq.signal, timeoutMs: 600_000 },
+      );
+      return text(
+        [
+          `Heard ${res.lines.length} line(s) in ${clock(fromMs)}-${clock(toMs)}${noContext ? ' (no context)' : ''}:`,
+          ...res.lines.map((l) => `- ${clock(l.startMs)}-${clock(l.endMs)} ${l.text}`),
+          res.applied
+            ? `Applied: replaced ${res.applied.replaced} line(s) with ${res.applied.lines.length} (${res.applied.lines.map((l) => l.id).join(', ')}).`
+            : 'Not applied: pass apply=true, or send your own version with replace_lines.',
+        ].join('\n'),
       );
     }),
   );

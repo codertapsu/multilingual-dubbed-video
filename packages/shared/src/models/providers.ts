@@ -127,6 +127,12 @@ export interface SttInput {
   model: string;
   /** Whether to emit per-word timestamps. */
   wordTimestamps: boolean;
+  /**
+   * Decode without the previous text as a prompt (whisper.cpp `max_context=0`,
+   * faster-whisper `condition_on_previous_text=False`): how a range where the
+   * model looped is decoded again (pipeline/loopRepair.ts).
+   */
+  noContext?: boolean;
 }
 
 /** Result of a transcription request. */

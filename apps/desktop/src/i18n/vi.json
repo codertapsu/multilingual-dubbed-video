@@ -702,7 +702,9 @@
     "speakers-detecting": "Đang phát hiện…",
     "speakers-detect-hint": "Xác định ai nói từng dòng từ âm thanh của video chỉ trong vài giây, không cần nhận dạng lại: bản dịch và thời gian vẫn giữ nguyên. Nếu bạn biết có bao nhiêu người nói, hãy chọn số người — kết quả sẽ chính xác hơn nhiều. Các dòng bị đổi giọng sẽ được đánh dấu để lồng tiếng lại.",
     "speaker-merge": "Gộp vào…",
-    "speaker-merge-label": "Gộp Người nói {{ n }} vào người khác"
+    "speaker-merge-label": "Gộp Người nói {{ n }} vào người khác",
+    "loop-suspect": "Có thể lặp do chép lời",
+    "loop-suspect-title": "Bộ chuyển giọng nói thành chữ có thể đã lặp lại một câu không hề được nói ở đây (lỗi quen thuộc của Whisper khi có nhạc nền). Ứng dụng đã thử sửa nhưng không được: hãy nghe bản gốc rồi sửa hoặc xoá câu này."
   },
   "studio": {
     "back": "Quay lại danh sách dự án",
@@ -1659,7 +1661,9 @@
     "gpu-fallback-failed": "Không khởi động được bộ máy GPU ({{pack}}) nên một bước đã chạy bằng bản dùng CPU, chậm hơn. Nếu lặp lại, hãy cài lại nó trong Cài đặt → Engine.",
     "no-speech-lines": "{{count}} câu không có chữ nào để đọc ({{examples}}): bản lồng tiếng để im lặng ở những câu này, phụ đề vẫn giữ nguyên.",
     "speakers-failed": "Không nhận diện được người nói ({{cause}}), nên cả bản lồng tiếng dùng một giọng. Hãy nhận diện lại người nói trong trình chỉnh sửa.",
-    "speakers-low-confidence": "{{count}} câu được gán cho người nói gần nhất, chưa chắc chắn. Hãy kiểm tra chúng ở mục Vấn đề trong trình chỉnh sửa."
+    "speakers-low-confidence": "{{count}} câu được gán cho người nói gần nhất, chưa chắc chắn. Hãy kiểm tra chúng ở mục Vấn đề trong trình chỉnh sửa.",
+    "loops-repaired": "Đã sửa {{count}} đoạn lặp do chép lời hoặc dòng chữ quảng cáo: chép lời lại, hoặc xoá ở chỗ không ai nói.",
+    "loops-left": "Không sửa được {{count}} đoạn có vẻ bị lặp do chép lời: các câu đó được đánh dấu trong trình chỉnh sửa (mục Vấn đề). Hãy kiểm tra trước khi lồng tiếng."
   },
   "diagnostics": {
     "heading": "Chẩn đoán",
@@ -1702,6 +1706,7 @@
     "translating-rate": "Đang dịch {{done}}/{{total}} câu · {{rate}} câu/phút",
     "voicing": "Đang lồng tiếng {{done}}/{{total}}",
     "transcribing": "Đang chuyển giọng nói thành chữ, phần {{done}}/{{total}}",
-    "speakers": "Đang nhận diện người nói {{done}}/{{total}}"
+    "speakers": "Đang nhận diện người nói {{done}}/{{total}}",
+    "loops": "Đang kiểm tra các đoạn lặp do chép lời {{done}}/{{total}}"
   }
 }

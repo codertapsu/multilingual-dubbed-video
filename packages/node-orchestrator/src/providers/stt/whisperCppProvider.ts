@@ -109,6 +109,9 @@ export class WhisperCppProvider implements CancellableSttProvider {
     // 0 segments for a 10-minute chunk that verbose_json splits into 157).
     form.append('response_format', 'verbose_json');
     form.append('temperature', '0');
+    // A loop's range decoded again without the previous text (loopRepair.ts):
+    // what `-mc 0` does on the command line, per request.
+    if (input.noContext) form.append('max_context', '0');
     const lang = normalizeLanguageCode(input.language ?? '').split('-')[0];
     // Omitted = auto-detect: the engine is launched with `-l auto`.
     if (lang) form.append('language', lang);

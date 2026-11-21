@@ -410,6 +410,12 @@ export interface TranscriptSegment {
    * Rewritten whenever the pipeline re-translates or reviews the line.
    */
   qualityFlags?: ('untranslated' | 'wrong-script' | 'pinyin' | 'alternatives' | 'no-diacritics')[];
+  /**
+   * Inside a range that looked like a transcription loop and could not be
+   * repaired (pipeline/loopRepair.ts): the editor lists it as a problem and
+   * get_transcript marks it, so a person checks it before it is dubbed.
+   */
+  loopSuspect?: true;
 }
 
 /**

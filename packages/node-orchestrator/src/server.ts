@@ -12,7 +12,7 @@ import { DiagnosticsService } from './diagnostics/diagnosticsService.js';
 import { StructuredLog } from './diagnostics/logFiles.js';
 import { WarningInbox } from './diagnostics/warningInbox.js';
 import { createReadStream, mkdirSync, writeFileSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { extname, join, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from '@fastify/cors';
@@ -119,7 +119,7 @@ import {
 } from './integrations/claude.js';
 import { samePath } from './workspace/outputFolder.js';
 import { MEDIA_SERVICE_METHODS, type PipelineMediaService } from './media.js';
-import { ProjectStore, writeJsonAtomic } from './workspace/projectStore.js';
+import { ProjectStore, writeJsonAtomic, writeTextAtomic } from './workspace/projectStore.js';
 import { projectsDirOf, readProjectsRoot } from './workspace/projectsFolder.js';
 import { ProjectsFolderService } from './workspace/projectsFolderService.js';
 import { buildCatalog, findPiperVoice, translatableLanguages } from './setup/catalog.js';
@@ -1751,6 +1751,90 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
     return out;
   }
+
+  // The whole transcript as a file (a 10-hour series has ~19,000 lines: 48
+  // pages of get_transcript), JSON or tab-separated, in the project's folder.
+  app.post(
+    '/projects/:id/transcript/export',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { format?: 'json' | 'tsv' } }>, reply) => {
+      try {
+        const segments = await orchestrator.getSegments(req.params.id);
+        const format = req.body?.format === 'tsv' ? 'tsv' : 'json';
+        const project = await store.getProject(req.params.id);
+        const dir = join(project.workspaceDir, 'exports');
+        await mkdir(dir, { recursive: true });
+        const file = join(dir, `transcript-${new Date().toISOString().replace(/[:.]/g, '-')}.${format}`);
+        const rows = segments.map((s) => ({
+          id: s.id,
+          startMs: s.startMs,
+          endMs: s.endMs,
+          ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+          source: s.sourceText,
+          ...(s.translatedText !== undefined ? { translation: s.translatedText } : {}),
+          ...(s.loopSuspect ? { loopSuspect: true } : {}),
+          ...(s.qualityFlags?.length ? { flags: s.qualityFlags } : {}),
+        }));
+        const clean = (t: string | undefined): string => (t ?? '').replace(/[\t\r\n]+/g, ' ');
+        const body =
+          format === 'json'
+            ? JSON.stringify({ projectId: project.id, name: project.name, lines: rows }, null, 1)
+            : [
+                'id\tstartMs\tendMs\tspeaker\tsource\ttranslation\tflags',
+                ...rows.map((r) =>
+                  [r.id, r.startMs, r.endMs, r.speakerId ?? '', clean(r.source), clean(r.translation), [...(r.flags ?? []), ...(r.loopSuspect ? ['loop?'] : [])].join(',')].join('\t'),
+                ),
+              ].join('\n');
+        await writeTextAtomic(file, body);
+        return { path: file, lines: rows.length, format };
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // The line structure of a range (before translation): replace it, or hear it again.
+  app.post(
+    '/projects/:id/lines/replace',
+    async (
+      req: FastifyRequest<{
+        Params: { id: string };
+        Body: { fromMs?: number; toMs?: number; lines?: { startMs: number; endMs: number; text: string; speakerId?: string }[] };
+      }>,
+      reply,
+    ) => {
+      try {
+        const b = req.body ?? {};
+        if (typeof b.fromMs !== 'number' || typeof b.toMs !== 'number' || !Array.isArray(b.lines)) {
+          return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: 'Send fromMs, toMs and lines.' } });
+        }
+        return await orchestrator.replaceSourceLines(req.params.id, b.fromMs, b.toMs, b.lines);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  app.post(
+    '/projects/:id/lines/retranscribe',
+    async (
+      req: FastifyRequest<{ Params: { id: string }; Body: { fromMs?: number; toMs?: number; noContext?: boolean; model?: string; apply?: boolean } }>,
+      reply,
+    ) => {
+      try {
+        const b = req.body ?? {};
+        if (typeof b.fromMs !== 'number' || typeof b.toMs !== 'number') {
+          return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: 'Send fromMs and toMs.' } });
+        }
+        return await orchestrator.retranscribeRange(req.params.id, b.fromMs, b.toMs, {
+          ...(b.noContext === false ? { noContext: false } : {}),
+          ...(typeof b.model === 'string' && b.model.trim() ? { model: b.model.trim() } : {}),
+          ...(b.apply === true ? { apply: true } : {}),
+        });
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
 
   // Make the parts' transcripts again from the series transcript (series/seriesService.ts rebuildParts).
   app.post(

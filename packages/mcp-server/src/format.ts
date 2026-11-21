@@ -98,6 +98,9 @@ export function renderLine(seg: TimelineSegment, targetLanguage: string, ctx: Bu
   const a = seg.alignment;
   if (a) parts.push(`fit ${a.speedRatio.toFixed(2)}x ${a.status}${a.overflowMs > 0 ? ` +${a.overflowMs}ms` : ''}`);
   const tags: string[] = [];
+  // A range that looked like a transcription loop and could not be repaired:
+  // compare it with the audio (retranscribe_range) and fix it (replace_lines).
+  if (seg.loopSuspect) tags.push('LOOP? check against the audio');
   if (seg.qualityFlags?.length) tags.push(`NEEDS FIX: ${seg.qualityFlags.join(', ')}`);
   if (seg.locked) tags.push('locked');
   if (seg.ttsStale) tags.push('voice out of date');

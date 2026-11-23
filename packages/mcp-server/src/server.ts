@@ -1300,14 +1300,14 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId }, ctx) => {
-      const res = await api.post<{ parts: { projectId: string; error?: string; queued?: boolean; waiting?: boolean }[] }>(
+      const res = await api.post<{ parts: { projectId: string; index?: number; error?: string; queued?: boolean; waiting?: boolean }[] }>(
         `/projects/${encodeURIComponent(projectId)}/series/start`,
         {},
         { signal: ctx.mcpReq.signal, timeoutMs: 300_000 },
       );
       return text(
         [
-          ...res.parts.map((p, i) => `- part ${i + 1}: ${p.projectId}${p.error ? ` not started: ${p.error}` : p.waiting ? ' (starts when its models arrive)' : p.queued ? ' queued' : ' dubbing'}`),
+          ...res.parts.map((p, i) => `- part ${p.index ?? i + 1}: ${p.projectId}${p.error ? ` not started: ${p.error}` : p.waiting ? ' (starts when its models arrive)' : p.queued ? ' queued' : ' dubbing'}`),
           `Project ids: ${JSON.stringify(res.parts.map((p) => p.projectId))}`,
         ].join('\n'),
       );
@@ -1606,12 +1606,12 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     const res = fromStep
       ? await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/retry`, { stepId: fromStep }, { signal })
       : await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/run`, {}, { signal });
-    const parts = (res as { parts?: { projectId: string; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; error?: string }[] }).parts;
+    const parts = (res as { parts?: { projectId: string; index?: number; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; error?: string }[] }).parts;
     if (parts) {
       // A series parent continues as a whole: its parts, in order.
       return [
         'The series continues: its parts, in order.',
-        ...parts.map((p, i) => `- part ${i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`),
+        ...parts.map((p, i) => `- part ${p.index ?? i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`),
         'Follow them with get_series or get_queue.',
       ].join('\n');
     }

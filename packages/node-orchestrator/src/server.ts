@@ -1790,17 +1790,19 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     apply: (partId: string) => Promise<unknown>,
   ): Promise<{ projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[]> {
     const ids = await series.partIdsOf(projectId);
+    // Parts by the numbers they are shown with (a continued series starts at its offset + 1).
+    const offset = ids.length > 0 ? await series.numberOffsetOf(projectId) : 0;
     const out: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[] = [];
     for (const [i, id] of ids.entries()) {
       if (orchestrator.busyProjects().includes(id)) {
-        out.push({ projectId: id, index: i + 1, ok: false, skipped: 'dubbing now: pause it (or the series), then apply again' });
+        out.push({ projectId: id, index: offset + i + 1, ok: false, skipped: 'dubbing now: pause it (or the series), then apply again' });
         continue;
       }
       try {
         await apply(id);
-        out.push({ projectId: id, index: i + 1, ok: true });
+        out.push({ projectId: id, index: offset + i + 1, ok: true });
       } catch (err) {
-        out.push({ projectId: id, index: i + 1, ok: false, error: toAppError(err).message });
+        out.push({ projectId: id, index: offset + i + 1, ok: false, error: toAppError(err).message });
       }
     }
     return out;

@@ -602,27 +602,36 @@ export class SeriesService {
    */
   async startParts(
     projectId: string,
-  ): Promise<{ projectId: string; started?: boolean; queued?: boolean; waiting?: boolean; done?: boolean; error?: string }[]> {
+  ): Promise<{ projectId: string; index: number; started?: boolean; queued?: boolean; waiting?: boolean; done?: boolean; error?: string }[]> {
     const parent = await this.parentOf(projectId);
     const ids = parent.series.partIds?.length ? parent.series.partIds : await this.createParts(projectId);
+    // Each part by the number it is shown with (part 49 of a continued series).
+    const { offset } = partNumbering(parent.series.settings, ids.length);
     const out = [];
-    for (const id of ids) {
+    for (const [i, id] of ids.entries()) {
+      const index = offset + i + 1;
       try {
         const status = (await this.deps.store.getProject(id).catch(() => undefined))?.status;
         if (status === 'completed') {
-          out.push({ projectId: id, done: true });
+          out.push({ projectId: id, index, done: true });
           continue;
         }
         if (status === 'running' || status === 'queued') {
-          out.push({ projectId: id, ...(status === 'running' ? { started: true } : { queued: true }) });
+          out.push({ projectId: id, index, ...(status === 'running' ? { started: true } : { queued: true }) });
           continue;
         }
-        out.push({ projectId: id, ...(await this.deps.start(id)) });
+        out.push({ projectId: id, index, ...(await this.deps.start(id)) });
       } catch (err) {
-        out.push({ projectId: id, error: toAppError(err).message });
+        out.push({ projectId: id, index, error: toAppError(err).message });
       }
     }
     return out;
+  }
+
+  /** The number before a series' first part (`partNumberOffset`; 0 for a series that continues none, or a project of no series). */
+  async numberOffsetOf(projectId: string): Promise<number> {
+    const parent = await this.parentOf(projectId).catch(() => undefined);
+    return parent ? partNumbering(parent.series.settings, 0).offset : 0;
   }
 
   /** The part ids of a series parent ([] for any other project). */

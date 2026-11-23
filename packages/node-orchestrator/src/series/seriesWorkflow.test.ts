@@ -452,6 +452,14 @@ describe('a series that continues another (5.2)', { timeout: 60_000 }, () => {
     await fsp.writeFile(store.paths(fifth!).translatedJson, JSON.stringify({ segments: await lines(fifth!) }), 'utf8');
     expect(await reuseRecapTranslations(await store.getProject(fifth!), store)).toBeGreaterThan(0);
 
+    // Started, each part answers by the number it is shown with (the queue holds them here).
+    expect((await r.series.startParts(second.id)).map((p) => [p.index, p.queued])).toEqual([
+      [4, true],
+      [5, true],
+    ]);
+    expect(await r.series.numberOffsetOf(fifth!)).toBe(3);
+    for (const id of ids) await r.orchestrator.cancelJob(id);
+
     expect((await r.series.listSeries()).map((s) => [s.name, s.firstNumber, s.lastNumber, s.total]).sort()).toEqual([
       ['Tây Du Ký', 1, 3, 3],
       ['Tây Du Ký', 4, 5, 5],

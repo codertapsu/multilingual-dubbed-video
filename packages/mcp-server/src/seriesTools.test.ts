@@ -36,7 +36,8 @@ async function startFake(): Promise<Fake> {
       return;
     }
     const out = await route(req, body, res);
-    if (res.headersSent || res.writableEnded) return;
+    // A client that gave up (a timeout) has no answer to receive.
+    if (res.headersSent || res.writableEnded || res.destroyed) return;
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(out ?? {}));
   });
@@ -132,9 +133,13 @@ describe('series and create tools (0.18.0)', () => {
     createRoutes();
     fake.routes.set('GET /storage/projects-folder', () => ({ projectsDir: 'D:/VideoDubber/projects' }));
     // The app copies an 18 GB file: longer than the client waits.
-    fake.routes.set('POST /projects', () => new Promise((r) => setTimeout(() => r(project()), 600)));
+    let copied!: () => void;
+    const copying = new Promise<void>((done) => (copied = done));
+    fake.routes.set('POST /projects', () => new Promise((r) => setTimeout(() => (r(project()), copied()), 400)));
     await connect({ createProjectTimeoutMs: 150 });
     const r = await call('create_project', { videoPath: 'E:/raw/joined.mp4', targetLanguage: 'vi-VN', sourceLanguage: 'zh' });
+    // The app finishes its copy after the agent stopped waiting: nothing is answered to it.
+    await copying;
     expect(r.isError).toBe(true);
     expect(r.text).toContain('may still appear');
     expect(r.text).toContain('Do not create it again');

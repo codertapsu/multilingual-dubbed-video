@@ -94,6 +94,18 @@ export const APP_ROUTES: Routes = [
       import('./screens/export/export.component').then((m) => m.ExportComponent),
   },
   {
+    // Everything the app works on, whoever started it: one project's work
+    // (its older work too), or all of it (core/activity).
+    path: 'project/:id/activity',
+    title: 'nav.title.activity',
+    loadComponent: () => import('./screens/activity/activity-log.component').then((m) => m.ActivityLogComponent),
+  },
+  {
+    path: 'activity',
+    title: 'nav.title.activity',
+    loadComponent: () => import('./screens/activity/activity-log.component').then((m) => m.ActivityLogComponent),
+  },
+  {
     // The voice library: browse, preview, install and favourite voices of
     // every engine, each with its licence (docs/VOICES.md).
     path: 'voices',

@@ -198,7 +198,7 @@ export class StudioStore implements OnDestroy {
    */
   readonly voicesVersion = signal(0);
   /** The side panel's tab (the shell shows it; the Project tab can switch to Line). */
-  readonly sideTab = signal<'line' | 'project'>('line');
+  readonly sideTab = signal<'line' | 'project' | 'history'>('line');
 
   readonly selection = signal<ReadonlySet<string>>(new Set());
   /** The line the inspector shows (the last one clicked). */

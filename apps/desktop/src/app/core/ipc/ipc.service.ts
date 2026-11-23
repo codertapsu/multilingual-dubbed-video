@@ -2,6 +2,8 @@ import type { DiagnosticsSummaryView } from '../../shared/diagnostics/diagnostic
 import { Injectable, signal } from '@angular/core';
 
 import { environment } from '../environment';
+import { withInitiator } from './initiator';
+import type { ActivityAgentSession, ActivityEntry, EditHistoryEntry, EditHistorySummary, UndoEditResult } from '../activity/activity-models';
 import type {
   CreateProjectInput,
   ReviseProjectInput,
@@ -1080,6 +1082,42 @@ export class IpcService {
     return this.http<{ services: CloudCredentialInfo[] }>('GET', '/credentials');
   }
 
+  // ----- Activity and edit history (node-orchestrator activity/; HTTP in both modes) -----
+
+  /** GET /activity — everything the app works on, newest first (one project's, or what still runs). */
+  async activity(params: { projectId?: string; active?: boolean; limit?: number } = {}): Promise<ActivityEntry[]> {
+    const q = new URLSearchParams();
+    if (params.projectId) q.set('projectId', params.projectId);
+    if (params.active) q.set('active', '1');
+    if (params.limit) q.set('limit', String(params.limit));
+    const qs = q.toString();
+    return (await this.http<{ entries: ActivityEntry[] }>('GET', `/activity${qs ? `?${qs}` : ''}`)).entries ?? [];
+  }
+
+  /** GET /activity/agents — the AI agents (MCP sessions) seen in the last hour. */
+  async activityAgents(): Promise<ActivityAgentSession[]> {
+    return (await this.http<{ sessions: ActivityAgentSession[] }>('GET', '/activity/agents')).sessions ?? [];
+  }
+
+  /** GET /projects/:id/history — the project's line edits, newest first (without the lines). */
+  async editHistory(projectId: string): Promise<EditHistorySummary[]> {
+    return (await this.http<{ entries: EditHistorySummary[] }>('GET', `/projects/${encodeURIComponent(projectId)}/history`)).entries ?? [];
+  }
+
+  /** GET /projects/:id/history/:entryId — one edit with the lines before and after. */
+  async editHistoryEntry(projectId: string, entryId: string): Promise<EditHistoryEntry> {
+    const res = await this.http<{ entry: EditHistoryEntry }>(
+      'GET',
+      `/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(entryId)}`,
+    );
+    return res.entry;
+  }
+
+  /** POST /projects/:id/history/:entryId/undo — refused (409, with `changes`) when its lines changed since. */
+  undoEdit(projectId: string, entryId: string): Promise<UndoEditResult> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(entryId)}/undo`, {});
+  }
+
   // ----- Engine packs (optional accelerated/heavy local engines) -----
 
   /** GET /engines — packs runnable on this machine + installed set. */
@@ -1431,7 +1469,8 @@ export class IpcService {
     let delay = 150;
     for (;;) {
       try {
-        const res = await fetch(url, init);
+        // Who asked: the window (initiator.ts).
+        const res = await fetch(url, withInitiator(init));
         this.backendSeen = true;
         this._backendDown.set(false);
         return res;

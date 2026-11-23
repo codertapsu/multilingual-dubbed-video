@@ -13,6 +13,7 @@
       </p>
     </div>
     <div class="row">
+      <a class="btn btn-ghost btn-sm" [routerLink]="['/project', id(), 'activity']" [title]="'activity.project-link-title' | translate">{{ 'activity.project-link' | translate }}</a>
       <vd-status-badge [status]="overallStatus()" />
       @if (events.status() === 'error') {
         <span class="badge badge-warning" [title]="'processing.stream-offline-title' | translate"

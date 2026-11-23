@@ -19,6 +19,7 @@ import { IpcService } from '../../core/ipc/ipc.service';
 import { toAppError } from '../../core/state/project.store';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
+import { HistoryPanelComponent } from './studio/history-panel.component';
 import { InspectorComponent } from './studio/inspector.component';
 import { LinesPanelComponent } from './studio/lines-panel.component';
 import { describeTightenReason } from './studio/notes';
@@ -60,6 +61,7 @@ const LINES_OPEN_KEY = 'vd.studio.linesOpen';
     InspectorComponent,
     ProjectPanelComponent,
     TimelineComponent,
+    HistoryPanelComponent,
   ],
   templateUrl: './editor.component.html',
   styleUrl: './editor.component.scss',

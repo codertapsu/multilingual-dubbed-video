@@ -122,9 +122,13 @@
       <button type="button" role="tab" [class.active]="sideTab() === 'project'" [attr.aria-selected]="sideTab() === 'project'" (click)="sideTab.set('project')">
         {{ 'studio.tab-project' | translate }}
       </button>
+      <button type="button" role="tab" [class.active]="sideTab() === 'history'" [attr.aria-selected]="sideTab() === 'history'" (click)="sideTab.set('history')">
+        {{ 'history.tab' | translate }}
+      </button>
     </div>
     <vd-inspector class="pane" [hidden]="sideTab() !== 'line'" />
     <vd-project-panel class="pane" [hidden]="sideTab() !== 'project'" />
+    <vd-history-panel class="pane" [hidden]="sideTab() !== 'history'" [active]="sideTab() === 'history'" />
   </aside>
 </div>
 

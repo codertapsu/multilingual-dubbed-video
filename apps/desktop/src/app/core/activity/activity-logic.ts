@@ -12,6 +12,7 @@
  */
 import type { PipelineStepId, Project, PipelineState, ProjectsFolderInfo } from '../models';
 import type { DownloadItem, DownloadState } from '../models/download';
+import type { ActivityEntry, ActivityInitiator } from './activity-models';
 
 // ------------------------------------------------------------------ dubs
 
@@ -157,4 +158,146 @@ export function moveProgress(info: Pick<ProjectsFolderInfo, 'moving'>): { done: 
   const m = info.moving;
   if (!m) return null;
   return { done: m.done, total: m.total, percent: m.total > 0 ? Math.round((m.done / m.total) * 100) : null };
+}
+
+// ------------------------------------------------- the server's list (GET /activity)
+
+/**
+ * Kinds of work this app already follows from their own streams (dubs from
+ * GET /queue, downloads, installs, the move): listed once, from there, with
+ * their own links, notices and replay rules. The server's activity list holds
+ * them too (for the per-project Activity view and the agents), so its entries
+ * of these kinds are never listed a second time in the top bar.
+ */
+export const FOLLOWED_ELSEWHERE: ReadonlySet<string> = new Set([
+  'dub.run',
+  'dub.render',
+  'download',
+  'engine.install',
+  'model.install',
+  'projects.move',
+]);
+
+export function followedElsewhere(kind: string): boolean {
+  return FOLLOWED_ELSEWHERE.has(kind);
+}
+
+const KIND_KEYS: Record<string, string> = {
+  'dub.run': 'activity.kind-dub-run',
+  'dub.render': 'activity.kind-dub-render',
+  download: 'activity.kind-download',
+  'engine.install': 'activity.kind-engine-install',
+  'model.install': 'activity.kind-model-install',
+  'projects.move': 'activity.kind-projects-move',
+  'voices.regenerate': 'activity.kind-voices-regenerate',
+  'speakers.detect': 'activity.kind-speakers-detect',
+  'lines.retranscribe': 'activity.kind-lines-retranscribe',
+  'series.plan': 'activity.kind-series-plan',
+  'series.rebuild': 'activity.kind-series-rebuild',
+  'project.join': 'activity.kind-project-join',
+  external: 'activity.kind-external',
+};
+
+/** The family of a kind the UI has no exact name for (`picture.watermark` → picture). */
+const KIND_FAMILY_KEYS: Record<string, string> = {
+  speakers: 'activity.kind-speakers',
+  lines: 'activity.kind-lines',
+  series: 'activity.kind-series',
+  project: 'activity.kind-project',
+  picture: 'activity.kind-picture',
+  voices: 'activity.kind-voices-regenerate',
+};
+
+/**
+ * The translation key naming a kind of work, or null when the UI does not
+ * know it (the server's own title is shown then). Kinds are named by the job
+ * that reports them (`speakers.detect`, `picture.…`): a family name covers
+ * the ones added later.
+ */
+export function kindLabelKey(kind: string): string | null {
+  return KIND_KEYS[kind] ?? KIND_FAMILY_KEYS[kind.split('.')[0] ?? ''] ?? null;
+}
+
+/**
+ * An agent's name as people know it, from the name its MCP client gives in
+ * its handshake (`claude-code`, `claude-ai`…); else that name as it is, or
+ * null when it gave none.
+ */
+export function agentName(client: string | undefined): string | null {
+  if (!client) return null;
+  const c = client.toLowerCase();
+  if (c.includes('mother')) return 'Mother Claude';
+  if (c.includes('claude-code') || c.includes('claude code')) return 'Claude Code';
+  if (c === 'claude-ai' || c.includes('claude desktop') || c.includes('claude-desktop')) return 'Claude Desktop';
+  return client;
+}
+
+/** Who started a piece of work, as a translation key and its parameters. */
+export function initiatorView(initiator: ActivityInitiator, external?: boolean): { key: string; params?: Record<string, string> } {
+  const name = agentName(initiator.client);
+  if (external) return name ? { key: 'activity.reported-by', params: { name } } : { key: 'activity.reported-by-agent' };
+  switch (initiator.kind) {
+    case 'ui':
+      return { key: 'activity.by-you' };
+    case 'mcp':
+      return name ? { key: 'activity.by-agent', params: { name } } : { key: 'activity.by-some-agent' };
+    case 'scheduler':
+      return { key: 'activity.by-app' };
+    default:
+      return { key: 'activity.by-unknown' };
+  }
+}
+
+/** Where an entry is looked at: its project's Activity page, or the app's. */
+export function entryLink(entry: Pick<ActivityEntry, 'projectId'>): string {
+  return entry.projectId ? `/project/${encodeURIComponent(entry.projectId)}/activity` : '/activity';
+}
+
+/** How an entry of the server's list shows in the top bar. */
+export interface RegistryRow {
+  /** `job:<entry id>`. */
+  id: string;
+  state: 'running' | 'waiting' | 'done' | 'failed';
+  percent: number | null;
+  link: string;
+}
+
+/**
+ * Whether (and how) an entry of the server's list is a row of the top bar:
+ * not the kinds followed elsewhere (no row twice), not what was stopped
+ * (whoever stopped it knows, as for a paused dub), and not what ended before
+ * this window saw it run (a replay of history).
+ */
+export function registryRow(entry: ActivityEntry, opts: { replay: boolean; seenRunning: boolean }): RegistryRow | null {
+  if (followedElsewhere(entry.kind) || entry.state === 'cancelled') return null;
+  if (entry.endedAt && opts.replay && !opts.seenRunning) return null;
+  return { id: `job:${entry.id}`, state: entry.state, percent: entry.percent, link: entryLink(entry) };
+}
+
+/**
+ * Whether an entry's end is news worth a notice: it ended while this window
+ * watched it. The window's own re-voicing is left out (the editor shows it).
+ */
+export function announceEnd(entry: ActivityEntry, opts: { replay: boolean; seenRunning: boolean }): boolean {
+  if (opts.replay || !opts.seenRunning || !entry.endedAt) return false;
+  if (entry.state !== 'done' && entry.state !== 'failed') return false;
+  if (followedElsewhere(entry.kind)) return false;
+  return !(entry.kind === 'voices.regenerate' && entry.initiator.kind === 'ui' && entry.state === 'done');
+}
+
+/**
+ * A list of entries with `incoming` merged in: one per id (the latest),
+ * newest first by start, at most `max`. Pure; the Activity page's list.
+ */
+export function mergeEntries(list: readonly ActivityEntry[], incoming: readonly ActivityEntry[], max = 300): ActivityEntry[] {
+  const byId = new Map(list.map((e) => [e.id, e]));
+  for (const e of incoming) {
+    const prev = byId.get(e.id);
+    if (prev && prev.updatedAt > e.updatedAt) continue;
+    // A change streamed before the name was looked up keeps the name already known.
+    byId.set(e.id, e.projectName || !prev?.projectName ? e : { ...e, projectName: prev.projectName });
+  }
+  return [...byId.values()]
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, max);
 }

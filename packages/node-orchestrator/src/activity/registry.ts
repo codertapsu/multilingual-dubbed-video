@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 import { toAppError, type ActivityEntry, type ActivityInitiator, type AppError } from '@videodubber/shared';
 
-import { currentInitiator } from './context.js';
+import { currentInitiator, currentRequestId } from './context.js';
 
 /** How a job reports itself while it runs. Every method is safe to call after it ended (ignored). */
 export interface ActivityHandle {
@@ -48,6 +48,7 @@ export class ActivityRegistry {
   start(opts: StartActivity): ActivityHandle {
     const now = new Date().toISOString();
     const id = `act_${crypto.randomBytes(8).toString('hex')}`;
+    const logRef = currentRequestId();
     this.put({
       id,
       kind: opts.kind,
@@ -60,6 +61,7 @@ export class ActivityRegistry {
       startedAt: now,
       updatedAt: now,
       ...(opts.external ? { external: true } : {}),
+      ...(logRef ? { logRef } : {}),
     });
     const patch = (p: Partial<ActivityEntry>): void => {
       const cur = this.entries.get(id);
@@ -97,6 +99,22 @@ export class ActivityRegistry {
     const next: ActivityEntry = { ...cur, ...patch, updatedAt: now, ...(ended && !cur.endedAt ? { endedAt: now } : {}) };
     this.put(next);
     return next;
+  }
+
+  /**
+   * Change a running entry the app follows from outside the job itself (a
+   * download that got its title, went back to waiting its turn; the
+   * initiator of a queued dub found again after a restart). Ignored once it
+   * ended, like the handle's methods.
+   */
+  patch(
+    id: string,
+    patch: Partial<Pick<ActivityEntry, 'title' | 'state' | 'percent' | 'message' | 'etaSec' | 'initiator'>>,
+  ): void {
+    const cur = this.entries.get(id);
+    if (!cur || cur.endedAt) return;
+    if (patch.state && patch.state !== 'running' && patch.state !== 'waiting') return;
+    this.put({ ...cur, ...patch, updatedAt: new Date().toISOString() });
   }
 
   get(id: string): ActivityEntry | undefined {

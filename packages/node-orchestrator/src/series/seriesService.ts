@@ -54,6 +54,7 @@ import {
 } from './seriesPlanner.js';
 import { rangedMediaInfo } from './seriesRange.js';
 import { sanitizeSeriesSettings } from './seriesSanitize.js';
+import { runAsScheduler } from '../activity/context.js';
 
 export { sanitizeSeriesSettings };
 
@@ -180,7 +181,7 @@ export class SeriesService {
       const reasons = parent.series.settings.autoStart ? seriesReviewReasons(parent, pipeline) : [];
       if (parent.series.settings.autoStart && reasons.length === 0) {
         await this.createParts(parentId);
-        await this.startParts(parentId);
+        await runAsScheduler(() => this.startParts(parentId));
       } else {
         if (reasons.length > 0) this.deps.logger?.warn(`series ${parentId}: stopped at review: ${reasons.map((r) => r.message).join(' ')}`);
         await this.setState(parentId, 'review', reasons.length > 0 ? { reviewReasons: reasons } : {});

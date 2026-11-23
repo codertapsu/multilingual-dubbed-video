@@ -51,6 +51,55 @@ export interface ActivityEntry {
   error?: AppError;
   /** Reported by an agent for work it did outside the app (MCP `report_activity`). */
   external?: boolean;
+  /**
+   * The tool call that started it, when an agent did (the MCP's request id,
+   * `mcp-…`): the same reference its tool errors give, so the app's log lines
+   * of that call can be found. The entry's own id is logged too.
+   */
+  logRef?: string;
+  /** The project's name when the entry was listed (GET /activity fills it in; not stored). */
+  projectName?: string;
+}
+
+/** A change of the activity list, as `GET /activity/events` streams it. */
+export interface ActivityStreamEvent {
+  type: 'entry';
+  entry: ActivityEntry;
+  /** Sent on connect: the state of things, not news. */
+  replay?: boolean;
+}
+
+/**
+ * An MCP session seen in the last hour (GET /activity/agents): which agent,
+ * since when, and what it did last, so the user sees who is driving the app.
+ */
+export interface ActivityAgentSession {
+  /** The session the MCP server names in `x-vd-session`. */
+  session: string;
+  /** The client's own name from its handshake ("claude-code", "claude-ai"…). */
+  client?: string;
+  firstAt: string;
+  lastAt: string;
+  /** Tool calls seen (each may make several requests to the app). */
+  calls: number;
+  /** The last tools it used, newest first. */
+  tools: string[];
+}
+
+/**
+ * An agent's report about work it does outside the app (POST
+ * /activity/report, MCP `report_activity`): the first one (no `id`) creates
+ * the entry, later ones update it by the id it got back.
+ */
+export interface ActivityReport {
+  id?: string;
+  projectId?: string;
+  title?: string;
+  state?: ActivityState;
+  /** 0..100, or null when unknown. */
+  percent?: number | null;
+  /** The step it is on, or how it ended. */
+  detail?: string;
 }
 
 /**
@@ -80,4 +129,24 @@ export interface EditHistoryEntry {
   after: TranscriptSegment[];
   /** Set when the change was undone. */
   undoneAt?: string;
+  /** This change is the undo of that entry. */
+  undoOf?: string;
+}
+
+/**
+ * A history entry as the list shows it (GET /projects/:id/history): everything
+ * but the lines themselves, which can be hundreds (GET …/history/:entryId has
+ * them).
+ */
+export interface EditHistorySummary extends Omit<EditHistoryEntry, 'before' | 'after'> {
+  /** How many lines the change touched, as they were and as they became. */
+  beforeCount: number;
+  afterCount: number;
+}
+
+/** POST /projects/:id/history/:entryId/undo: the entry undone, and the undo's own entry. */
+export interface UndoEditResult {
+  undone: EditHistorySummary;
+  /** The undo as recorded in the history (absent when nothing had to be written). */
+  entry?: EditHistorySummary;
 }

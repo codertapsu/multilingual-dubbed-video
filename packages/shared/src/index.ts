@@ -186,11 +186,16 @@ export type {
 export { DEFAULT_SERIES_SETTINGS } from './models/series.js';
 export type { BlurRegion } from './models/picture.js';
 export type {
+  ActivityAgentSession,
   ActivityEntry,
   ActivityInitiator,
   ActivityInitiatorKind,
+  ActivityReport,
   ActivityState,
+  ActivityStreamEvent,
   EditHistoryEntry,
+  EditHistorySummary,
+  UndoEditResult,
 } from './models/activity.js';
 export type {
   BackendCrash,

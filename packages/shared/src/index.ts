@@ -188,6 +188,8 @@ export type {
   BlurRegion,
   PictureCorner,
   PictureDetection,
+  PictureDetectionJob,
+  PictureFrame,
   SubtitleBandProposal,
   WatermarkProposal,
 } from './models/picture.js';

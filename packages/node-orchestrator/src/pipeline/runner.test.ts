@@ -1908,7 +1908,7 @@ describe('PipelineRunner — continuing after a pause (review findings)', () => 
 
 describe('PipelineRunner — picture options in the render', () => {
   it("hands the project's watermark regions and its blurred band to the render, in the input video's time", async () => {
-    const regions = [{ x: 0.66, y: 0.014, w: 0.31, h: 0.04, mode: 'blur' as const, startMs: 0, endMs: 3_600_000 }];
+    const regions = [{ x: 0.66, y: 0.014, w: 0.31, h: 0.04, mode: 'blur' as const, startMs: 1_000, endMs: 3_600_000 }];
     const { project, deps, media } = await buildProject({
       settings: { ...defaultSettings(), blurRegions: regions, burnSubtitleStyle: { coverOriginal: 'blur', coverBand: { y: 0.755, h: 0.06 } } },
     });

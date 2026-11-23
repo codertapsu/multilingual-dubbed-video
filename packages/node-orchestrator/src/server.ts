@@ -95,6 +95,8 @@ import { checkWorkersHealth } from './health.js';
 import { toHttpError } from './httpErrors.js';
 import { decideRange } from './httpRange.js';
 import { createFfmpegMediaService } from './mediaAdapter.js';
+import { PictureDetectionService } from './picture/pictureDetection.js';
+import { registerPictureRoutes } from './picture/pictureRoutes.js';
 import { openPath } from './openPath.js';
 import { describeStorage, clearStorage, dirSize } from './storage.js';
 import { LocalJobOrchestrator } from './orchestrator.js';
@@ -3437,6 +3439,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
 
   // [routes: picture options]
+  // Watermarks and the band over the source's subtitles: found without AI
+  // (a job in the activity list), saved with PUT /projects/:id/settings.
+  registerPictureRoutes(app, { pictures: new PictureDetectionService({ store }), sendError });
 
 
   // [routes: activity and edit history]

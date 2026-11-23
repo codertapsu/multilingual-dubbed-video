@@ -89,3 +89,33 @@ export interface PictureDetection {
   /** What to know about the result ("no transcript yet: the band was found from the picture alone"). */
   notes: string[];
 }
+
+/**
+ * A picture detection as the routes report it (POST/GET
+ * /projects/:id/picture/detect, POST /picture/detect): running with its
+ * progress, or its last result.
+ */
+export interface PictureDetectionJob {
+  state: 'idle' | 'running' | 'done' | 'failed';
+  /** 0–100 while running. */
+  percent?: number;
+  message?: string;
+  startedAt?: string;
+  result?: PictureDetection;
+  error?: { code: string; message: string; remediation?: string };
+  /** Its entry in the activity list (GET /activity). */
+  activityId?: string;
+}
+
+/** One frame of a video for the picture editor (POST /projects/:id/picture/frame, POST /picture/frame). */
+export interface PictureFrame {
+  /** A JPEG as a data: URL. */
+  image: string;
+  width: number;
+  height: number;
+  /** Where it is, ms of the input video. */
+  atMs: number;
+  /** The stretch of the input video the project covers (a part's window), ms. */
+  windowStartMs: number;
+  windowEndMs: number;
+}

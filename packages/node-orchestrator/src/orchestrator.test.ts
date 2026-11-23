@@ -474,6 +474,59 @@ describe('burned-in subtitle style edits', () => {
       outlineColor: '#000000',
     });
   });
+
+  it('the blurred band: where it is, how strong, our subtitles in it; null puts a field back to its default', async () => {
+    const video = await writeDummyVideo(tmp);
+    const p = await orchestrator.createProject(createProjectInput(video));
+
+    let { project } = await orchestrator.updateProjectSettings(p.id, {
+      burnSubtitleStyle: { coverOriginal: 'blur', coverBand: { y: 0.755, h: 0.06 }, coverStrength: 7, subtitlesInBand: true },
+    });
+    expect(project.settings.burnSubtitleStyle).toEqual({ coverOriginal: 'blur', coverBand: { y: 0.755, h: 0.06 }, coverStrength: 7, subtitlesInBand: true });
+
+    // A band past the frame is clipped; a strength out of range is dropped, the old one kept.
+    ({ project } = await orchestrator.updateProjectSettings(p.id, { burnSubtitleStyle: { coverBand: { y: 0.9, h: 0.5 }, coverStrength: 40 } }));
+    expect(project.settings.burnSubtitleStyle).toMatchObject({ coverBand: { y: 0.9, h: 0.1 }, coverStrength: 7 });
+
+    ({ project } = await orchestrator.updateProjectSettings(p.id, {
+      burnSubtitleStyle: { coverBand: null, subtitlesInBand: null, coverOriginal: 'solid' } as never,
+    }));
+    expect(project.settings.burnSubtitleStyle).toEqual({ coverOriginal: 'solid', coverStrength: 7 });
+  });
+});
+
+describe('picture options: regions hidden in the render', () => {
+  it('saves well-formed regions, drops the rest, clears with [] or null', async () => {
+    const video = await writeDummyVideo(tmp);
+    const p = await orchestrator.createProject(createProjectInput(video));
+    const mark = { x: 0.66, y: 0.014, w: 0.31, h: 0.04, mode: 'blur' as const };
+
+    let { project } = await orchestrator.updateProjectSettings(p.id, {
+      blurRegions: [
+        mark,
+        { x: 0.9, y: 0.9, w: 0.5, h: 0.5, mode: 'pixelate', strength: 99, startMs: 1000.4, endMs: 9000 },
+        { x: 0.1, y: 0.1, w: 0.1, h: 0.1, mode: 'smudge' },
+        { x: 0.1, y: 0.1, w: 0.1, h: 0.1, mode: 'delogo', startMs: 5000, endMs: 4000 },
+        'junk',
+      ] as never,
+    });
+    expect(project.settings.blurRegions).toEqual([mark, { x: 0.9, y: 0.9, w: 0.1, h: 0.1, mode: 'pixelate', strength: 10, startMs: 1000, endMs: 9000 }]);
+
+    ({ project } = await orchestrator.updateProjectSettings(p.id, { blurRegions: [] }));
+    expect(project.settings.blurRegions).toBeUndefined();
+    ({ project } = await orchestrator.updateProjectSettings(p.id, { blurRegions: [mark] }));
+    expect(project.settings.blurRegions).toEqual([mark]);
+    ({ project } = await orchestrator.updateProjectSettings(p.id, { blurRegions: null } as never));
+    expect(project.settings.blurRegions).toBeUndefined();
+  });
+
+  it('a project created with regions keeps only the well-formed ones', async () => {
+    const video = await writeDummyVideo(tmp);
+    const p = await orchestrator.createProject(
+      createProjectInput(video, { settings: { ...defaultSettings(), blurRegions: [{ x: 0.1, y: 0.1, w: 0.2, h: 0.1, mode: 'delogo' }, { x: 'a' }] as never } }),
+    );
+    expect(p.settings.blurRegions).toEqual([{ x: 0.1, y: 0.1, w: 0.2, h: 0.1, mode: 'delogo' }]);
+  });
 });
 
 describe('heavy-lane hand-over', () => {

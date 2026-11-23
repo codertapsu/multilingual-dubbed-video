@@ -96,6 +96,7 @@ import { mixFingerprint, readMixFingerprint } from './pipeline/mixFingerprint.js
 import type { BrandKit } from './branding/brandKit.js';
 import { greetingSettingsKey, readGreetingPlan } from './branding/greetingMix.js';
 import { sanitizeBranding } from './branding/sanitize.js';
+import { sanitizeBlurRegions, sanitizeCoverFields, withoutClearedCoverFields } from './picture/pictureSanitize.js';
 import { rangedMediaInfo } from './series/seriesRange.js';
 import { acceptOutputDir, moveOutputFiles, samePath } from './workspace/outputFolder.js';
 import { clearCueOverridesFor, displayCuesFor, readCueOverrides } from './workspace/subtitleTiming.js';
@@ -268,7 +269,8 @@ export function sanitizeSubtitleStyle(input: unknown): SubtitleStyle | undefined
     typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : undefined;
   const color = (v: unknown): string | undefined => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : undefined);
   if (s.position === 'bottom' || s.position === 'raised' || s.position === 'top') out.position = s.position;
-  if (typeof s.coverOriginal === 'boolean') out.coverOriginal = s.coverOriginal;
+  // The band over the source's subtitles: solid or blurred, where, how strong (picture/pictureSanitize.ts).
+  Object.assign(out, sanitizeCoverFields(s));
   const opacity = num(s.coverOpacity, 0, 1);
   if (opacity !== undefined) out.coverOpacity = opacity;
   const band = num(s.coverHeightPercent, 5, 50);
@@ -582,9 +584,18 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // (position + the band that hides a source's own hardsubs; see SubtitleStyle).
     // Validate the patch BEFORE merging, so a bad value cannot erase a good one.
     if (patch.burnSubtitleStyle !== undefined) {
-      const style = sanitizeSubtitleStyle({ ...next.burnSubtitleStyle, ...sanitizeSubtitleStyle(patch.burnSubtitleStyle) });
+      const style = withoutClearedCoverFields(
+        sanitizeSubtitleStyle({ ...next.burnSubtitleStyle, ...sanitizeSubtitleStyle(patch.burnSubtitleStyle) }),
+        patch.burnSubtitleStyle,
+      );
       if (style) next.burnSubtitleStyle = style;
       else delete next.burnSubtitleStyle;
+    }
+    // Watermarks hidden in the render, checked box by box; [] or null clears them.
+    if (patch.blurRegions !== undefined) {
+      const regions = sanitizeBlurRegions(patch.blurRegions);
+      if (regions) next.blurRegions = regions;
+      else delete next.blurRegions;
     }
     // Logo and greeting: checked field by field; null or {} turns both off.
     if (patch.branding !== undefined) {

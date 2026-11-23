@@ -238,6 +238,35 @@ enum Method {
     Put,
 }
 
+/// Who asked, as the orchestrator reads it (node-orchestrator
+/// `activity/context.ts`): every job and edit there records it. Everything this
+/// proxy sends is the window's doing (or the shell's, on the user's behalf), so
+/// it says `ui`, like the webview's own fetches (ipc.service.ts). Without it the
+/// app's activity list could not tell the user's clicks from an agent's calls,
+/// which is all a 27.8-hour production run over MCP looked like (2026-11-23).
+const INITIATOR_HEADER: &str = "x-vd-initiator";
+const INITIATOR_UI: &str = "ui";
+
+/// One request to the orchestrator, as sent: the verb, the path, the JSON body
+/// and who asked.
+fn build_request(
+    client: &reqwest::Client,
+    method: Method,
+    path: &str,
+    body: Option<&Value>,
+) -> reqwest::RequestBuilder {
+    let req = match method {
+        Method::Get => client.get(url(path)),
+        Method::Post => client.post(url(path)),
+        Method::Put => client.put(url(path)),
+    };
+    let req = req.header(INITIATOR_HEADER, INITIATOR_UI);
+    match body {
+        Some(b) => req.json(b),
+        None => req,
+    }
+}
+
 /// Send a request, waiting out a backend that is still booting.
 ///
 /// Only CONNECTION-REFUSED failures are retried, which is what makes retrying a
@@ -254,15 +283,7 @@ async fn send_with_boot_wait(
     let mut backoff = INITIAL_BACKOFF;
 
     loop {
-        let req = match method {
-            Method::Get => client.get(url(path)),
-            Method::Post => client.post(url(path)),
-            Method::Put => client.put(url(path)),
-        };
-        let req = match body {
-            Some(b) => req.json(b),
-            None => req,
-        };
+        let req = build_request(client, method, path, body);
         match req.send().await {
             Ok(resp) => {
                 // First contact: every later call gets the short budget, so a
@@ -361,6 +382,34 @@ mod tests {
     #[test]
     fn the_loopback_client_builds_before_the_updater_ever_runs() {
         client(DEFAULT_TIMEOUT).expect("the orchestrator client must build");
+    }
+
+    /// Every proxied request says the window asked, whatever its verb, so the
+    /// orchestrator's activity and edit history record the user's own clicks
+    /// as theirs (and a JSON body still goes with its content type).
+    #[test]
+    fn every_request_says_the_window_asked() {
+        let c = client(DEFAULT_TIMEOUT).expect("client");
+        let body = json!({ "a": 1 });
+        for (method, body) in [
+            (Method::Get, None),
+            (Method::Post, Some(&body)),
+            (Method::Put, Some(&body)),
+        ] {
+            let req = build_request(&c, method, "/projects", body).build().expect("request");
+            assert_eq!(
+                req.headers().get(INITIATOR_HEADER).and_then(|v| v.to_str().ok()),
+                Some("ui")
+            );
+            if body.is_some() {
+                assert_eq!(
+                    req.headers()
+                        .get(reqwest::header::CONTENT_TYPE)
+                        .and_then(|v| v.to_str().ok()),
+                    Some("application/json")
+                );
+            }
+        }
     }
 
     #[test]

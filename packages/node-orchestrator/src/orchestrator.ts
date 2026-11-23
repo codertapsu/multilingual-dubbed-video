@@ -779,8 +779,16 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   async speakerJobState(projectId: string): Promise<SpeakerJobView | undefined> {
     const live = this.speakerJob(projectId);
     if (live) return speakerJobView(live, true);
-    const saved = await readSpeakerJob(speakerJobFile(this.deps.store.paths(projectId)));
-    return saved ? speakerJobView(saved, false) : undefined;
+    const paths = this.deps.store.paths(projectId);
+    const saved = await readSpeakerJob(speakerJobFile(paths));
+    if (!saved) return undefined;
+    // One that failed or was cut off, then a detection that finished after it
+    // (a dub's own, in its STT step): "try again" is no longer true.
+    if (saved.state !== 'done') {
+      const detectedAt = await fsp.stat(paths.diarizationJson).then((s) => s.mtimeMs, () => 0);
+      if (detectedAt > Date.parse(saved.finishedAt ?? saved.startedAt)) return undefined;
+    }
+    return speakerJobView(saved, false);
   }
 
   /** Save a detection job's state as it changes: one write at a time, in order. */

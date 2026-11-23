@@ -150,7 +150,8 @@ describe('a detection job outlives the app', () => {
     await vi.waitFor(() => expect(orchestrator.speakerJob(id)?.state).toBe('done'), { timeout: 5000 });
 
     // Another process (the app started again) finds a job saved as running that nobody runs.
-    await saveSpeakerJob(speakerJobFile(paths), { state: 'running', done: 3, total: 12, startedAt: '2026-11-23T10:00:00.000Z' });
+    const startedAt = new Date(Date.now() + 1000).toISOString();
+    await saveSpeakerJob(speakerJobFile(paths), { state: 'running', done: 3, total: 12, startedAt });
     const restarted = new LocalJobOrchestrator({
       config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
       store,
@@ -161,6 +162,10 @@ describe('a detection job outlives the app', () => {
     });
     expect(restarted.speakerJob(id)).toBeUndefined();
     expect(await restarted.speakerJobState(id)).toMatchObject({ state: 'interrupted', done: 3, total: 12 });
+    // A detection that finished after it (a dub's own) makes its notice untrue: none.
+    await saveSpeakerJob(speakerJobFile(paths), { state: 'failed', done: 1, total: 12, startedAt: '2026-11-20T10:00:00.000Z', finishedAt: '2026-11-20T10:05:00.000Z', error: 'HTTP 500' });
+    expect(await restarted.speakerJobState(id)).toBeUndefined();
+    await saveSpeakerJob(speakerJobFile(paths), { state: 'running', done: 3, total: 12, startedAt });
     // Retry starts it again (the saved parts make it resume).
     expect(await restarted.startSpeakerDetection(id)).toEqual({ started: true });
     await vi.waitFor(() => expect(restarted.speakerJob(id)?.state).toBe('done'), { timeout: 5000 });

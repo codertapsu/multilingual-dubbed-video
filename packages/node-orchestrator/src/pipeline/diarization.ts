@@ -28,13 +28,20 @@
  * speaker became, for casting (readSpeakerProfiles).
  */
 import fsp from 'node:fs/promises';
-import type { StepDetail, TranscriptSegment } from '@videodubber/shared';
-import type {
-  DetectedVoice,
-  Diarization,
-  DiarizationService,
-  DiarizeOptions,
-  SpeakerTurn,
+import { AppErrorException, type StepDetail, type TranscriptSegment } from '@videodubber/shared';
+import {
+  MAX_DETECTED_SPEAKERS,
+  ONE_PASS_MAX_MS,
+  planDiarizationChunks,
+  wavDurationMs,
+  type ChunkSpeaker,
+  type DetectedVoice,
+  type Diarization,
+  type DiarizationChunk,
+  type DiarizationService,
+  type DiarizeOptions,
+  type SpeakerGender,
+  type SpeakerTurn,
 } from '../providers/diarization/sherpaDiarizationProvider.js';
 import { cosineSimilarity } from '../providers/diarization/voicePrint.js';
 import { writeJsonAtomic } from '../workspace/projectStore.js';
@@ -460,5 +467,344 @@ export function speakerDetectionProgress(
     if (total > 1) {
       log(done === 0 ? `Detecting speakers in ${total} parts of up to 10 minutes...` : `Speaker detection: part ${done}/${total} done.`);
     }
+  };
+}
+
+// ---- ranged detection --------------------------------------------------------
+
+/*
+ * Speakers again for one stretch of a project, linked to the speakers it
+ * already has (detect_speakers with fromMs/toMs). After a re-transcription the
+ * range's new lines have no speaker (orchestrator retranscribeRange carries
+ * one only where the text still matches), and on the 27.8-hour series a full
+ * detection took 4 h 56 min for 5.3 h of changed audio (claude-dubber report,
+ * 2026-11-23, 1.3 and 6.1).
+ *
+ * When the saved detection was made on this very audio, its turns are the
+ * range's turns: the lines are labelled from them, nothing is detected. When
+ * the audio changed since (extracted again, joined again), only the parts
+ * over the range are detected (saved and resumed like any part), each part's
+ * speakers are linked to the known speakers by voice print, and their turns
+ * replace the old ones inside those parts. The cache keeps the stamp of the
+ * audio it was first made on: only the range is known to be current, so a
+ * later full detection still detects everything (reusing the saved parts).
+ *
+ * Only the lines in the range change. Ids stay the project's own (a known
+ * speaker keeps its SPEAKER_xx, so voices chosen per speaker stay valid); a
+ * voice the project never heard gets the next free id.
+ */
+
+/** A part's speaker is a known one from this print similarity: 1 − the engine's fallback link distance (0.35). */
+export const RANGE_LINK_MIN_SIMILARITY = 0.65;
+/** Prints from less clean speech than this (s) are noisy: they only join a known speaker... */
+const RANGE_MIN_PRINT_SEC = 3;
+/** ...from this similarity (the engine's join slack, 0.35 + 0.15), and never make a new one. */
+const RANGE_JOIN_MIN_SIMILARITY = 0.5;
+/** Two speakers of one part that both talk this long were kept apart by its diarizer... */
+const RANGE_CANNOT_LINK_SEC = 15;
+/** ...so they stay two people unless their prints are this alike (the engine's cannot-link). */
+const RANGE_CANNOT_LINK_SIMILARITY = 0.78;
+/** The engine's pitch-only confidence (gender.py). */
+const PITCH_ONLY_CONFIDENCE = 0.3;
+
+/** A gender from pitch alone, as the engine's `pitch_gender` (no seeds to compare with here). Pure. */
+export function pitchGender(f0Hz: number | null, lowShare: number | null): SpeakerGender {
+  if (f0Hz === null) return 'unknown';
+  if (f0Hz < 165) return 'male';
+  if (f0Hz <= 180) return (lowShare ?? 0.5) >= 0.5 ? 'male' : 'female';
+  if (f0Hz <= 300) return 'female';
+  return 'unknown';
+}
+
+function normalised(v: readonly number[]): number[] {
+  const n = Math.sqrt(v.reduce((a, x) => a + x * x, 0));
+  return n > 0 ? v.map((x) => x / n) : [...v];
+}
+
+export interface LinkedParts {
+  /** `${part}:${local}` -> a speaker number of the cache (a known one, or one of `added`). */
+  speakerOf: Map<string, number>;
+  /** Voices no known speaker matched, numbered after the known ones. */
+  added: CachedSpeaker[];
+}
+
+/**
+ * Link the speakers of separately detected parts to the speakers already
+ * known, by voice print. Per part, the most alike pairs first; two speakers
+ * of one part that both talk 15 s or more never become one known speaker
+ * unless their prints say they are (the part's diarizer kept them apart). A
+ * clear print nobody matches is someone new (past `maxSpeakers`, the most
+ * alike known one); a print from under 3 s of clean speech only joins a known
+ * speaker, or stays out (its lines then take a neighbour's speaker, marked as
+ * a guess). Known prints are not moved. Pure.
+ */
+export function linkPartsToSpeakers(
+  known: readonly CachedSpeaker[],
+  parts: readonly { speakers: readonly ChunkSpeaker[] }[],
+  opts: { maxSpeakers?: number } = {},
+): LinkedParts {
+  interface Candidate {
+    speaker: number;
+    print: number[];
+    /** Its members' sec-weighted prints, for a voice added here (its print follows them). */
+    sum?: number[];
+  }
+  const pool: Candidate[] = known.filter((k) => k.print.length > 0).map((k) => ({ speaker: k.speaker, print: k.print }));
+  const added: CachedSpeaker[] = [];
+  const addedMembers = new Map<number, ChunkSpeaker[]>();
+  const cap = Math.max(1, Math.min(opts.maxSpeakers ?? MAX_DETECTED_SPEAKERS, MAX_DETECTED_SPEAKERS));
+  let next = known.reduce((m, k) => Math.max(m, k.speaker), -1) + 1;
+  const speakerOf = new Map<string, number>();
+
+  for (const [p, part] of parts.entries()) {
+    const voiced = part.speakers.filter((s) => s.print.length > 0);
+    const taken = new Map<number, ChunkSpeaker[]>();
+    const canJoin = (s: ChunkSpeaker, speaker: number): boolean =>
+      (taken.get(speaker) ?? []).every(
+        (o) => s.sec < RANGE_CANNOT_LINK_SEC || o.sec < RANGE_CANNOT_LINK_SEC || cosineSimilarity(s.print, o.print) >= RANGE_CANNOT_LINK_SIMILARITY,
+      );
+    const assign = (s: ChunkSpeaker, speaker: number): void => {
+      speakerOf.set(`${p}:${s.local}`, speaker);
+      taken.set(speaker, [...(taken.get(speaker) ?? []), s]);
+      const members = addedMembers.get(speaker);
+      if (members) {
+        members.push(s);
+        const c = pool.find((x) => x.speaker === speaker)!;
+        c.sum = c.sum ? c.sum.map((x, i) => x + s.sec * (s.print[i] ?? 0)) : s.print.map((x) => x * s.sec);
+        c.print = normalised(c.sum);
+      }
+    };
+    const best = (s: ChunkSpeaker, min: number): Candidate | undefined =>
+      pool
+        .map((k) => ({ k, sim: cosineSimilarity(s.print, k.print) }))
+        .filter((x) => x.sim >= min && canJoin(s, x.k.speaker))
+        .sort((a, b) => b.sim - a.sim || a.k.speaker - b.k.speaker)[0]?.k;
+
+    const clear = voiced.filter((s) => s.printSec >= RANGE_MIN_PRINT_SEC);
+    const pairs = clear
+      .flatMap((s) => pool.map((k) => ({ s, speaker: k.speaker, sim: cosineSimilarity(s.print, k.print) })))
+      .filter((x) => x.sim >= RANGE_LINK_MIN_SIMILARITY)
+      .sort((a, b) => b.sim - a.sim || a.s.local - b.s.local || a.speaker - b.speaker);
+    for (const { s, speaker } of pairs) {
+      if (speakerOf.has(`${p}:${s.local}`) || !canJoin(s, speaker)) continue;
+      assign(s, speaker);
+    }
+    for (const s of clear) {
+      if (speakerOf.has(`${p}:${s.local}`)) continue;
+      if (known.length + added.length < cap) {
+        const speaker = next++;
+        pool.push({ speaker, print: [...s.print] });
+        addedMembers.set(speaker, []);
+        added.push({ speaker, sec: 0, f0Hz: null, gender: 'unknown', genderConfidence: 0, print: [] });
+        assign(s, speaker);
+      } else {
+        const k = best(s, -1);
+        if (k) assign(s, k.speaker);
+      }
+    }
+    for (const s of voiced.filter((x) => x.printSec < RANGE_MIN_PRINT_SEC)) {
+      const k = best(s, RANGE_JOIN_MIN_SIMILARITY);
+      if (k) assign(s, k.speaker);
+    }
+  }
+
+  // What each added voice sounds like, from its members.
+  const weight = (m: ChunkSpeaker): number => Math.max(m.sec, 1e-6);
+  for (const a of added) {
+    const members = addedMembers.get(a.speaker) ?? [];
+    const pitched = members.filter((m) => m.f0Hz !== null);
+    const f0Hz = pitched.length
+      ? Math.round((pitched.reduce((n, m) => n + m.f0Hz! * weight(m), 0) / pitched.reduce((n, m) => n + weight(m), 0)) * 10) / 10
+      : null;
+    const shared = members.filter((m) => m.lowShare !== null);
+    const lowShare = shared.length ? shared.reduce((n, m) => n + m.lowShare! * weight(m), 0) / shared.reduce((n, m) => n + weight(m), 0) : null;
+    const gender = pitchGender(f0Hz, lowShare);
+    Object.assign(a, {
+      sec: Math.round(members.reduce((n, m) => n + m.sec, 0) * 100) / 100,
+      f0Hz,
+      gender,
+      genderConfidence: gender === 'unknown' ? 0 : PITCH_ONLY_CONFIDENCE,
+      print: pool.find((k) => k.speaker === a.speaker)!.print,
+    });
+  }
+  return { speakerOf, added };
+}
+
+/**
+ * The known turns with every re-detected window cut out of them (a turn
+ * across a window's edge keeps its outside piece), and the windows' new turns
+ * in their place; sorted. Pure.
+ */
+export function spliceTurns(
+  turns: readonly SpeakerTurn[],
+  windows: readonly Pick<DiarizationChunk, 'startMs' | 'endMs'>[],
+  fresh: readonly SpeakerTurn[],
+): SpeakerTurn[] {
+  const kept = turns.flatMap((t) => {
+    let pieces: SpeakerTurn[] = [t];
+    for (const w of windows) {
+      pieces = pieces.flatMap((x) => {
+        if (x.endMs <= w.startMs || x.startMs >= w.endMs) return [x];
+        const out: SpeakerTurn[] = [];
+        if (x.startMs < w.startMs) out.push({ ...x, endMs: w.startMs });
+        if (x.endMs > w.endMs) out.push({ ...x, startMs: w.endMs });
+        return out;
+      });
+    }
+    return pieces;
+  });
+  return [...kept, ...fresh].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs || a.speaker - b.speaker);
+}
+
+/** The windows a ranged detection detects: the parts of the file's plan that touch the range. Pure. */
+export function windowsForRange(durationMs: number, fromMs: number, toMs: number): DiarizationChunk[] {
+  const plan = durationMs < ONE_PASS_MAX_MS ? [{ index: 0, startMs: 0, endMs: durationMs }] : planDiarizationChunks(durationMs);
+  return plan.filter((w) => w.endMs > w.startMs && w.endMs > fromMs && w.startMs < toMs);
+}
+
+const SPEAKER_ID = /^SPEAKER_(\d+)$/;
+
+/**
+ * Label only the lines in [fromMs, toMs) from `turns` (labelSpeakers' rules,
+ * over the turns near the range), with the project's ids: `known` names the
+ * cache's speaker numbers; a number it does not name gets the next id free in
+ * the lines and in `known`. Lines outside the range come back as they were. Pure.
+ */
+export function labelRange(
+  segments: readonly TranscriptSegment[],
+  fromMs: number,
+  toMs: number,
+  turns: readonly SpeakerTurn[],
+  known: ReadonlyMap<number, string>,
+): { segments: TranscriptSegment[]; ids: Map<number, string>; lines: number; relabelled: number; lowConfidence: number } {
+  const inRange = (l: { startMs: number; endMs: number }): boolean => l.startMs < toMs && l.endMs > fromMs;
+  const target = segments.filter(inRange);
+  const near = turns.filter((t) => t.endMs > fromMs - NEAREST_TURN_MS && t.startMs < toMs + NEAREST_TURN_MS);
+  const labels = labelSpeakers(target, near);
+  let top = -1;
+  for (const id of [...segments.map((s) => s.speakerId), ...known.values()]) {
+    const m = id ? SPEAKER_ID.exec(id) : null;
+    if (m) top = Math.max(top, Number(m[1]));
+  }
+  const ids = new Map<number, string>();
+  const byLocal = new Map<string, string>();
+  for (const [speaker, local] of [...labels.idBySpeaker].sort((a, b) => a[1].localeCompare(b[1]))) {
+    const id = known.get(speaker) ?? `SPEAKER_${String(++top).padStart(2, '0')}`;
+    ids.set(speaker, id);
+    byLocal.set(local, id);
+  }
+  const labelled = new Map(labels.segments.map((s) => [s.id, s.speakerId ? { ...s, speakerId: byLocal.get(s.speakerId)! } : s] as const));
+  let relabelled = 0;
+  const out = segments.map((s) => {
+    const l = labelled.get(s.id);
+    if (!l) return s;
+    if (l.speakerId !== s.speakerId) relabelled++;
+    return l;
+  });
+  return { segments: out, ids, lines: target.length, relabelled, lowConfidence: labels.lowConfidence };
+}
+
+export interface RangedDetectionInput extends SpeakerDetectionInput {
+  fromMs: number;
+  toMs: number;
+}
+
+export interface RangedDetectionResult {
+  /** Every line; only those in the range were labelled again. */
+  segments: TranscriptSegment[];
+  /** Lines in the range, and how many of them changed speaker. */
+  lines: number;
+  relabelled: number;
+  /** Best guesses among the range's lines. */
+  lowConfidence: number;
+  /** Every detected speaker who says a line, SPEAKER_00 first. */
+  speakers: DetectedSpeaker[];
+  /** Speakers heard for the first time (new ids). */
+  added: DetectedSpeaker[];
+  /** Parts detected again (0: the saved detection matched the audio). */
+  detectedParts: number;
+}
+
+/**
+ * Detect the speakers of [fromMs, toMs) again and label the lines there,
+ * linked to the project's known speakers (see this section's comment). Null
+ * when no engine is installed. Throws INVALID_EDIT when there is nothing to
+ * link to: no saved detection, or one by another model on other audio.
+ */
+export async function redetectSpeakersInRange(input: RangedDetectionInput): Promise<RangedDetectionResult | null> {
+  const cache = await readDiarizationCache(input.cachePath);
+  if (!cache) {
+    throw new AppErrorException('INVALID_EDIT', 'This project has no saved speaker detection to link a range to.', {
+      remediation: "Detect speakers over the whole video first (detect_speakers without a range, or the editor's Detect speakers).",
+    });
+  }
+  const stat = await fsp.stat(input.audioPath);
+  const fresh =
+    cache.audio.sizeBytes === stat.size && cache.audio.mtimeMs === Math.round(stat.mtimeMs) && cache.model === input.service.modelKey;
+  let turns = cache.turns;
+  let speakers: CachedSpeaker[] = cache.speakers.map((s) => ({ ...s }));
+  let detectedParts = 0;
+  let changed = false;
+  if (fresh) {
+    input.onProgress?.(1, 1);
+  } else {
+    if (cache.model !== input.service.modelKey || !cache.speakers.some((s) => s.print.length > 0)) {
+      throw new AppErrorException('INVALID_EDIT', 'The saved speaker detection was made by another version of the engine: a range cannot be linked to it.', {
+        remediation: 'Detect speakers over the whole video again (detect_speakers without a range).',
+      });
+    }
+    if (!input.service.diarizeWindows) {
+      throw new AppErrorException('INVALID_EDIT', 'This speaker detection engine cannot detect a range.', {
+        remediation: 'Detect speakers over the whole video (detect_speakers without a range).',
+      });
+    }
+    const windows = windowsForRange(wavDurationMs(stat.size), input.fromMs, input.toMs);
+    const parts = await input.service.diarizeWindows(
+      input.audioPath,
+      windows,
+      {
+        ...(input.onProgress ? { onProgress: input.onProgress } : {}),
+        ...(input.checkpointDir ? { checkpointDir: input.checkpointDir } : {}),
+      },
+      input.signal,
+    );
+    if (!parts) return null;
+    const max = input.numSpeakers ?? cache.numSpeakers;
+    const linked = linkPartsToSpeakers(speakers, parts, max ? { maxSpeakers: max } : {});
+    const freshTurns = parts.flatMap((part, p) =>
+      part.turns.flatMap((t) => {
+        const speaker = linked.speakerOf.get(`${p}:${t.speaker}`);
+        return speaker === undefined ? [] : [{ startMs: t.startMs, endMs: t.endMs, speaker }];
+      }),
+    );
+    turns = spliceTurns(cache.turns, windows, freshTurns);
+    speakers = [...speakers, ...linked.added];
+    detectedParts = windows.length;
+    changed = true;
+  }
+
+  const known = new Map(speakers.flatMap((s) => (s.speakerId ? [[s.speaker, s.speakerId] as const] : [])));
+  const labelled = labelRange(input.segments, input.fromMs, input.toMs, turns, known);
+  const newIds = [...labelled.ids].filter(([speaker]) => !known.has(speaker));
+  for (const [speaker, speakerId] of newIds) {
+    const s = speakers.find((x) => x.speaker === speaker);
+    if (s) s.speakerId = speakerId;
+    else speakers.push({ speaker, sec: 0, f0Hz: null, gender: 'unknown', genderConfidence: 0, print: [], speakerId });
+    changed = true;
+  }
+  if (changed) await writeJsonAtomic(input.cachePath, { ...cache, turns, speakers } satisfies DiarizationCache);
+
+  const named = speakers
+    .filter((s): s is DetectedSpeaker => typeof s.speakerId === 'string')
+    .sort((a, b) => a.speakerId.localeCompare(b.speakerId));
+  const addedIds = new Set(newIds.map(([, id]) => id));
+  return {
+    segments: labelled.segments,
+    lines: labelled.lines,
+    relabelled: labelled.relabelled,
+    lowConfidence: labelled.lowConfidence,
+    speakers: named,
+    added: named.filter((s) => addedIds.has(s.speakerId)),
+    detectedParts,
   };
 }

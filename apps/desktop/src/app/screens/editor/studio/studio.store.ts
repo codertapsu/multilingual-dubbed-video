@@ -87,9 +87,10 @@ export type SaveState = 'saved' | 'pending' | 'saving' | 'error';
 
 /**
  * Why the last speaker detection ended without a result: it failed (the
- * server's words in `detail`), or it is gone. A job lives in the backend's
- * memory, so a backend restart loses it, and the editor used to wait for it
- * forever.
+ * server's words in `detail`), or it is gone: the backend stopped while it
+ * ran. The backend saves the job in the project's folder and answers
+ * `interrupted` for it after a restart (an older one forgot it), and the
+ * editor used to wait for it forever.
  */
 export interface DetectFailure {
   kind: 'failed' | 'gone';
@@ -729,8 +730,8 @@ export class StudioStore implements OnDestroy {
           this.detectFailure.set({ kind: 'gone' });
           return false;
         }
-        // No job at all: the backend that ran it restarted (jobs live in its memory).
-        if (!job) {
+        // No job, or one saved as running that nothing runs: the backend restarted under it.
+        if (!job || job.state === 'interrupted') {
           this.detectFailure.set({ kind: 'gone' });
           return false;
         }
@@ -774,11 +775,23 @@ export class StudioStore implements OnDestroy {
     }
     const followed = this.wasDetecting();
     this.markDetecting(false);
-    // Followed here before, and the backend has no job now: it restarted under it.
-    if (!job) {
-      if (followed) this.detectFailure.set({ kind: 'gone' });
+    // Followed here before and the backend has no job now, or it saved one as
+    // running when it stopped: it restarted under it. Said once per session.
+    if (!job || job.state === 'interrupted') {
+      if (followed || (job && !this.detectFailureSeen(job))) this.showDetectGone(job);
     } else if (job.state === 'failed' && !this.detectFailureSeen(job)) {
       this.showDetectFailure(job);
+    }
+  }
+
+  /** The backend stopped while it detected: Retry resumes from the parts it saved. */
+  private showDetectGone(job: SpeakerJobState | undefined): void {
+    this.detectFailure.set({ kind: 'gone' });
+    if (!job) return;
+    try {
+      sessionStorage.setItem(this.detectSeenKey(), job.finishedAt ?? job.startedAt ?? 'failed');
+    } catch {
+      /* storage disabled: it may show once more */
     }
   }
 

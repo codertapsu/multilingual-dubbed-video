@@ -29,6 +29,16 @@ import { AppNotRunningError, VideoDubberApiError, requestContext, type VideoDubb
 import { cookiesOfSite, takeCookieExport } from './cookies.js';
 import { ensureAppRunning, type LaunchTarget } from './launcher.js';
 import {
+  renderProjectJobs,
+  renderRetranscribeJob,
+  renderRetranscribed,
+  speakerJobSentence,
+  type ProjectJobLite,
+  type RetranscribeAnswer,
+  type RetranscribeJobLite,
+  type SpeakerJobLite,
+} from './lineJobs.js';
+import {
   clock,
   lineFlags,
   renderLine,
@@ -1347,7 +1357,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Project and dubbing progress',
       description:
-        'A project\'s settings, each pipeline step\'s status, errors with how to fix them, recent log lines and output files. With waitSeconds > 0 it waits (up to 50 s) for the dub to move on before answering — call it repeatedly to follow a dub.',
+        'A project\'s settings, each pipeline step\'s status, errors with how to fix them, recent log lines and output files, and the jobs working on it outside the dub (speaker detection, re-transcription of a long range, and the like) with their progress. With waitSeconds > 0 it waits (up to 50 s) for the dub to move on before answering — call it repeatedly to follow a dub.',
       inputSchema: z.object({
         projectId: z.string(),
         waitSeconds: z.number().min(0).max(50).default(0),
@@ -1374,6 +1384,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         `Settings: ${settingsSummary(project.settings)}`,
         renderPipeline(pipeline),
       ];
+      // Work on the project outside its dub (an app of before 0.18 has no such route: nothing to list).
+      const jobs = await api.get<{ jobs: ProjectJobLite[] }>(`/projects/${encodeURIComponent(projectId)}/jobs`, { signal }).catch(() => undefined);
+      if (jobs?.jobs.length) lines.push('Jobs outside the dub:', ...renderProjectJobs(jobs.jobs));
       if (pipeline.status === 'running' || pipeline.status === 'failed') {
         const tail = await logTail(project, 8);
         if (tail.length > 0) lines.push('Recent log:', ...tail.map((l) => `  ${l}`));
@@ -1704,7 +1717,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
   type SpeakersDoc = {
     speakers: SpeakerRow[];
     detected?: { at?: string; model?: string };
-    job?: { state: 'running' | 'done' | 'failed'; done?: number; total?: number; error?: string; message?: string };
+    job?: SpeakerJobLite;
     defaults?: { male?: string; female?: string };
   };
 
@@ -1719,13 +1732,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     },
     guarded(async ({ projectId, limit }, ctx) => {
       const doc = await api.get<SpeakersDoc>(`/projects/${encodeURIComponent(projectId)}/speakers`, { signal: ctx.mcpReq.signal });
-      const job = doc.job;
+      const said = doc.job ? speakerJobSentence(doc.job) : undefined;
       const lines = [
-        ...(job?.state === 'running'
-          ? [`Speaker detection is running${job.total ? ` (${job.done ?? 0}/${job.total})` : ''}: call again later.`]
-          : job?.state === 'failed'
-            ? [`The last speaker detection failed: ${job.error ?? 'unknown error'}.`]
-            : []),
+        ...(said ? [said] : []),
         doc.speakers.length === 0
           ? 'No speakers detected: the lines have no speaker ids. detect_speakers finds them (settings.diarize does it during speech-to-text).'
           : `${doc.speakers.length} speaker(s)${doc.detected?.at ? `, detected ${doc.detected.at}` : ''}:`,
@@ -1750,15 +1759,34 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Detect who speaks again',
       description:
-        'Run speaker detection again over the project\'s existing transcript and give every line its speaker: never speech-to-text again, never re-timing. Starts a job and returns at once (it can take long on hours of audio): follow it with get_project (sub-step "Detecting speakers k/n") or get_speakers. Voices chosen per line are kept; voices chosen per speaker follow their speakers to the new ids (matched by voice print). Not while the project is being dubbed.',
+        'Run speaker detection again over the project\'s existing transcript and give every line its speaker: never speech-to-text again, never re-timing. Starts a job and returns at once (it can take long on hours of audio): follow it with get_project (its jobs) or get_speakers; a job the app was closed during is shown as interrupted, and calling this again continues from the parts already done. Voices chosen per line are kept; voices chosen per speaker follow their speakers to the new ids (matched by voice print). With fromMs and toMs, only the lines in that range are labelled again (after retranscribe_range left lines without a speaker): linked to the speakers the project already has, by voice print, so their ids and voices stay; a voice never heard before gets a new id. It reuses the saved detection when the audio has not changed (a moment), else detects only the 10-minute parts over the range. Not while the project is being dubbed.',
       inputSchema: z.object({
         projectId: z.string(),
         numSpeakers: z.number().int().min(2).max(50).optional().describe('When you know exactly how many people speak.'),
+        fromMs: z.number().min(0).optional().describe('With toMs: detect only this range (ms of the video), linked to the existing speakers.'),
+        toMs: z.number().min(1).optional(),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    guarded(async ({ projectId, numSpeakers }, ctx) => {
-      await api.post(`/projects/${encodeURIComponent(projectId)}/speakers/detect`, numSpeakers ? { numSpeakers } : {}, { signal: ctx.mcpReq.signal });
+    guarded(async ({ projectId, numSpeakers, fromMs, toMs }, ctx) => {
+      const signal = ctx.mcpReq.signal;
+      const id = encodeURIComponent(projectId);
+      const ranged = fromMs !== undefined || toMs !== undefined;
+      await api.post(`/projects/${id}/speakers/detect`, { ...(numSpeakers ? { numSpeakers } : {}), ...(ranged ? { fromMs, toMs } : {}) }, { signal });
+      if (ranged) {
+        // From the saved detection a range takes a moment: answer with its result when it is that quick.
+        const deadline = Date.now() + 15_000;
+        while (Date.now() < deadline && !signal.aborted) {
+          await sleep(pollMs, signal);
+          const job = (await api.get<{ job?: SpeakerJobLite }>(`/projects/${id}/speakers`, { signal })).job;
+          if (job && job.state !== 'running') {
+            const said = speakerJobSentence(job);
+            return job.state === 'done'
+              ? text(`${said ?? 'Speakers detected.'} Check the lines with get_transcript; cast_voices gives a new speaker a voice.`)
+              : failure(new Error(said ?? 'Speaker detection did not finish.'));
+          }
+        }
+      }
       return text('Speaker detection started. Follow it with get_speakers or get_project; when it is done, cast_voices (and set_translation_context cast[].speakerId) use the new speakers. If the project was translated, redo it from "translation": the speakers decide the forms of address.');
     }),
   );
@@ -1882,32 +1910,49 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Transcribe a time range again',
       description:
-        'Run the project\'s own speech-to-text again on [fromMs, toMs) (at most 15 minutes), by default without the previous text as a prompt (noContext), which is what breaks a transcription loop. Returns the lines it heard, in video time; apply=true also replaces the range with them (as replace_lines). The app already does this by itself for the loops it finds; use it for ranges it marked LOOP? or that sound wrong.',
+        'Run the project\'s own speech-to-text again on [fromMs, toMs), by default without the previous text as a prompt (noContext), which is what breaks a transcription loop, then the checks speech-to-text itself runs: credit lines removed, each loop decoded again without context to confirm it (a repeat heard again is kept as really said; one that could not be checked is marked LOOP?). The range grows to the whole lines across its edges. Returns the lines it heard, in video time; apply=true also replaces the range with them (as replace_lines; refused on a translated project, before anything is decoded): a new line keeps its speaker only where its words still match the old line under it, the others are left without one and counted (detect_speakers with fromMs/toMs gives them speakers). Up to 15 minutes it answers with the lines. A longer range is one job in 15-minute windows, each applied as soon as it is heard: this tool follows it for waitSeconds, then retranscribe_range with jobId (or get_project) follows it further. The app already does this by itself for the loops it finds; use it for ranges it marked LOOP? or that sound wrong.',
       inputSchema: z.object({
         projectId: z.string(),
-        fromMs: z.number().min(0),
-        toMs: z.number().min(1),
+        fromMs: z.number().min(0).optional().describe('Start of the range, ms of the video (needed unless jobId is given).'),
+        toMs: z.number().min(1).optional().describe('End of the range, ms of the video (needed unless jobId is given).'),
         noContext: z.boolean().default(true),
         model: z.string().optional().describe('Another speech model of the same engine, e.g. "large-v3-turbo".'),
         apply: z.boolean().default(false),
+        jobId: z.string().optional().describe('Follow a re-transcription job started earlier (the id from its first answer) instead of starting one.'),
+        waitSeconds: z
+          .number()
+          .min(0)
+          .max(600)
+          .default(50)
+          .describe('A range over 15 minutes is a job: how long to follow it before answering.'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    guarded(async ({ projectId, fromMs, toMs, noContext, model, apply }, ctx) => {
-      const res = await api.post<{ lines: { startMs: number; endMs: number; text: string }[]; applied?: { replaced: number; lines: { id: string }[] } }>(
-        `/projects/${encodeURIComponent(projectId)}/lines/retranscribe`,
-        { fromMs, toMs, noContext, ...(model ? { model } : {}), apply },
-        { signal: ctx.mcpReq.signal, timeoutMs: 600_000 },
-      );
-      return text(
-        [
-          `Heard ${res.lines.length} line(s) in ${clock(fromMs)}-${clock(toMs)}${noContext ? ' (no context)' : ''}:`,
-          ...res.lines.map((l) => `- ${clock(l.startMs)}-${clock(l.endMs)} ${l.text}`),
-          res.applied
-            ? `Applied: replaced ${res.applied.replaced} line(s) with ${res.applied.lines.length} (${res.applied.lines.map((l) => l.id).join(', ')}).`
-            : 'Not applied: pass apply=true, or send your own version with replace_lines.',
-        ].join('\n'),
-      );
+    guarded(async ({ projectId, fromMs, toMs, noContext, model, apply, jobId, waitSeconds }, ctx) => {
+      const signal = ctx.mcpReq.signal;
+      const id = encodeURIComponent(projectId);
+      const readJob = (jid: string) => api.get<RetranscribeJobLite>(`/projects/${id}/lines/retranscribe/${encodeURIComponent(jid)}`, { signal });
+      let job: RetranscribeJobLite;
+      if (jobId) {
+        job = await readJob(jobId);
+      } else {
+        if (fromMs === undefined || toMs === undefined) return failure(new Error('Give fromMs and toMs (or the jobId of a re-transcription to follow).'));
+        // Up to 15 minutes: one request with every check, as long as the decodes take.
+        const res = await api.post<RetranscribeAnswer>(
+          `/projects/${id}/lines/retranscribe`,
+          { fromMs, toMs, noContext, ...(model ? { model } : {}), apply },
+          { signal, timeoutMs: 900_000 },
+        );
+        if (!res.job) return text(renderRetranscribed(res, { fromMs, toMs, noContext }));
+        job = res.job;
+      }
+      const deadline = Date.now() + waitSeconds * 1000;
+      while (job.state === 'running' && Date.now() < deadline && !signal.aborted) {
+        await sleep(pollMs, signal);
+        job = await readJob(job.id);
+        void progress(ctx, job.done, job.windows, `Re-transcribing: ${job.done}/${job.windows} windows`);
+      }
+      return text(renderRetranscribeJob(job));
     }),
   );
 

@@ -10,7 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vd_diarize import app as app_mod
-from vd_diarize.core import AudioTooLong, Embedder, read_audio_window
+from vd_diarize.core import AudioTooLong, Diarizer, Embedder, read_audio_window
+from vd_diarize.pool import ModelPool
 from vd_diarize.prints import speech_runs, yin_f0
 
 from test_chunks import FakeExtractor, tone
@@ -89,7 +90,8 @@ def test_speech_is_where_the_recording_is_loud() -> None:
 
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setattr(app_mod, "_embedder", Embedder(2, factory=FakeExtractor))
+    embedder = Embedder(2, factory=FakeExtractor)
+    monkeypatch.setattr(app_mod, "_pool", ModelPool(1, 2, lambda _threads: (Diarizer(2), embedder)))
     return TestClient(app_mod.app)
 
 

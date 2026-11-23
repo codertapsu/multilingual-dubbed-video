@@ -282,6 +282,103 @@ describe('SherpaDiarizationProvider', () => {
     expect(calls.map((c) => c.body)).toEqual([{ audioPath: clip }, { audioPath: clip, startMs: 1000, endMs: 4000 }]);
   });
 
+  /** An engine with `pool` model pairs whose parts take a little while, counting how many run at once. */
+  function pooledEngine(pool: number, opts: { failPart?: number } = {}) {
+    const seen = { calls: [] as Call[], inflight: 0, peak: 0 };
+    setWorkerTransport(async (_method, url, payload) => {
+      const body = JSON.parse(payload ?? '{}') as Record<string, unknown>;
+      seen.calls.push({ url, body });
+      if (url.endsWith('/health')) return json({ ok: true, pool });
+      if (url.endsWith('/diarize-chunk')) {
+        const startMs = body.startMs as number;
+        if (Math.round(startMs / 600_000) === opts.failPart) return json({ detail: 'Internal Server Error' }, 500);
+        seen.inflight += 1;
+        seen.peak = Math.max(seen.peak, seen.inflight);
+        await new Promise((r) => setTimeout(r, 15));
+        seen.inflight -= 1;
+        return json({
+          turns: [{ startMs: startMs + 1000, endMs: startMs + 5000, speaker: 0 }],
+          speakers: [{ local: 0, sec: 4, printSec: 4, print: [1, 0], f0Hz: 120, lowShare: 0.9 }],
+          processMs: 1,
+        });
+      }
+      if (url.endsWith('/link')) {
+        const items = body.items as { chunk: number; local: number }[];
+        return json({
+          assignments: items.map((it) => ({ chunk: it.chunk, local: it.local, speaker: 0 })),
+          speakers: [{ speaker: 0, sec: 24, f0Hz: 120, gender: 'male', genderConfidence: 0.9, print: [1, 0] }],
+        });
+      }
+      return json({ detail: 'Not Found' }, 404);
+    });
+    return seen;
+  }
+
+  it('runs parts side by side up to the engine\'s pool while the machine is idle, one at a time otherwise', async () => {
+    const seen = pooledEngine(3);
+    const audio = await wav('long.wav', 60);
+    const p = provider();
+    let budget = Number.POSITIVE_INFINITY;
+    p.setParallelism(() => budget);
+    const progress: [number, number][] = [];
+    const found = await p.diarize(audio, { onProgress: (d, t) => progress.push([d, t]) });
+    expect(seen.peak).toBe(3);
+    expect(seen.calls.filter((c) => c.url.endsWith('/diarize-chunk'))).toHaveLength(6);
+    // The answers keep the plan's order, whatever order the parts ended in.
+    expect(found!.turns.map((t) => t.startMs)).toEqual([0, 1, 2, 3, 4, 5].map((i) => i * 600_000 + 1000));
+    expect(progress[0]).toEqual([0, 6]);
+    expect(progress[progress.length - 1]).toEqual([6, 6]);
+    // The engine is asked its pool once, not before every part.
+    expect(seen.calls.filter((c) => c.url.endsWith('/health'))).toHaveLength(1);
+
+    // A heavy step runs: one part at a time.
+    seen.peak = 0;
+    budget = 1;
+    await p.diarize(audio, {});
+    expect(seen.peak).toBe(1);
+    // An engine from before 0.18 says nothing of a pool: one at a time.
+    const old = pooledEngine(0);
+    const before = provider();
+    before.setParallelism(() => Number.POSITIVE_INFINITY);
+    await before.diarize(audio, {});
+    expect(old.peak).toBe(1);
+  });
+
+  it('lets the parts in flight finish and saves them when another fails, so a retry resumes', async () => {
+    pooledEngine(2, { failPart: 1 });
+    const audio = await wav('long.wav', 40);
+    const parts = path.join(tmp, 'parts');
+    const p = provider();
+    p.setParallelism(() => Number.POSITIVE_INFINITY);
+    await expect(p.diarize(audio, { checkpointDir: parts })).rejects.toMatchObject({ appError: { code: 'UNKNOWN' } });
+    // Part 0 ran beside the failing part 1 and was kept; no part started after the failure.
+    expect(await fsp.readdir(parts)).toEqual(['chunk_0000.json']);
+
+    const seen = pooledEngine(2);
+    const found = await p.diarize(audio, { checkpointDir: parts });
+    expect(seen.calls.filter((c) => c.url.endsWith('/diarize-chunk')).map((c) => c.body.startMs)).toEqual([600_000, 1_200_000, 1_800_000]);
+    expect(found!.turns).toHaveLength(4);
+  });
+
+  it('detects only the windows of a range, saved, and not linked', async () => {
+    const seen = pooledEngine(2);
+    const audio = await wav('long.wav', 60);
+    const parts = path.join(tmp, 'parts');
+    const windows = [
+      { index: 2, startMs: 1_200_000, endMs: 1_800_000 },
+      { index: 3, startMs: 1_800_000, endMs: 2_400_000 },
+    ];
+    const found = await provider().diarizeWindows(audio, windows, { checkpointDir: parts });
+    expect(seen.calls.map((c) => c.url)).toEqual(['http://engine/diarize-chunk', 'http://engine/diarize-chunk']);
+    expect(found!.map((f) => [f.window.index, f.turns[0]!.startMs, f.speakers[0]!.local])).toEqual([
+      [2, 1_201_000, 0],
+      [3, 1_801_000, 0],
+    ]);
+    expect((await fsp.readdir(parts)).sort()).toEqual(['chunk_0002.json', 'chunk_0003.json']);
+    installed = false;
+    expect(await provider().diarizeWindows(audio, windows, {})).toBeNull();
+  });
+
   it('does nothing without the engine', async () => {
     const calls = fakeEngine();
     installed = false;

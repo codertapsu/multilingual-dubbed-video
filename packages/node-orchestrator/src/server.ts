@@ -90,6 +90,7 @@ import { AudioCppSeparationProvider, currentVocals } from './providers/separatio
 import type { SeparationService } from './media.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 import { SherpaDiarizationProvider } from './providers/diarization/sherpaDiarizationProvider.js';
+import { diarizationBudget, registerTranscriptJobRoutes } from './transcriptJobs.js';
 import { EventBusRegistry } from './events.js';
 import { checkWorkersHealth } from './health.js';
 import { toHttpError } from './httpErrors.js';
@@ -1874,11 +1875,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         if (typeof b.fromMs !== 'number' || typeof b.toMs !== 'number') {
           return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: 'Send fromMs and toMs.' } });
         }
-        return await orchestrator.retranscribeRange(req.params.id, b.fromMs, b.toMs, {
+        const res = await orchestrator.retranscribeRange(req.params.id, b.fromMs, b.toMs, {
           ...(b.noContext === false ? { noContext: false } : {}),
           ...(typeof b.model === 'string' && b.model.trim() ? { model: b.model.trim() } : {}),
           ...(b.apply === true ? { apply: true } : {}),
         });
+        // Over 15 minutes it is a job: follow it on GET .../lines/retranscribe/:jobId.
+        return res.job ? reply.status(202).send(res) : res;
       } catch (err) {
         return sendError(reply, err);
       }
@@ -3084,12 +3087,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // transcript): the editor's Speakers section. Returns the timeline.
   app.post(
     '/projects/:id/speakers/detect',
-    async (req: FastifyRequest<{ Params: { id: string }; Body: { numSpeakers?: number; wait?: boolean } }>, reply) => {
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { numSpeakers?: number; wait?: boolean; fromMs?: number; toMs?: number } }>, reply) => {
       try {
         // A job by default (hours of audio take an hour or more): follow it on
         // GET /projects/:id/speakers. `wait` keeps the old answer, the timeline.
-        if (req.body?.wait === true) return await orchestrator.redetectSpeakers(req.params.id, { numSpeakers: req.body?.numSpeakers });
-        const started = await orchestrator.startSpeakerDetection(req.params.id, { numSpeakers: req.body?.numSpeakers });
+        // fromMs/toMs: only that range, linked to the known speakers.
+        const opts = { numSpeakers: req.body?.numSpeakers, fromMs: req.body?.fromMs, toMs: req.body?.toMs };
+        if (req.body?.wait === true) return await orchestrator.redetectSpeakers(req.params.id, opts);
+        const started = await orchestrator.startSpeakerDetection(req.params.id, opts);
         return reply.status(202).send(started);
       } catch (err) {
         return sendError(reply, err);
@@ -3106,7 +3111,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       const lines = await readSpeakerLines(paths);
       const detected = await readSpeakerProfiles(paths.diarizationJson);
       const detectedAt = await stat(paths.diarizationJson).then((s) => s.mtime.toISOString(), () => undefined);
-      const job = orchestrator.speakerJob(req.params.id);
+      // Also a job saved before a restart: `interrupted` (Retry resumes from its saved parts).
+      const job = await orchestrator.speakerJobState(req.params.id);
       return {
         speakers: speakerRows(lines, detected, project.settings),
         ...(detectedAt ? { detected: { at: detectedAt } } : {}),
@@ -3425,6 +3431,17 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // edits the same lines. Prefer a route module of its own, registered here.
 
   // [routes: re-transcription and speaker detection]
+  // Speaker detection's parts run side by side only while no heavy step runs
+  // anywhere and memory is not short (plan 6.1); a re-transcription job's and a
+  // project's jobs are followed here (transcriptJobs.ts).
+  diarization.setParallelism(() =>
+    diarizationBudget({
+      heavyLane: engineManager.heavyLaneOwner() !== undefined,
+      runs: [...runActivity.steps()].map(([projectId, step]) => ({ step, heavy: orchestrator.heavyStepsOf(projectId).includes(step) })),
+      pressure: health.pressure(),
+    }),
+  );
+  registerTranscriptJobRoutes(app, { orchestrator, store, sendError });
 
 
   // [routes: casting and songs]

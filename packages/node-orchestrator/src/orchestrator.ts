@@ -49,7 +49,39 @@ import {
 } from '@videodubber/shared';
 import { alignSegments, type AlignSettings } from './alignment/align.js';
 import { formatClock, recordEdit } from './activity/history.js';
-import { copySpeakerLabels, redetectSpeakers, remapSpeakerVoices } from './pipeline/diarization.js';
+import { copySpeakerLabels, redetectSpeakers, redetectSpeakersInRange, remapSpeakerVoices } from './pipeline/diarization.js';
+import { activity } from './activity/registry.js';
+import {
+  RETRANSCRIBE_JOBS_KEPT,
+  RETRANSCRIBE_WINDOW_MS,
+  carrySpeakers,
+  hearWindow,
+  heardLine,
+  loopCounts,
+  planRetranscribeWindows,
+  readSavedSpeechRegions,
+  saveLoopReport,
+  silenceTest,
+  widenToLines,
+  windowSummary,
+  type HearDeps,
+  type RetranscribeJobView,
+  type RetranscribeOutcome,
+  type RetranscribeResult,
+  type RetranscribeWindowResult,
+  type TimeRange,
+} from './pipeline/retranscribe.js';
+import {
+  detectionRange,
+  readSpeakerJob,
+  saveSpeakerJob,
+  speakerJobFile,
+  speakerJobSummary,
+  speakerJobView,
+  type SpeakerJobState,
+  type SpeakerJobView,
+} from './pipeline/speakerJob.js';
+import { refreshTranscriptWarnings } from './pipeline/transcriptWarnings.js';
 import { measureClip, type ClipTiming } from './alignment/clipSpeech.js';
 import {
   rateForGroup,
@@ -184,19 +216,21 @@ const FALLBACK_PROFILE: SystemProfile = {
 /** How long to wait before retrying a dispatch blocked by a booting worker. */
 const QUEUE_RETRY_MS = 2000;
 
-/** A speaker detection job outside a run (the editor's Detect, MCP detect_speakers). */
-export interface SpeakerJob {
-  state: 'running' | 'done' | 'failed';
-  /** Parts of the audio done, of the total (one part under 20 minutes). */
-  done: number;
-  total: number;
-  startedAt: string;
-  finishedAt?: string;
-  error?: string;
-  speakers?: number;
-  lowConfidence?: number;
-  remapped?: number;
+/**
+ * A speaker detection job outside a run (the editor's Detect, MCP
+ * detect_speakers), whole or over a range; saved in the project's folder as
+ * it goes (pipeline/speakerJob.ts), so a restart shows it as interrupted.
+ */
+export interface SpeakerJob extends SpeakerJobState {
   abort: AbortController;
+}
+
+/** Work on a project's lines outside a run (a re-transcription), which a dub must not start under. */
+interface LineJob {
+  kind: 'retranscribe';
+  abort: AbortController;
+  /** Its entry in the activity list. */
+  activityId: string;
 }
 
 /** A tracked, in-flight pipeline run. */
@@ -332,6 +366,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   /** In-flight editor actions per owner id, so the LAST one frees the lane. */
   /** Speaker detection jobs outside runs (startSpeakerDetection), by project. */
   private readonly speakerJobs = new Map<string, SpeakerJob>();
+  /** Re-transcriptions in progress (retranscribeRange), by project: one at a time. */
+  private readonly lineJobs = new Map<string, LineJob>();
+  /** Re-transcription jobs (ranges over 15 minutes) by id, the last ones kept for their result. */
+  private readonly retranscribeJobs = new Map<string, RetranscribeJobView>();
   /** Jobs in progress per lane owner outside a run (`editor:<id>`, `preview:<voice>`). */
   private readonly laneRefs = new Map<string, number>();
   /**
@@ -400,7 +438,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   busyProjects(): string[] {
     const editing = [...this.laneRefs.keys()].filter((owner) => owner.startsWith('editor:')).map((owner) => owner.slice('editor:'.length));
     const detecting = [...this.speakerJobs].filter(([, j]) => j.state === 'running').map(([id]) => id);
-    return [...new Set([...this.running.keys(), ...this.queued, ...this.movingOutput, ...editing, ...detecting])];
+    return [...new Set([...this.running.keys(), ...this.queued, ...this.movingOutput, ...editing, ...detecting, ...this.lineJobs.keys()])];
   }
 
   /**
@@ -450,6 +488,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     this.assertNotMoving(projectId);
     if (this.speakerJobs.get(projectId)?.state === 'running') {
       throw new AppErrorException('RUN_IN_PROGRESS', 'Speakers are being detected in this project: start the dub when that is done.');
+    }
+    if (this.lineJobs.has(projectId)) {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'A range of this project is being transcribed again: start the dub when that is done.');
     }
     if (this.running.has(projectId)) return { started: true, queued: false };
     if (this.queued.has(projectId)) return { started: false, queued: true, position: this.queuePosition(projectId) };
@@ -646,13 +687,26 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * people to the new ids (matched by voice print); the speakers' genders are
    * recorded for the default voices; lines whose voice moves are marked for
    * re-voicing. Throws ENGINE_PACK_MISSING without the engine.
+   *
+   * With `fromMs`/`toMs`, only the lines in that range are labelled again,
+   * linked to the project's known speakers by voice print (after a
+   * re-transcription left them without one): see redetectSpeakersInRange.
+   * The job reports in the activity list (`speakers.detect`) and is saved in
+   * the project's folder as it goes, so a restart shows it interrupted.
    */
-  async startSpeakerDetection(projectId: string, opts: { numSpeakers?: number } = {}): Promise<{ started: boolean; running?: boolean }> {
+  async startSpeakerDetection(
+    projectId: string,
+    opts: { numSpeakers?: number; fromMs?: number; toMs?: number } = {},
+  ): Promise<{ started: boolean; running?: boolean }> {
     this.assertNotRunning(projectId, 'detect speakers');
     if (this.queued.has(projectId)) {
       throw new AppErrorException('RUN_IN_PROGRESS', 'This project is waiting in the dubbing queue: take it out of the queue first.');
     }
     if (this.speakerJobs.get(projectId)?.state === 'running') return { started: false, running: true };
+    if (this.lineJobs.has(projectId)) {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'A range of this project is being transcribed again: detect speakers when that is done.');
+    }
+    const range = detectionRange(opts);
     await this.deps.store.getProject(projectId);
     const service = this.deps.diarization;
     if (!service || !(await service.available().catch(() => false))) {
@@ -666,20 +720,50 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     }
     const n = Number(opts.numSpeakers);
     const numSpeakers = Number.isInteger(n) && n >= 2 && n <= 50 ? n : undefined;
-    const job: SpeakerJob = { state: 'running', done: 0, total: 0, startedAt: new Date().toISOString(), abort: new AbortController() };
+    const job: SpeakerJob = {
+      state: 'running',
+      done: 0,
+      total: 0,
+      startedAt: new Date().toISOString(),
+      abort: new AbortController(),
+      ...(range ? { range } : {}),
+      ...(numSpeakers ? { numSpeakers } : {}),
+    };
+    const handle = activity.start({
+      kind: 'speakers.detect',
+      title: range ? `Detecting speakers at ${formatClock(range.fromMs)}–${formatClock(range.toMs)}` : 'Detecting speakers',
+      projectId,
+    });
+    job.activityId = handle.id;
     this.speakerJobs.set(projectId, job);
-    void this.runSpeakerDetection(projectId, numSpeakers, job)
+    const save = this.speakerJobSaver(speakerJobFile(paths), job);
+    save();
+    const onProgress = (done: number, total: number): void => {
+      job.done = done;
+      job.total = total;
+      const percent = total > 0 ? (done / total) * 100 : null;
+      handle.progress(percent, total > 1 ? `Part ${done}/${total}` : undefined, percent === null ? undefined : etaSeconds(job.startedAt, percent));
+      save();
+    };
+    const work = range
+      ? this.runRangedSpeakerDetection(projectId, range, numSpeakers, job, onProgress)
+      : this.runSpeakerDetection(projectId, numSpeakers, job, onProgress);
+    void work
       .then((outcome) => {
         Object.assign(job, { state: 'done', finishedAt: new Date().toISOString(), ...outcome });
+        handle.done(speakerJobSummary(job));
+        save();
       })
       .catch((err: unknown) => {
         Object.assign(job, { state: 'failed', finishedAt: new Date().toISOString(), error: toAppError(err).message });
+        handle.fail(err);
+        save();
         this.deps.bus.get(projectId).emit({ type: 'log', level: 'warn', message: `Speaker detection failed: ${toAppError(err).message}`, ts: new Date().toISOString() });
       });
     return { started: true };
   }
 
-  /** Where a speaker detection job is (undefined: none since the app started). */
+  /** Where a speaker detection job is (undefined: none since the app started; speakerJobState also reads the saved one). */
   speakerJob(projectId: string): Omit<SpeakerJob, 'abort'> | undefined {
     const job = this.speakerJobs.get(projectId);
     if (!job) return undefined;
@@ -687,10 +771,41 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     return rest;
   }
 
+  /**
+   * Where a project's speaker detection job is: this process's, else the one
+   * saved in the project's folder, which says `interrupted` when the app died
+   * while it ran (Retry resumes from the parts already saved).
+   */
+  async speakerJobState(projectId: string): Promise<SpeakerJobView | undefined> {
+    const live = this.speakerJob(projectId);
+    if (live) return speakerJobView(live, true);
+    const paths = this.deps.store.paths(projectId);
+    const saved = await readSpeakerJob(speakerJobFile(paths));
+    if (!saved) return undefined;
+    // One that failed or was cut off, then a detection that finished after it
+    // (a dub's own, in its STT step): "try again" is no longer true.
+    if (saved.state !== 'done') {
+      const detectedAt = await fsp.stat(paths.diarizationJson).then((s) => s.mtimeMs, () => 0);
+      if (detectedAt > Date.parse(saved.finishedAt ?? saved.startedAt)) return undefined;
+    }
+    return speakerJobView(saved, false);
+  }
+
+  /** Save a detection job's state as it changes: one write at a time, in order. */
+  private speakerJobSaver(file: string, job: SpeakerJob): () => void {
+    let chain: Promise<void> = Promise.resolve();
+    return () => {
+      const { abort: _abort, ...state } = job;
+      const snapshot: SpeakerJobState = { ...state };
+      chain = chain.then(() => saveSpeakerJob(file, snapshot));
+    };
+  }
+
   private async runSpeakerDetection(
     projectId: string,
     numSpeakers: number | undefined,
     job: SpeakerJob,
+    onProgress: (done: number, total: number) => void,
   ): Promise<{ speakers: number; lowConfidence: number; remapped: number }> {
     const service = this.deps.diarization!;
     const paths = this.deps.store.paths(projectId);
@@ -702,10 +817,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       checkpointDir: paths.diarizationChunksDir,
       segments: source,
       ...(numSpeakers ? { numSpeakers } : {}),
-      onProgress: (done, total) => {
-        job.done = done;
-        job.total = total;
-      },
+      onProgress,
       signal: job.abort.signal,
     });
     if (!found) throw new AppErrorException('ENGINE_PACK_MISSING', 'Speaker detection is not installed.');
@@ -732,25 +844,123 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       await writeJsonAtomic(paths.sourceJson, { segments: found.segments });
       await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(found.segments)));
       const translated = await this.tryReadSegments(paths.translatedJson);
+      let after: TranscriptSegment[] = found.segments;
       if (translated) {
         const voiced = (await this.deps.store.getPipeline(projectId)).steps.find((s) => s.id === 'tts')?.status === 'completed';
         const relabelled = copySpeakerLabels(translated, found.segments);
-        await writeJsonAtomic(paths.translatedJson, {
-          segments: relabelled.map((s, i) =>
-            voiced && voiceForLine(s, settings) !== voiceForLine(translated[i]!, project.settings) ? { ...s, ttsStale: true } : s,
-          ),
-        });
+        after = relabelled.map((s, i) =>
+          voiced && voiceForLine(s, settings) !== voiceForLine(translated[i]!, project.settings) ? { ...s, ttsStale: true } : s,
+        );
+        await writeJsonAtomic(paths.translatedJson, { segments: after });
       }
+      // The lines the dub uses: the translated ones once they exist.
+      const before = translated ?? source;
+      await recordEdit({
+        projectId,
+        target: translated ? 'translation' : 'source',
+        summary: `Detected speakers again: ${found.speakers.length} speaker(s), ${after.filter((s, i) => s.speakerId !== before[i]?.speakerId).length} line(s) changed speaker`,
+        before,
+        after,
+      });
     });
     await this.deps.store.saveProject({ ...(await this.deps.store.getProject(projectId)), settings, updatedAt: new Date().toISOString() });
+    await this.refreshWarnings(projectId);
     return { speakers: found.speakers.length, lowConfidence: found.lowConfidence, remapped: Object.keys(found.remap).length };
+  }
+
+  /**
+   * Speakers again over one range, linked to the project's known speakers
+   * (pipeline/diarization.ts redetectSpeakersInRange): only the lines in the
+   * range change, known speakers keep their ids and so their voices, a voice
+   * heard for the first time gets a new id and a gender for the default
+   * voices. The labels are put on the lines as they are when it ends, by id:
+   * an edit made meanwhile in the editor is kept.
+   */
+  private async runRangedSpeakerDetection(
+    projectId: string,
+    range: TimeRange,
+    numSpeakers: number | undefined,
+    job: SpeakerJob,
+    onProgress: (done: number, total: number) => void,
+  ): Promise<Partial<SpeakerJobState>> {
+    const service = this.deps.diarization!;
+    const paths = this.deps.store.paths(projectId);
+    const source = (await this.tryReadSegments(paths.sourceJson)) ?? [];
+    const found = await redetectSpeakersInRange({
+      service,
+      audioPath: paths.original16kMonoWav,
+      cachePath: paths.diarizationJson,
+      checkpointDir: paths.diarizationChunksDir,
+      segments: source,
+      fromMs: range.fromMs,
+      toMs: range.toMs,
+      ...(numSpeakers ? { numSpeakers } : {}),
+      onProgress,
+      signal: job.abort.signal,
+    });
+    if (!found) throw new AppErrorException('ENGINE_PACK_MISSING', 'Speaker detection is not installed.');
+    const inRange = (s: { startMs: number; endMs: number }): boolean => s.startMs < range.toMs && s.endMs > range.fromMs;
+    const labels = found.segments.filter(inRange);
+    const project = await this.deps.store.getProject(projectId);
+    const genders: Record<string, 'female' | 'male'> = { ...(project.settings.speakerGenders ?? {}) };
+    for (const sp of found.added) if ((sp.gender === 'male' || sp.gender === 'female') && !genders[sp.speakerId]) genders[sp.speakerId] = sp.gender;
+    const settings: ProjectSettings = {
+      ...project.settings,
+      diarize: true,
+      ...(Object.keys(genders).length > 0 ? { speakerGenders: genders } : {}),
+    };
+    await this.artifactLock.run(projectId, async () => {
+      const current = (await this.tryReadSegments(paths.sourceJson)) ?? [];
+      const relabelledSource = copySpeakerLabels(current, labels);
+      await writeJsonAtomic(paths.sourceJson, { segments: relabelledSource });
+      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(relabelledSource)));
+      const translated = await this.tryReadSegments(paths.translatedJson);
+      let after: TranscriptSegment[] = relabelledSource;
+      if (translated) {
+        const voiced = (await this.deps.store.getPipeline(projectId)).steps.find((s) => s.id === 'tts')?.status === 'completed';
+        after = copySpeakerLabels(translated, labels).map((s, i) =>
+          voiced && voiceForLine(s, settings) !== voiceForLine(translated[i]!, project.settings) ? { ...s, ttsStale: true } : s,
+        );
+        await writeJsonAtomic(paths.translatedJson, { segments: after });
+      }
+      await recordEdit({
+        projectId,
+        target: translated ? 'translation' : 'source',
+        summary:
+          `Detected speakers at ${formatClock(range.fromMs)}–${formatClock(range.toMs)}: ${found.relabelled} of ${found.lines} line(s) changed speaker` +
+          (found.added.length ? `, ${found.added.length} new speaker(s)` : ''),
+        before: translated ?? current,
+        after,
+      });
+    });
+    await this.deps.store.saveProject({ ...(await this.deps.store.getProject(projectId)), settings, updatedAt: new Date().toISOString() });
+    await this.refreshWarnings(projectId);
+    return {
+      speakers: found.speakers.length,
+      lowConfidence: found.lowConfidence,
+      relabelled: found.relabelled,
+      added: found.added.length,
+      detectedParts: found.detectedParts,
+    };
+  }
+
+  /** Bring the project's transcript warnings up to date with its lines (pipeline/transcriptWarnings.ts). */
+  private async refreshWarnings(projectId: string): Promise<void> {
+    await refreshTranscriptWarnings(
+      {
+        store: this.deps.store,
+        isRunning: (id) => this.running.has(id),
+        emit: (id, pipeline) => this.deps.bus.get(id).emit({ type: 'state', pipeline }),
+      },
+      projectId,
+    );
   }
 
   /**
    * Detect the speakers again and wait for it (the editor's old flow, kept
    * for callers that need the relabelled timeline back).
    */
-  async redetectSpeakers(projectId: string, opts: { numSpeakers?: number } = {}): Promise<TimelineDocument> {
+  async redetectSpeakers(projectId: string, opts: { numSpeakers?: number; fromMs?: number; toMs?: number } = {}): Promise<TimelineDocument> {
     const started = await this.startSpeakerDetection(projectId, opts);
     const job = this.speakerJobs.get(projectId);
     if (!started.started && !job) throw new AppErrorException('UNKNOWN', 'Speaker detection did not start.');
@@ -828,11 +1038,15 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     projectId: string,
     fromMs: number,
     toMs: number,
-    lines: readonly { startMs: number; endMs: number; text: string; speakerId?: string }[],
+    lines: readonly { startMs: number; endMs: number; text: string; speakerId?: string; speakerLowConfidence?: boolean; loopSuspect?: boolean }[],
     /** What the project's edit history says about it (activity/history.ts); a default otherwise. */
     opts: { summary?: string } = {},
   ): Promise<{ replaced: number; lines: { id: string; startMs: number; endMs: number; text: string; speakerId?: string }[] }> {
     this.assertNotRunning(projectId, 'replace lines');
+    // The detection writes every line's speaker when it ends: lines changed under it would be lost.
+    if (this.speakerJobs.get(projectId)?.state === 'running') {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'Speakers are being detected in this project: change its lines when that is done.');
+    }
     if (!(toMs > fromMs)) throw new AppErrorException('INVALID_EDIT', 'The range must end after it starts.');
     // A project that exists, before anything is written: a mistyped id made
     // a stray <projects>/<id>/subtitles/source.json (found booting 0.17.0's
@@ -846,7 +1060,15 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       });
     }
     const fresh = lines
-      .map((l) => ({ startMs: Math.round(l.startMs), endMs: Math.round(l.endMs), text: String(l.text ?? '').trim(), speakerId: l.speakerId }))
+      .map((l) => ({
+        startMs: Math.round(l.startMs),
+        endMs: Math.round(l.endMs),
+        text: String(l.text ?? '').trim(),
+        speakerId: l.speakerId,
+        // A re-transcription's marks: a carried best-guess speaker, a loop it could not check.
+        guess: l.speakerLowConfidence === true,
+        loop: l.loopSuspect === true,
+      }))
       .filter((l) => l.text && l.endMs > l.startMs && l.startMs >= fromMs - 1 && l.endMs <= toMs + 1)
       .sort((a, b) => a.startMs - b.startMs);
     for (let i = 1; i < fresh.length; i++) {
@@ -866,7 +1088,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         startMs: l.startMs,
         endMs: l.endMs,
         sourceText: l.text,
-        ...(l.speakerId && /^SPEAKER_\d+$/.test(l.speakerId) ? { speakerId: l.speakerId } : {}),
+        ...(l.speakerId && /^SPEAKER_\d+$/.test(l.speakerId) ? { speakerId: l.speakerId, ...(l.guess ? { speakerLowConfidence: true as const } : {}) } : {}),
+        ...(l.loop ? { loopSuspect: true as const } : {}),
       }));
       const all = [...before, ...made, ...after].map((s, i) => ({ ...s, index: i, id: `seg_${String(i + 1).padStart(4, '0')}` }));
       await writeJsonAtomic(paths.sourceJson, { segments: all });
@@ -882,6 +1105,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         before: current.filter(inside),
         after: all.slice(first, first + made.length),
       });
+      // A loop left LOOP? may be gone now, or lines may have lost their speaker.
+      await this.refreshWarnings(projectId);
       return {
         replaced,
         lines: all.slice(first, first + made.length).map((s) => ({
@@ -898,17 +1123,31 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   /**
    * Transcribe [fromMs, toMs) of the project's audio again, by default
    * without the previous text (what repairs a loop), with the project's own
-   * speech-to-text engine and model; `apply` replaces the range with it.
+   * speech-to-text engine and model, through the STT step's loop pass
+   * (pipeline/retranscribe.ts); `apply` replaces the range with it, a line
+   * keeping a speaker only where its text still matches the old line under
+   * it. The range grows to the whole lines across its edges. Up to 15
+   * minutes it answers with the result, as it always did; a longer range is
+   * one job in windows of up to 15 minutes, each applied as it is heard,
+   * followed with {@link retranscribeJob} and the activity list
+   * (`lines.retranscribe`). A translated project is refused before anything
+   * is decoded.
    */
   async retranscribeRange(
     projectId: string,
     fromMs: number,
     toMs: number,
     opts: { noContext?: boolean; model?: string; apply?: boolean } = {},
-  ): Promise<{ lines: { startMs: number; endMs: number; text: string }[]; applied?: { replaced: number; lines: { id: string; startMs: number; endMs: number; text: string }[] } }> {
+  ): Promise<RetranscribeOutcome> {
     this.assertNotRunning(projectId, 'transcribe a range');
-    if (!(toMs > fromMs) || toMs - fromMs > 15 * 60_000) {
-      throw new AppErrorException('INVALID_EDIT', 'Give a range of up to 15 minutes, ending after it starts.');
+    if (!(fromMs >= 0) || !(toMs > fromMs)) {
+      throw new AppErrorException('INVALID_EDIT', 'Give a range that starts at 0 or later and ends after it starts.');
+    }
+    if (this.lineJobs.has(projectId)) {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'A range of this project is already being transcribed again: wait for it to finish.');
+    }
+    if (this.speakerJobs.get(projectId)?.state === 'running') {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'Speakers are being detected in this project: transcribe a range when that is done.');
     }
     const project = await this.deps.store.getProject(projectId);
     const paths = this.deps.store.paths(projectId);
@@ -916,29 +1155,182 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     if (!clip || !(await fileExistsNonEmpty(paths.original16kMonoWav))) {
       throw new AppErrorException('INVALID_EDIT', 'This project has no extracted audio yet: start_dubbing transcribes it first.');
     }
+    const apply = opts.apply === true;
+    // Before anything is decoded: the request used to decode for minutes and
+    // only then be refused by replaceSourceLines.
+    if (apply && (await fileExistsNonEmpty(paths.translatedJson))) {
+      throw new AppErrorException('INVALID_EDIT', 'This project is already translated: its lines can no longer be restructured.', {
+        remediation:
+          'Transcribe a range again before translation (without apply it only shows what it hears). In a series, fix the series (parent) transcript, then rebuild the parts not translated yet (rebuild_parts).',
+      });
+    }
+    const audioMs = project.mediaInfo?.durationMs;
+    const end = audioMs && audioMs > 0 ? Math.min(toMs, audioMs) : toMs;
+    if (!(end > fromMs)) throw new AppErrorException('INVALID_EDIT', 'The range starts after the end of the audio.');
+    const asJob = end - fromMs > RETRANSCRIBE_WINDOW_MS;
+    if (asJob && this.queued.has(projectId)) {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'This project is waiting in the dubbing queue: take it out of the queue first.');
+    }
+    const old = (await this.tryReadSegments(paths.sourceJson)) ?? [];
+    const range = widenToLines({ fromMs, toMs: end }, old);
+    const windows = asJob ? planRetranscribeWindows(range, old) : [range];
+
     const stt = this.deps.registry.getStt(project.settings.sttProviderId);
-    const heard = await this.withEditorLane(projectId, async () => {
-      await fsp.mkdir(paths.sttChunksDir, { recursive: true });
-      const clipPath = path.join(paths.sttChunksDir, `range_${Math.round(fromMs)}_${Math.round(toMs)}.wav`);
-      try {
-        await clip(paths.original16kMonoWav, clipPath, fromMs, toMs);
-        const language = project.settings.sourceLanguage ? toWhisperLanguage(project.settings.sourceLanguage) : undefined;
-        return await stt.transcribe({
-          audioPath: clipPath,
-          language,
-          model: opts.model ?? project.settings.sttModel ?? 'small',
-          wordTimestamps: true,
-          noContext: opts.noContext !== false,
-        });
-      } finally {
-        await fsp.rm(clipPath, { force: true }).catch(() => undefined);
-      }
+    const language = project.settings.sourceLanguage ? toWhisperLanguage(project.settings.sourceLanguage) : undefined;
+    const model = opts.model ?? project.settings.sttModel ?? 'small';
+    const regions = await readSavedSpeechRegions(paths.original16kMonoWav, paths.speechRegionsJson);
+    const hear: HearDeps = {
+      decode: async (from, to, noContext, signal) => {
+        await fsp.mkdir(paths.sttChunksDir, { recursive: true });
+        const clipPath = path.join(paths.sttChunksDir, `range_${Math.round(from)}_${Math.round(to)}.wav`);
+        try {
+          await clip(paths.original16kMonoWav, clipPath, from, to, signal);
+          const heard = await stt.transcribe({ audioPath: clipPath, language, model, wordTimestamps: true, noContext }, signal);
+          return heard.segments.map((s) => ({ ...s, startMs: s.startMs + from, endMs: s.endMs + from }));
+        } finally {
+          await fsp.rm(clipPath, { force: true }).catch(() => undefined);
+        }
+      },
+      ...(regions ? { inSilence: silenceTest(regions) } : {}),
+    };
+
+    const startedAt = new Date().toISOString();
+    const handle = activity.start({
+      kind: 'lines.retranscribe',
+      title: `Re-transcribing ${formatClock(range.fromMs)}–${formatClock(range.toMs)}`,
+      projectId,
+      ...(asJob ? { message: `${windows.length} windows of up to 15 minutes` } : {}),
     });
-    const lines = heard.segments
-      .map((s) => ({ startMs: Math.round(s.startMs + fromMs), endMs: Math.round(s.endMs + fromMs), text: s.sourceText.trim() }))
-      .filter((l) => l.text && l.endMs > l.startMs);
-    if (!opts.apply) return { lines };
-    return { lines, applied: await this.replaceSourceLines(projectId, fromMs, toMs, lines) };
+    const lineJob: LineJob = { kind: 'retranscribe', abort: new AbortController(), activityId: handle.id };
+    this.lineJobs.set(projectId, lineJob);
+    const view: RetranscribeJobView = {
+      id: handle.id,
+      projectId,
+      state: 'running',
+      fromMs: range.fromMs,
+      toMs: range.toMs,
+      apply,
+      windows: windows.length,
+      done: 0,
+      startedAt,
+      results: [],
+    };
+    const work = this.withEditorLane(projectId, () =>
+      this.hearRange(projectId, windows, hear, { apply, noContext: opts.noContext !== false }, lineJob.abort.signal, (result) => {
+        view.done += 1;
+        view.results.push(result);
+        const percent = (view.done / windows.length) * 100;
+        handle.progress(percent, `${view.done}/${windows.length}: ${result.summary}`, etaSeconds(startedAt, percent));
+      }),
+    ).finally(() => {
+      if (this.lineJobs.get(projectId) === lineJob) this.lineJobs.delete(projectId);
+    });
+
+    if (!asJob) {
+      try {
+        const result = await work;
+        handle.done(windowSummary(range, result.lines.length, loopCounts(result.loops), result.speakers.unassigned));
+        return result;
+      } catch (err) {
+        handle.fail(err);
+        throw err;
+      }
+    }
+    this.keepRetranscribeJob(view);
+    void work.then(
+      (result) => {
+        const loops = loopCounts(result.loops);
+        Object.assign(view, {
+          state: 'done',
+          finishedAt: new Date().toISOString(),
+          result: { lines: result.lines.length, replaced: result.applied?.replaced ?? 0, loops, speakers: result.speakers },
+          ...(apply ? {} : { lines: result.lines }),
+        });
+        handle.done(windowSummary(range, result.lines.length, loops, result.speakers.unassigned));
+      },
+      (err: unknown) => {
+        Object.assign(view, { state: 'failed', finishedAt: new Date().toISOString(), error: toAppError(err).message });
+        handle.fail(err);
+        this.deps.bus.get(projectId).emit({
+          type: 'log',
+          level: 'warn',
+          message: `Re-transcription stopped after ${view.done} of ${windows.length} window(s): ${toAppError(err).message}`,
+          ts: new Date().toISOString(),
+        });
+      },
+    );
+    return { job: { ...view, results: [...view.results] } };
+  }
+
+  /**
+   * Hear the windows in order, carrying speakers from the lines each one
+   * replaces (pipeline/retranscribe.ts). With `apply` each window replaces
+   * its range as soon as it is heard (its own entry in the edit history) and
+   * refreshes the loop report: a job stopped halfway leaves whole windows.
+   */
+  private async hearRange(
+    projectId: string,
+    windows: readonly TimeRange[],
+    hear: HearDeps,
+    opts: { apply: boolean; noContext: boolean },
+    signal: AbortSignal,
+    onWindow: (result: RetranscribeWindowResult) => void,
+  ): Promise<RetranscribeResult> {
+    const paths = this.deps.store.paths(projectId);
+    const out: RetranscribeResult = { fromMs: windows[0]!.fromMs, toMs: windows[windows.length - 1]!.toMs, lines: [], loops: [], speakers: { carried: 0, unassigned: 0 }, windows: [] };
+    const applied: NonNullable<RetranscribeResult['applied']> = { replaced: 0, lines: [] };
+    for (const w of windows) {
+      const heard = await hearWindow(hear, w, opts.noContext, signal);
+      if (signal.aborted) throw new AppErrorException('CANCELLED', 'The re-transcription was stopped.');
+      const current = (await this.tryReadSegments(paths.sourceJson)) ?? [];
+      const under = current.filter((s) => s.startMs < w.toMs && s.endMs > w.fromMs);
+      const speakers = carrySpeakers(heard.lines.map(heardLine), under, current.some((s) => s.speakerId));
+      const counts = loopCounts(heard.loops);
+      const summary = windowSummary(w, speakers.lines.length, counts, speakers.unassigned);
+      let result: RetranscribeWindowResult = {
+        fromMs: w.fromMs,
+        toMs: w.toMs,
+        lines: speakers.lines.length,
+        loops: counts,
+        speakers: { carried: speakers.carried, unassigned: speakers.unassigned },
+        summary,
+      };
+      if (opts.apply) {
+        await saveLoopReport(paths.loopRangesJson, w, heard.loops);
+        const done = await this.replaceSourceLines(projectId, w.fromMs, w.toMs, speakers.lines, { summary });
+        applied.replaced += done.replaced;
+        applied.lines.push(...done.lines);
+        result = { ...result, replaced: done.replaced };
+      }
+      out.lines.push(...speakers.lines);
+      out.loops.push(...heard.loops);
+      out.speakers.carried += speakers.carried;
+      out.speakers.unassigned += speakers.unassigned;
+      out.windows.push(result);
+      onWindow(result);
+    }
+    return opts.apply ? { ...out, applied } : out;
+  }
+
+  /** Keep a re-transcription job for its result; the oldest finished ones go first. */
+  private keepRetranscribeJob(view: RetranscribeJobView): void {
+    this.retranscribeJobs.set(view.id, view);
+    const ended = [...this.retranscribeJobs.values()].filter((j) => j.state !== 'running');
+    for (const j of ended.slice(0, Math.max(0, this.retranscribeJobs.size - RETRANSCRIBE_JOBS_KEPT))) this.retranscribeJobs.delete(j.id);
+  }
+
+  /** A re-transcription job of this project (a range over 15 minutes), as it is now. */
+  retranscribeJob(projectId: string, jobId: string): RetranscribeJobView | undefined {
+    const job = this.retranscribeJobs.get(jobId);
+    return job && job.projectId === projectId ? { ...job, results: [...job.results] } : undefined;
+  }
+
+  /** The activity entries of the jobs this process runs on projects' lines and speakers (anything else of those kinds died with an earlier one). */
+  liveLineJobIds(): Set<string> {
+    return new Set([
+      ...[...this.lineJobs.values()].map((j) => j.activityId),
+      ...[...this.speakerJobs.values()].filter((j) => j.state === 'running' && j.activityId).map((j) => j.activityId!),
+    ]);
   }
 
   async getSegments(projectId: string): Promise<SegmentWithAlignment[]> {
@@ -1280,6 +1672,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         before: base,
         after: outcome.segments,
       });
+      // A speaker set by hand may be one a re-transcription left out (speakers-unassigned).
+      if (outcome.speakerChanged.size > 0) await this.refreshWarnings(projectId);
     });
     return this.getTimeline(projectId);
   }

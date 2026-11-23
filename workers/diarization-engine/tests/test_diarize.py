@@ -10,7 +10,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vd_diarize import app as app_mod
-from vd_diarize.core import Diarizer, read_wav_16k_mono, shape_turns
+from vd_diarize.core import Diarizer, Embedder, read_wav_16k_mono, shape_turns
+from vd_diarize.pool import ModelPool
 
 
 def write_wav(path: Path, samples: np.ndarray, rate: int = 16_000, channels: int = 1) -> None:
@@ -67,7 +68,8 @@ def test_http_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         built.append((threshold, num_speakers))
         return FakeDiarization(threshold, num_speakers)
 
-    monkeypatch.setattr(app_mod, "_diarizer", Diarizer(2, factory=factory))
+    diarizer = Diarizer(2, factory=factory)
+    monkeypatch.setattr(app_mod, "_pool", ModelPool(1, 2, lambda _threads: (diarizer, Embedder(2))))
     client = TestClient(app_mod.app)
     f = tmp_path / "audio.wav"
     write_wav(f, np.zeros(16_000 * 4, dtype=np.float32))
@@ -89,3 +91,5 @@ def test_http_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.post("/diarize", json={"audioPath": str(f), "threshold": -1}).status_code == 422
     health = client.get("/health").json()
     assert health["ok"] is True and set(health["models"]) == {"segmentation", "embedding"}
+    # How many requests run side by side, for the orchestrator's parallel parts.
+    assert health["pool"] == 1 and health["threads"] == 2 and health["busy"] == 0

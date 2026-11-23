@@ -1,6 +1,6 @@
 [project]
 name = "vd-diarize"
-version = "0.2.0"
+version = "0.3.0"
 description = "VideoDubber speaker diarization (sherpa-onnx) for the optional diarization-sherpa engine pack"
 requires-python = ">=3.10"
 # Runtime deps come from the engine pack's uv venv (the orchestrator's

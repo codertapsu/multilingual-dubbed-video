@@ -1,6 +1,10 @@
 """HTTP face of the diarization engine.
 
-  GET  /health                         {"ok": true, "version", "models": {...}}
+  GET  /health                         {"ok": true, "version", "models": {...},
+                                        "threads", "pool", "busy"}
+     `pool`: how many requests run side by side (pool.py); the orchestrator
+     sends that many parts of a long detection at once when the machine is
+     otherwise idle. `threads`: the threads of each.
   POST /diarize {audioPath, threshold?, numSpeakers?, withSpeakers?}
        -> {"turns": [{"startMs", "endMs", "speaker"}], "speakers", "processMs",
            "speakerInfo"?: [{"speaker", "sec", "printSec", "print", "f0Hz",
@@ -56,6 +60,7 @@ from .core import (
 )
 from .gender import genders
 from .linking import LinkItem, link_speakers
+from .pool import ModelPool, plan_from_environment
 from .prints import profile_json, recording_voice, speaker_profiles
 
 # The threshold measured for the pack's embedding model, ERes2Net (Phase 0,
@@ -71,33 +76,22 @@ ONE_PASS_MAX_MS = 60 * 60_000
 EMBED_MAX_MS = 10 * 60_000
 
 
-def _threads() -> int:
-    try:
-        return int(os.environ.get("VD_DIARIZE_THREADS", "0")) or min(8, os.cpu_count() or 4)
-    except ValueError:
-        return 4
-
-
 app = FastAPI(title="VideoDubber speaker diarization", version=__version__)
-_diarizer: Optional[Diarizer] = None
-_embedder: Optional[Embedder] = None
-# FastAPI runs these handlers on a thread pool, and two projects detecting at
-# once would share one loaded model: one request at a time uses them.
-_models_lock = threading.Lock()
+# FastAPI runs these handlers on a thread pool. A loaded model serves one
+# request at a time, so each request borrows a pair of its own (pool.py): up
+# to four parts of a long detection run side by side, where one lock used to
+# queue every request behind the one before.
+_pool: Optional[ModelPool[Diarizer, Embedder]] = None
+_pool_lock = threading.Lock()
 
 
-def diarizer() -> Diarizer:
-    global _diarizer
-    if _diarizer is None:
-        _diarizer = Diarizer(_threads())
-    return _diarizer
-
-
-def embedder() -> Embedder:
-    global _embedder
-    if _embedder is None:
-        _embedder = Embedder(_threads())
-    return _embedder
+def pool() -> ModelPool[Diarizer, Embedder]:
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            plan = plan_from_environment()
+            _pool = ModelPool(plan.pairs, plan.threads, lambda threads: (Diarizer(threads), Embedder(threads)))
+        return _pool
 
 
 class DiarizeRequest(BaseModel):
@@ -163,7 +157,9 @@ def health() -> dict:
         "ok": True,
         "version": __version__,
         "models": {"segmentation": seg.is_file(), "embedding": emb.is_file()},
-        "threads": diarizer().threads,
+        "threads": pool().threads,
+        "pool": pool().size,
+        "busy": pool().busy,
     }
 
 
@@ -185,9 +181,9 @@ def diarize(req: DiarizeRequest) -> dict:
     threshold = req.threshold if req.threshold is not None else DEFAULT_THRESHOLD
     t0 = time.perf_counter()
     try:
-        with _models_lock:
-            turns, _ = diarizer().run(samples, threshold, req.numSpeakers)
-            profiles = speaker_profiles(samples, turns, embedder().embed) if req.withSpeakers else []
+        with pool().borrow() as (diarizer, embedder):
+            turns, _ = diarizer.run(samples, threshold, req.numSpeakers)
+            profiles = speaker_profiles(samples, turns, embedder.embed) if req.withSpeakers else []
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     body: dict = {
@@ -229,12 +225,12 @@ def diarize_chunk(req: ChunkRequest) -> dict:
         return {"turns": [], "speakers": [], "processMs": 0}
     threshold = req.threshold if req.threshold is not None else DEFAULT_THRESHOLD
     try:
-        with _models_lock:
-            turns, _ = diarizer().run(samples, threshold, req.numSpeakers)
+        with pool().borrow() as (diarizer, embedder):
+            turns, _ = diarizer.run(samples, threshold, req.numSpeakers)
             profiles = speaker_profiles(
                 samples,
                 turns,
-                embedder().embed,
+                embedder.embed,
                 max_pieces=req.maxPrintPieces,
                 max_piece_ms=int(req.maxPieceSec * 1000),
                 max_print_ms=int(req.maxPrintSec * 1000),
@@ -261,8 +257,8 @@ def embed(req: EmbedRequest) -> dict:
     except (ValueError, EOFError, wave.Error) as exc:
         raise HTTPException(status_code=400, detail=f"not a PCM WAV file: {exc}") from exc
     try:
-        with _models_lock:
-            return recording_voice(audio, embedder().embed)
+        with pool().borrow() as (_, embedder):
+            return recording_voice(audio, embedder.embed)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

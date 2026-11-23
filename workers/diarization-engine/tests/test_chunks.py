@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from vd_diarize import app as app_mod
 from vd_diarize.core import Diarizer, Embedder, Turn, read_wav_window, wav_duration_ms
+from vd_diarize.pool import ModelPool
 from vd_diarize.prints import pitch_stats, print_pieces, speaker_profiles, subtract, voice_print, yin_f0
 
 SR = 16_000
@@ -206,8 +207,9 @@ class WindowDiarization:
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     WindowDiarization.seen = []
-    monkeypatch.setattr(app_mod, "_diarizer", Diarizer(2, factory=lambda threshold, num_speakers: WindowDiarization(threshold, num_speakers)))
-    monkeypatch.setattr(app_mod, "_embedder", Embedder(2, factory=FakeExtractor))
+    diarizer = Diarizer(2, factory=lambda threshold, num_speakers: WindowDiarization(threshold, num_speakers))
+    embedder = Embedder(2, factory=FakeExtractor)
+    monkeypatch.setattr(app_mod, "_pool", ModelPool(1, 2, lambda _threads: (diarizer, embedder)))
     return TestClient(app_mod.app)
 
 

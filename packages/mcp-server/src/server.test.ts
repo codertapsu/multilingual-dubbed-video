@@ -152,6 +152,8 @@ describe('VideoDubber MCP server', () => {
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(
       [
+        // 0.18.0: songs kept as the original (casting is cast_voices, below).
+        'mark_song',
         'adjust_lines', 'cancel_dubbing', 'create_project', 'download_video', 'get_download', 'get_project',
         'get_status', 'get_transcript', 'get_translation_context', 'get_translation_report', 'install_engine',
         'install_voice', 'list_engines',
@@ -468,6 +470,110 @@ describe('VideoDubber MCP server', () => {
       const order = fake.calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.path}`);
       expect(order).toEqual(['PUT /projects/proj_1/settings', 'POST /projects/proj_1/retry']);
       expect(fake.calls.find((c) => c.path.endsWith('/retry'))!.body).toEqual({ stepId: 'audio-mix' });
+    });
+  });
+
+  // 0.18.0 (plan 1.4, 6.2): the crowd shares a pool of voices; songs keep the original.
+  describe('casting and songs', () => {
+    it('cast_voices shows the pools by voice, the soundalikes left out and the unknown-gender speakers with their lines', async () => {
+      fake.routes.set('POST /projects/proj_1/speakers/cast', () => ({
+        unconfirmed: [],
+        assignments: [
+          { speakerId: 'SPEAKER_00', voiceId: 'vp_thien', voiceName: 'Thiện Minh (clone)', by: 'pitch-rank' },
+          { speakerId: 'SPEAKER_01', voiceId: 'vieneu38-hai-dang', voiceName: 'Hải Đăng', by: 'pitch-rank' },
+          { speakerId: 'SPEAKER_02', voiceId: 'vieneu38-hai-dang', voiceName: 'Hải Đăng', by: 'pool' },
+          { speakerId: 'SPEAKER_03', voiceId: 'vieneu38-hai-dang', voiceName: 'Hải Đăng', by: 'pool' },
+        ],
+        defaults: { male: 'vieneu38-hai-dang' },
+        unassigned: ['SPEAKER_09'],
+        pools: {
+          male: {
+            minorSpeakers: 2,
+            size: 3,
+            voices: [{ voiceId: 'vieneu38-hai-dang', name: 'Hải Đăng', from: 'reused', sharedWith: 'SPEAKER_01', speakers: ['SPEAKER_02', 'SPEAKER_03'], minutes: 3 }],
+          },
+        },
+        soundalikes: [{ voiceId: 'vieneu38-thien-minh', name: 'Thiện Minh', cloneId: 'vp_thien', cloneName: 'Thiện Minh - Nam - Miền Bắc', similarity: 0.84 }],
+        unknown: [{ speakerId: 'SPEAKER_09', minutes: 2.31, lines: 14, samples: [{ id: 'seg_0123', text: '你是谁', startMs: 723_000, endMs: 726_000 }] }],
+        notes: [
+          'male: 2 minor speaker(s) share 1 voice(s), about 2 each; speakers who answer each other get different voices where possible.',
+          'male: no spare built-in voice, so the voices of the least-heard cast speaker(s) SPEAKER_01 are shared too.',
+          'Built-in voice "Thiện Minh" is left out of shared use: it sounds like your cloned voice "Thiện Minh - Nam - Miền Bắc" (0.84).',
+          '1 speaker(s) of unknown gender keep the project voice (set them in the editor).',
+        ],
+      }));
+      await connect();
+      const r = await call('cast_voices', { projectId: 'proj_1', minorVoices: 0, minorPool: { male: ['vieneu38-hai-dang'] } });
+      expect(fake.calls.find((c) => c.path.endsWith('/speakers/cast'))?.body).toMatchObject({ minorVoices: null, minorPool: { male: ['vieneu38-hai-dang'] } });
+      expect(r.text).toContain('- SPEAKER_01 -> Hải Đăng (vieneu38-hai-dang, pitch-rank)');
+      expect(r.text).not.toContain('- SPEAKER_02 ->');
+      expect(r.text).toContain("  - Hải Đăng (vieneu38-hai-dang, also SPEAKER_01's voice): 2 speaker(s): SPEAKER_02, SPEAKER_03");
+      expect(r.text).toContain('A speaker detected later: male -> vieneu38-hai-dang, female -> (project voice).');
+      expect(r.text).toContain('Left out of shared use: built-in "Thiện Minh" (vieneu38-thien-minh) sounds like the user\'s clone "Thiện Minh - Nam - Miền Bắc" (0.84).');
+      expect(r.text).toContain('- SPEAKER_09: 2.3 min, 14 line(s); longest: seg_0123 12:03.00 "你是谁"');
+      // Said once: the notes the lines above already carry are not repeated.
+      expect(r.text).toContain('Note: male: no spare built-in voice');
+      expect(r.text).not.toContain('Note: male: 2 minor speaker(s)');
+      expect(r.text).not.toContain('Note: Built-in voice');
+    });
+
+    it('mark_song keeps lines as the original song, says which clips need a new voice, and needs lines or a range', async () => {
+      fake.routes.set('POST /projects/proj_1/songs', () => ({
+        song: true,
+        targets: [
+          { id: 'seg_0002', startMs: 4480, endMs: 5960 },
+          { id: 'seg_0003', startMs: 30_000, endMs: 46_960 },
+        ],
+        changed: [{ id: 'seg_0002', startMs: 4480, endMs: 5960 }],
+        revoice: ['seg_0001'],
+        songs: 2,
+        parts: [{ projectId: 'proj_p1', index: 1, ok: true }, { projectId: 'proj_p2', index: 2, ok: false, skipped: 'dubbing now' }],
+      }));
+      await connect();
+      const r = await call('mark_song', { projectId: 'proj_1', lineIds: ['seg_0002', 'seg_0003'], applyToParts: true });
+      expect(fake.calls.find((c) => c.path.endsWith('/songs'))?.body).toEqual({ song: true, applyToParts: true, lineIds: ['seg_0002', 'seg_0003'] });
+      expect(r.text).toContain('Kept as the original song: 1 line(s) (seg_0002 00:04.48-00:05.96); 1 already were. The project has 2 song line(s) now.');
+      expect(r.text).toContain('1 line(s) need a new voice clip');
+      expect(r.text).toContain('- part 2 (proj_p2): skipped, dubbing now');
+      const none = await call('mark_song', { projectId: 'proj_1' });
+      expect(none.isError).toBe(true);
+    });
+
+    it('get_transcript marks song lines and the app\'s suggestions, and lists them with filter="songs"', async () => {
+      fake.routes.set('GET /projects/proj_1', () => ({ project: project(), pipeline: pipeline() }));
+      fake.routes.set('GET /projects/proj_1/timeline', () => ({
+        projectId: 'proj_1',
+        translated: true,
+        aligned: true,
+        units: [],
+        cueOverrides: {},
+        media: { videoPath: 'x' },
+        segments: [
+          seg('seg_0001', 0, 4480, '谁又给小爷我干哪儿来了', { translatedText: 'Ai lại đưa tiểu gia đến đây' }),
+          // An untranslated song line needs nothing: it has no voice, and its subtitle is off.
+          seg('seg_0002', 4480, 9960, '夢裡淚水為誰流', { song: true }),
+          seg('seg_0003', 30_000, 36_000, '風雨中的你', { translatedText: 'Em trong mưa gió' }),
+        ],
+      }));
+      fake.routes.set('GET /projects/proj_1/songs', () => ({ songs: [], suggestions: [{ lineId: 'seg_0003', reasons: ['traditional', 'sung'] }], songSubtitles: false }));
+      await connect();
+      const all = await call('get_transcript', { projectId: 'proj_1' });
+      expect(all.text).toContain('1 kept as the original song (no voice; subtitles off), 1 suggested as sung');
+      expect(all.text).toContain('{SONG: the original plays, no voice}');
+      expect(all.text).toContain('{SONG? traditional+sung: keep the original with mark_song}');
+      const attention = await call('get_transcript', { projectId: 'proj_1', filter: 'attention' });
+      expect(attention.text).not.toContain('seg_0002 ');
+      const songs = await call('get_transcript', { projectId: 'proj_1', filter: 'songs' });
+      expect(songs.text).toContain('Showing song lines and suggested songs 1-2 of 2.');
+      expect(songs.text).not.toContain('seg_0001 ');
+    });
+
+    it('update_settings takes the song subtitles and the minor voices, and names the step for the first', async () => {
+      fake.routes.set('PUT /projects/proj_1/settings', () => ({ project: project() }));
+      await connect();
+      const r = await call('update_settings', { projectId: 'proj_1', settings: { songSubtitles: true, minorVoices: 5 } });
+      expect(fake.calls.find((c) => c.method === 'PUT')?.body).toEqual({ songSubtitles: true, minorVoices: 5 });
+      expect(r.text).toContain('fromStep="render"');
     });
   });
 

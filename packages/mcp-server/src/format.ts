@@ -87,7 +87,13 @@ export function lineFlags(seg: TimelineSegment, targetLanguage: string, ctx: Bud
  * One cue as one line:
  * `seg_0012 00:46.84-00:49.76 (2.9s, ≤13 syllables (aim 11)) | 这地方不在三界 => Nơi này không thuộc tam giới [6] fit 1.00x ok`
  */
-export function renderLine(seg: TimelineSegment, targetLanguage: string, ctx: BudgetContext = {}): string {
+export function renderLine(
+  seg: TimelineSegment,
+  targetLanguage: string,
+  ctx: BudgetContext = {},
+  /** Why the app suggests this line is sung (GET /projects/:id/songs), when it does. */
+  songReasons?: readonly string[],
+): string {
   const dur = ((seg.endMs - seg.startMs) / 1000).toFixed(1);
   const budget = budgetLabel(seg, targetLanguage, ctx);
   const head = `${seg.id} ${clock(seg.startMs)}-${clock(seg.endMs)} (${dur}s${budget ? `, ${budget}` : ''})`;
@@ -101,6 +107,10 @@ export function renderLine(seg: TimelineSegment, targetLanguage: string, ctx: Bu
   // A range that looked like a transcription loop and could not be repaired:
   // compare it with the audio (retranscribe_range) and fix it (replace_lines).
   if (seg.loopSuspect) tags.push('LOOP? check against the audio');
+  // Kept as the original song (mark_song): no voice, the original plays. A
+  // suggestion is only that: the app never applies one by itself.
+  if (seg.song) tags.push('SONG: the original plays, no voice');
+  else if (songReasons?.length) tags.push(`SONG? ${songReasons.join('+')}: keep the original with mark_song`);
   if (seg.qualityFlags?.length) tags.push(`NEEDS FIX: ${seg.qualityFlags.join(', ')}`);
   if (seg.locked) tags.push('locked');
   if (seg.ttsStale) tags.push('voice out of date');

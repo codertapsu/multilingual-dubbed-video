@@ -89,6 +89,7 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   branding: 'audio-mix',
   useSourceSubtitles: 'stt',
   syncSubtitlesToVoice: 'render',
+  songSubtitles: 'render',
   subtitleExportMode: 'render',
   renderQuality: 'render',
   burnSubtitleStyle: 'render',
@@ -120,6 +121,9 @@ const editableSettings = z
     allowedOverflowMs: z.number().min(0).describe('How far a line may run past its slot, in ms.'),
     autoFitOverflow: z.boolean().describe('Automatically shorten lines that still do not fit (LLM translators only).'),
     syncSubtitlesToVoice: z.boolean().describe('Time subtitles to when the dub voice speaks.'),
+    songSubtitles: z
+      .boolean()
+      .describe('Show subtitles for the lines kept as the original song (mark_song). Off by default: the original song plays untouched. The subtitle files follow at once; render_video shows it.'),
     renderQuality: z
       .enum(['auto', 'quality', 'fast'])
       .describe('auto (default) = the hardware encoder when it works here, else x264; quality = always x264 on the CPU (smallest files, slower); fast = same as auto.'),
@@ -141,6 +145,12 @@ const editableSettings = z
       .min(0)
       .max(20)
       .describe('How many people speak, when known (2-20; 0 = let speaker detection decide). Far more reliable than detecting the count.'),
+    minorVoices: z
+      .number()
+      .int()
+      .min(0)
+      .max(12)
+      .describe('How many voices the minor speakers of each gender share when voices are cast (cast_voices): 1-12, 0 = automatic (3-6 by how many there are). Takes effect at the next cast_voices.'),
     branding: z
       .object({
         logo: z
@@ -1638,21 +1648,29 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Transcript and translation',
       description:
-        'The lines of a project: id, time slot, spoken-length budget for the dub language ("≤13 syllables (aim 11)", at the voice\'s measured pace, counting up to a second of the pause after the line), the original text and (=>) the translation with its length in [brackets], and how the dub fits ("fit 1.20x ok", "timing-conflict"). "NEEDS FIX" marks lines the app\'s checks rejected (foreign script, pinyin, "a/b" alternatives, no diacritics). filter="attention" lists only lines that need work: untranslated, flagged, over budget, out of time, or with out-of-date voices. Pages through long videos with offset/limit.',
+        'The lines of a project: id, time slot, spoken-length budget for the dub language ("≤13 syllables (aim 11)", at the voice\'s measured pace, counting up to a second of the pause after the line), the original text and (=>) the translation with its length in [brackets], and how the dub fits ("fit 1.20x ok", "timing-conflict"). "NEEDS FIX" marks lines the app\'s checks rejected (foreign script, pinyin, "a/b" alternatives, no diacritics). filter="attention" lists only lines that need work: untranslated, flagged, over budget, out of time, or with out-of-date voices. "SONG" marks a line kept as the original song (no voice; mark_song), "SONG?" one the app suggests is sung (never applied by itself); filter="songs" lists both. Pages through long videos with offset/limit.',
       inputSchema: z.object({
         projectId: z.string(),
         offset: z.number().int().min(0).default(0),
         limit: z.number().int().min(1).max(400).default(150),
-        filter: z.enum(['all', 'attention']).default('all'),
+        filter: z.enum(['all', 'attention', 'songs']).default('all'),
       }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId, offset, limit, filter }, ctx) => {
       const signal = ctx.mcpReq.signal;
-      const [{ project }, doc] = await Promise.all([getProject(projectId, signal), getTimeline(projectId, signal)]);
+      const [{ project }, doc, songsDoc] = await Promise.all([
+        getProject(projectId, signal),
+        getTimeline(projectId, signal),
+        // The app's song suggestions (an older app has none to give).
+        api
+          .get<{ suggestions?: { lineId: string; reasons: string[] }[] }>(`/projects/${encodeURIComponent(projectId)}/songs`, { signal })
+          .catch(() => undefined),
+      ]);
       const target = project.settings.targetLanguage;
       const all = doc.segments;
       if (all.length === 0) return text('No transcript yet: the speech-to-text step has not run. start_dubbing first.');
+      const suggested = new Map((songsDoc?.suggestions ?? []).map((s) => [s.lineId, s.reasons]));
       // Budget each line like the pipeline does: the voice's pace, plus up to a
       // second of the pause before the next line.
       const ctxOf = (i: number) => ({
@@ -1662,10 +1680,13 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const flagsOf = new Map(all.map((s, i) => [s.id, lineFlags(s, target, ctxOf(i))]));
       const indexOf = new Map(all.map((s, i) => [s.id, i]));
       const needsWork = (s: (typeof all)[number]): boolean => {
+        // A song line has no voice: only its subtitle can need a translation.
+        if (s.song) return project.settings.songSubtitles === true && !s.translatedText?.trim();
         const f = flagsOf.get(s.id)!;
         return !s.translatedText?.trim() || f.quality.length > 0 || f.overBudget || f.conflict || f.review || f.stale || s.loopSuspect === true;
       };
-      const pool = filter === 'attention' ? all.filter(needsWork) : all;
+      const pool =
+        filter === 'attention' ? all.filter(needsWork) : filter === 'songs' ? all.filter((s) => s.song === true || suggested.has(s.id)) : all;
       const page = pool.slice(offset, offset + limit);
       const counts = {
         lines: all.length,
@@ -1678,13 +1699,18 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const pace = doc.speechRate
         ? ` Budgets use the voice's ${doc.speechRate.source === 'measured' ? 'measured' : 'typical'} pace of ${doc.speechRate.perSecond.toFixed(1)}/s.`
         : '';
+      const songs = all.filter((s) => s.song === true).length;
+      const songNote =
+        songs || suggested.size
+          ? ` ${songs} kept as the original song (no voice; subtitles ${project.settings.songSubtitles ? 'on' : 'off'}), ${suggested.size} suggested as sung (SONG?: listen, then mark_song).`
+          : '';
       const header = [
-        `"${project.name}": ${project.settings.sourceLanguage || 'auto'} -> ${target}. ${counts.lines} lines, ${counts.translated} translated, ${counts.flagged} flagged by the checks, ${counts.overBudget} over budget, ${counts.conflicts} timing conflicts, ${counts.stale} with out-of-date voices.${pace}`,
-        `Showing ${filter === 'attention' ? 'lines needing attention ' : ''}${offset + 1}-${offset + page.length} of ${pool.length}.`,
+        `"${project.name}": ${project.settings.sourceLanguage || 'auto'} -> ${target}. ${counts.lines} lines, ${counts.translated} translated, ${counts.flagged} flagged by the checks, ${counts.overBudget} over budget, ${counts.conflicts} timing conflicts, ${counts.stale} with out-of-date voices.${songNote}${pace}`,
+        `Showing ${filter === 'attention' ? 'lines needing attention ' : filter === 'songs' ? 'song lines and suggested songs ' : ''}${offset + 1}-${offset + page.length} of ${pool.length}.`,
       ];
       const next = offset + page.length < pool.length ? `More: call again with offset=${offset + page.length}.` : '';
       return text(
-        [...header, ...page.map((s) => renderLine(s, target, ctxOf(indexOf.get(s.id)!))), next].filter(Boolean).join('\n'),
+        [...header, ...page.map((s) => renderLine(s, target, ctxOf(indexOf.get(s.id)!), suggested.get(s.id))), next].filter(Boolean).join('\n'),
       );
     }),
   );
@@ -1768,7 +1794,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Choose a voice for each speaker',
       description:
-        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones; within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance; speakers past the voices share a default voice of their gender. A cloned voice whose gender the user has not confirmed is left out of the proposal, which then says so first; apply=true is refused while any is left out, unless allowWithoutClones=true (the user agreed to a cast without them). Ask the user to confirm them in Voices → My voices instead when you can: their rule is their clones first. Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
+        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones; within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance. The speakers past the distinct voices (minor speakers) share a POOL of voices per gender: 3-6 by how many there are (minorVoices sets it, saved with apply), built-in voices no main speaker has, then the voices of the least-heard cast speakers, never a clone unless the user picks one (minorPool); speakers who answer each other get different pool voices where possible. Built-in voices that sound like one of the user\'s clones are left out of shared use and named. Speakers of unknown gender are listed with their three longest lines and talk time: they keep the project voice until someone sets them (swaps). A cloned voice whose gender the user has not confirmed is left out of the proposal, which then says so first; apply=true is refused while any is left out, unless allowWithoutClones=true (the user agreed to a cast without them). Ask the user to confirm them in Voices → My voices instead when you can: their rule is their clones first. Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
       inputSchema: z.object({
         projectId: z.string(),
         apply: z.boolean().default(false),
@@ -1781,10 +1807,22 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           .array(z.object({ speakerId: z.string(), voiceId: z.string() }))
           .optional()
           .describe('Changes to the proposal (from the user), applied before saving.'),
+        minorVoices: z
+          .number()
+          .int()
+          .min(0)
+          .max(12)
+          .optional()
+          .describe('How many voices the minor speakers of each gender share (1-12); 0 = automatic (3-6). Saved as the project\'s setting with apply.'),
+        minorPool: z
+          .object({ male: z.array(z.string()).optional(), female: z.array(z.string()).optional() })
+          .optional()
+          .describe('The exact voices (ids) the minor speakers of a gender share, when the user picked them (their clones allowed).'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    guarded(async ({ projectId, apply, applyToParts, allowWithoutClones, swaps }, ctx) => {
+    guarded(async ({ projectId, apply, applyToParts, allowWithoutClones, swaps, minorVoices, minorPool }, ctx) => {
+      type PoolVoice = { voiceId: string; name: string; from: 'spare' | 'reused' | 'picked'; sharedWith?: string; speakers: string[] };
       type Cast = {
         refused?: boolean;
         message?: string;
@@ -1793,12 +1831,22 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         defaults: { male?: string; female?: string };
         unassigned: string[];
         notes: string[];
+        pools?: Partial<Record<'male' | 'female', { minorSpeakers: number; size: number; voices: PoolVoice[] }>>;
+        soundalikes?: { voiceId: string; name: string; cloneName: string; similarity: number }[];
+        unknown?: { speakerId: string; minutes: number; lines: number; samples: { id: string; text: string; startMs?: number }[] }[];
         applied?: boolean;
         parts?: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[];
       };
       const res = await api.post<Cast>(
         `/projects/${encodeURIComponent(projectId)}/speakers/cast`,
-        { apply, applyToParts, allowWithoutClones, ...(swaps?.length ? { swaps } : {}) },
+        {
+          apply,
+          applyToParts,
+          allowWithoutClones,
+          ...(swaps?.length ? { swaps } : {}),
+          ...(minorVoices !== undefined ? { minorVoices: minorVoices === 0 ? null : minorVoices } : {}),
+          ...(minorPool ? { minorPool } : {}),
+        },
         { signal: ctx.mcpReq.signal },
       );
       // What was left out comes first: the user's rule is their clones first,
@@ -1812,13 +1860,49 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       if (res.refused) {
         return text([...leftOut, `Not saved: ${res.message ?? 'cloned voices would be left out.'}`].join('\n'));
       }
+      // The minor speakers by pool voice (one line per voice, not per speaker:
+      // the series had 59 of them), then who is left to the project voice.
+      const pooled = new Set((['male', 'female'] as const).flatMap((g) => res.pools?.[g]?.voices.flatMap((v) => v.speakers) ?? []));
+      const pools = (['male', 'female'] as const).flatMap((g) => {
+        const pool = res.pools?.[g];
+        if (!pool) return [];
+        return [
+          `Minor ${g} speakers: ${pool.minorSpeakers} share ${pool.voices.length} voice(s) (speakers who answer each other get different ones):`,
+          ...pool.voices.map(
+            (v) =>
+              `  - ${v.name} (${v.voiceId}, ${v.from === 'spare' ? 'a built-in no main speaker has' : v.from === 'picked' ? 'picked' : `also ${v.sharedWith}'s voice`}): ${v.speakers.length} speaker(s): ${v.speakers.join(', ')}`,
+          ),
+        ];
+      });
+      const unknownRows = res.unknown?.length
+        ? [
+            `Gender unknown (they keep the project voice: set them with swaps, or in the editor):`,
+            ...res.unknown.map(
+              (u) =>
+                `- ${u.speakerId}: ${u.minutes.toFixed(1)} min, ${u.lines} line(s); longest: ${u.samples
+                  .map((s) => `${s.id}${s.startMs !== undefined ? ` ${clock(s.startMs)}` : ''} "${s.text}"`)
+                  .join('; ')}`,
+            ),
+          ]
+        : res.unassigned.length
+          ? [`Project voice (gender unknown): ${res.unassigned.join(', ')}`]
+          : [];
+      // Notes the lines above already say are not repeated.
+      const said = /minor speaker\(s\) share|^Built-in voice "|of unknown gender keep the project voice/;
       return text(
         [
           ...leftOut,
           `${res.applied ? 'Saved' : 'Proposed'} cast (${res.assignments.length} speaker(s)):`,
-          ...res.assignments.map((a) => `- ${a.speakerId} -> ${a.voiceName} (${a.voiceId}, ${a.by})`),
-          ...(res.unassigned.length ? [`Project voice (gender unknown): ${res.unassigned.join(', ')}`] : []),
-          ...res.notes.map((n) => `Note: ${n}`),
+          ...res.assignments.filter((a) => !pooled.has(a.speakerId)).map((a) => `- ${a.speakerId} -> ${a.voiceName} (${a.voiceId}, ${a.by})`),
+          ...pools,
+          ...(res.defaults.male || res.defaults.female
+            ? [`A speaker detected later: male -> ${res.defaults.male ?? '(project voice)'}, female -> ${res.defaults.female ?? '(project voice)'}.`]
+            : []),
+          ...(res.soundalikes ?? []).map(
+            (s) => `Left out of shared use: built-in "${s.name}" (${s.voiceId}) sounds like the user's clone "${s.cloneName}" (${s.similarity.toFixed(2)}).`,
+          ),
+          ...unknownRows,
+          ...res.notes.filter((n) => !said.test(n)).map((n) => `Note: ${n}`),
           ...(res.parts ?? []).map((p) => `- part ${p.index} (${p.projectId}): ${p.ok ? 'saved' : p.skipped ? `skipped, ${p.skipped}` : `failed: ${p.error ?? '?'}`}`),
           res.applied
             ? 'To hear it, redo from "tts" (start_dubbing fromStep="tts"), or regenerate_voices for an edited project.'
@@ -2253,6 +2337,58 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
 
 
   // [tools: casting and songs]
+  // (cast_voices is with the speaker tools above.)
+  server.registerTool(
+    'mark_song',
+    {
+      title: 'Keep lines as the original song',
+      description:
+        'Keep sung lines as the original song (song=true, the default) or dub them again (song=false). A song line gets no voice; the original audio plays in its window (not lowered; with replace-vocals its singer comes back; with the original removed it plays there anyway); its subtitle shows only when the project\'s songSubtitles is on (update_settings, off by default). Per LINE, never a whole scene: calls and dialogue between the lyrics stay dubbed. Name the lines (lineIds from get_transcript) or a time range (fromMs/toMs: the lines at least half inside it). get_transcript filter="songs" lists the song lines and the app\'s suggestions (SONG?), which it never applies by itself: listen before keeping them. On a series (the project the parts were made from), applyToParts=true marks the same lines in every part, by time; a part being dubbed is skipped with the reason. Lines that shared a voice clip with a song line are marked out of date: regenerate_voices makes their new clips (or start_dubbing fromStep="alignment"), then render_video. Not while the project is dubbing.',
+      inputSchema: z.object({
+        projectId: z.string(),
+        lineIds: z.array(z.string()).optional().describe('The lines, e.g. ["seg_0412", "seg_0413"].'),
+        fromMs: z.number().min(0).optional().describe('Or a time range in ms of the video: from…'),
+        toMs: z.number().min(1).optional().describe('…to.'),
+        song: z.boolean().default(true).describe('true: keep the original song; false: dub the lines again.'),
+        applyToParts: z.boolean().default(false),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, lineIds, fromMs, toMs, song, applyToParts }, ctx) => {
+      if (!lineIds?.length && (fromMs === undefined || toMs === undefined)) {
+        return { content: [{ type: 'text', text: 'Name the lines (lineIds) or a time range (fromMs and toMs).' }], isError: true };
+      }
+      type Span = { id: string; startMs: number; endMs: number };
+      const res = await api.post<{
+        song: boolean;
+        targets: Span[];
+        changed: Span[];
+        revoice: string[];
+        songs: number;
+        parts?: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[];
+      }>(
+        `/projects/${encodeURIComponent(projectId)}/songs`,
+        { song, applyToParts, ...(lineIds?.length ? { lineIds } : { fromMs, toMs }) },
+        // Every part of a long series is read and written: allow it the time.
+        { signal: ctx.mcpReq.signal, ...(applyToParts ? { timeoutMs: 600_000 } : {}) },
+      );
+      const shown = res.changed.slice(0, 20).map((l) => `${l.id} ${clock(l.startMs)}-${clock(l.endMs)}`);
+      const same = res.targets.length - res.changed.length;
+      return text(
+        [
+          res.targets.length === 0
+            ? 'No line is at least half inside that range.'
+            : `${res.song ? 'Kept as the original song' : 'Dubbed again'}: ${res.changed.length} line(s)${shown.length ? ` (${shown.join(', ')}${res.changed.length > shown.length ? ', …' : ''})` : ''}${same > 0 ? `; ${same} already were` : ''}. The project has ${res.songs} song line(s) now.`,
+          ...(res.revoice.length
+            ? [`${res.revoice.length} line(s) need a new voice clip (they shared one with a song line, or sing no more): regenerate_voices, then render_video.`]
+            : res.changed.length
+              ? ['render_video makes the video with it (the mix is redone).']
+              : []),
+          ...(res.parts ?? []).map((p) => `- part ${p.index} (${p.projectId}): ${p.ok ? 'done' : p.skipped ? `skipped, ${p.skipped}` : `failed: ${p.error ?? '?'}`}`),
+        ].join('\n'),
+      );
+    }),
+  );
 
 
   // [tools: series, create, continue]

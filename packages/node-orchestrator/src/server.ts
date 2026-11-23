@@ -2803,6 +2803,16 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
             .status(400)
             .send({ error: { code: 'UNKNOWN', message: 'Expected { name, settings, inputVideoPath? }.' } });
         }
+        // "Split into parts" as the form now holds it: checked as at creation.
+        if (body.series) {
+          const chosen = pickSeriesAi(await seriesAiOptions(), body.series.aiProviderId);
+          if (!chosen) {
+            return reply.status(400).send({
+              error: { code: 'CLOUD_CREDENTIALS_MISSING', message: 'Splitting a video into parts needs an AI set up in Settings.' },
+            });
+          }
+          body.series = await series.prepareSeries({ ...body.series, aiProviderId: chosen.id });
+        }
         return await orchestrator.reviseProject(req.params.id, body);
       } catch (err) {
         return sendError(reply, err);

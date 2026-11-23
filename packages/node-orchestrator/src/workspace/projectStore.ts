@@ -262,6 +262,13 @@ export class ProjectStore {
     const paths = this.paths(current.id);
 
     let next: Project = { ...current, name: input.name, settings };
+    // "Split into parts" as the form now holds it (never on a part of a series).
+    if (input.series !== undefined && current.series?.role !== 'part') {
+      const { series: _old, ...single } = next;
+      next = input.series
+        ? { ...single, series: { role: 'parent', settings: sanitizeSeriesSettings(input.series, input.series.aiProviderId ?? ''), state: 'analysing' } }
+        : single;
+    }
     let staleCopy: string | undefined;
     if (input.inputVideoPath?.trim()) {
       const copied = await copyInputVideo(input.inputVideoPath, paths);

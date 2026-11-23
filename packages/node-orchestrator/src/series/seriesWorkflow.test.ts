@@ -229,6 +229,27 @@ describe('titles and names of the parts (1.5, 2.1)', { timeout: 60_000 }, () => 
   });
 });
 
+describe('New project after Back: the series options as the form now holds them', { timeout: 60_000 }, () => {
+  it('replaces them, or makes a single video again, and never touches a part', async () => {
+    const r = rig();
+    const video = await writeDummyVideo(tmp);
+    const input = createProjectInput(video, { name: 'Tây Du Ký' });
+    const base = { minMinutes: 15, maxMinutes: 20, aiProviderId: 'fake-ai', recapSec: 4, autoStart: false };
+    const made = await r.orchestrator.createProject({ ...input, series: base });
+    // A client older than 0.18.0 sends no series: unchanged.
+    expect((await r.orchestrator.reviseProject(made.id, { name: 'A', settings: input.settings })).series).toMatchObject({ role: 'parent' });
+    const named = await r.orchestrator.reviseProject(made.id, { name: 'A', settings: input.settings, series: { ...base, nameTemplate: '{series} - Tập {nn}' } });
+    expect(named.series).toMatchObject({ role: 'parent', state: 'analysing', settings: { nameTemplate: '{series} - Tập {nn}' } });
+    const single = await r.orchestrator.reviseProject(made.id, { name: 'A', settings: input.settings, series: null });
+    expect(single.series).toBeUndefined();
+
+    const parent = await analysedParent(r, { minutes: 40 });
+    const [part] = await r.series.createParts(parent.id);
+    const revised = await r.orchestrator.reviseProject(part!, { name: 'P', settings: input.settings, series: null });
+    expect(revised.series).toMatchObject({ role: 'part', parentId: parent.id });
+  });
+});
+
 describe('a part edited after it was made (2.2)', { timeout: 60_000 }, () => {
   it('renames, retitles and summarises a part without a reset; a rendered one renders again', async () => {
     const chat = chatTitling((n) => `{"title":"Tên ${n}","summary":"Tóm tắt ${n}."}`);

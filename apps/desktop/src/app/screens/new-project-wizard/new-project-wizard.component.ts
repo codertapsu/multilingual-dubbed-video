@@ -1384,6 +1384,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
             name: input.name,
             settings: input.settings,
             ...(input.inputVideoPath !== this.createdFromVideo ? { inputVideoPath: input.inputVideoPath } : {}),
+            // "Split into parts" as the form is now: null makes it one video again.
+            series: series ?? null,
           })
         : await this.createWithLastFolder(input);
       // The project holds these choices now; the next New project starts afresh.

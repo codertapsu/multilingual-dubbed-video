@@ -639,7 +639,18 @@ export class IpcService {
       samples: { id: string; text: string }[];
       voiceId?: string;
     }[];
-    job?: { state: 'running' | 'done' | 'failed'; done: number; total: number; error?: string; speakers?: number; lowConfidence?: number };
+    /** `interrupted`: saved as running when the backend stopped (a restart); Retry resumes from its saved parts. */
+    job?: {
+      state: 'running' | 'done' | 'failed' | 'interrupted';
+      done: number;
+      total: number;
+      error?: string;
+      speakers?: number;
+      lowConfidence?: number;
+      startedAt?: string;
+      finishedAt?: string;
+      range?: { fromMs: number; toMs: number };
+    };
     defaults?: { male?: string; female?: string };
   }> {
     return this.http('GET', `/projects/${encodeURIComponent(projectId)}/speakers`);

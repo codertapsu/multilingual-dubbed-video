@@ -2437,6 +2437,7 @@
     "gpu-fallback-failed": "Không khởi động được engine GPU ({{pack}}) nên một bước đã chạy bằng bản dùng CPU, chậm hơn. Nếu lặp lại, hãy cài lại nó trong Cài đặt → Engine.",
     "no-speech-lines": "{{count}} câu không có chữ nào để đọc ({{examples}}): bản lồng tiếng để im lặng ở những câu này, phụ đề vẫn giữ nguyên.",
     "speakers-failed": "Không nhận diện được người nói ({{cause}}), nên cả bản lồng tiếng dùng một giọng. Hãy nhận diện lại người nói trong trình chỉnh sửa.",
+    "speakers-unassigned": "{{count}} câu chưa có người nói ({{ranges}}), nên sẽ được lồng tiếng bằng giọng của dự án. Hãy chọn người nói cho các câu này trong trình chỉnh sửa, hoặc nhận diện lại người nói (thẻ Dự án → Người nói).",
     "speakers-low-confidence": "{{count}} câu được gán cho người nói gần nhất, chưa chắc chắn. Hãy kiểm tra chúng ở mục Vấn đề trong trình chỉnh sửa.",
     "loops-repaired": "Đã sửa {{count}} đoạn lặp do chép lời hoặc dòng chữ quảng cáo: chép lời lại, hoặc xoá ở chỗ không ai nói.",
     "loops-left": "Không sửa được {{count}} đoạn có vẻ bị lặp do chép lời: các câu đó được đánh dấu trong trình chỉnh sửa (mục Vấn đề). Hãy kiểm tra trước khi lồng tiếng."

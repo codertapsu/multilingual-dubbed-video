@@ -47,6 +47,7 @@ import {
   projectOutputVideoPath,
   projectOutputThumbnailPath,
   type AlignedSegment,
+  type AudioDrift,
   type ProjectWarning,
   type StepDetail,
   type PipelineState,
@@ -133,6 +134,7 @@ import type { DiarizationService } from '../providers/diarization/sherpaDiarizat
 import { detectLineSpeakers, readSpeakerProfiles, speakerDetectionProgress } from './diarization.js';
 import { hasSpeakableText, writeSilentClip } from './speakable.js';
 import { findLoopRanges, repairLoops, type RepairedRange } from './loopRepair.js';
+import { audioDriftWarning, describeAudioDrift } from './audioDrift.js';
 import { expectedSpeechMs } from '../alignment/clipSpeech.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
@@ -873,7 +875,7 @@ export class PipelineRunner {
       case 'probe-video':
         return this.stepProbe(project, paths, signal);
       case 'extract-audio':
-        return this.stepExtractAudio(project, paths, signal);
+        return this.stepExtractAudio(project, paths, signal, onProgress);
       case 'stt':
         return this.stepStt(project, paths, signal, onProgress);
       case 'translation':
@@ -918,7 +920,12 @@ export class PipelineRunner {
     );
   }
 
-  private async stepExtractAudio(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
+  private async stepExtractAudio(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress?: StepProgress,
+  ): Promise<void> {
     throwIfCancelled(signal);
     const range = project.sourceRange;
     this.deps.logger.info(`Extracting full-rate audio (original.wav)${range ? ' of this part' : ''}...`);
@@ -926,6 +933,38 @@ export class PipelineRunner {
     throwIfCancelled(signal);
     this.deps.logger.info('Extracting 16 kHz mono audio for STT (original_16k_mono.wav)...');
     await this.deps.media.extract16kMono(project.inputVideoPath, paths.original16kMonoWav, signal, range);
+    await this.recordAudioDrift(project, signal, onProgress);
+  }
+
+  /**
+   * How far the source's audio was off its picture (pipeline/audioDrift.ts):
+   * in the project's media info and the log every time, a warning from 0.5 s.
+   * Both tracks were just extracted on the picture's clock, so this says what
+   * that fixed. Best effort: a measurement that fails never fails the step.
+   */
+  private async recordAudioDrift(project: Project, signal: AbortSignal, onProgress?: StepProgress): Promise<void> {
+    const measure = this.deps.media.measureAudioDrift?.bind(this.deps.media);
+    if (!measure) return;
+    let drift: AudioDrift | undefined;
+    try {
+      const measured = await measure(project.inputVideoPath, signal, project.sourceRange);
+      if (measured) drift = { ...measured, measuredAt: new Date().toISOString() };
+    } catch (err) {
+      if (signal.aborted) throw err;
+      this.deps.logger.warn(
+        `Could not measure the audio against the picture (${toAppError(err).message}); both audio tracks follow the picture's clock all the same.`,
+      );
+    }
+    // Replaced every time: a part starts with its parent's whole-video value.
+    const fresh = await this.deps.store.getProject(project.id);
+    if (fresh.mediaInfo) {
+      const { audioDrift: _previous, ...info } = fresh.mediaInfo;
+      await this.deps.store.saveProject({ ...fresh, mediaInfo: drift ? { ...info, audioDrift: drift } : info });
+    }
+    if (!drift) return;
+    this.deps.logger.info(describeAudioDrift(drift));
+    const warning = audioDriftWarning(drift);
+    if (warning) onProgress?.warn?.(warning);
   }
 
   private async stepStt(

@@ -26,8 +26,11 @@
 import { padSegmentIndex } from '../workspace/paths.js';
 import type { TranscriptSegment } from '@videodubber/shared';
 
-/** What kind of loop a range is. */
-export type LoopKind = 'repeat' | 'low-diversity' | 'phrase';
+/**
+ * What kind of loop a range is. `silence`: lines the speech map heard no
+ * speech under (sttChecks.ts), hallucinations over a silent stretch.
+ */
+export type LoopKind = 'repeat' | 'low-diversity' | 'phrase' | 'silence';
 
 export interface LoopRange {
   /** Lines [start, end) of the transcript. */
@@ -136,7 +139,7 @@ export function findLoopRanges(lines: readonly Line[], inSilence?: (fromMs: numb
   }
 
   // Merge overlapping ranges; the stronger kind names the merge.
-  const rank: Record<LoopKind, number> = { repeat: 3, 'low-diversity': 2, phrase: 1 };
+  const rank: Record<LoopKind, number> = { silence: 4, repeat: 3, 'low-diversity': 2, phrase: 1 };
   const sorted = found.sort((a, b) => a.start - b.start || b.end - a.end);
   const merged: LoopRange[] = [];
   for (const r of sorted) {
@@ -223,13 +226,18 @@ export async function repairLoops(
       report.push({ ...base, status: 'left', after: original.length, reason: `the second decode failed (${err instanceof Error ? err.message : String(err)})` });
       continue;
     }
+    // Lines written where the speech map heard no speech: what a second decode
+    // writes over that silence is a hallucination too, and a decode that hears
+    // nothing is the answer there, however varied the lines were.
+    const silent = r.kind === 'silence';
     // The re-decode can hallucinate over music too ("优优独播剧场—YoYo…").
     const usable = fresh
       .filter((l) => l.endMs > r.fromMs - 500 && l.startMs < r.toMs + 500)
-      .filter((l) => normalizeLine(l.sourceText) !== '' && !creditPhrase(l.sourceText, deps.inSilence?.(l.startMs, l.endMs) === true));
+      .filter((l) => normalizeLine(l.sourceText) !== '' && !creditPhrase(l.sourceText, deps.inSilence?.(l.startMs, l.endMs) === true))
+      .filter((l) => !silent || deps.inSilence?.(l.startMs, l.endMs) !== true);
     const varied = new Set(original.map((l) => normalizeLine(l.sourceText))).size / Math.max(1, original.length) >= VARIED_RATIO;
     if (usable.length === 0) {
-      if (varied) {
+      if (varied && !silent) {
         out.push(...original);
         report.push({ ...base, status: 'kept', after: original.length, reason: 'the second decode heard nothing, and the lines are varied' });
       } else {
@@ -239,7 +247,7 @@ export async function repairLoops(
     }
     const again = findLoopRanges(usable).filter((x) => x.kind !== 'phrase');
     const repeatedShare = again.reduce((n, x) => n + (x.end - x.start), 0) / usable.length;
-    if (again.length > 0 && repeatedShare >= 0.5) {
+    if (!silent && again.length > 0 && repeatedShare >= 0.5) {
       // It repeats without context too: really said (a chant, a song).
       out.push(...original);
       report.push({ ...base, status: 'kept', after: original.length, reason: 'it repeats in a fresh decode too: really said (a chant or a song)' });

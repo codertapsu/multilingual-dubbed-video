@@ -11,8 +11,46 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 /**
  * The tool call an API request belongs to: sent as X-Request-Id, so the app's
  * structured log ties its lines to the call, and a tool's error can name them.
+ * And who is calling: the MCP client's name from its handshake, the session,
+ * the tool (see {@link initiatorHeaders}).
  */
-export const requestContext = new AsyncLocalStorage<{ requestId: string }>();
+export interface RequestContext {
+  requestId: string;
+  /** The client's own name ("claude-code", "claude-ai", …). */
+  client?: string;
+  session?: string;
+  tool?: string;
+}
+
+export const requestContext = new AsyncLocalStorage<RequestContext>();
+
+/**
+ * Who asked, for the app (its activity/context.ts reads these): every job and
+ * edit there records it, and the activity panel lists the agents connected.
+ * Values are percent-encoded: a header carries no Vietnamese or Chinese, and
+ * a client may be named in them; the app decodes them.
+ *
+ * WHY: a 27.8-hour production ran mostly over MCP and the user saw almost
+ * none of it in the app, nor which agent did what (claude-dubber report,
+ * 2026-11-23, R3). The MCP sent only a per-call request id.
+ */
+export function initiatorHeaders(ctx: Omit<RequestContext, 'requestId'> | undefined): Record<string, string> {
+  const enc = (v: string): string => encodeURIComponent(v.slice(0, 120));
+  return {
+    'x-vd-initiator': 'mcp',
+    ...(ctx?.client ? { 'x-vd-client': enc(ctx.client) } : {}),
+    ...(ctx?.session ? { 'x-vd-session': enc(ctx.session) } : {}),
+    ...(ctx?.tool ? { 'x-vd-tool': enc(ctx.tool) } : {}),
+  };
+}
+
+/** Options of one request to the app. */
+export interface RequestOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  /** More headers (`x-vd-batch-left`: how many lines a re-voicing batch has left). */
+  headers?: Record<string, string>;
+}
 
 /** The orchestrator's error envelope (sendError in node-orchestrator/src/server.ts). */
 interface ErrorEnvelope {
@@ -72,43 +110,41 @@ export class VideoDubberApi {
     }
   }
 
-  get<T>(path: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
+  get<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     return this.request<T>('GET', path, undefined, opts);
   }
 
-  post<T>(path: string, body?: unknown, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
+  post<T>(path: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
     return this.request<T>('POST', path, body ?? {}, opts);
   }
 
-  put<T>(path: string, body: unknown, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
+  put<T>(path: string, body: unknown, opts: RequestOptions = {}): Promise<T> {
     return this.request<T>('PUT', path, body, opts);
   }
 
-  delete<T>(path: string, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
+  delete<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     return this.request<T>('DELETE', path, undefined, opts);
   }
 
-  patch<T>(path: string, body: unknown, opts: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<T> {
+  patch<T>(path: string, body: unknown, opts: RequestOptions = {}): Promise<T> {
     return this.request<T>('PATCH', path, body, opts);
   }
 
-  private async request<T>(
-    method: string,
-    path: string,
-    body: unknown,
-    opts: { timeoutMs?: number; signal?: AbortSignal },
-  ): Promise<T> {
+  private async request<T>(method: string, path: string, body: unknown, opts: RequestOptions): Promise<T> {
     const timeout = AbortSignal.timeout(opts.timeoutMs ?? 60_000);
     const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
     let res: Response;
     try {
-      const requestId = requestContext.getStore()?.requestId;
+      const call = requestContext.getStore();
+      const requestId = call?.requestId;
       res = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         signal,
         headers: {
           ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
           ...(requestId ? { 'x-request-id': requestId } : {}),
+          ...initiatorHeaders(call),
+          ...(opts.headers ?? {}),
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
@@ -153,7 +189,11 @@ export class VideoDubberApi {
     try {
       let res: Response;
       try {
-        res = await this.fetchImpl(`${this.baseUrl}${path}`, { signal: controller.signal });
+        const call = requestContext.getStore();
+        res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+          signal: controller.signal,
+          headers: { ...(call?.requestId ? { 'x-request-id': call.requestId } : {}), ...initiatorHeaders(call) },
+        });
       } catch (err) {
         if (controller.signal.aborted) return undefined;
         if (isConnectionRefused(err)) throw new AppNotRunningError(this.baseUrl);

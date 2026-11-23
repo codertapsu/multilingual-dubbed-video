@@ -1805,6 +1805,15 @@
     "phowhisper-medium": "PhoWhisper Medium — best for Vietnamese-source audio",
     "phowhisper-large": "PhoWhisper Large — Vietnamese-source, highest accuracy"
   },
+  "source-checks": {
+    "spot-check": "Spot-check the transcript",
+    "spot-check-hint": "Decodes one minute of every half hour again and compares it with the transcript, to find stretches where the transcript does not match the audio (a bad join or a broken download). Adds about 3–5% to speech-to-text. On by default for videos over 2 hours; works for Chinese, Japanese and Korean.",
+    "drift-label": "Audio vs. picture",
+    "drift-longer": "The audio was {{seconds}} s longer than the picture: re-timed to the picture",
+    "drift-match": "In step with the picture ({{seconds}} s)",
+    "drift-shorter": "The audio ends {{seconds}} s before the picture: silence fills the rest",
+    "drift-hint": "Measured from the audio's own samples when the audio is extracted. The extracted audio always follows the picture's clock and ends with it, so the dub stays in sync and the video keeps its length."
+  },
   "confirm": {
     "remove-argos-title": "Remove translation pack?",
     "remove-engine-title": "Remove engine pack?",
@@ -2435,6 +2444,13 @@
   "warning": {
     "gpu-fallback-busy": "The graphics card was busy with another job, so a step ran on the slower CPU build ({{pack}}).",
     "gpu-fallback-failed": "A GPU engine ({{pack}}) could not start, so a step ran on the slower CPU build. If it keeps happening, reinstall it in Settings → Engines.",
+    "audio-drift": "The audio was {{seconds}} s longer than the picture: it was re-timed to the picture, so the dub stays in sync and the video keeps its length.",
+    "stt-no-speech": "Speech-to-text chunk {{chunk}} of {{chunks}} heard no speech at {{from}}–{{to}}, yet wrote {{count}} line(s) there: they were decoded again, and removed where nothing is said.",
+    "stt-no-speech-whole": "Speech-to-text wrote {{count}} line(s) at {{from}}–{{to}}, where nobody speaks: they were decoded again, and removed where nothing is said.",
+    "digital-silence": "{{minutes}} min of complete silence at {{from}}–{{to}} in a video full of talk: probably a problem in the source or its encoding (a bad join or a broken download). Check that part of the video.",
+    "transcript-mismatch": "The transcript does not match the audio around {{at}}: decoded again, that minute agrees with only {{percent}}% of the lines. Listen to it, and re-transcribe it in the editor if it is wrong.",
+    "transcript-mismatch-span": "The transcript does not match the audio from {{from}} to {{to}} ({{failed}} spot checks failed): probably a broken source there (a bad join or download). Check that part, and re-transcribe it in the editor.",
+    "more-ranges": "…and {{count}} more like it (every one of them is in the log).",
     "no-speech-lines": "{{count}} line(s) have no words to say ({{examples}}): they stay silent in the dub and keep their subtitle.",
     "speakers-failed": "Speaker detection failed ({{cause}}), so the dub uses one voice. Re-detect speakers in the editor.",
     "speakers-low-confidence": "{{count}} line(s) were given the nearest speaker, not a sure one. Check them in the editor's Issues.",
@@ -2490,6 +2506,8 @@
     "voicing": "Voicing {{done}}/{{total}}",
     "transcribing": "Transcribing part {{done}}/{{total}}",
     "speakers": "Detecting speakers {{done}}/{{total}}",
+    "spot-check": "Spot-checking the transcript {{done}}/{{total}}",
+    "silence-check": "Checking the audio for complete silence",
     "loops": "Checking transcription loops {{done}}/{{total}}"
   },
   "activity": {

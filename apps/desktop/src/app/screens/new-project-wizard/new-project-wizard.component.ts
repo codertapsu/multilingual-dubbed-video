@@ -32,6 +32,7 @@ import { DownloadProgressListComponent } from '../../shared/download-progress-li
 import { BusyIndicatorComponent } from '../../shared/busy-indicator/busy-indicator.component';
 import { OutputFolderComponent } from '../../shared/output-folder/output-folder.component';
 import { forgetLastOutputDir, readLastOutputDir, rememberOutputDir } from '../../core/util/last-output-folder';
+import { spotCheckApplies, spotCheckOn } from '../../core/util/source-checks';
 import {
   ALL_SUBTITLE_EXPORT_MODES,
   SUBTITLE_EXPORT_MODE_HINTS,
@@ -503,6 +504,9 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   /** The folder remembered from the last project could not be used for this one. */
   protected readonly outputFolderFallback = signal<string | null>(null);
   protected readonly mediaInfo = signal<MediaInfo | null>(null);
+  /** The transcript spot check (core/util/source-checks.ts): CJK speech only; on by default above 2 hours. */
+  protected readonly spotCheckOffered = computed(() => spotCheckApplies(this.settings().sourceLanguage));
+  protected readonly spotCheck = computed(() => spotCheckOn(this.settings().transcriptSpotCheck, this.mediaInfo()?.durationMs));
 
   /** Step 1 is valid once we have a video path and distinct languages. */
   protected readonly step1Valid = computed(() => {

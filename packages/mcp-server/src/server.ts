@@ -29,6 +29,7 @@ import { AppNotRunningError, VideoDubberApiError, requestContext, type VideoDubb
 import { cookiesOfSite, takeCookieExport } from './cookies.js';
 import { ensureAppRunning, type LaunchTarget } from './launcher.js';
 import {
+  audioDriftLines,
   clock,
   lineFlags,
   renderLine,
@@ -69,6 +70,7 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   forcedAlignment: 'stt',
   diarize: 'stt',
   diarizeSpeakers: 'stt',
+  transcriptSpotCheck: 'stt',
   targetLanguage: 'translation',
   translationProviderId: 'translation',
   refineProviderId: 'refine',
@@ -141,6 +143,11 @@ const editableSettings = z
       .min(0)
       .max(20)
       .describe('How many people speak, when known (2-20; 0 = let speaker detection decide). Far more reliable than detecting the count.'),
+    transcriptSpotCheck: z
+      .boolean()
+      .describe(
+        'Spot-check the transcript at the end of speech-to-text: one minute of every half hour is decoded again without context and compared with the lines, and stretches that do not match (a bad join or download) become warnings with their time range. Chinese/Japanese/Korean only; about 3-5 % of the speech-to-text time. Unset = on for videos over 2 hours; false = off; true = also on shorter videos.',
+      ),
     branding: z
       .object({
         logo: z
@@ -1370,6 +1377,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const lines = [
         `"${project.name}" (${project.id}) — ${project.status}`,
         `Video: ${project.inputVideoPath}${project.mediaInfo?.durationMs ? ` (${clock(project.mediaInfo.durationMs)})` : ''}`,
+        ...audioDriftLines(project.mediaInfo),
         `Saves to: ${projectOutputVideoPath(project)} (and subtitle files beside it)`,
         `Settings: ${settingsSummary(project.settings)}`,
         renderPipeline(pipeline),

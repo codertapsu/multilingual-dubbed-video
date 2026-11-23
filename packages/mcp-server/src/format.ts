@@ -9,10 +9,29 @@ import {
   countSpeechUnits,
   fitBudget,
   fitWindowMs,
+  type AudioDrift,
   type FitBudget,
   type PipelineState,
   type TimelineSegment,
 } from '@videodubber/shared';
+
+/**
+ * The source's audio against its picture as the extract-audio step counted it
+ * (docs/plans/production-requests-2026-11-23.md 1.1): a line for get_project,
+ * or none before that step ran. Pure.
+ */
+export function audioDriftLines(info: { audioDrift?: AudioDrift } | undefined): string[] {
+  const d = info?.audioDrift;
+  if (!d) return [];
+  const s = (ms: number): string => (Math.abs(ms) / 1000).toFixed(2);
+  const what =
+    d.driftMs >= 500
+      ? `the audio was ${s(d.driftMs)} s longer than the picture, re-timed to it`
+      : d.driftMs <= -500
+        ? `the audio ends ${s(d.driftMs)} s before the picture, silence fills the rest`
+        : `in step with the picture (${d.driftMs >= 0 ? '+' : '-'}${s(d.driftMs)} s)`;
+  return [`Audio vs picture: ${what} (counted from its decoded samples${d.range ? ", in this part's window" : ''}).`];
+}
 
 /**
  * How a line is budgeted: the voice's pace (the timeline's `speechRate`; else

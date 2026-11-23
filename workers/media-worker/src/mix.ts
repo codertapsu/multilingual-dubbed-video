@@ -15,6 +15,8 @@
  * The filtergraph builder is pure and unit-tested. Output is 48k stereo WAV.
  */
 
+import { rm, writeFile } from 'node:fs/promises';
+
 import { writeAtomically } from './atomic.js';
 import {
   assertInputReadable,
@@ -55,6 +57,72 @@ export interface DuckAndMixInput {
    * dynamic mode. Higher quality for the final mix; one extra analysis pass.
    */
   twoPassLoudnorm?: boolean;
+  /**
+   * Windows (ms) where the original plays as it is: the lines kept as the
+   * original song (the orchestrator's songs/songLines.ts). There the original
+   * is not lowered (keep), is there at all (remove), and, with
+   * `originalVocals`, gets its voices back (replace-vocals mixes the M&E bed).
+   * Outside them nothing changes. A sung OST would otherwise have been dubbed
+   * as speech, or (replace-vocals) lost its singer everywhere (F7).
+   */
+  keepOriginal?: readonly { startMs: number; endMs: number }[];
+  /** The separated vocal stem of the original (input 2), restored inside `keepOriginal`. */
+  originalVocals?: string;
+}
+
+/**
+ * How long the original takes to rise to full level before a song window and
+ * to fall back after it (outside the window, so the song itself is whole).
+ */
+export const SONG_RAMP_SEC = 0.25;
+
+/** A filter graph longer than this goes through a file (`-/filter_complex`): Windows caps a command line at 32,767 characters. */
+export const MAX_INLINE_GRAPH_CHARS = 20_000;
+
+const sec = (ms: number): string => String(Math.round(ms) / 1000);
+
+/** Terms per parenthesised group of a long sum (see balancedSum). */
+const SUM_GROUP = 16;
+
+/**
+ * `a+b+c+…` as a shallow tree of parenthesised groups. ffmpeg's expression
+ * evaluator refuses a chain deeper than about 100 (measured on 8.1.1: a sum
+ * of 101 terms parses, 150 do not), and a dub with a hundred song windows
+ * makes exactly that chain. Pure.
+ */
+export function balancedSum(terms: readonly string[]): string {
+  if (terms.length <= SUM_GROUP) return terms.join('+');
+  const groups: string[] = [];
+  for (let i = 0; i < terms.length; i += SUM_GROUP) groups.push(`(${terms.slice(i, i + SUM_GROUP).join('+')})`);
+  return balancedSum(groups);
+}
+
+/**
+ * An ffmpeg expression of `t` (seconds): 1 inside the windows, 0 away from
+ * them, rising and falling linearly over `rampSec` just outside each one.
+ * For `volume=...:eval=frame`. Pure.
+ */
+export function songGateExpr(windows: readonly { startMs: number; endMs: number }[], rampSec = SONG_RAMP_SEC): string {
+  const ramp = String(rampSec);
+  const terms = windows
+    .filter((w) => w.endMs > w.startMs)
+    .map((w) => `clip(min(t-${sec(w.startMs - rampSec * 1000)},${sec(w.endMs + rampSec * 1000)}-t)/${ramp},0,1)`);
+  return terms.length > 0 ? `min(1,${balancedSum(terms)})` : '0';
+}
+
+/** The song windows of a mix, when it has any. */
+function songWindowsOf(opts: DuckAndMixInput): readonly { startMs: number; endMs: number }[] {
+  return (opts.keepOriginal ?? []).filter((w) => w.endMs > w.startMs);
+}
+
+/**
+ * The original's bed at `db` away from the songs and at full level in them:
+ * a frame-wise volume of lin + (1 - lin) × gate. Unchanged without songs.
+ */
+function bedVolume(db: number, songs: readonly { startMs: number; endMs: number }[]): string {
+  if (songs.length === 0 || !(db < 0)) return `volume=${dbToVolumeArg(db)}`;
+  const lin = Math.round(10 ** (db / 20) * 1e6) / 1e6;
+  return `volume='${lin}+${Math.round((1 - lin) * 1e6) / 1e6}*${songGateExpr(songs)}':eval=frame`;
 }
 
 /**
@@ -149,12 +217,17 @@ export function dbToVolumeArg(db: number): string {
 
 /**
  * Build the `filter_complex` for the mix.
- * Convention: input 0 = original audio, input 1 = tts timeline.
+ * Convention: input 0 = original audio, input 1 = tts timeline, input 2 = the
+ * original's vocal stem (only with song windows and `originalVocals`).
+ *
+ * Song windows (`keepOriginal`) leave the graph exactly as it was without
+ * them; with them the original is gated in frame by frame (songGateExpr).
  *
  * Pure function so it can be asserted in tests without ffmpeg.
  */
 export function buildMixFilterComplex(opts: DuckAndMixInput, loudnorm?: string): string {
   const ttsGain = dbToVolumeArg(opts.ttsGainDb);
+  const songs = songWindowsOf(opts);
 
   // TTS bus is always prepared (it's the voice we want to hear).
   const ttsChain = `[1:a]${normalizeChain()},volume=${ttsGain}[tts]`;
@@ -167,14 +240,26 @@ export function buildMixFilterComplex(opts: DuckAndMixInput, loudnorm?: string):
   // --- No background: output is just the (gained) TTS, normalized — with an
   // optional room-tone bed so gaps between lines never fall to digital black.
   // anoisesrc is a filter source (no extra -i input); duration=first pins the
-  // bed to the TTS timeline's exact length.
+  // bed to the TTS timeline's exact length. A song kept as the original is the
+  // original there, even with the original removed.
   if (!opts.includeBackground) {
+    const song = songs.length > 0 ? [`[0:a]${normalizeChain()},volume='${songGateExpr(songs)}':eval=frame[song]`] : [];
+    const songIn = songs.length > 0 ? '[song]' : '';
     if (opts.roomTone) {
       return [
         ttsChain,
+        ...song,
         `anoisesrc=color=pink:amplitude=${ROOM_TONE_AMPLITUDE}:sample_rate=${SAMPLE_RATE},` +
           `aformat=sample_fmts=fltp:channel_layouts=stereo[room]`,
-        `[tts][room]amix=inputs=2:duration=first:normalize=0:dropout_transition=0[bedded]`,
+        `[tts][room]${songIn}amix=inputs=${songs.length > 0 ? 3 : 2}:duration=first:normalize=0:dropout_transition=0[bedded]`,
+        `[bedded]${loudness}[out]`,
+      ].join(';');
+    }
+    if (songs.length > 0) {
+      return [
+        ttsChain,
+        ...song,
+        `[tts][song]amix=inputs=2:duration=first:normalize=0:dropout_transition=0[bedded]`,
         `[bedded]${loudness}[out]`,
       ].join(';');
     }
@@ -182,21 +267,28 @@ export function buildMixFilterComplex(opts: DuckAndMixInput, loudnorm?: string):
   }
 
   const origChain = `[0:a]${normalizeChain()}[orig]`;
+  // The separated voices, back where a song is kept (replace-vocals).
+  const vocals = songs.length > 0 && opts.originalVocals ? [`[2:a]${normalizeChain()},volume='${songGateExpr(songs)}':eval=frame[voc]`] : [];
+  const mixOf = (tts: string, bg: string): string =>
+    vocals.length > 0
+      ? `[${tts}][${bg}][voc]amix=inputs=3:normalize=0:dropout_transition=0[mixed]`
+      : `[${tts}][${bg}]amix=inputs=2:normalize=0:dropout_transition=0[mixed]`;
 
   if (opts.duck) {
     // Dynamic ducking: the TTS signal drives a compressor on the original.
     // sidechaincompress needs the sidechain as its SECOND input.
     // threshold/ratio tuned so speech clearly pushes background down; the
-    // requested duckingLevelDb additionally hard-attenuates the ducked bg.
-    const duckAttenuate = dbToVolumeArg(Math.min(0, opts.duckingLevelDb));
+    // requested duckingLevelDb additionally hard-attenuates the ducked bg,
+    // except in a song's window, where no dub plays to duck it either.
     return [
       origChain,
       ttsChain,
+      ...vocals,
       // Split tts: one copy to the mix, one copy as the sidechain key.
       `[tts]asplit=2[tts_mix][tts_key]`,
       `[orig][tts_key]sidechaincompress=threshold=0.05:ratio=8:attack=20:release=300:makeup=1[ducked]`,
-      `[ducked]volume=${duckAttenuate}[bg]`,
-      `[tts_mix][bg]amix=inputs=2:normalize=0:dropout_transition=0[mixed]`,
+      `[ducked]${bedVolume(Math.min(0, opts.duckingLevelDb), songs)}[bg]`,
+      mixOf('tts_mix', 'bg'),
       `[mixed]${loudness}[out]`,
     ].join(';');
   }
@@ -204,14 +296,20 @@ export function buildMixFilterComplex(opts: DuckAndMixInput, loudnorm?: string):
   // Static mix: attenuate the original by duckingLevelDb and mix. With
   // duckingLevelDb=0 this is the "replace-vocals / keep M&E bed" case — the
   // separated music+effects sit at full volume under the dub.
-  const bgVolume = dbToVolumeArg(opts.duckingLevelDb);
   return [
     origChain,
     ttsChain,
-    `[orig]volume=${bgVolume}[bg]`,
-    `[tts][bg]amix=inputs=2:normalize=0:dropout_transition=0[mixed]`,
+    ...vocals,
+    `[orig]${bedVolume(opts.duckingLevelDb, songs)}[bg]`,
+    mixOf('tts', 'bg'),
     `[mixed]${loudness}[out]`,
   ].join(';');
+}
+
+/** The inputs of a mix: original, timeline, and the vocal stem when the graph reads it. */
+function mixInputs(opts: DuckAndMixInput): string[] {
+  const vocals = opts.includeBackground && opts.originalVocals && songWindowsOf(opts).length > 0;
+  return ['-i', opts.originalAudio, '-i', opts.ttsTimeline, ...(vocals ? ['-i', opts.originalVocals!] : [])];
 }
 
 /**
@@ -223,10 +321,7 @@ export function buildMixFilterComplex(opts: DuckAndMixInput, loudnorm?: string):
 export function buildMixArgs(opts: DuckAndMixInput, loudnorm?: string): string[] {
   return [
     '-y',
-    '-i',
-    opts.originalAudio,
-    '-i',
-    opts.ttsTimeline,
+    ...mixInputs(opts),
     '-filter_complex',
     buildMixFilterComplex(opts, loudnorm),
     '-map',
@@ -252,10 +347,7 @@ export function buildMixMeasureArgs(opts: DuckAndMixInput): string[] {
   const measure = `${loudnormFilter()}:print_format=json`;
   return [
     '-y',
-    '-i',
-    opts.originalAudio,
-    '-i',
-    opts.ttsTimeline,
+    ...mixInputs(opts),
     '-filter_complex',
     buildMixFilterComplex(opts, measure),
     '-map',
@@ -280,19 +372,23 @@ export async function duckAndMix(
   runOpts: RunOptions = {},
 ): Promise<{ output: string; durationMs: number }> {
   assertInputReadable(input.ttsTimeline);
-  if (input.includeBackground) {
+  const songs = songWindowsOf(input).length > 0;
+  if (input.includeBackground || songs) {
     assertInputReadable(input.originalAudio);
+  }
+  if (input.includeBackground && songs && input.originalVocals) {
+    assertInputReadable(input.originalVocals);
   }
   assertOutputWritable(input.output);
 
   if (input.twoPassLoudnorm) {
     // Pass 1: measure the mixed program loudness.
-    const measureRes = await runFfmpeg(buildMixMeasureArgs(input), runOpts);
+    const measureRes = await runMixFfmpeg(buildMixMeasureArgs(input), input.output, runOpts);
     const measured = parseLoudnormJson(measureRes.stderr);
     if (measured && loudnormMeasurementsUsable(measured)) {
       // Pass 2: apply with measured values (linear/transparent).
       await writeAtomically(input.output, (partial) =>
-        runFfmpeg(buildMixArgs({ ...input, output: partial }, loudnormApplyFilter(measured)), runOpts),
+        runMixFfmpeg(buildMixArgs({ ...input, output: partial }, loudnormApplyFilter(measured)), input.output, runOpts),
       );
       return { output: input.output, durationMs: await probeDurationMs(input.output) };
     }
@@ -302,7 +398,32 @@ export async function duckAndMix(
   }
 
   await writeAtomically(input.output, (partial) =>
-    runFfmpeg(buildMixArgs({ ...input, output: partial }), runOpts),
+    runMixFfmpeg(buildMixArgs({ ...input, output: partial }), input.output, runOpts),
   );
   return { output: input.output, durationMs: await probeDurationMs(input.output) };
+}
+
+/**
+ * The graph inline when it is short (always, without songs), else from a
+ * file beside the output (`-/filter_complex`, ffmpeg 7+; the app bundles 9):
+ * an unsplit feature-length project with hundreds of song windows would
+ * outgrow Windows' 32,767-character command line. Pure argv rewrite.
+ */
+export function graphFromFile(args: readonly string[], graphFile: string): { args: string[]; graph: string } | undefined {
+  const at = args.indexOf('-filter_complex');
+  const graph = at >= 0 ? args[at + 1] : undefined;
+  if (graph === undefined || graph.length <= MAX_INLINE_GRAPH_CHARS) return undefined;
+  return { args: [...args.slice(0, at), '-/filter_complex', graphFile, ...args.slice(at + 2)], graph };
+}
+
+async function runMixFfmpeg(args: string[], output: string, runOpts: RunOptions): ReturnType<typeof runFfmpeg> {
+  const file = `${output}.graph-${process.pid}-${Date.now()}.txt`;
+  const viaFile = graphFromFile(args, file);
+  if (!viaFile) return runFfmpeg(args, runOpts);
+  await writeFile(file, viaFile.graph, 'utf8');
+  try {
+    return await runFfmpeg(viaFile.args, runOpts);
+  } finally {
+    await rm(file, { force: true }).catch(() => undefined);
+  }
 }

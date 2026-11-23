@@ -45,6 +45,8 @@ export interface MixInputs {
   originalWav: string;
   /** The spoken greeting's clips (branding), when it plays. */
   greeting?: { file: string; placements: readonly { atMs: number }[]; gainDb: number; key: string };
+  /** Where the original plays as it is: the lines kept as a song (songs/songLines.ts). */
+  keepOriginal?: readonly { startMs: number; endMs: number }[];
 }
 
 interface FileStamp {
@@ -97,6 +99,8 @@ export async function mixFingerprint(inputs: MixInputs): Promise<string> {
     settings,
     clips,
     greeting,
+    // Only when there are songs: every mix made before them stays current.
+    ...(inputs.keepOriginal?.length ? { keepOriginal: inputs.keepOriginal.map((w) => [w.startMs, w.endMs]) } : {}),
   });
   return crypto.createHash('sha256').update(body).digest('hex');
 }

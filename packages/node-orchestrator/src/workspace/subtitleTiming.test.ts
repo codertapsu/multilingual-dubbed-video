@@ -18,6 +18,14 @@ describe('displayCuesFor', () => {
     seg(3, 9000, 10_000, 'Đi thôi.'),
   ];
 
+  it('leaves out the lines kept as the original song unless songSubtitles (default off), numbering the rest from 1', () => {
+    const withSong = lines.map((l) => (l.id === 'seg_0002' ? { ...l, song: true } : l));
+    const off = displayCuesFor(withSong);
+    expect(off.map((c) => c.text)).toEqual(['Ngươi là ai mà dám tới đây?', 'Đi thôi.']);
+    expect(off.map((c) => c.index)).toEqual([1, 2]);
+    expect(displayCuesFor(withSong, { songSubtitles: true }).map((c) => c.text)).toHaveLength(3);
+  });
+
   it('without a dub: cues planned for reading only', () => {
     const cues = displayCuesFor(lines);
     expect(cues.map((c) => [c.startMs, c.endMs])).toEqual([

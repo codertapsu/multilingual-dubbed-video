@@ -99,7 +99,9 @@ import {
   translationCheckpointKey,
   TranslationCheckpointWriter,
 } from './translationCheckpoint.js';
-import { displayCuesFor, writeCueOverrides } from '../workspace/subtitleTiming.js';
+import { displayCuesFor, songSubtitlesOn, writeCueOverrides } from '../workspace/subtitleTiming.js';
+import { isSong, songMixPlan, songUnits } from '../songs/songLines.js';
+import { recordSongSuggestions } from '../songs/songSuggestions.js';
 import {
   estimateGroupDriftMs,
   maxGroupDriftMs,
@@ -267,7 +269,7 @@ async function writeTranscriptAtomic(paths: WorkspacePaths, segments: Transcript
   await writeJsonAtomic(paths.translatedJson, { segments });
   // Planned for reading (displayCuesFor); the alignment step rewrites them
   // once the dub is placed, holding each line until its voice has finished.
-  const cues = displayCuesFor(segments);
+  const cues = displayCuesFor(segments, { songSubtitles: await songSubtitlesOn(paths.projectJson) });
   await writeTextAtomic(paths.translatedSrt, segmentsToSrt(cues));
   await writeTextAtomic(paths.translatedVtt, segmentsToVtt(cues));
 }
@@ -839,7 +841,8 @@ export class PipelineRunner {
           const segments = await readSegments(paths.translatedJson);
           if (segments.length === 0) return false;
           const groups = await readGroups(paths.synthesisGroupsJson);
-          const ids = groups ? groups.map((g) => g.id) : segments.map((s) => s.id);
+          // A line kept as the original song has no clip (songs/songLines.ts).
+          const ids = groups ? groups.map((g) => g.id) : segments.filter((s) => !isSong(s)).map((s) => s.id);
           for (const id of ids) {
             const idx = segmentIdToIndex(id);
             if (!(await fileExistsNonEmpty(paths.ttsSegment(idx)))) return false;
@@ -1045,6 +1048,8 @@ export class PipelineRunner {
     if (canChunk) {
       await fsp.rm(paths.sttChunksDir, { recursive: true, force: true }).catch(() => {});
     }
+    // Lines that look sung, offered to keep as the original song: never applied here (songs/songSuggestions.ts).
+    await recordSongSuggestions(paths, segments, { language: detectedLanguage || project.settings.sourceLanguage || '', warn: onProgress.warn, log: (m) => this.deps.logger.info(m) });
   }
 
   /**
@@ -1888,7 +1893,13 @@ export class PipelineRunner {
   ): Promise<void> {
     throwIfCancelled(signal);
     const provider = this.deps.registry.getTts(project.settings.ttsProviderId);
-    const segments = await readSegments(paths.translatedJson);
+    const lines = await readSegments(paths.translatedJson);
+    // Lines kept as the original song get no voice (songs/songLines.ts): the
+    // original plays in their windows at the mix.
+    const segments = lines.filter((s) => !isSong(s));
+    if (segments.length < lines.length) {
+      this.deps.logger.info(`${lines.length - segments.length} line(s) are kept as the original song: no voice is made for them.`);
+    }
 
     // Group consecutive same-speaker cues into whole utterances so the engine
     // speaks them with ONE coherent intonation contour instead of resetting its
@@ -2037,11 +2048,12 @@ export class PipelineRunner {
       );
     }
     // Every line was just synthesized from its current text/voice/rate, so no
-    // clip is stale any more. Rewritten only when a flag is actually set.
-    if (segments.some((s) => s.ttsStale === true)) {
+    // clip is stale any more. Rewritten only when a flag is actually set (and
+    // whole: the song lines, never voiced, are part of the transcript).
+    if (lines.some((s) => s.ttsStale === true)) {
       await writeSegments(
         paths.translatedJson,
-        segments.map(({ ttsStale: _stale, ...rest }) => rest),
+        lines.map(({ ttsStale: _stale, ...rest }) => rest),
       );
     }
     this.deps.logger.info(`Speech synthesis complete (engine: ${engine ?? (sawFallbackEngine ? 'fallback' : 'unknown')}).`);
@@ -2141,7 +2153,18 @@ export class PipelineRunner {
     // step (one WAV per group, on the first member's canonical path). Older
     // projects without the artifact fall back to one-group-per-segment, which
     // reproduces the legacy behavior exactly.
-    const groups = (await readGroups(paths.synthesisGroupsJson)) ?? singletonGroups(toGroupInputs(segments));
+    let groups = (await readGroups(paths.synthesisGroupsJson)) ?? singletonGroups(toGroupInputs(segments.filter((s) => !isSong(s))));
+    // Song lines have no unit (songs/songLines.ts): one planned before they
+    // were marked goes, one shared with spoken lines is cut and re-voiced
+    // below, a line that sings no more gets its own.
+    const songFix = songUnits(groups, segments);
+    if (songFix.changed) {
+      groups = songFix.groups;
+      const revoice = new Set(songFix.revoice);
+      for (const s of segments) if (revoice.has(s.id)) s.ttsStale = true;
+      await writeGroups(paths.synthesisGroupsJson, groups);
+      this.deps.logger.info(`Song lines: ${songFix.touched.length} line(s) moved out of or into a voice clip; ${revoice.size} re-voiced.`);
+    }
     await this.revoiceStaleUnits(project, paths, segments, groups, signal);
 
     // Measure each synthesized unit's WAV: its length, and where the speech is
@@ -2289,8 +2312,10 @@ export class PipelineRunner {
       }
     }
     // The subtitle files, now that the dub is placed: planned for reading, and
-    // (with voice sync) each line held until its voice has finished.
-    const cues = displayCuesFor(segments, sync ? { overrides: retimed, groups: finalGroups, units: aligned } : {});
+    // (with voice sync) each line held until its voice has finished. Song
+    // lines only with the project's songSubtitles.
+    const songSubtitles = project.settings.songSubtitles === true;
+    const cues = displayCuesFor(segments, sync ? { overrides: retimed, groups: finalGroups, units: aligned, songSubtitles } : { songSubtitles });
     await writeTextAtomic(paths.translatedSrt, segmentsToSrt(cues));
     await writeTextAtomic(paths.translatedVtt, segmentsToVtt(cues));
 
@@ -2673,7 +2698,24 @@ export class PipelineRunner {
 
   private async stepAudioMix(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
     throwIfCancelled(signal);
-    const aligned = await this.readAligned(paths.translatedAlignedJson);
+    // Song lines (songs/songLines.ts): no clip of theirs plays, the original
+    // plays in their windows; a clip not made yet for lines split off a song's
+    // unit is silent until re-voiced instead of failing the mix.
+    const songs = await songMixPlan(
+      await this.readAligned(paths.translatedAlignedJson),
+      await readGroups(paths.synthesisGroupsJson),
+      await readSegments(paths.translatedJson).catch(() => [] as TranscriptSegment[]),
+      fileExistsNonEmpty,
+    );
+    const aligned = songs.aligned;
+    if (songs.keepOriginal.length > 0) {
+      this.deps.logger.info(`Keeping the original song in ${songs.keepOriginal.length} window(s) (lines kept as the original song).`);
+    }
+    if (songs.waiting.length > 0) {
+      this.deps.logger.warn(
+        `${songs.waiting.length} voice clip(s) are not made yet (lines split off a song's clip, e.g. ${songs.waiting.slice(0, 3).join(', ')}): silent in this mix. Regenerate their voices, or redo from alignment.`,
+      );
+    }
     const mediaInfo = (await this.deps.store.getProject(project.id)).mediaInfo;
     const totalDurationMs = mediaInfo?.durationMs ?? this.estimateTotalDuration(aligned);
     // The spoken greeting (branding): planned into quiet moments, laid into the
@@ -2684,6 +2726,7 @@ export class PipelineRunner {
     const fingerprint = await mixFingerprint({
       workspaceDir: project.workspaceDir,
       aligned,
+      keepOriginal: songs.keepOriginal,
       totalDurationMs,
       settings: project.settings,
       originalWav: paths.originalWav,
@@ -2740,6 +2783,8 @@ export class PipelineRunner {
     let includeBackground = true;
     let duck = project.settings.duckOriginalAudio;
     let duckingLevelDb = project.settings.duckingLevelDb;
+    // The separated voices, put back where a song plays (replace-vocals).
+    let originalVocals: string | undefined;
 
     if (mode === 'remove') {
       includeBackground = false;
@@ -2758,6 +2803,7 @@ export class PipelineRunner {
       if (separated) {
         this.deps.logger.info('Separated original into vocals + music/effects; mixing dub over the M&E bed.');
         originalAudio = separated.accompanimentPath;
+        originalVocals = separated.vocalsPath;
         duck = false;
         duckingLevelDb = 0;
       } else {
@@ -2784,6 +2830,11 @@ export class PipelineRunner {
         roomTone: !includeBackground && project.settings.roomTone !== false,
         // Two-pass loudnorm gives a transparent, dialogue-anchored final mix.
         twoPassLoudnorm: true,
+        // The original as it is where a song is kept: not lowered (keep), put
+        // back with its voices (replace-vocals), there at all (remove).
+        ...(songs.keepOriginal.length > 0
+          ? { keepOriginal: songs.keepOriginal, ...(originalVocals ? { originalVocals } : {}) }
+          : {}),
       },
       signal,
     );

@@ -98,7 +98,8 @@ import { greetingSettingsKey, readGreetingPlan } from './branding/greetingMix.js
 import { sanitizeBranding } from './branding/sanitize.js';
 import { rangedMediaInfo } from './series/seriesRange.js';
 import { acceptOutputDir, moveOutputFiles, samePath } from './workspace/outputFolder.js';
-import { clearCueOverridesFor, displayCuesFor, readCueOverrides } from './workspace/subtitleTiming.js';
+import { clearCueOverridesFor, displayCuesFor, readCueOverrides, songSubtitlesOn } from './workspace/subtitleTiming.js';
+import { isSong, setSongFlags, songMixPlan, songTargets, songUnits, type SongMarkRequest, type SongMarkResult } from './songs/songLines.js';
 import { MAX_MINOR_VOICES } from './voices/casting.js';
 import { writeJsonAtomic, writeTextAtomic } from './workspace/projectStore.js';
 import {
@@ -621,11 +622,15 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       else delete next[key];
     }
     // Voices the minor speakers share per gender (voices/casting.ts): 1..12,
-    // anything else is automatic again.
+    // anything else is automatic again; subtitles for song lines: on or off.
     if (patch.minorVoices !== undefined) {
       const n = Number(patch.minorVoices);
       if (Number.isInteger(n) && n >= 1 && n <= MAX_MINOR_VOICES) next.minorVoices = n;
       else delete next.minorVoices;
+    }
+    if (patch.songSubtitles !== undefined) {
+      if (patch.songSubtitles === true) next.songSubtitles = true;
+      else delete next.songSubtitles;
     }
     if (
       patch.speakerVoices !== undefined ||
@@ -640,6 +645,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       settings: next,
       updatedAt: new Date().toISOString(),
     });
+    // The subtitle files follow the song setting at once (displayCuesFor reads
+    // it), so "Render again" draws what was chosen without a new alignment.
+    if ((next.songSubtitles === true) !== (project.settings.songSubtitles === true)) await this.rewriteSubtitleFiles(projectId);
     const pipeline = await this.deps.store.getPipeline(projectId);
     return { project: saved, pipeline };
   }
@@ -1769,9 +1777,17 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         key,
       };
     }
+    // What the mix step plays of it: no unit of song lines, the original in their windows (songs/songLines.ts).
+    const songs = await songMixPlan(
+      aligned,
+      await this.tryReadGroups(paths.synthesisGroupsJson),
+      (await this.tryReadSegments(paths.translatedJson)) ?? [],
+      fileExistsNonEmpty,
+    );
     const now = await mixFingerprint({
       workspaceDir: project.workspaceDir,
-      aligned,
+      aligned: songs.aligned,
+      keepOriginal: songs.keepOriginal,
       totalDurationMs,
       settings: project.settings,
       originalWav: paths.originalWav,
@@ -2410,18 +2426,109 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * source-speech timing. Atomic, like every other editor write.
    */
   private async writeSidecars(paths: WorkspacePaths, segments: readonly TranscriptSegment[]): Promise<void> {
-    const [overrides, groups, units] = await Promise.all([
+    const [overrides, groups, units, songSubtitles] = await Promise.all([
       readCueOverrides(paths.cueTimingJson),
       this.tryReadGroups(paths.synthesisGroupsJson),
       this.tryReadAligned(paths.translatedAlignedJson),
+      songSubtitlesOn(paths.projectJson),
     ]);
     const cues = displayCuesFor(segments, {
       overrides,
       ...(groups ? { groups } : {}),
       ...(units ? { units } : {}),
+      songSubtitles,
     });
     await writeTextAtomic(paths.translatedSrt, segmentsToSrt(cues));
     await writeTextAtomic(paths.translatedVtt, segmentsToVtt(cues));
+  }
+
+  /** Write a project's subtitle files again from its lines as they are (a setting they follow changed). */
+  async rewriteSubtitleFiles(projectId: string): Promise<void> {
+    await this.artifactLock.run(projectId, async () => {
+      const paths = this.deps.store.paths(projectId);
+      const translated = await this.tryReadSegments(paths.translatedJson);
+      if (translated) await this.writeSidecars(paths, translated);
+      const source = await this.tryReadSegments(paths.sourceJson);
+      if (source) {
+        const songSubtitles = await songSubtitlesOn(paths.projectJson);
+        await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(source, { songSubtitles })));
+      }
+    });
+  }
+
+  /**
+   * Keep lines as the original song, or dub them again (MCP mark_song, the
+   * editor; songs/songLines.ts). The flag lands in source.json (so a new
+   * translation keeps it) and translated.json; a synthesis unit holding a
+   * song line is cut around it and its other lines marked for re-voicing (its
+   * clip said the song line too); the dub's fit is redone from the clips on
+   * disk; the subtitle files follow; the edit history records it. Nothing is
+   * synthesized here: the re-voicing is the editor's Regenerate, or the next
+   * run from alignment.
+   */
+  async markSongs(projectId: string, request: SongMarkRequest): Promise<SongMarkResult> {
+    this.assertNotRunning(projectId, 'mark songs');
+    return this.artifactLock.run(projectId, async () => {
+      const project = await this.deps.store.getProject(projectId);
+      const paths = this.deps.store.paths(projectId);
+      const translated = await this.tryReadSegments(paths.translatedJson);
+      const source = await this.tryReadSegments(paths.sourceJson);
+      const base = translated ?? source;
+      if (!base) throw new AppErrorException('INVALID_EDIT', 'This project has no transcript yet: songs are marked on its lines.');
+      const targets = songTargets(base, request);
+      const groups = await this.tryReadGroups(paths.synthesisGroupsJson);
+      const marked = setSongFlags(base, new Set(targets.map((t) => t.id)), request.song, groups !== undefined);
+      let lines = marked.lines;
+      let revoice: string[] = [];
+      if (marked.changed.length > 0) {
+        if (groups) {
+          const units = songUnits(groups, lines);
+          if (units.changed) {
+            revoice = units.revoice;
+            const stale = new Set(revoice);
+            lines = lines.map((l) => (stale.has(l.id) ? { ...l, ttsStale: true as const } : l));
+            await writeJsonAtomic(paths.synthesisGroupsJson, { groups: units.groups });
+            await clearCueOverridesFor(paths.cueTimingJson, units.touched);
+          }
+        }
+        if (translated) await writeJsonAtomic(paths.translatedJson, { segments: lines });
+        if (source) {
+          const flagged = new Map(lines.map((l) => [l.id, isSong(l)]));
+          const nextSource = source.map((s) => {
+            const song = flagged.get(s.id);
+            if (song === undefined || song === isSong(s)) return s;
+            const { song: _song, ...rest } = s;
+            return song ? { ...rest, song: true } : rest;
+          });
+          await writeJsonAtomic(paths.sourceJson, { segments: nextSource });
+          const songSubtitles = await songSubtitlesOn(paths.projectJson);
+          await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(nextSource, { songSubtitles })));
+        }
+        if (translated) {
+          if (groups) await this.realign(project, paths, lines, new Map());
+          await this.writeSidecars(paths, lines);
+        }
+        const first = targets[0];
+        await recordEdit({
+          projectId,
+          target: translated ? 'translation' : 'source',
+          summary: request.song
+            ? `Kept ${marked.changed.length} line(s) as the original song${first ? ` at ${formatClock(first.startMs)}` : ''}`
+            : `Dubbed ${marked.changed.length} song line(s) again${first ? ` at ${formatClock(first.startMs)}` : ''}`,
+          before: base,
+          after: lines,
+        });
+      }
+      const span = (l: TranscriptSegment): { id: string; startMs: number; endMs: number } => ({ id: l.id, startMs: l.startMs, endMs: l.endMs });
+      const changed = new Set(marked.changed);
+      return {
+        song: request.song,
+        targets: targets.map(span),
+        changed: targets.filter((t) => changed.has(t.id)).map(span),
+        revoice,
+        songs: lines.filter(isSong).length,
+      };
+    });
   }
 
   /**

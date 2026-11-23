@@ -99,6 +99,14 @@ export interface DuckAndMixInput {
   roomTone?: boolean;
   /** Two-pass EBU R128 loudness normalization for a transparent final mix. */
   twoPassLoudnorm?: boolean;
+  /**
+   * Windows (ms) where the original plays as it is: lines kept as the original
+   * song (songs/songLines.ts). Never lowered there; with the original removed
+   * it plays there anyway; see `originalVocals` for replace-vocals.
+   */
+  keepOriginal?: { startMs: number; endMs: number }[];
+  /** The separated vocal stem, restored inside `keepOriginal` (replace-vocals mixes the M&E bed). */
+  originalVocals?: string;
 }
 
 /**

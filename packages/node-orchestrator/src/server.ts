@@ -147,6 +147,7 @@ import {
   type VoiceMeasure,
 } from './voices/speakerCast.js';
 import { dialogueAdjacency } from './voices/casting.js';
+import { registerSongRoutes } from './songs/songRoutes.js';
 import { suggestGender } from './voices/casting.js';
 import { libraryItems } from './voices/voiceLibrary.js';
 import { readSpeakerProfiles } from './pipeline/diarization.js';
@@ -3469,6 +3470,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
 
   // [routes: casting and songs]
+  // Lines kept as the original song (songs/songRoutes.ts). The cast route is
+  // above (/projects/:id/speakers/cast).
+  registerSongRoutes(app, { store, orchestrator, forEachPart, sendError });
 
 
   // [routes: series, create, continue]

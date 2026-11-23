@@ -59,6 +59,7 @@ import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvi
 import type { DubPreset } from '../../core/models/download';
 import type { BrandAsset, SeriesAiOption } from '@videodubber/shared';
 import { BrandingFormComponent } from '../../shared/branding/branding-form.component';
+import { PictureSetupComponent } from '../../shared/picture/picture-setup.component';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { LanguageNamePipe, TranslatePipe, TranslateService, languageName } from '../../core/i18n';
 import { baseLanguage, describeVoice } from '../../shared/voice-library/voice-filter';
@@ -153,6 +154,7 @@ function defaultSettings(): ProjectSettings {
     OutputFolderComponent,
     TranslatePipe,
     BrandingFormComponent,
+    PictureSetupComponent,
   ],
   templateUrl: './new-project-wizard.component.html',
   styleUrl: './new-project-wizard.component.scss',

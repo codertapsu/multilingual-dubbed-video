@@ -210,6 +210,21 @@
               </div>
             </fieldset>
 
+            <!-- Picture: a watermark and the video's own subtitles hidden in the
+                 render, found by looking at the chosen video (no AI). -->
+            <fieldset>
+              <legend>{{ 'picture.heading' | translate }}</legend>
+              <p class="hint muted">{{ 'picture.intro' | translate }}</p>
+              <vd-picture-setup
+                [videoPath]="inputVideoPath()"
+                [regions]="settings().blurRegions ?? []"
+                [style]="settings().burnSubtitleStyle"
+                [burnedIn]="settings().subtitleExportMode === 'burned-in'"
+                (regionsChange)="patchSettings('blurRegions', $event.length > 0 ? $event : undefined)"
+                (styleChange)="patchSettings('burnSubtitleStyle', $event)"
+              />
+            </fieldset>
+
             <!-- Logo & greeting (optional; applied only when mixing and rendering). -->
             <fieldset>
               <legend>{{ 'branding.heading' | translate }}</legend>

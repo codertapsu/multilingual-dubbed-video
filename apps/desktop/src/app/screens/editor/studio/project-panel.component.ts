@@ -1,4 +1,6 @@
 import { BrandingPanelComponent } from './branding-panel.component';
+import { PicturePanelComponent } from './picture-panel.component';
+import { coverModeOf } from '../../../shared/picture/picture-geometry';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, viewChild, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
@@ -88,6 +90,7 @@ const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libret
     VoiceCloneDialogComponent,
     SpeakerVoicesDialogComponent,
     BrandingPanelComponent,
+    PicturePanelComponent,
   ],
   templateUrl: './project-panel.component.html',
   styleUrl: './project-panel.component.scss',
@@ -99,6 +102,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   private readonly confirm = inject(ConfirmService);
   protected readonly store = inject(StudioStore);
   private readonly branding = viewChild(BrandingPanelComponent);
+  private readonly picture = viewChild(PicturePanelComponent);
 
   /** "Voice from this video" dialog (the whole track). */
   protected readonly voiceDialogOpen = signal(false);
@@ -245,7 +249,16 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   private readonly edits = signal<Partial<ProjectSettings>>({});
   protected readonly draft = computed<ProjectSettings | null>(() => {
     const applied = this.store.settings();
-    return applied ? { ...applied, ...this.edits() } : null;
+    if (!applied) return null;
+    const edits = this.edits();
+    // The subtitle style field by field: the picture block saves the band
+    // at once, and a position picked here must not carry a stale copy of
+    // the band back with it (picture-panel.component.ts).
+    return {
+      ...applied,
+      ...edits,
+      ...(edits.burnSubtitleStyle ? { burnSubtitleStyle: { ...applied.burnSubtitleStyle, ...edits.burnSubtitleStyle } } : {}),
+    };
   });
   protected readonly providers = signal<ProvidersResponse | null>(null);
   protected readonly whisperModels = signal<WhisperModelInfo[]>([]);
@@ -474,9 +487,15 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     }
   }
 
-  /** Burned-in subtitle placement / the band that hides a source's own subtitles. */
+  /** Burned-in subtitle placement (only the fields changed here; see `draft`). */
   protected onBurnStyleChange(patch: Partial<SubtitleStyle>): void {
-    this.edits.update((e) => ({ ...e, burnSubtitleStyle: { ...this.draft()?.burnSubtitleStyle, ...patch } }));
+    this.edits.update((e) => ({ ...e, burnSubtitleStyle: { ...e.burnSubtitleStyle, ...patch } }));
+  }
+
+  /** How the video's own subtitles are hidden, in words (set in the picture block). */
+  protected coverLabel(style: SubtitleStyle | undefined): string {
+    const mode = coverModeOf(style);
+    return mode === 'blur' ? 'picture.band-blur' : mode === 'solid' ? 'picture.band-solid' : 'picture.band-off';
   }
 
   protected onNumberSettingChange<K extends keyof ProjectSettings>(key: K, value: unknown): void {
@@ -525,6 +544,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     if (this.settingsDirty()) out.push(this.translate.instant('studio.draft-settings'));
     if (this.ctxDirty()) out.push(this.translate.instant('studio.draft-sheet'));
     if (this.branding()?.dirty()) out.push(this.translate.instant('studio.draft-greeting'));
+    if (this.picture()?.dirty()) out.push(this.translate.instant('picture.draft'));
     return out;
   }
 

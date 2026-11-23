@@ -14,6 +14,14 @@
  * sized to the part, is saved as it finishes (a pause, a crash or a retry
  * resumes at the first missing part), and is reported ("Detecting speakers
  * 12/60"); POST /link then groups the parts' speakers by voice print.
+ *
+ * Parts run side by side when the machine has room: the engine keeps up to
+ * four model pairs (its GET /health `pool`), and the orchestrator's
+ * `setParallelism` budget says 1 while a heavy step runs anywhere. The
+ * 27.8-hour series ran its 168 parts one after another, 4 h 56 min with ~3.6
+ * of 16 threads busy (claude-dubber report, 2026-11-23, F6). A ranged
+ * detection (`diarizeWindows`) runs only the parts it is given, unlinked:
+ * pipeline/diarization.ts links them to the speakers already known.
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -25,7 +33,7 @@ import { pickInstalledPack } from '../../engines/packSelection.js';
 import { checkpointKey, readCheckpoint } from '../../pipeline/translationCheckpoint.js';
 import { writeJsonAtomic } from '../../workspace/projectStore.js';
 
-import { postWorkerJson } from '../workerHttp.js';
+import { getWorkerJson, postWorkerJson } from '../workerHttp.js';
 
 /** A stretch of audio said by one speaker (numbers from 0). */
 export interface SpeakerTurn {
@@ -95,6 +103,20 @@ export interface DiarizationService {
    * Absent on engines, and test doubles, that make no prints.
    */
   embed?(audioPath: string, opts?: { startMs?: number; endMs?: number }, signal?: AbortSignal): Promise<VoiceEmbedding | null>;
+  /**
+   * Detect only these windows of a 16 kHz mono WAV (a ranged detection): each
+   * window's turns on the file's clock with its speakers numbered within it,
+   * and their voice prints, NOT linked to the rest of the file
+   * (pipeline/diarization.ts links them to the speakers already known). Saved
+   * and resumed like the parts of a long detection; null when no engine is
+   * installed. Absent on engines, and test doubles, that cannot.
+   */
+  diarizeWindows?(
+    audioPath: string,
+    windows: readonly DiarizationChunk[],
+    opts: Pick<DiarizeOptions, 'onProgress' | 'checkpointDir'>,
+    signal?: AbortSignal,
+  ): Promise<DiarizationPart[] | null>;
   /** Whether `diarize` can do anything here. */
   available(): Promise<boolean>;
   /** What the turns depend on besides the audio (the model and its threshold), for caching. */
@@ -174,10 +196,13 @@ export function chunkCheckpointKey(
 }
 
 /** A local speaker of one part (POST /diarize-chunk's `speakers`). */
-interface ChunkSpeaker {
+export interface ChunkSpeaker {
   local: number;
+  /** Seconds of talk in the part. */
   sec: number;
+  /** Seconds of clean speech the print was made from. */
   printSec: number;
+  /** L2-normalised; empty when none could be made. */
   print: number[];
   f0Hz: number | null;
   lowShare: number | null;
@@ -187,6 +212,11 @@ interface ChunkSpeaker {
 interface ChunkResult {
   turns: SpeakerTurn[];
   speakers: ChunkSpeaker[];
+}
+
+/** A window detected on its own (`diarizeWindows`): its turns' speakers are its local ones. */
+export interface DiarizationPart extends ChunkResult {
+  window: DiarizationChunk;
 }
 
 const isCount = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
@@ -250,6 +280,10 @@ interface LinkResponse {
 
 export class SherpaDiarizationProvider implements DiarizationService {
   readonly modelKey = `sherpa-2.0.1:${DIARIZATION_EMBEDDING.sha256.slice(0, 12)}:${DIARIZATION_EMBEDDING.threshold}`;
+  /** How many parts the machine has room for now (setParallelism); unset: one at a time. */
+  private budget: (() => number) | undefined;
+  /** The model pairs of each running engine (its GET /health `pool`), by base URL. */
+  private readonly pools = new Map<string, Promise<number>>();
 
   constructor(
     private readonly engines: EngineManager,
@@ -257,8 +291,41 @@ export class SherpaDiarizationProvider implements DiarizationService {
     private readonly timeoutMs: number,
   ) {}
 
+  /**
+   * How many parts may run at once right now, asked before each part starts:
+   * the server answers 1 while a heavy step runs anywhere (a GPU engine, a
+   * big model, a render) and unlimited otherwise; the engine's own pool caps
+   * it. Without it, one part at a time, as before.
+   */
+  setParallelism(budget: () => number): void {
+    this.budget = budget;
+  }
+
   async available(): Promise<boolean> {
     return (await pickInstalledPack(this.store, 'speaker-diarization')) !== undefined;
+  }
+
+  /**
+   * Parts to keep in flight: the budget, capped by the engine's model pairs.
+   * An engine of before 0.18 says nothing about a pool: one at a time.
+   */
+  private async width(engineUrl: () => Promise<string>): Promise<number> {
+    let wanted = 1;
+    try {
+      wanted = this.budget ? this.budget() : 1;
+    } catch {
+      /* a failing budget is no budget */
+    }
+    if (!(wanted > 1)) return 1;
+    const url = await engineUrl();
+    let pool = this.pools.get(url);
+    if (!pool) {
+      pool = getWorkerJson<{ pool?: unknown }>(`${url}/health`, { timeoutMs: 10_000, workerName: WORKER_NAME })
+        .then((h) => (isCount(h?.pool) && h.pool >= 1 ? h.pool : 1))
+        .catch(() => 1);
+      this.pools.set(url, pool);
+    }
+    return Math.max(1, Math.min(wanted, await pool));
   }
 
   async diarize(audioPath: string, opts: DiarizeOptions, signal?: AbortSignal): Promise<Diarization | null> {
@@ -327,26 +394,84 @@ export class SherpaDiarizationProvider implements DiarizationService {
     signal?: AbortSignal,
   ): Promise<Diarization> {
     const plan = planDiarizationChunks(durationMs);
+    const parts = await this.detectParts(engineUrl, audioPath, audio, plan, opts, signal);
+    return this.link(engineUrl, parts, opts, signal);
+  }
+
+  async diarizeWindows(
+    audioPath: string,
+    windows: readonly DiarizationChunk[],
+    opts: Pick<DiarizeOptions, 'onProgress' | 'checkpointDir'>,
+    signal?: AbortSignal,
+  ): Promise<DiarizationPart[] | null> {
+    const packId = await pickInstalledPack(this.store, 'speaker-diarization');
+    if (!packId) return null;
+    const engineUrl = async (): Promise<string> => (await this.engines.ensureRunning(packId)).replace(/\/$/, '');
+    const stat = await fsp.stat(audioPath);
+    const audio = { sizeBytes: stat.size, mtimeMs: Math.round(stat.mtimeMs) };
+    const parts = await this.detectParts(engineUrl, audioPath, audio, windows, opts, signal);
+    return parts.map((part, i) => ({ ...part, window: windows[i]! }));
+  }
+
+  /**
+   * Each window from its saved part or from the engine, as many at once as
+   * {@link width} allows when each starts; the answers in the order given.
+   * A failed part stops new ones from starting, lets those in flight finish
+   * (and be saved), then throws; a stop (the signal) throws CANCELLED. Saved
+   * as each finishes, so a pause or a retry detects only the parts missing.
+   */
+  private async detectParts(
+    engineUrl: () => Promise<string>,
+    audioPath: string,
+    audio: { sizeBytes: number; mtimeMs: number },
+    plan: readonly DiarizationChunk[],
+    opts: Pick<DiarizeOptions, 'onProgress' | 'checkpointDir'>,
+    signal?: AbortSignal,
+  ): Promise<ChunkResult[]> {
     // No known speaker count here: forcing it on a part where two of the cast
     // talk would split those two into that many. It caps the linking instead,
     // so saved parts stay valid when only the count changes.
     const request = { threshold: DIARIZATION_EMBEDDING.threshold, maxPrintPieces: MAX_PRINT_PIECES };
-    const parts: ChunkResult[] = [];
+    const results: (ChunkResult | undefined)[] = plan.map(() => undefined);
+    const inFlight = new Set<Promise<void>>();
+    let failure: { err: unknown } | undefined;
+    let done = 0;
+    const finished = (): void => {
+      done += 1;
+      opts.onProgress?.(done, plan.length);
+    };
     opts.onProgress?.(0, plan.length);
-    for (const chunk of plan) {
-      if (signal?.aborted) throw new AppErrorException('CANCELLED', `${WORKER_NAME} request cancelled.`);
+    for (const [i, chunk] of plan.entries()) {
+      if (signal?.aborted || failure) break;
       const file = opts.checkpointDir ? path.join(opts.checkpointDir, `chunk_${String(chunk.index).padStart(4, '0')}.json`) : undefined;
       const key = chunkCheckpointKey(audio, this.modelKey, chunk, request);
-      let part = file ? parseChunk(await readCheckpoint<unknown>(file, key)) : undefined;
-      if (!part) {
-        part = await this.detectPart(engineUrl, audioPath, chunk, request, signal);
-        // Atomic: a resumed run trusts a part that exists.
-        if (file) await writeJsonAtomic(file, { key, data: part, savedAt: new Date().toISOString() });
+      const saved = file ? parseChunk(await readCheckpoint<unknown>(file, key)) : undefined;
+      if (saved) {
+        results[i] = saved;
+        finished();
+        continue;
       }
-      parts.push(part);
-      opts.onProgress?.(chunk.index + 1, plan.length);
+      // Room for one more? Asked again each time: a heavy step that started
+      // since narrows it to one, one that ended widens it again.
+      while (inFlight.size > 0 && inFlight.size >= (await this.width(engineUrl))) await Promise.race(inFlight);
+      if (signal?.aborted || failure) break;
+      const job: Promise<void> = this.detectPart(engineUrl, audioPath, chunk, request, signal)
+        .then(async (part) => {
+          // Atomic: a resumed run trusts a part that exists.
+          if (file) await writeJsonAtomic(file, { key, data: part, savedAt: new Date().toISOString() });
+          results[i] = part;
+          finished();
+        })
+        .catch((err: unknown) => {
+          failure ??= { err };
+        })
+        .finally(() => inFlight.delete(job));
+      inFlight.add(job);
     }
-    return this.link(engineUrl, parts, opts, signal);
+    await Promise.all(inFlight);
+    if (failure && !signal?.aborted) throw failure.err;
+    if (signal?.aborted || failure) throw new AppErrorException('CANCELLED', `${WORKER_NAME} request cancelled.`);
+    return results.map((r) => r!);
   }
 
   /**

@@ -952,7 +952,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * Detect the speakers again and wait for it (the editor's old flow, kept
    * for callers that need the relabelled timeline back).
    */
-  async redetectSpeakers(projectId: string, opts: { numSpeakers?: number } = {}): Promise<TimelineDocument> {
+  async redetectSpeakers(projectId: string, opts: { numSpeakers?: number; fromMs?: number; toMs?: number } = {}): Promise<TimelineDocument> {
     const started = await this.startSpeakerDetection(projectId, opts);
     const job = this.speakerJobs.get(projectId);
     if (!started.started && !job) throw new AppErrorException('UNKNOWN', 'Speaker detection did not start.');

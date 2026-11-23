@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  continuedSeriesSettings,
   defaultPartNameTemplate,
   fallbackPartTitle,
   isFallbackPartTitle,
@@ -52,6 +53,28 @@ describe('part names from a template', () => {
     expect(partNameTemplateProblem('{series} - {title}')).toEqual({ code: 'no-number' });
     expect(partNameTemplateProblem('{series} {N0}')).toEqual({ code: 'unknown-placeholder', placeholder: '{n0}' });
     expect(partNameTemplateProblem(`{n}${'x'.repeat(250)}`)).toMatchObject({ code: 'too-long' });
+  });
+});
+
+describe('the settings a later season starts from', () => {
+  it('keeps the engines and look, not the speakers or the picture regions', () => {
+    const from = continuedSeriesSettings({
+      sourceLanguage: 'zh',
+      targetLanguage: 'vi-VN',
+      subtitleExportMode: 'burned-in',
+      processingMode: 'local',
+      sttProviderId: 'whisper-cpp',
+      translationProviderId: 'anthropic-translate',
+      ttsProviderId: 'vieneu-tts',
+      speakerVoices: [{ speakerId: 'SPEAKER_00', voiceId: 'clone' }],
+      speakerGenders: { SPEAKER_00: 'male' },
+      diarizeSpeakers: 6,
+      defaultMaleVoiceId: 'clone',
+      blurRegions: [{ x: 0.8, y: 0, w: 0.2, h: 0.1, mode: 'blur' }],
+      burnSubtitleStyle: { position: 'raised', coverOriginal: true },
+    });
+    expect(from).toMatchObject({ ttsProviderId: 'vieneu-tts', burnSubtitleStyle: { position: 'raised' } });
+    for (const k of ['speakerVoices', 'speakerGenders', 'diarizeSpeakers', 'defaultMaleVoiceId', 'blurRegions']) expect(k in from).toBe(false);
   });
 });
 

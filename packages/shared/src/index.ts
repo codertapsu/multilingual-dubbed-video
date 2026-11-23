@@ -189,6 +189,7 @@ export {
   PART_NAME_PLACEHOLDERS,
   PART_NAME_TEMPLATE_MAX,
   SERIES_CARD_WORDS,
+  continuedSeriesSettings,
   defaultPartNameTemplate,
   fallbackPartTitle,
   isFallbackPartTitle,

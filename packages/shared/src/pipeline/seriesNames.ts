@@ -13,6 +13,29 @@
  *
  * Browser-safe: no node imports (the UI imports it too).
  */
+import type { ProjectSettings } from '../models/domain.js';
+
+/**
+ * The settings a later season starts from (a series continuing another,
+ * models/series.ts): the series' own engines, subtitles, mix and logo, without
+ * what belongs to its speakers (matched again by voice print once this
+ * video's speakers are detected) or to its picture (blur regions are found
+ * per video, with time ranges of that video). New project and the plugin's
+ * create_project both start from it. Pure.
+ */
+export function continuedSeriesSettings(settings: ProjectSettings): Partial<ProjectSettings> {
+  const {
+    speakerVoices: _voices,
+    speakerGenders: _genders,
+    diarizeSpeakers: _count,
+    defaultMaleVoiceId: _male,
+    defaultFemaleVoiceId: _female,
+    minorVoices: _minor,
+    blurRegions: _blur,
+    ...rest
+  } = settings;
+  return rest;
+}
 
 /** The words on a part's cards, in the dub's language. */
 export interface SeriesCardWords {

@@ -16,7 +16,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer, type CallToolResult, type ServerContext } from '@modelcontextprotocol/server';
 import * as z from 'zod';
-import { projectOutputFiles, projectOutputVideoPath } from '@videodubber/shared';
+import { continuedSeriesSettings, projectOutputFiles, projectOutputVideoPath } from '@videodubber/shared';
 import type {
   PipelineState,
   PipelineStepId,
@@ -1516,7 +1516,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const signal = ctx.mcpReq.signal;
       // A later season starts from the series it continues: its engines, voices, subtitles and look.
       const continued = series?.continues ? (await getProject(series.continues, signal)).project : undefined;
-      const fromContinued = continued ? continuedSettings(continued.settings) : {};
+      const fromContinued = continued ? continuedSeriesSettings(continued.settings) : {};
       const spoken = settings?.sourceLanguage ?? sourceLanguage ?? fromContinued.sourceLanguage ?? '';
       const q = new URLSearchParams({ targetLanguage, sourceLanguage: spoken });
       const defaults = await api.get<{ settings: ProjectSettings; notes?: string[] }>(`/project-defaults?${q}`, { signal });
@@ -2410,25 +2410,6 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         ...(requestId ? [`Log reference: ${requestId}.`] : []),
       ].join('\n'),
     );
-  }
-
-  /**
-   * The settings a later season starts from: the series' own (engines,
-   * subtitles, mix, logo), without what belongs to its speakers (matched again
-   * by voice) or to its picture (blur regions are found per video).
-   */
-  function continuedSettings(s: ProjectSettings): Partial<ProjectSettings> {
-    const {
-      speakerVoices: _voices,
-      speakerGenders: _genders,
-      diarizeSpeakers: _count,
-      defaultMaleVoiceId: _male,
-      defaultFemaleVoiceId: _female,
-      minorVoices: _minor,
-      blurRegions: _blur,
-      ...rest
-    } = s;
-    return rest;
   }
 
   /** What create_project says about a series that continues another. */

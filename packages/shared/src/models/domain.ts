@@ -246,6 +246,15 @@ export interface ProjectSettings {
    * setting kept one character in one speaker on a real drama clip.
    */
   diarizeSpeakers?: number;
+  /**
+   * Spot-check the transcript against the audio at the end of speech-to-text:
+   * a minute of every half hour decoded again without context and compared
+   * with the lines (pipeline/spotCheck.ts). Absent = on for videos over 2
+   * hours, where a garbled stretch (a bad join: 5.3 hours of the 27.8-hour
+   * series) is otherwise found only by listening; false = never; true = also
+   * on shorter videos. Costs about 3-5 % of the speech-to-text time.
+   */
+  transcriptSpotCheck?: boolean;
   /** Per-speaker TTS voice assignments (used when diarization is on). */
   speakerVoices?: SpeakerVoiceAssignment[];
   /** Each detected speaker's gender (speaker detection writes it), for the default voices below. */

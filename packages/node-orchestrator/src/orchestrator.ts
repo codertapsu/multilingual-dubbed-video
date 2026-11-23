@@ -99,6 +99,7 @@ import { sanitizeBranding } from './branding/sanitize.js';
 import { rangedMediaInfo } from './series/seriesRange.js';
 import { acceptOutputDir, moveOutputFiles, samePath } from './workspace/outputFolder.js';
 import { clearCueOverridesFor, displayCuesFor, readCueOverrides } from './workspace/subtitleTiming.js';
+import { MAX_MINOR_VOICES } from './voices/casting.js';
 import { writeJsonAtomic, writeTextAtomic } from './workspace/projectStore.js';
 import {
   alignmentInputsForUnits,
@@ -618,6 +619,13 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       if (value === undefined) continue;
       if (typeof value === 'string' && value.trim() && value.length <= 200) next[key] = value.trim();
       else delete next[key];
+    }
+    // Voices the minor speakers share per gender (voices/casting.ts): 1..12,
+    // anything else is automatic again.
+    if (patch.minorVoices !== undefined) {
+      const n = Number(patch.minorVoices);
+      if (Number.isInteger(n) && n >= 1 && n <= MAX_MINOR_VOICES) next.minorVoices = n;
+      else delete next.minorVoices;
     }
     if (
       patch.speakerVoices !== undefined ||

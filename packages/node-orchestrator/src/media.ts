@@ -13,6 +13,7 @@
  * ffmpeg-backed implementation or a fake in tests.
  */
 import type {
+  AudioDrift,
   AudioExtractResult,
   MediaInfo,
   MediaService,
@@ -244,6 +245,28 @@ export interface PipelineMediaService extends MediaService {
     minSilenceMs: number;
   }>;
   /**
+   * How long the input's audio really is against its picture (`range`: inside
+   * that window), from its decoded sample count, never the container's
+   * durations (media-worker drift.ts). Undefined for audio-only input.
+   * Optional: an older media worker cannot measure, and the extraction
+   * re-times the audio either way.
+   */
+  measureAudioDrift?(
+    inputPath: string,
+    signal?: AbortSignal,
+    range?: MediaRange,
+  ): Promise<Omit<AudioDrift, 'measuredAt'> | undefined>;
+  /**
+   * Silent stretches of a whole track below `noiseDb` lasting `minSilenceMs`
+   * or more (media-worker silences.ts): the speech-to-text step's
+   * digital-silence check. Optional, like measureSpeech.
+   */
+  detectSilences?(
+    wavPath: string,
+    opts: { noiseDb: number; minSilenceMs: number },
+    signal?: AbortSignal,
+  ): Promise<{ durationMs: number; silences: Array<{ startMs: number; endMs: number }> }>;
+  /**
    * A voice-cloning reference: cut `[startMs, endMs)` (at most `maxMs`) of any
    * audio or video, mixed down to mono at `sampleRate`, levelled to
    * `loudnessLufs` when given, written atomically. Optional: an older media
@@ -292,6 +315,8 @@ const MEDIA_SERVICE_METHOD_TABLE: Record<keyof PipelineMediaService, true> = {
   prepareLogo: true,
   prepareGreeting: true,
   measureSpeech: true,
+  measureAudioDrift: true,
+  detectSilences: true,
   referenceClip: true,
   prepareStemInput: true,
   mixStems: true,

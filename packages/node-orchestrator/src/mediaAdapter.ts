@@ -100,6 +100,14 @@ interface MediaWorkerModule {
     input: string,
     opts?: { noiseDb?: number; minSilenceMs?: number; signal?: AbortSignal },
   ): ReturnType<NonNullable<PipelineMediaService['measureSpeech']>>;
+  measureAudioDrift?(
+    input: string,
+    opts?: MediaWorkerRunOptions & { range?: MediaRange },
+  ): ReturnType<NonNullable<PipelineMediaService['measureAudioDrift']>>;
+  detectSilences?(
+    input: string,
+    opts: { noiseDb: number; minSilenceMs: number; signal?: AbortSignal },
+  ): ReturnType<NonNullable<PipelineMediaService['detectSilences']>>;
   referenceClip?(
     input: string,
     output: string,
@@ -229,6 +237,20 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
       ? {
           measureSpeech: (p: string, o?: { noiseDb?: number; minSilenceMs?: number }, signal?: AbortSignal) =>
             mod.measureSpeech!(p, { ...(o ?? {}), ...(signal ? { signal } : {}) }),
+        }
+      : {}),
+    // The source's audio against its picture, and long silences of a track
+    // (the extract-audio and speech-to-text steps' checks).
+    ...(typeof mod.measureAudioDrift === 'function'
+      ? {
+          measureAudioDrift: (i: string, signal?: AbortSignal, range?: MediaRange) =>
+            mod.measureAudioDrift!(i, { ...runOpts(signal), ...(range ? { range } : {}) }),
+        }
+      : {}),
+    ...(typeof mod.detectSilences === 'function'
+      ? {
+          detectSilences: (p: string, o: { noiseDb: number; minSilenceMs: number }, signal?: AbortSignal) =>
+            mod.detectSilences!(p, { ...o, ...(signal ? { signal } : {}) }),
         }
       : {}),
     // Voice-cloning references (voices/referencePrep.ts).

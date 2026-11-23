@@ -305,6 +305,31 @@ export class FakeMediaService implements PipelineMediaService {
       minSilenceMs: 50,
     };
   }
+
+  /** The audio against the picture a test wants measured (default: nothing measured), and the windows asked. */
+  public audioDrift: Awaited<ReturnType<NonNullable<PipelineMediaService['measureAudioDrift']>>> = undefined;
+  public driftRanges: Array<{ startMs: number; endMs: number } | undefined> = [];
+
+  async measureAudioDrift(
+    _inputPath: string,
+    _signal?: AbortSignal,
+    range?: { startMs: number; endMs: number },
+  ): ReturnType<NonNullable<PipelineMediaService['measureAudioDrift']>> {
+    this.driftRanges.push(range);
+    return this.audioDrift;
+  }
+
+  /** Long silent stretches a test wants found in a track (default: none). */
+  public trackSilences: Array<{ startMs: number; endMs: number }> = [];
+
+  async detectSilences(
+    wavPath: string,
+    opts: { noiseDb: number; minSilenceMs: number },
+  ): ReturnType<NonNullable<PipelineMediaService['detectSilences']>> {
+    this.calls.push(`detectSilences:${wavPath}`);
+    const { durationMs } = await this.probe(wavPath);
+    return { durationMs, silences: this.trackSilences.filter((s) => s.endMs - s.startMs >= opts.minSilenceMs) };
+  }
 }
 
 /** A fake STT provider that returns a fixed set of segments. */

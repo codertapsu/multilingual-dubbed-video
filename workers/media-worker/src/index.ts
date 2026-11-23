@@ -13,6 +13,8 @@
 import type { AudioExtractResult, MediaInfo, MediaService } from '@videodubber/shared';
 
 import { clip16kMono, extract16kMono, extractAudio, type MediaWindow } from './extract.js';
+import { measureAudioDrift } from './drift.js';
+import { detectSilences, type DetectSilencesOptions } from './silences.js';
 import { probe } from './probe.js';
 import { renderFinalVideo, type RenderFinalVideoOptions, type RenderFinalVideoReport } from './render.js';
 import { measureSpeech, type MeasureSpeechOptions, type SpeechMeasurement } from './speech.js';
@@ -88,6 +90,21 @@ export class FfmpegMediaService implements MediaService {
     const run = this.opts(opts);
     return measureSpeech(inputPath, { ...options, ...(run.signal ? { signal: run.signal } : {}) });
   }
+
+  /** The input's audio against its picture, from its decoded samples; see drift.ts. */
+  measureAudioDrift(inputPath: string, opts?: RunOptions, range?: MediaWindow): ReturnType<typeof measureAudioDrift> {
+    return measureAudioDrift(inputPath, { ...this.opts(opts), ...(range ? { range } : {}) });
+  }
+
+  /** Long silent stretches of a whole track; see silences.ts. */
+  detectSilences(
+    inputPath: string,
+    options: Omit<DetectSilencesOptions, 'signal'>,
+    opts?: RunOptions,
+  ): ReturnType<typeof detectSilences> {
+    const run = this.opts(opts);
+    return detectSilences(inputPath, { ...options, ...(run.signal ? { signal: run.signal } : {}) });
+  }
 }
 
 /**
@@ -159,6 +176,8 @@ export {
   buildVideoGeometryArgs,
   ffprobeJsonToMediaInfo,
   parseFrameRate,
+  pictureDurationMs,
+  streamDurationMs,
   type VideoGeometry,
 } from './probe.js';
 
@@ -169,7 +188,28 @@ export {
   buildExtractAudioArgs,
   buildExtract16kMonoArgs,
   buildClip16kMonoArgs,
+  extractKeepMs,
+  pictureClockFilter,
+  AUDIO_ASYNC_SAMPLES_PER_SEC,
 } from './extract.js';
+
+export {
+  measureAudioDrift,
+  buildAudioPacketsArgs,
+  buildAudioHeadArgs,
+  buildDecodedSamplesArgs,
+  parseAudioPackets,
+  parseAudioHead,
+  parseDecodedSamples,
+  steadyFrameSize,
+  primingSamples,
+  packetsToMs,
+  type AudioPackets,
+  type AudioHead,
+  type MeasureAudioDriftOptions,
+} from './drift.js';
+
+export { detectSilences, silenceTimeoutMs, type DetectSilencesOptions } from './silences.js';
 
 export { referenceClip, buildReferenceClipArgs, REFERENCE_MAX_MS, type ReferenceClipOptions } from './reference.js';
 export { prepareLogo, prepareGreeting, buildPrepareLogoArgs, buildPrepareGreetingArgs, MAX_GREETING_MS } from './brand.js';

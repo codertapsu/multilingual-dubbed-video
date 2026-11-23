@@ -98,6 +98,7 @@ export type {
   VideoStreamInfo,
   AudioStreamInfo,
   AudioExtractResult,
+  AudioDrift,
 } from './models/media.js';
 
 // ---- Pipeline-state types --------------------------------------------------

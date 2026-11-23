@@ -51,6 +51,7 @@ import type {
   UpdateStatus,
 } from '../models/setup';
 import type { BrandAsset, GreetingPlacement, GreetingPlan, SeriesAiOption, SeriesView, DownloadsWhileDubbing } from '@videodubber/shared';
+import type { SeriesListItem } from '@videodubber/shared';
 import type {
   AddDownloadsResult,
   DownloadItem,
@@ -913,17 +914,45 @@ export class IpcService {
     return this.http('POST', `/projects/${encodeURIComponent(projectId)}/series/start`, {});
   }
 
-  /** Plan the cuts again (after the AI failed). */
-  replanSeries(projectId: string): Promise<unknown> {
-    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/series/replan`, {});
+  /** Plan the cuts again (after the AI failed); `keepTitles` keeps the titles written in review. */
+  replanSeries(projectId: string, keepTitles = false): Promise<unknown> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/series/replan`, { keepTitles });
   }
 
-  /** Make the parts' transcripts again from the fixed series transcript (seriesService.rebuildParts). */
+  /**
+   * Make the parts' transcripts again from the fixed series transcript
+   * (seriesService.rebuildParts): `parts` = only these numbers; a queued part
+   * is rebuilt where it waits.
+   */
   rebuildSeriesParts(
     projectId: string,
     force = false,
-  ): Promise<{ parts: { projectId: string; index: number; rebuilt: boolean; skipped?: string; oldLines?: number; newLines?: number; speakers?: number }[] }> {
-    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/series/rebuild-parts`, { force });
+    parts?: number[],
+  ): Promise<{
+    parts: {
+      projectId: string;
+      index: number;
+      rebuilt: boolean;
+      skipped?: string;
+      reason?: string;
+      queued?: boolean;
+      translationDiscarded?: boolean;
+      oldLines?: number;
+      newLines?: number;
+      speakers?: number;
+    }[];
+  }> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/series/rebuild-parts`, { force, ...(parts?.length ? { parts } : {}) });
+  }
+
+  /** Rename a made part, or change its title or summary, its dub kept (PATCH /projects/:id/series-part). */
+  editSeriesPart(partId: string, edit: { name?: string; title?: string; summary?: string }): Promise<{ project: Project; renderAgain: boolean }> {
+    return this.http('PATCH', `/projects/${encodeURIComponent(partId)}/series-part`, edit);
+  }
+
+  /** The series a new one can continue (GET /series). */
+  listSeries(): Promise<SeriesListItem[]> {
+    return this.http<SeriesListItem[]>('GET', '/series');
   }
 
   /** The same settings change on a series and every part not being dubbed (`?applyToParts=true`). */
@@ -979,7 +1008,7 @@ export class IpcService {
     presetId?: string;
     start?: boolean;
     /** Dub the downloads longer than `longerThanMinutes` as series of parts. */
-    series?: { minMinutes: number; maxMinutes: number; aiProviderId: string; longerThanMinutes: number; autoStart: boolean };
+    series?: { minMinutes: number; maxMinutes: number; aiProviderId: string; longerThanMinutes: number; autoStart: boolean; nameTemplate?: string };
   }): Promise<{ results: DubDownloadResult[] }> {
     return this.http<{ results: DubDownloadResult[] }>('POST', '/downloads/dub', body);
   }

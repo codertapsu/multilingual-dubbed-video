@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import en from '../../../i18n/en.json';
 import vi from '../../../i18n/vi.json';
-import { partBadge, partStarts, seriesAiName, startReport } from './series-view';
+import { parsePartList, partBadge, partStarts, rebuildReportLine, seriesAiName, startReport } from './series-view';
 
 /** A dotted key's text in a locale tree (undefined when missing). */
 function text(tree: unknown, key: string): unknown {
@@ -77,6 +77,56 @@ describe('the Start every part report', () => {
   it('only uses keys both languages define, with the same placeholders', () => {
     const lines = startReport(partStarts(answer), (id) => index[id]);
     for (const { key, params } of lines) {
+      for (const locale of [en, vi]) {
+        const s = text(locale, key);
+        expect(typeof s, key).toBe('string');
+        for (const name of Object.keys(params)) expect(s as string, `${key} {{${name}}}`).toContain(`{{${name}}}`);
+      }
+    }
+  });
+});
+
+describe('parsePartList', () => {
+  it('reads part numbers and ranges, and an empty field as every part', () => {
+    expect(parsePartList('')).toEqual([]);
+    expect(parsePartList(' 24, 23 ')).toEqual([23, 24]);
+    expect(parsePartList('1, 5-7; 6')).toEqual([1, 5, 6, 7]);
+    expect(parsePartList('30–28')).toEqual([28, 29, 30]);
+  });
+
+  it('refuses what is not a part number', () => {
+    expect(parsePartList('23, x')).toBeNull();
+    expect(parsePartList('0')).toBeNull();
+    expect(parsePartList('1-5000')).toBeNull();
+  });
+});
+
+describe('rebuildReportLine', () => {
+  const parts = [
+    { index: 22, rebuilt: true, oldLines: 500, newLines: 510, speakers: 5 },
+    { index: 23, rebuilt: true, queued: true, oldLines: 480, newLines: 470, speakers: 6 },
+    { index: 24, rebuilt: true, translationDiscarded: true, oldLines: 400, newLines: 400, speakers: 4 },
+    { index: 25, rebuilt: false, skipped: 'running', reason: 'is being dubbed now' },
+    { index: 26, rebuilt: false, skipped: 'running', reason: 'is busy in the editor (a line being voiced again)' },
+    { index: 27, rebuilt: false, skipped: 'translated' },
+    { index: 28, rebuilt: false, skipped: 'missing' },
+  ];
+
+  it('says how each part was rebuilt, or why it was left', () => {
+    expect(parts.map((p) => rebuildReportLine(p).key)).toEqual([
+      'series.report-rebuilt',
+      'series.report-rebuilt-queued',
+      'series.report-rebuilt-forced',
+      'series.report-kept-running',
+      'series.report-kept-busy',
+      'series.report-kept-translated',
+      'series.report-kept-missing',
+    ]);
+    expect(rebuildReportLine(parts[4]!).params['why']).toBe('is busy in the editor (a line being voiced again)');
+  });
+
+  it('only uses keys both languages define, with the same placeholders', () => {
+    for (const { key, params } of parts.map(rebuildReportLine)) {
       for (const locale of [en, vi]) {
         const s = text(locale, key);
         expect(typeof s, key).toBe('string');

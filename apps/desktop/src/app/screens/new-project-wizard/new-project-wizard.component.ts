@@ -58,6 +58,8 @@ import type {
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
 import type { DubPreset } from '../../core/models/download';
 import type { BrandAsset, SeriesAiOption } from '@videodubber/shared';
+import { continuedSeriesSettings, type SeriesListItem } from '@videodubber/shared';
+import { PartNameFieldComponent } from '../../shared/series/part-name-field.component';
 import { BrandingFormComponent } from '../../shared/branding/branding-form.component';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { LanguageNamePipe, TranslatePipe, TranslateService, languageName } from '../../core/i18n';
@@ -153,6 +155,7 @@ function defaultSettings(): ProjectSettings {
     OutputFolderComponent,
     TranslatePipe,
     BrandingFormComponent,
+    PartNameFieldComponent,
   ],
   templateUrl: './new-project-wizard.component.html',
   styleUrl: './new-project-wizard.component.scss',
@@ -576,6 +579,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
     void this.loadPresets();
     void this.ipc.listBrandKit().then((a) => this.brandAssets.set(a), () => undefined);
     void this.loadSeriesAi();
+    void this.loadContinuable();
   }
 
   /** The project, while it still waits to start (null: started, deleted or unreachable). */
@@ -601,6 +605,56 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   protected readonly seriesAi = signal(DEFAULT_SERIES.ai);
   protected readonly seriesRecap = signal(DEFAULT_SERIES.recapSec);
   protected readonly seriesAuto = signal(DEFAULT_SERIES.autoStart);
+  /** How the parts are named ('' = the usual names). */
+  protected readonly seriesTemplate = signal(DEFAULT_SERIES.nameTemplate ?? '');
+  /** A later season: the series it continues ('' = a new series), and the total its cards say (0 = as many as there are). */
+  protected readonly seriesContinues = signal(DEFAULT_SERIES.continues ?? '');
+  protected readonly seriesTotal = signal(DEFAULT_SERIES.total ?? 0);
+  /** The series a new one can continue (GET /series). */
+  protected readonly continuable = signal<SeriesListItem[]>([]);
+  protected readonly continuedSeries = computed(() => this.continuable().find((s) => s.parentId === this.seriesContinues()) ?? null);
+  /** The series' name for the part names' example: the one it continues, else this project's. */
+  protected readonly exampleSeriesName = computed(() => this.continuedSeries()?.name ?? this.name());
+  protected readonly seriesNotice = signal<string | null>(null);
+
+  /**
+   * Continue another series, or not. Its part names carry on: shown in the
+   * field (when it is empty), so the example is what the parts will be called.
+   */
+  protected pickContinued(id: string): void {
+    this.seriesContinues.set(id);
+    this.seriesNotice.set(null);
+    const template = this.continuable().find((s) => s.parentId === id)?.nameTemplate;
+    if (template && !this.seriesTemplate().trim()) this.seriesTemplate.set(template);
+  }
+
+  private async loadContinuable(): Promise<void> {
+    try {
+      this.continuable.set(await this.ipc.listSeries());
+    } catch {
+      /* none to continue: the choice offers only a new series */
+    }
+  }
+
+  /**
+   * Fill the form from the series this one continues: its languages, engines,
+   * voice engine, subtitles and mix (its speakers' voices are matched by voice
+   * later, shared continuedSeriesSettings), as a preset would.
+   */
+  protected async useContinuedSettings(): Promise<void> {
+    const series = this.continuedSeries();
+    if (!series) return;
+    try {
+      const { project } = await this.ipc.getProject(series.parentId);
+      this.settings.update((s) => ({ ...s, ...continuedSeriesSettings(project.settings) }));
+      this.syncProcessingMode();
+      this.stopPreview();
+      void this.loadVoicesForTarget();
+      this.seriesNotice.set(this.translate.instant('series.continues-settings-applied', { name: series.name }));
+    } catch (err) {
+      this.error.set(toAppError(err));
+    }
+  }
 
   private async loadSeriesAi(): Promise<void> {
     try {
@@ -626,6 +680,9 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
       ai: this.seriesAi(),
       recapSec: this.seriesRecap(),
       autoStart: this.seriesAuto(),
+      nameTemplate: this.seriesTemplate(),
+      continues: this.seriesContinues(),
+      total: this.seriesTotal(),
     };
   }
 
@@ -637,6 +694,10 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
     this.seriesAi.set(s.ai);
     this.seriesRecap.set(s.recapSec);
     this.seriesAuto.set(s.autoStart);
+    // Absent in a draft kept before 0.18.0.
+    this.seriesTemplate.set(s.nameTemplate ?? '');
+    this.seriesContinues.set(s.continues ?? '');
+    this.seriesTotal.set(s.total ?? 0);
   }
 
   /** The series settings the form asks for, or undefined when not splitting. */

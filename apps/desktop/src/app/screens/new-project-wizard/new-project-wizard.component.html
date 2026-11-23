@@ -488,6 +488,54 @@
                     <span>{{ 'series.auto-start' | translate }}</span>
                   </label>
                   <p class="hint muted">{{ 'series.wizard-how' | translate }}</p>
+                  <!-- A later season of a series already dubbed: its name, numbers and voices carry on. -->
+                  @if (continuable().length > 0) {
+                    <label class="stack-sm">
+                      <span class="label">{{ 'series.continues' | translate }}</span>
+                      <select
+                        name="seriesContinues"
+                        [ngModel]="seriesContinues()"
+                        (ngModelChange)="pickContinued($event)"
+                      >
+                        <option value="">{{ 'series.continues-none' | translate }}</option>
+                        @for (s of continuable(); track s.parentId) {
+                          <option [value]="s.parentId">
+                            {{ 'series.continues-option' | translate: { name: s.name, first: s.firstNumber, last: s.lastNumber } }}
+                          </option>
+                        }
+                      </select>
+                    </label>
+                    @if (continuedSeries(); as c) {
+                      <p class="hint muted">{{ 'series.continues-hint' | translate: { name: c.name, next: c.lastNumber + 1 } }}</p>
+                      <div class="row series-grid">
+                        <button type="button" class="btn btn-sm" (click)="useContinuedSettings()" [disabled]="busy()">
+                          {{ 'series.continues-use-settings' | translate: { name: c.name } }}
+                        </button>
+                      </div>
+                      <p class="hint muted">{{ seriesNotice() ?? ('series.continues-settings-hint' | translate) }}</p>
+                      <label class="stack-sm">
+                        <span class="label">{{ 'series.continues-total' | translate }}</span>
+                        <input
+                          type="number"
+                          name="seriesTotal"
+                          [min]="c.lastNumber + 1"
+                          max="100000"
+                          [ngModel]="seriesTotal() || null"
+                          (ngModelChange)="seriesTotal.set(+$event || 0)"
+                        />
+                      </label>
+                      <p class="hint muted">{{ 'series.continues-total-hint' | translate }}</p>
+                    }
+                  }
+                  <vd-part-name-field
+                    [value]="seriesTemplate()"
+                    (valueChange)="seriesTemplate.set($event)"
+                    [seriesName]="exampleSeriesName()"
+                    [targetLanguage]="settings().targetLanguage"
+                    [firstNumber]="(continuedSeries()?.lastNumber ?? 0) + 1"
+                    [total]="seriesTotal() || null"
+                    [disabled]="busy()"
+                  />
                 }
               }
             </fieldset>

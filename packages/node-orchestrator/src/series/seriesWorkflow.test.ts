@@ -232,8 +232,8 @@ describe('titles and names of the parts (1.5, 2.1)', { timeout: 60_000 }, () => 
 describe('a part edited after it was made (2.2)', { timeout: 60_000 }, () => {
   it('renames, retitles and summarises a part without a reset; a rendered one renders again', async () => {
     const chat = chatTitling((n) => `{"title":"Tên ${n}","summary":"Tóm tắt ${n}."}`);
-    let busy: string | undefined;
-    const r = rig({ chat, workOn: (id) => (id === busy ? 'running' : undefined) });
+    const dubbing: { id?: string } = {};
+    const r = rig({ chat, workOn: (id) => (id === dubbing.id ? 'running' : undefined) });
     const dubs = path.join(tmp, 'Dubs');
     const parent = await analysedParent(r, { outputDir: dubs, settings: { nameTemplate: '{series} - Tập {nn}: {title}' } });
     const [p1, p2, p3] = await r.series.createParts(parent.id);
@@ -271,7 +271,7 @@ describe('a part edited after it was made (2.2)', { timeout: 60_000 }, () => {
     ]);
 
     // Never while it is being dubbed, and only parts.
-    busy = p3;
+    dubbing.id = p3;
     await expect(r.series.editPart(p3!, { title: 'X' })).rejects.toMatchObject({ appError: { code: 'RUN_IN_PROGRESS' } });
     await expect(r.series.editPart(parent.id, { title: 'X' })).rejects.toMatchObject({ appError: { code: 'INVALID_EDIT' } });
     await expect(r.series.editPart(p2!, { name: '  ' })).rejects.toMatchObject({ appError: { code: 'INVALID_EDIT' } });

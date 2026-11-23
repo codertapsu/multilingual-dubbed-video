@@ -331,6 +331,14 @@
             </label>
           </div>
           <p class="hint muted">{{ 'source-video.dub-split-hint' | translate: { min: dubSplitAbove() } }}</p>
+          <vd-part-name-field
+            fieldName="dubSplitTemplate"
+            [value]="dubSplitTemplate()"
+            (valueChange)="dubSplitTemplate.set($event)"
+            [seriesName]="dubExampleName()"
+            [targetLanguage]="dubTargetLanguage()"
+            [disabled]="dubbing()"
+          />
         }
         <div class="row">
           <button type="button" class="btn" (click)="selectAllDone()">{{ 'source-video.select-all-done' | translate }}</button>

@@ -18,6 +18,7 @@ import type {
   TtsSegment,
 } from './domain.js';
 import type { AudioExtractResult, MediaInfo } from './media.js';
+import type { BlurRegion } from './picture.js';
 
 // ---------------------------------------------------------------------------
 // Media service (FFmpeg/ffprobe)
@@ -54,6 +55,12 @@ export interface RenderFinalVideoInput {
   range?: { startMs: number; endMs: number };
   /** Opening and closing of a series part: fades, a darker recap, text cards. */
   effects?: RenderEffects;
+  /**
+   * Regions of the picture blurred, pixelated or delogo'd (a watermark), in
+   * the input video's time; with `range`, the render shifts them to the
+   * window. Forces a video re-encode.
+   */
+  blurRegions?: BlurRegion[];
 }
 
 /** A logo for {@link RenderFinalVideoInput}. */

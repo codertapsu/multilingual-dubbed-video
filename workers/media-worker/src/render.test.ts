@@ -18,10 +18,12 @@ vi.mock('./probe.js', () => ({
   probeDurationMs: vi.fn(async () => 120_000),
   probeVideoGeometry: vi.fn(async () => ({ width: 1280, height: 720, fps: 30, durationMs: 120_000 })),
 }));
+// The picture runs 118.5 s; the container says 120 s (its audio ran long).
+vi.mock('./videoLength.js', () => ({ probeVideoLengthMs: vi.fn(async () => 118_500) }));
 
 import { partialPathFor } from './atomic.js';
 import type { HardwareEncoderProbe } from './encoder.js';
-import { runFfmpeg } from './exec.js';
+import { ffmpegHasFilter, runFfmpeg } from './exec.js';
 import { BUNDLED_FONT_FAMILY, BUNDLED_FONT_FILE } from './fonts.js';
 import { renderFinalVideo, type RenderFinalVideoOptions } from './render.js';
 import { escapeSubtitlePathForFilter } from './subtitles.js';
@@ -179,5 +181,108 @@ describe('renderFinalVideo burned-in', () => {
     await renderFinalVideo(input({ subtitlePath: ass, renderQuality: 'quality' }));
 
     expect(vf.startsWith(`subtitles=${escapeSubtitlePathForFilter(ass)}:fontsdir=`)).toBe(true);
+  });
+
+  it('stops at the end of the picture, not of the longer mix', async () => {
+    let args: string[] = [];
+    runFfmpegMock.mockImplementation((async (a: string[]) => {
+      args = a;
+      writeFileSync(a[a.length - 1]!, 'ok');
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }) as never);
+
+    await renderFinalVideo(input({ renderQuality: 'quality' }));
+    expect(args[args.indexOf('-t') + 1]).toBe('118.500');
+
+    // The stream-copy render too.
+    await renderFinalVideo(input({ subtitleExportMode: 'srt-file', copyVideoStream: true }));
+    expect(args).toEqual(expect.arrayContaining(['-c:v', 'copy']));
+    expect(args[args.indexOf('-t') + 1]).toBe('118.500');
+  });
+});
+
+describe('renderFinalVideo hiding parts of the picture', () => {
+  let dir: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'vd-render-picture-'));
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    runFfmpegMock.mockReset();
+    vi.mocked(ffmpegHasFilter).mockImplementation(async () => true);
+  });
+
+  const input = (o: Partial<RenderFinalVideoOptions> = {}): RenderFinalVideoOptions => ({
+    inputVideoPath: join(dir, 'original.mp4'),
+    audioPath: join(dir, 'final_mix.wav'),
+    outputPath: join(dir, 'output.mp4'),
+    subtitleExportMode: 'srt-file',
+    renderQuality: 'quality',
+    ...o,
+  });
+  const graphOf = (args: string[]) => args[args.indexOf('-filter_complex') + 1]!;
+
+  it('a watermark region re-encodes through the filter graph, whatever the subtitle mode, capped at the picture', async () => {
+    let args: string[] = [];
+    runFfmpegMock.mockImplementation((async (a: string[]) => {
+      args = a;
+      writeFileSync(a[a.length - 1]!, 'ok');
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }) as never);
+
+    await renderFinalVideo(input({ blurRegions: [{ x: 0.66, y: 0.02, w: 0.31, h: 0.05, mode: 'blur' }] }));
+
+    expect(graphOf(args)).toMatch(/^\[0:v\]split=2\[pr0m\]\[pr0c\];\[pr0c\]crop=\d+:\d+:\d+:\d+,boxblur=/);
+    expect(args[args.indexOf('-c:v') + 1]).toBe('libx264');
+    expect(args[args.indexOf('-t') + 1]).toBe('118.500');
+  });
+
+  it("a part's regions move to its window: one over a file that ended before it is gone", async () => {
+    let args: string[] = [];
+    runFfmpegMock.mockImplementation((async (a: string[]) => {
+      args = a;
+      writeFileSync(a[a.length - 1]!, 'ok');
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }) as never);
+
+    await renderFinalVideo(
+      input({
+        range: { startMs: 60_000, endMs: 90_000 },
+        blurRegions: [
+          { x: 0.66, y: 0.02, w: 0.31, h: 0.05, mode: 'blur', startMs: 0, endMs: 60_000 },
+          { x: 0.02, y: 0.02, w: 0.2, h: 0.05, mode: 'delogo', startMs: 70_000 },
+        ],
+      }),
+    );
+
+    // 25.6–281.6 × 14.4–50.4 px, outward to even pixels; from 70 s = 10 s into the part.
+    expect(graphOf(args)).toMatch(/^\[0:v\]delogo=x=24:y=14:w=258:h=38:enable='gte\(t,10\.000\)'\[vh\];\[vh\]null\[v0\]$/);
+  });
+
+  it('the blurred band is hidden even without burned-in subtitles; the solid one stays with the burn', async () => {
+    let args: string[] = [];
+    runFfmpegMock.mockImplementation((async (a: string[]) => {
+      args = a;
+      writeFileSync(a[a.length - 1]!, 'ok');
+      return { stdout: '', stderr: '', exitCode: 0 };
+    }) as never);
+
+    await renderFinalVideo(input({ burnSubtitleStyle: { coverOriginal: 'blur', coverBand: { y: 0.76, h: 0.05 } } }));
+    // Rows 547–583 of 720, outward to even rows.
+    expect(graphOf(args)).toContain('crop=1280:38:0:546,boxblur=');
+
+    // A solid band alone needs no picture filter: the plain stream copy.
+    await renderFinalVideo(input({ burnSubtitleStyle: { coverOriginal: true } }));
+    expect(args).not.toContain('-filter_complex');
+    expect(args).toEqual(expect.arrayContaining(['-c:v', 'copy']));
+  });
+
+  it('an FFmpeg without boxblur fails with a clear error before it encodes', async () => {
+    vi.mocked(ffmpegHasFilter).mockImplementation(async (name: string) => name !== 'boxblur');
+
+    await expect(renderFinalVideo(input({ blurRegions: [{ x: 0.1, y: 0.1, w: 0.2, h: 0.1, mode: 'blur' }] }))).rejects.toMatchObject({
+      code: 'FFMPEG_FILTER_MISSING',
+    });
+    expect(runFfmpegMock).not.toHaveBeenCalled();
   });
 });

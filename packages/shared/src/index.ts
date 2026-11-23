@@ -184,7 +184,13 @@ export type {
   SeriesView,
 } from './models/series.js';
 export { DEFAULT_SERIES_SETTINGS } from './models/series.js';
-export type { BlurRegion } from './models/picture.js';
+export type {
+  BlurRegion,
+  PictureCorner,
+  PictureDetection,
+  SubtitleBandProposal,
+  WatermarkProposal,
+} from './models/picture.js';
 export type {
   ActivityEntry,
   ActivityInitiator,

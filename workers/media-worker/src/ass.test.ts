@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildAssDocument,
   computeAssLayout,
+  coverBandRect,
+  coverModeOf,
   cueTextToAss,
   formatAssTime,
   parseSubtitleCues,
@@ -157,6 +159,38 @@ describe('computeAssLayout', () => {
   it('raised + coverOriginal puts the text above the band, never across its edge', () => {
     const l = computeAssLayout({ position: 'raised', coverOriginal: true }, 1280, 720);
     expect(l.marginV).toBeGreaterThan(l.band!.height);
+  });
+
+  it("'solid' is today's band; a detected band (coverBand) puts it where the source's subtitles are", () => {
+    expect(computeAssLayout({ coverOriginal: 'solid' }, 1280, 720)).toEqual(computeAssLayout({ coverOriginal: true }, 1280, 720));
+    // The series' hardsubs: 76–81 % of a 1080×1920 frame.
+    const l = computeAssLayout({ coverOriginal: true, coverBand: { y: 0.755, h: 0.06 } }, 1080, 1920);
+    expect(l.band).toEqual({ top: 1450, height: 115, opacity: 1 });
+    expect(coverBandRect({ coverOriginal: 'solid', coverBand: { y: 0.755, h: 0.06 } }, 1080, 1920)).toEqual({ top: 1450, height: 115 });
+    // Raised keeps clear of it wherever it is: 1920 - 1450 + 2 % of 1920.
+    expect(computeAssLayout({ coverOriginal: true, coverBand: { y: 0.755, h: 0.06 }, position: 'raised' }, 1080, 1920).marginV).toBe(508);
+  });
+
+  it('a blurred band draws nothing in the script (the filter graph blurs it), but the text still keeps clear of it', () => {
+    const blur = computeAssLayout({ coverOriginal: 'blur', position: 'raised' }, 1280, 720);
+    expect(blur.band).toBeUndefined();
+    expect(blur.marginV).toBe(computeAssLayout({ coverOriginal: true, position: 'raised' }, 1280, 720).marginV);
+    expect(buildAssDocument([], computeAssLayout({ coverOriginal: 'blur' }, 1280, 720), 60_000)).not.toContain(',Band,,');
+    expect(coverModeOf({ coverOriginal: 'blur' })).toBe('blur');
+    expect(coverModeOf({ coverOriginal: false })).toBeUndefined();
+    expect(coverBandRect({ coverOriginal: false, coverBand: { y: 0.7, h: 0.1 } }, 1280, 720)).toBeUndefined();
+  });
+
+  it('subtitlesInBand: one line centred in the band where the source had its own; two when two fit', () => {
+    // 59.4 px em on 1080 wide, line 75.1 px: one line in a 115-px band.
+    const one = computeAssLayout({ coverOriginal: 'blur', coverBand: { y: 0.755, h: 0.06 }, subtitlesInBand: true }, 1080, 1920);
+    expect(one).toMatchObject({ alignment: 2, marginV: 375 });
+    // Its line sits inside the band: bottom at 1920 - 375 = 1545 <= 1565, top at 1470 >= 1450.
+    const two = computeAssLayout({ coverOriginal: 'blur', coverBand: { y: 0.7, h: 0.1 }, subtitlesInBand: true }, 1080, 1920);
+    expect(two.marginV).toBe(Math.round(1920 - (1344 + 192) + (192 - 2 * 59.4 * 1.265) / 2));
+    // Position is overruled; without a band it is not.
+    expect(computeAssLayout({ coverOriginal: 'solid', subtitlesInBand: true, position: 'top' }, 1280, 720).alignment).toBe(2);
+    expect(computeAssLayout({ subtitlesInBand: true, position: 'top' }, 1280, 720).alignment).toBe(8);
   });
 
   it('a style saved by the old force_style renderer keeps its size and placement', () => {

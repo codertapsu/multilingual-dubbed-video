@@ -20,6 +20,13 @@
  *       from encoder.ts: x264, or a PROBED hardware encoder with one x264
  *       retry. aac audio.
  *
+ * A logo, a part's window, a part's opening and closing, or parts of the
+ * picture hidden (blur regions, the blurred band; pictureFilters.ts) go
+ * through one filter graph instead (overlay.ts), whatever the subtitle mode.
+ *
+ * Every render stops at the picture's end (`-t`, videoLength.ts): a mix that
+ * ran longer than the picture used to lengthen the video.
+ *
  * Arg-builders are pure (testable); renderFinalVideo spawns + probes duration.
  */
 
@@ -54,8 +61,10 @@ import {
 } from './exec.js';
 import { chooseBurnFont, resolveFontsDir, type BurnFont } from './fonts.js';
 import { buildCardsAss, buildFilteredRenderArgs } from './overlay.js';
+import { hidesPicture, pictureRegionsFor, requiredPictureFilters } from './pictureFilters.js';
 import { probeDurationMs, probeVideoGeometry, type VideoGeometry } from './probe.js';
 import { buildSubtitlesFilter } from './subtitles.js';
+import { probeVideoLengthMs } from './videoLength.js';
 
 /** Inputs needed to construct the ffmpeg argv (already-validated paths). */
 export interface RenderArgsContext {
@@ -76,6 +85,8 @@ export interface RenderArgsContext {
   videoCodecArgs?: string[];
   /** Fonts directory handed to libass for the burn (the bundled subtitle font). */
   fontsDir?: string;
+  /** The picture's length: the output never runs past it (`-t`). Absent or 0: no cap. */
+  maxDurationMs?: number;
 }
 
 const AUDIO_ARGS = ['-c:a', 'aac', '-b:a', '192k'] as const;
@@ -114,6 +125,8 @@ export function buildRenderArgs(ctx: RenderArgsContext): string[] {
   // (renderQuality "fast"/"auto" with a probed hardware encoder).
   const videoCodec = ctx.videoCodec ?? LIBX264.codec;
   const videoCodecArgs = ctx.videoCodecArgs ?? LIBX264.args;
+  // Never longer than the picture, whatever the mix's length.
+  const cap = ctx.maxDurationMs && ctx.maxDurationMs > 0 ? ['-t', (ctx.maxDurationMs / 1000).toFixed(3)] : [];
 
   switch (subtitleExportMode) {
     case 'burned-in': {
@@ -134,6 +147,7 @@ export function buildRenderArgs(ctx: RenderArgsContext): string[] {
         '1:a:0',
         '-vf',
         filter,
+        ...cap,
         '-c:v',
         videoCodec,
         ...videoCodecArgs,
@@ -162,6 +176,7 @@ export function buildRenderArgs(ctx: RenderArgsContext): string[] {
         '1:a:0',
         '-map',
         '2:0',
+        ...cap,
         '-c:v',
         copyVideo ? 'copy' : 'libx264',
         ...AUDIO_ARGS,
@@ -187,6 +202,7 @@ export function buildRenderArgs(ctx: RenderArgsContext): string[] {
         '0:v:0',
         '-map',
         '1:a:0',
+        ...cap,
         '-c:v',
         copyVideo ? 'copy' : 'libx264',
         ...AUDIO_ARGS,
@@ -262,9 +278,10 @@ export async function renderFinalVideo(
   assertInputReadable(input.audioPath);
   assertOutputWritable(input.outputPath);
 
-  // A logo, a part's window or its opening and closing: the picture is
-  // re-encoded through one filtergraph (overlay.ts), whatever the subtitle mode.
-  if (input.logo || input.range || input.effects) return renderFiltered(input, runOpts, deps);
+  // A logo, a part's window or its opening and closing, or parts of the
+  // picture hidden: the picture is re-encoded through one filtergraph
+  // (overlay.ts), whatever the subtitle mode.
+  if (input.logo || input.range || input.effects || hidesPicture(input)) return renderFiltered(input, runOpts, deps);
 
   // Burned-in subtitles use the libavfilter "subtitles" filter, which is only
   // present in an FFmpeg built with libass. Detect a missing filter up front so
@@ -308,6 +325,7 @@ export async function renderFinalVideo(
   // resume check looks at, so the next run would "skip" Render and hand the user
   // a broken file as a success. The `.partial` keeps the `.mp4` extension so
   // ffmpeg still infers the mp4 muxer from it.
+  const videoMs = await probeVideoLengthMs(input.inputVideoPath, runOpts);
   await writeAtomically(input.outputPath, (partial) => {
     const args = buildRenderArgs({
       inputVideoPath: input.inputVideoPath,
@@ -316,6 +334,7 @@ export async function renderFinalVideo(
       subtitleExportMode: input.subtitleExportMode,
       subtitlePath: input.subtitlePath,
       copyVideoStream: input.copyVideoStream,
+      ...(videoMs > 0 ? { maxDurationMs: videoMs } : {}),
     });
     return runFfmpeg(args, runOpts);
   });
@@ -391,8 +410,24 @@ async function renderFiltered(
   if (input.logo) assertInputReadable(input.logo.imagePath);
 
   const geometry = await probeVideoGeometry(input.inputVideoPath, runOpts);
-  const durationMs = input.range ? input.range.endMs - input.range.startMs : geometry.durationMs;
+  // A part runs its window; a whole video its picture (not the container,
+  // which a long audio stream stretches), which is also where it is cut.
+  const videoMs = input.range ? 0 : await probeVideoLengthMs(input.inputVideoPath, runOpts);
+  const durationMs = input.range ? input.range.endMs - input.range.startMs : videoMs || geometry.durationMs;
   const burnFont = chooseBurnFont(resolveFontsDir(input.fontsDir), input.burnSubtitleStyle?.fontFamily);
+  // Watermarks and the blurred band, hidden before anything is drawn.
+  const regions = pictureRegionsFor(input, geometry.width, geometry.height, input.range ? undefined : durationMs);
+  for (const name of requiredPictureFilters(regions)) {
+    if (!(await ffmpegHasFilter(name, runOpts))) {
+      throw new AppErrorException({
+        code: 'FFMPEG_FILTER_MISSING',
+        message: `Hiding part of the picture needs FFmpeg's "${name}" filter, which this FFmpeg lacks.`,
+        remediation:
+          'Use the FFmpeg that comes with VideoDubber (unset FFMPEG_PATH), or set the region to "pixelate", which every FFmpeg can do.',
+        docsRef: 'docs/TROUBLESHOOTING.md#ffmpeg-filter-missing',
+      });
+    }
+  }
   const scratch = mkdtempSync(join(tmpdir(), 'vd-render-'));
   try {
     const burnScriptPath = burning ? writeBurnScript(input, input.subtitlePath!, burnFont, geometry, durationMs, scratch) : undefined;
@@ -425,6 +460,8 @@ async function renderFiltered(
               ...(input.range ? { range: input.range } : {}),
               ...(input.effects ? { effects: input.effects } : {}),
               ...(cardsScriptPath ? { cardsScriptPath } : {}),
+              ...(regions.length > 0 ? { regions } : {}),
+              ...(videoMs > 0 ? { maxDurationMs: videoMs } : {}),
               videoCodec: encoder.codec,
               videoCodecArgs: encoder.args,
               audioArgs: AUDIO_ARGS,
@@ -466,6 +503,7 @@ async function renderBurnedIn(
   if (!subtitlePath) throw missingSubtitle('burned-in');
 
   const geometry = await probeVideoGeometry(input.inputVideoPath, runOpts);
+  const videoMs = await probeVideoLengthMs(input.inputVideoPath, runOpts);
   const burnFont = chooseBurnFont(resolveFontsDir(input.fontsDir), input.burnSubtitleStyle?.fontFamily);
   const fontsDir = burnFont.fontsDir;
   const scratch = mkdtempSync(join(tmpdir(), 'vd-burn-'));
@@ -492,6 +530,7 @@ async function renderBurnedIn(
               videoCodec: encoder.codec,
               videoCodecArgs: encoder.args,
               ...(fontsDir ? { fontsDir } : {}),
+              ...(videoMs > 0 ? { maxDurationMs: videoMs } : {}),
             }),
             runOpts,
           ),

@@ -2245,6 +2245,28 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     }),
   );
 
+  // ---- 0.18.0 tools (docs/plans/production-requests-2026-11-23.md). Each
+  // area adds its tools at its own anchor below, so parallel work never edits
+  // the same lines.
+
+  // [tools: re-transcription and speaker detection]
+
+
+  // [tools: casting and songs]
+
+
+  // [tools: series, create, continue]
+
+
+  // [tools: join videos]
+
+
+  // [tools: picture options]
+
+
+  // [tools: activity and edit history]
+
+
   return server;
 }
 

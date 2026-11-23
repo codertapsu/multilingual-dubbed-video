@@ -7,6 +7,7 @@ import type { BrandingSettings, TimeSpan } from './branding.js';
 import type { DownloadSource } from './download.js';
 import type { SeriesInfo, SeriesSettings } from './series.js';
 import type { MediaInfo } from './media.js';
+import type { BlurRegion } from './picture.js';
 
 /**
  * A BCP-47-ish language code such as `"en"`, `"en-US"`, or `"vi-VN"`.
@@ -253,6 +254,23 @@ export interface ProjectSettings {
   defaultMaleVoiceId?: string;
   defaultFemaleVoiceId?: string;
   /**
+   * How many voices the minor speakers share per gender (cast_voices rotates
+   * them); absent = from the number of minor speakers, 3–6. One shared voice
+   * for 59 minor characters (the user's own clone) was the 27.8-hour series'
+   * casting problem (claude-dubber report, 2026-11-23).
+   */
+  minorVoices?: number;
+  /**
+   * Show subtitles for lines kept as the original song (`TranscriptSegment.song`).
+   * Default off: the user's choice was "the original song plays untouched".
+   */
+  songSubtitles?: boolean;
+  /**
+   * Regions of the picture blurred, pixelated or removed (a watermark): in 0–1
+   * coordinates, so they work at any resolution (models/picture.ts).
+   */
+  blurRegions?: BlurRegion[];
+  /**
    * Phases whose engine the APP picked for this project (an installed GPU
    * engine, recommendProjectSettings) rather than the user. Speech-to-text and
    * translation fall back to the built-in engine when the picked one cannot
@@ -338,6 +356,25 @@ export interface Project {
    * subtitles) is relative to `startMs`.
    */
   sourceRange?: TimeSpan;
+  /**
+   * The files a joined project was built from, in order (New project → "Join
+   * several videos"): where each starts in the joined input and how long it
+   * is. The series planner prefers these boundaries as cuts; watermark
+   * detection runs per file. Absent: the project has one input file.
+   */
+  inputFiles?: ProjectInputFile[];
+}
+
+/** One of the files a joined project's input was built from. */
+export interface ProjectInputFile {
+  /** Absolute path of the original file. */
+  path: string;
+  /** Its file name, for display ("P4.mp4"). */
+  name: string;
+  /** Where it starts in the joined input, in milliseconds. */
+  startMs: number;
+  /** Its picture's length, in milliseconds (its audio was cut to exactly this). */
+  durationMs: number;
 }
 
 /** A single word with timing inside a transcript segment. */
@@ -430,6 +467,14 @@ export interface TranscriptSegment {
    * get_transcript marks it, so a person checks it before it is dubbed.
    */
   loopSuspect?: true;
+  /**
+   * A sung line kept as the original song: no voice is made for it, the
+   * original plays there, and its subtitle shows only when the project's
+   * `songSubtitles` is on. Set per line (the editor, MCP `mark_song`): in the
+   * 27.8-hour series' funeral scene, calls and dialogue sat between the lyrics
+   * and stayed dubbed (claude-dubber report, 2026-11-23).
+   */
+  song?: boolean;
 }
 
 /**

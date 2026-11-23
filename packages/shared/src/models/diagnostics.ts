@@ -72,6 +72,18 @@ export type ProjectWarningCode =
   | 'ai-cut-fallback'
   /** Lines with no letters were left silent instead of spoken. */
   | 'no-speech-lines'
+  /** The source's audio ran longer than its picture (by 0.5 s or more): re-timed to the picture. */
+  | 'audio-drift'
+  /** A speech-to-text chunk wrote lines over (nearly) no speech: hallucinations over silence. */
+  | 'stt-no-speech'
+  /** Over a minute of digital silence in a talk-heavy video: probably a source or encoding problem. */
+  | 'digital-silence'
+  /** A spot check found the transcript does not match the audio around a time. */
+  | 'transcript-mismatch'
+  /** Re-transcribed lines whose speaker could not be carried over. */
+  | 'speakers-unassigned'
+  /** Lines that look like a song, offered to keep as the original. */
+  | 'songs-suggested'
   /** Anything else worth knowing (the message says what). */
   | 'other';
 

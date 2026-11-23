@@ -8,6 +8,7 @@
  * `createServer()` is exported for tests/embedding; a main guard starts the
  * server when this file is run directly.
  */
+import { initiatorFromHeaders, runWithInitiator } from './activity/context.js';
 import { DiagnosticsService } from './diagnostics/diagnosticsService.js';
 import { StructuredLog } from './diagnostics/logFiles.js';
 import { WarningInbox } from './diagnostics/warningInbox.js';
@@ -720,10 +721,47 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     };
   };
 
+  // Who asked (activity/context.ts): every job and edit below the route records
+  // it. And a change still running after 30 s is logged WHILE it runs: requests
+  // were logged only when they ended, so the 18 GB copy behind a POST /projects
+  // left no line for 6.5 minutes while the agent that sent it had already given
+  // up (claude-dubber, 2026-11-23).
+  const slowTimers = new WeakMap<FastifyRequest, NodeJS.Timeout>();
+  app.addHook('onRequest', (req, _reply, done) => {
+    if (req.method !== 'GET' && req.method !== 'OPTIONS' && req.method !== 'HEAD') {
+      const started = Date.now();
+      const mcpRequestId = req.headers['x-request-id'];
+      let ticks = 0;
+      const tick = (): void => {
+        const sec = Math.round((Date.now() - started) / 1000);
+        structured.write({
+          level: 'info',
+          msg: `still running: ${req.method} ${req.url.split('?')[0]} (${sec} s)`,
+          requestId: req.id,
+          ...(typeof mcpRequestId === 'string' ? { mcpRequestId } : {}),
+          event: 'http-slow',
+        });
+        // Then every 2 minutes, for at most 2 hours (a client that went away
+        // never gets its onResponse).
+        if (++ticks < 60) {
+          const next = setTimeout(tick, 120_000);
+          next.unref();
+          slowTimers.set(req, next);
+        }
+      };
+      const first = setTimeout(tick, 30_000);
+      first.unref();
+      slowTimers.set(req, first);
+    }
+    runWithInitiator(initiatorFromHeaders(req.headers), done);
+  });
+
   // What a request did, for the structured log: failures, slow ones, and every
   // change (not the screens' polling). The plugin sends its tool call's id as
   // X-Request-Id, so its errors can point at these lines.
   app.addHook('onResponse', async (req, reply) => {
+    const slow = slowTimers.get(req);
+    if (slow) clearTimeout(slow);
     const ms = Math.round(reply.elapsedTime);
     const changed = req.method !== 'GET' && req.method !== 'OPTIONS' && req.method !== 'HEAD';
     if (!changed && reply.statusCode < 400 && ms < 5000) return;
@@ -3381,6 +3419,28 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     req.raw.on('close', cleanup);
     req.raw.on('error', cleanup);
   });
+
+  // ---- 0.18.0 feature routes (docs/plans/production-requests-2026-11-23.md).
+  // Each area adds its routes at its own anchor below, so parallel work never
+  // edits the same lines. Prefer a route module of its own, registered here.
+
+  // [routes: re-transcription and speaker detection]
+
+
+  // [routes: casting and songs]
+
+
+  // [routes: series, create, continue]
+
+
+  // [routes: join videos]
+
+
+  // [routes: picture options]
+
+
+  // [routes: activity and edit history]
+
 
   return app;
 }

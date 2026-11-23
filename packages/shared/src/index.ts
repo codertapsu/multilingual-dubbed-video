@@ -34,6 +34,7 @@ export type {
   ProjectStatus,
   ProjectQueueEntry,
   Project,
+  ProjectInputFile,
   TranscriptWord,
   TranscriptSegment,
   SegmentPatch,
@@ -183,6 +184,14 @@ export type {
   SeriesView,
 } from './models/series.js';
 export { DEFAULT_SERIES_SETTINGS } from './models/series.js';
+export type { BlurRegion } from './models/picture.js';
+export type {
+  ActivityEntry,
+  ActivityInitiator,
+  ActivityInitiatorKind,
+  ActivityState,
+  EditHistoryEntry,
+} from './models/activity.js';
 export type {
   BackendCrash,
   BackendHealth,

@@ -48,6 +48,7 @@ import {
   type TtsSegment,
 } from '@videodubber/shared';
 import { alignSegments, type AlignSettings } from './alignment/align.js';
+import { formatClock, recordEdit } from './activity/history.js';
 import { copySpeakerLabels, redetectSpeakers, remapSpeakerVoices } from './pipeline/diarization.js';
 import { measureClip, type ClipTiming } from './alignment/clipSpeech.js';
 import {
@@ -828,6 +829,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     fromMs: number,
     toMs: number,
     lines: readonly { startMs: number; endMs: number; text: string; speakerId?: string }[],
+    /** What the project's edit history says about it (activity/history.ts); a default otherwise. */
+    opts: { summary?: string } = {},
   ): Promise<{ replaced: number; lines: { id: string; startMs: number; endMs: number; text: string; speakerId?: string }[] }> {
     this.assertNotRunning(projectId, 'replace lines');
     if (!(toMs > fromMs)) throw new AppErrorException('INVALID_EDIT', 'The range must end after it starts.');
@@ -869,6 +872,16 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       await writeJsonAtomic(paths.sourceJson, { segments: all });
       await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(all)));
       const first = before.length;
+      // A structural change: every later line was renumbered, so the history
+      // keeps the range's lines as they were and are (undo replaces the range).
+      await recordEdit({
+        projectId,
+        target: 'source',
+        range: { fromMs, toMs },
+        summary: opts.summary ?? `Replaced ${replaced} line(s) with ${made.length} at ${formatClock(fromMs)}–${formatClock(toMs)}`,
+        before: current.filter(inside),
+        after: all.slice(first, first + made.length),
+      });
       return {
         replaced,
         lines: all.slice(first, first + made.length).map((s) => ({
@@ -974,6 +987,13 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
       await writeJsonAtomic(paths.translatedJson, { segments: merged });
       await this.writeSidecars(paths, merged);
+      await recordEdit({
+        projectId,
+        target: 'translation',
+        summary: `Edited the translation of ${merged.filter((s, i) => s !== base[i]).length} line(s)`,
+        before: base,
+        after: merged,
+      });
     });
   }
 
@@ -1245,6 +1265,21 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       if (outcome.timingChanged.size > 0 || outcome.textChanged.size > 0) {
         await this.writeSidecars(paths, outcome.segments);
       }
+      const what = [
+        outcome.textChanged.size ? `text of ${outcome.textChanged.size}` : '',
+        outcome.timingChanged.size ? `timing of ${outcome.timingChanged.size}` : '',
+        outcome.speakerChanged.size ? `speaker of ${outcome.speakerChanged.size}` : '',
+        outcome.voiceChanged.size ? `voice of ${outcome.voiceChanged.size}` : '',
+        outcome.rateChanged.size ? `pace of ${outcome.rateChanged.size}` : '',
+        outcome.lockChanged.size ? `lock of ${outcome.lockChanged.size}` : '',
+      ].filter(Boolean);
+      await recordEdit({
+        projectId,
+        target: translated ? 'translation' : 'source',
+        summary: `Changed the ${what.join(', ')} line(s)`,
+        before: base,
+        after: outcome.segments,
+      });
     });
     return this.getTimeline(projectId);
   }

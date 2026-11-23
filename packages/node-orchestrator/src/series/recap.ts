@@ -30,9 +30,13 @@ async function readLines(file: string): Promise<Line[] | undefined> {
 /** Copy the previous part's translation onto this part's recap lines; how many changed. */
 export async function reuseRecapTranslations(project: Project, store: ProjectStore): Promise<number> {
   const info = project.series;
-  if (info?.role !== 'part' || info.index <= 1 || info.recapEndMs <= 0 || !project.sourceRange) return 0;
+  if (info?.role !== 'part' || info.recapEndMs <= 0 || !project.sourceRange) return 0;
   const parent = await store.getProject(info.parentId).catch(() => undefined);
-  const previousId = parent?.series?.role === 'parent' ? parent.series.partIds?.[info.index - 2] : undefined;
+  // By its place in the series: a series continuing another shows part 49 as
+  // its first (`index` is the number shown, models/series.ts).
+  const ids = parent?.series?.role === 'parent' ? (parent.series.partIds ?? []) : [];
+  const place = ids.indexOf(project.id);
+  const previousId = place > 0 ? ids[place - 1] : undefined;
   if (!previousId) return 0;
   const previous = await store.getProject(previousId).catch(() => undefined);
   const theirs = await readLines(store.paths(previousId).translatedJson);

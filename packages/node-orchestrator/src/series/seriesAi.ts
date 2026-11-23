@@ -65,8 +65,13 @@ export async function aiChooseCut(
   signal?: AbortSignal,
 ): Promise<number | undefined> {
   if (window.candidates.length === 0) return undefined;
+  // A joined project's file boundary is where one source video ends: said so,
+  // since the transcript alone cannot show it.
   const list = window.candidates
-    .map((c, i) => `C${i + 1} at ${clock(c.ms)}${c.score >= 3 ? ' (a scene change or chapter here)' : ''}`)
+    .map(
+      (c, i) =>
+        `C${i + 1} at ${clock(c.ms)}${c.boundary ? ' (one source video ends here and the next begins)' : c.score >= 3 ? ' (a scene change or chapter here)' : ''}`,
+    )
     .join('\n');
   const transcript = transcriptExcerpt(lines, window.fromMs - 60_000, window.toMs + 60_000, 6000);
   const user =

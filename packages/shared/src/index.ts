@@ -184,6 +184,19 @@ export type {
   SeriesView,
 } from './models/series.js';
 export { DEFAULT_SERIES_SETTINGS } from './models/series.js';
+export type { SeriesListItem } from './models/series.js';
+export {
+  PART_NAME_PLACEHOLDERS,
+  PART_NAME_TEMPLATE_MAX,
+  SERIES_CARD_WORDS,
+  defaultPartNameTemplate,
+  fallbackPartTitle,
+  isFallbackPartTitle,
+  partName,
+  partNameTemplateProblem,
+  seriesCardWords,
+} from './pipeline/seriesNames.js';
+export type { PartNameInput, PartNameTemplateProblem, SeriesCardWords } from './pipeline/seriesNames.js';
 export type { BlurRegion } from './models/picture.js';
 export type {
   ActivityEntry,

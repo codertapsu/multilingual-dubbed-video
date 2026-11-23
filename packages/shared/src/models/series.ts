@@ -24,6 +24,30 @@ export interface SeriesSettings {
   recapSec: number;
   /** Create the parts and dub them without stopping for a review of the cuts. */
   autoStart: boolean;
+  /**
+   * How the parts' projects (and their finished files in a chosen folder) are
+   * named: {series}, {n}, {nn} (two digits), {total}, {title}
+   * (pipeline/seriesNames.ts). Absent: "<series> - Phần 01", as before.
+   */
+  nameTemplate?: string;
+  /**
+   * The series' name on its parts and their title cards, when it is not this
+   * project's own name: a series that continues another carries that name on.
+   */
+  seriesName?: string;
+  /**
+   * The parts are numbered from this + 1: a series continuing one of 48 parts
+   * starts at part 49 (a later season). Absent: 0.
+   */
+  partNumberOffset?: number;
+  /** The total its cards and {total} say ("Phần 49/60"). Absent: the offset + this series' own parts. */
+  totalParts?: number;
+  /**
+   * The series (its parent project's id) this one continues: its name,
+   * numbering and name template carry on, and its voices go to the speakers
+   * here whose voice prints match its speakers'.
+   */
+  continues?: string;
 }
 
 export const DEFAULT_SERIES_SETTINGS: Omit<SeriesSettings, 'aiProviderId'> = {
@@ -63,8 +87,13 @@ export interface SeriesReviewReason {
 export interface SeriesPartInfo {
   role: 'part';
   parentId: string;
-  /** 1-based. */
+  /**
+   * The part's number as shown, 1-based: its place in the series, after the
+   * parts of the series it continues (`partNumberOffset`; plain 1..n for any
+   * other series). Its place in `partIds` is `index - partNumberOffset`.
+   */
   index: number;
+  /** How many parts the viewer is told there are (`totalParts`, else the offset + the series' parts). */
   count: number;
   /** The series' name (the parent project's), for the title card. */
   seriesName: string;
@@ -78,6 +107,7 @@ export type SeriesInfo = SeriesParentInfo | SeriesPartInfo;
 
 /** One part of a plan, in the source video's time. */
 export interface SeriesPlanPart {
+  /** The part's number as shown (after `partNumberOffset`). */
   index: number;
   /** Where the part's own content starts (the previous cut; 0 for the first). */
   startMs: number;
@@ -89,6 +119,8 @@ export interface SeriesPlanPart {
   summary: string;
   /** What chose the cut that starts this part. */
   cutBy: 'start' | 'ai' | 'pause' | 'manual';
+  /** What the user wrote in review: planning again with `keepTitles` keeps it. */
+  edited?: { title?: boolean; summary?: boolean };
 }
 
 /** A candidate cut: a pause between lines. */
@@ -96,6 +128,8 @@ export interface SeriesCandidate {
   ms: number;
   /** Higher is better (a long pause, a scene change, a chapter mark). */
   score: number;
+  /** Where one file of a joined project ends and the next begins: a preferred cut. */
+  boundary?: true;
 }
 
 /** `<parent>/series/plan.json`, shown for review. */
@@ -136,10 +170,32 @@ export interface SeriesView {
     index: number;
     projectId?: string;
     title: string;
+    /** The part's one-sentence summary, once it has one. */
+    summary?: string;
+    /** The part's project name, once it is made. */
+    name?: string;
     startMs: number;
     endMs: number;
     status?: string;
     progressPercent?: number;
   }[];
+  /** The series this one continues (`settings.continues`), by name. */
+  continues?: { parentId: string; name: string };
   error?: AppError;
+}
+
+/** GET /series: a series a new one can continue (a later season). */
+export interface SeriesListItem {
+  parentId: string;
+  /** Its name, as on its parts and cards. */
+  name: string;
+  state: SeriesState;
+  /** Its parts as numbered (made, or planned): first..last. */
+  firstNumber: number;
+  lastNumber: number;
+  /** The total its cards say. */
+  total: number;
+  targetLanguage: string;
+  /** Its name template, which a series continuing it carries on. */
+  nameTemplate?: string;
 }

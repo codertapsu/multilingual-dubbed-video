@@ -9,17 +9,25 @@
  * Part n+1 starts a few seconds before its cut (a recap), at the start of the
  * line being said there when that is close.
  */
-import type {
-  RenderCard,
-  RenderEffects,
-  SeriesCandidate,
-  SeriesPlanPart,
-  SeriesSettings,
-  TranscriptSegment,
+import {
+  isFallbackPartTitle,
+  seriesCardWords,
+  type RenderCard,
+  type RenderEffects,
+  type SeriesCandidate,
+  type SeriesPlanPart,
+  type SeriesSettings,
+  type TranscriptSegment,
 } from '@videodubber/shared';
 
 /** A pause shorter than this is a breath, not a place to cut. */
 export const MIN_PAUSE_MS = 600;
+/**
+ * What a file boundary of a joined project adds to the pause it lies in:
+ * more than a chapter mark, so a cut near its target lands where one source
+ * video ends and the next begins rather than a minute into the next one.
+ */
+export const BOUNDARY_BONUS = 4;
 /** A part is never shorter than this (manual cuts included). */
 export const MIN_PART_MS = 60_000;
 /** How many candidates the AI is shown per cut. */
@@ -31,23 +39,49 @@ export interface PlannerLine {
   sourceText: string;
 }
 
-/** The pauses between lines, scored. `scenes`/`chapters`: times that raise a nearby pause. */
+/**
+ * The pauses between lines, scored. `scenes`/`chapters`: times that raise a
+ * nearby pause. `boundaries`: where the files of a joined project meet
+ * (Project.inputFiles): a pause holding one is cut exactly there and ranks
+ * above the rest, and a boundary in no pause (between two lines said without
+ * one, or past the last line) is a candidate of its own, never inside a line.
+ */
 export function candidateCuts(
   lines: readonly PlannerLine[],
-  marks: { scenes?: readonly number[]; chapters?: readonly number[] } = {},
+  marks: { scenes?: readonly number[]; chapters?: readonly number[]; boundaries?: readonly number[] } = {},
 ): SeriesCandidate[] {
   const sorted = [...lines].sort((a, b) => a.startMs - b.startMs);
+  const boundaries = [...(marks.boundaries ?? [])].sort((a, b) => a - b);
+  const placed = new Set<number>();
   const out: SeriesCandidate[] = [];
   for (let i = 0; i + 1 < sorted.length; i++) {
     const gap = sorted[i + 1]!.startMs - sorted[i]!.endMs;
     if (gap < MIN_PAUSE_MS) continue;
-    const ms = Math.round(sorted[i]!.endMs + gap / 2);
+    const boundary = boundaries.find((b) => b >= sorted[i]!.endMs && b <= sorted[i + 1]!.startMs);
+    const ms = boundary ?? Math.round(sorted[i]!.endMs + gap / 2);
     let score = Math.min(gap, 6000) / 1000;
     if (marks.scenes?.some((s) => Math.abs(s - ms) <= 1000)) score += 2;
     if (marks.chapters?.some((c) => Math.abs(c - ms) <= 3000)) score += 3;
-    out.push({ ms, score: Math.round(score * 100) / 100 });
+    if (boundary !== undefined) {
+      score += BOUNDARY_BONUS;
+      placed.add(boundary);
+    }
+    out.push({ ms, score: Math.round(score * 100) / 100, ...(boundary !== undefined ? { boundary: true as const } : {}) });
   }
-  return out;
+  if (boundaries.length === 0) return out;
+  for (const b of boundaries) {
+    if (placed.has(b) || sorted.some((l) => l.startMs < b && l.endMs > b)) continue;
+    out.push({ ms: Math.round(b), score: 6 + BOUNDARY_BONUS, boundary: true });
+  }
+  return out.sort((a, b) => a.ms - b.ms);
+}
+
+/** Where the files of a joined project meet, inside the video (Project.inputFiles). Pure. */
+export function fileBoundaries(inputFiles: readonly { startMs: number }[] | undefined, durationMs: number): number[] {
+  return (inputFiles ?? [])
+    .map((f) => Math.round(f.startMs))
+    .filter((ms) => ms > 0 && (durationMs <= 0 || ms < durationMs))
+    .sort((a, b) => a - b);
 }
 
 /** How many parts: the length the user chose, as evenly as the video allows. */
@@ -168,13 +202,17 @@ export function recapStart(cutMs: number, recapSec: number, lines: readonly Plan
   return Math.max(previousStartMs, Math.max(0, Math.round(start)));
 }
 
-/** The plan's parts from its cuts (source time). */
+/**
+ * The plan's parts from its cuts (source time), numbered from `offset` + 1
+ * (a series continuing another: models/series.ts).
+ */
 export function partsFromCuts(
   durationMs: number,
   cuts: readonly { ms: number; by: SeriesPlanPart['cutBy'] }[],
   recapSec: number,
   lines: readonly PlannerLine[],
   titles: readonly { title?: string; summary?: string }[] = [],
+  offset = 0,
 ): SeriesPlanPart[] {
   const sorted = [...cuts].sort((a, b) => a.ms - b.ms);
   const parts: SeriesPlanPart[] = [];
@@ -183,7 +221,7 @@ export function partsFromCuts(
     const endMs = k === sorted.length ? durationMs : sorted[k]!.ms;
     const previous = parts[k - 1];
     parts.push({
-      index: k + 1,
+      index: offset + k + 1,
       startMs,
       endMs,
       recapStartMs: k === 0 ? 0 : recapStart(startMs, recapSec, lines, previous!.startMs),
@@ -208,6 +246,50 @@ export function validateCuts(cuts: readonly number[], durationMs: number): { ok:
   return { ok: true, cuts: sorted };
 }
 
+/**
+ * Mark what the user changed in review: a title or summary that differs from
+ * the plan's for the same part, or was the user's already and still is.
+ * Mutates `next`.
+ */
+export function markEdited(next: SeriesPlanPart[], before: readonly SeriesPlanPart[]): void {
+  for (const [k, part] of next.entries()) {
+    const old = before[k];
+    const title = part.title !== (old?.title ?? '') || (old?.edited?.title === true && part.title === old.title);
+    const summary = part.summary !== (old?.summary ?? '') || (old?.edited?.summary === true && part.summary === old.summary);
+    if (title || summary) part.edited = { ...(title ? { title: true } : {}), ...(summary ? { summary: true } : {}) };
+    else delete part.edited;
+  }
+}
+
+/**
+ * A plan made again keeps what the user wrote in review (`keepTitles`): each
+ * title or summary they edited goes to the new part covering most of the same
+ * stretch of video, when that is at least half of both parts. A replan that
+ * moves the cuts a little keeps every edit; one that makes other parts keeps
+ * only what still fits. Mutates `next`; returns how many parts kept an edit.
+ */
+export function keepEditedTitles(next: SeriesPlanPart[], before: readonly SeriesPlanPart[]): number {
+  let kept = 0;
+  for (const old of before) {
+    if (!old.edited?.title && !old.edited?.summary) continue;
+    let best: SeriesPlanPart | undefined;
+    let overlap = 0;
+    for (const p of next) {
+      const o = Math.min(p.endMs, old.endMs) - Math.max(p.startMs, old.startMs);
+      if (o > overlap) {
+        overlap = o;
+        best = p;
+      }
+    }
+    if (!best || overlap * 2 < old.endMs - old.startMs || overlap * 2 < best.endMs - best.startMs) continue;
+    if (old.edited.title) best.title = old.title;
+    if (old.edited.summary) best.summary = old.summary;
+    best.edited = { ...best.edited, ...(old.edited.title ? { title: true } : {}), ...(old.edited.summary ? { summary: true } : {}) };
+    kept += 1;
+  }
+  return kept;
+}
+
 /** The lines of one part, in the part's own time (ids renumbered from seg_0001). */
 export function partTranscript(lines: readonly TranscriptSegment[], part: Pick<SeriesPlanPart, 'recapStartMs' | 'endMs'>): TranscriptSegment[] {
   return [...lines]
@@ -230,19 +312,12 @@ export function partTranscript(lines: readonly TranscriptSegment[], part: Pick<S
     });
 }
 
-/** The card wording in the dub's language (English for the rest). */
-const CARD_WORDS: Record<string, { part: string; previously: string; next: string; end: string }> = {
-  vi: { part: 'Phần', previously: 'Phần trước', next: 'Còn tiếp', end: 'Hết' },
-  en: { part: 'Part', previously: 'Previously', next: 'To be continued', end: 'The end' },
-  zh: { part: '第', previously: '前情回顾', next: '未完待续', end: '完' },
-  ja: { part: 'パート', previously: '前回', next: '続く', end: '終わり' },
-  ko: { part: '파트', previously: '지난 이야기', next: '다음 편에 계속', end: '끝' },
-  es: { part: 'Parte', previously: 'Anteriormente', next: 'Continuará', end: 'Fin' },
-  fr: { part: 'Partie', previously: 'Précédemment', next: 'À suivre', end: 'Fin' },
-};
-
+/**
+ * The card wording in the dub's language (English for the rest). Kept in
+ * shared (pipeline/seriesNames.ts): the part names the UI shows use it too.
+ */
 export function cardWords(targetLanguage: string): { part: string; previously: string; next: string; end: string } {
-  return CARD_WORDS[targetLanguage.toLowerCase().split('-')[0] ?? 'en'] ?? CARD_WORDS['en']!;
+  return seriesCardWords(targetLanguage);
 }
 
 /**
@@ -262,8 +337,10 @@ export function partEffects(input: {
   const words = cardWords(input.targetLanguage);
   const label = words.part === '第' ? `第 ${input.index}/${input.count} 集` : `${words.part} ${input.index}/${input.count}`;
   const titleEnd = Math.min(input.durationMs, Math.max(3500, input.recapEndMs > 0 ? Math.min(input.recapEndMs, 5000) : 3500));
+  // The plain title a part the AI did not name gets ("Phần 42") only repeats the label.
+  const title = input.title && !isFallbackPartTitle(input.title, input.index, input.targetLanguage) ? input.title : undefined;
   const cards: RenderCard[] = [
-    { kind: 'title', text: `${input.seriesName}\n${label}${input.title ? `: ${input.title}` : ''}`, startMs: 300, endMs: titleEnd },
+    { kind: 'title', text: `${input.seriesName}\n${label}${title ? `: ${title}` : ''}`, startMs: 300, endMs: titleEnd },
   ];
   if (input.index > 1 && input.recapEndMs > 0) {
     cards.push({ kind: 'label', text: words.previously, startMs: 0, endMs: input.recapEndMs });

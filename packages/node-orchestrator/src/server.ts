@@ -169,6 +169,7 @@ import { downloadsDirFor, resolveVideo } from './providers/download/downloadServ
 import { isStopped, JobFeed, type JobLine } from './jobFeed.js';
 import { cleanPresetInput, PresetStore } from './workspace/presetStore.js';
 import { BrandKit } from './branding/brandKit.js';
+import { partSkipReason, seriesRedoRefusal } from './series/partWork.js';
 import { SeriesService } from './series/seriesService.js';
 import { registerSeriesRoutes } from './series/seriesRoutes.js';
 import type { SeriesChat } from './series/seriesAi.js';
@@ -1806,8 +1807,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   /**
    * Apply one change to every part of a series (`applyToParts`): each part
-   * reports what happened; a part being dubbed is skipped with the reason,
-   * never changed under the run (Phase 4.4).
+   * reports what happened; a part being dubbed or waiting in the queue is
+   * skipped with the reason and what to do (series/partWork.ts), never changed
+   * under the run (Phase 4.4).
    */
   async function forEachPart(
     projectId: string,
@@ -1819,7 +1821,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     const out: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[] = [];
     for (const [i, id] of ids.entries()) {
       if (orchestrator.busyProjects().includes(id)) {
-        out.push({ projectId: id, index: offset + i + 1, ok: false, skipped: 'dubbing now: pause it (or the series), then apply again' });
+        out.push({ projectId: id, index: offset + i + 1, ok: false, skipped: partSkipReason(orchestrator.workOn(id)) });
         continue;
       }
       try {
@@ -2946,6 +2948,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     '/projects/:id/retry',
     async (req: FastifyRequest<{ Params: { id: string }; Body: { stepId: PipelineStepId } }>, reply) => {
       try {
+        // A series' parent runs nothing after speech-to-text: a redo of a later
+        // step there "finished" at once and redid no part. Say how instead.
+        const refused = seriesRedoRefusal(req.body.stepId, (await series.partIdsOf(req.params.id).catch(() => [])).length);
+        if (refused) throw refused;
         await orchestrator.retryStep(req.params.id, req.body.stepId);
         return reply.status(202).send({ started: true });
       } catch (err) {

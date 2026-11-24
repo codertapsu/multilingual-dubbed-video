@@ -1715,7 +1715,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Start, continue or redo a dub',
       description:
-        'Start the dub, continue it after a pause (pause_dubbing, a review pause, or the app having been closed), or redo it from a step (fromStep) after changing settings or the translation. Finished steps are reused. If an engine or model is missing the app says what to install; whisper.cpp speech models start downloading by themselves.',
+        'Start the dub, continue it after a pause (pause_dubbing, a review pause, or the app having been closed), or redo it from a step (fromStep) after changing settings or the translation. Finished steps are reused. On a series, start_dubbing without fromStep continues its parts in order; a redo from a step is done on each part (fromStep on the series itself is refused). If an engine or model is missing the app says what to install; whisper.cpp speech models start downloading by themselves.',
       inputSchema: z.object({
         projectId: z.string(),
         fromStep: z.enum(STEP_IDS).optional().describe('Redo from this step on; omit to start or continue.'),

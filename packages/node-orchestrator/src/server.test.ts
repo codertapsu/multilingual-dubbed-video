@@ -190,6 +190,58 @@ describe('DELETE /projects/:id and /storage/projects-folder', () => {
   });
 });
 
+/** A change asked of a whole series (claude-dubber, 48-part series, 2026-11-24). */
+describe('a series asked as a whole', () => {
+  let tmp: string;
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'vd-server-test-'));
+    app = await createServer({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects'), configDir: path.join(tmp, 'config'), modelsDir: path.join(tmp, 'models') }),
+      media: new FakeMediaService(),
+    });
+  });
+
+  afterEach(async () => {
+    await app.close();
+    await fsp.rm(tmp, { recursive: true, force: true });
+  });
+
+  async function seriesWithOnePart(): Promise<{ parent: string; part: string; partJson: string }> {
+    const video = await writeDummyVideo(tmp);
+    const make = async (name: string) =>
+      (await app.inject({ method: 'POST', url: '/projects', payload: createProjectInput(video, { name }) })).json() as { id: string; workspaceDir: string };
+    const parent = await make('Series');
+    const part = await make('Series - Phần 01');
+    const parentJson = path.join(parent.workspaceDir, 'project.json');
+    const project = JSON.parse(await fsp.readFile(parentJson, 'utf8')) as Record<string, unknown>;
+    project.series = { role: 'parent', settings: { minMinutes: 15, maxMinutes: 20, recapSec: 4, autoStart: false, aiProviderId: 'none' }, state: 'parts', partIds: [part.id] };
+    await fsp.writeFile(parentJson, JSON.stringify(project));
+    return { parent: parent.id, part: part.id, partJson: path.join(part.workspaceDir, 'project.json') };
+  }
+
+  it('refuses a redo of a part-only step on the series itself, saying how', async () => {
+    const { parent } = await seriesWithOnePart();
+    const res = await app.inject({ method: 'POST', url: `/projects/${parent}/retry`, payload: { stepId: 'audio-mix' } });
+    expect(res.statusCode).toBe(400);
+    const { error } = res.json() as { error: { code: string; message: string; remediation?: string } };
+    expect(error.code).toBe('INVALID_EDIT');
+    expect(error.message).toContain('series of 1 part(s)');
+    expect(error.remediation).toContain('start_dubbing on the part');
+  });
+
+  it('applies settings to every idle part and says what it did with each', async () => {
+    const { parent, part, partJson } = await seriesWithOnePart();
+    const blur = [{ x: 0.8, y: 0.02, w: 0.18, h: 0.06, mode: 'blur' }];
+    const res = await app.inject({ method: 'PUT', url: `/projects/${parent}/settings?applyToParts=true`, payload: { blurRegions: blur } });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { parts: unknown[] }).parts).toEqual([{ projectId: part, index: 1, ok: true }]);
+    const saved = JSON.parse(await fsp.readFile(partJson, 'utf8')) as { settings: { blurRegions?: unknown[] } };
+    expect(saved.settings.blurRegions).toMatchObject(blur);
+  });
+});
+
 /** Claude through Mother Claude: the routes Settings drives. */
 describe('Mother Claude credential routes', () => {
   let tmp: string;

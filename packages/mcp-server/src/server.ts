@@ -16,7 +16,7 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer, type CallToolResult, type ServerContext } from '@modelcontextprotocol/server';
 import * as z from 'zod';
-import { projectOutputFiles, projectOutputVideoPath } from '@videodubber/shared';
+import { continuedSeriesSettings, projectOutputFiles, projectOutputVideoPath } from '@videodubber/shared';
 import type {
   PipelineState,
   PipelineStepId,
@@ -58,6 +58,8 @@ export interface VideoDubberServerOptions {
   pollMs?: number;
   /** How long one call may keep working before it reports and returns. */
   workBudgetMs?: number;
+  /** How long create_project waits for the app to make the project (30 min; tests shorten it). */
+  createProjectTimeoutMs?: number;
 }
 
 const STEP_IDS = [
@@ -211,7 +213,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         'For the best translation, create the project with reviewBeforeSynthesis=true: the run pauses after a quick draft translation, you read the whole transcript, record names/terms/forms of address with set_translation_context, rewrite the lines with set_translations, then start_dubbing continues with your text.',
         'Every line must be speakable in its own time slot: get_transcript shows each line\'s budget at the voice\'s pace (e.g. "≤13 syllables (aim 11)") and the current length in [brackets]. Aim for the target and never exceed the ceiling, but keep the full meaning: an over-short line is a worse dub than a slightly fast one. Never merge or split lines while translating (replace_lines restructures a range before translation). Fix every line marked NEEDS FIX; lines marked LOOP? may be a transcription loop the app could not repair: check them with retranscribe_range.',
         'Speakers: the speaker ids on the lines (SPEAKER_00...) decide the forms of address in the translation (Vietnamese xưng hô), so speakers must be detected before translating (settings.diarize). Map each speaker id to its character in the character sheet (set_translation_context cast[].speakerId) and fix what speech-to-text mishears with its corrections. get_project lists the warnings of a run (speaker detection failed, loops repaired or left, GPU busy so a step ran on the CPU): act on them.',
-        'Series (a long video in parts): even with autoStart the parts start by themselves only when the analysis is clean; otherwise the series stops at review and get_series says why. After fixing the series transcript, rebuild_parts; update_settings / set_translation_context take applyToParts; pause_dubbing / start_dubbing on the series act on all its parts in order.',
+        'Series (a long video in parts): even with autoStart the parts start by themselves only when the analysis is clean; otherwise the series stops at review and get_series says why. After fixing the series transcript, rebuild_parts (some parts or all; queued ones are rebuilt where they wait); update_settings / set_translation_context take applyToParts; pause_dubbing / start_dubbing on the series act on all its parts in order. edit_part renames or retitles a made part; replan_series plans again before the parts exist; create_project series.continues starts a later season of a series.',
         'When something fails: get_diagnostics (the app\'s health, GPU, queue, engine output, recent errors; bundle=true writes a support bundle) and get_queue (what waits and why, who holds the GPU lane). Every tool error ends with a log reference.',
         'Changing settings, engines or downloads is the user\'s machine: say what you are about to install (sizes are in list_engines) before doing it.',
         'Batches (Bilibili, Douyin): set_download_login with the path of a browser cookie export (never cookie values; optional, logged out gets up to 720p) -> download_videos -> follow_jobs_command (long batches) or wait_jobs -> dub_downloads (a preset from list_presets, or targetLanguage + settings) -> follow the projects -> get_outputs -> post -> mark_published.',
@@ -1009,6 +1011,11 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
             recapSec: z.number().min(0).max(8).optional(),
             autoStart: z.boolean().optional(),
             longerThanMinutes: z.number().min(5).optional().describe('Only videos longer than this are split (default 1.5 x maxMinutes).'),
+            nameTemplate: z
+              .string()
+              .max(200)
+              .optional()
+              .describe('How the parts are named: {series}, {n}, {nn} (two digits), {total}, {title}; default "<video> - Phần 01".'),
           })
           .optional()
           .describe('Dub the long downloads as series of parts (15-20 min by default); follow each with get_series.'),
@@ -1045,6 +1052,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
                   ...(series.recapSec !== undefined ? { recapSec: series.recapSec } : {}),
                   ...(series.autoStart !== undefined ? { autoStart: series.autoStart } : {}),
                   ...(series.longerThanMinutes ? { longerThanMinutes: series.longerThanMinutes } : {}),
+                  ...(series.nameTemplate?.trim() ? { nameTemplate: series.nameTemplate.trim() } : {}),
                 },
               }
             : {}),
@@ -1149,10 +1157,34 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     parentId: string;
     name: string;
     state: string;
-    settings: { minMinutes: number; maxMinutes: number; aiProviderId: string; recapSec: number };
-    plan?: { parts: { index: number; startMs: number; endMs: number; title: string; summary: string; cutBy: string }[]; notes: string[] };
+    settings: {
+      minMinutes: number;
+      maxMinutes: number;
+      aiProviderId: string;
+      recapSec: number;
+      nameTemplate?: string;
+      seriesName?: string;
+      partNumberOffset?: number;
+      totalParts?: number;
+    };
+    plan?: {
+      parts: { index: number; startMs: number; endMs: number; title: string; summary: string; cutBy: string }[];
+      notes: string[];
+      createdAt?: string;
+    };
     reviewReasons?: { code: string; message: string }[];
-    parts: { index: number; projectId?: string; title: string; startMs: number; endMs: number; status?: string; progressPercent?: number }[];
+    parts: {
+      index: number;
+      projectId?: string;
+      title: string;
+      summary?: string;
+      name?: string;
+      startMs: number;
+      endMs: number;
+      status?: string;
+      progressPercent?: number;
+    }[];
+    continues?: { parentId: string; name: string };
     error?: { message?: string };
   };
 
@@ -1160,17 +1192,24 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     const lines = [
       `Series "${v.name}" (${v.parentId}): ${v.state}${v.error?.message ? ` — ${v.error.message}` : ''}`,
       `Parts of ${v.settings.minMinutes}-${v.settings.maxMinutes} min, cuts by ${v.settings.aiProviderId}, ${v.settings.recapSec} s recap.`,
+      // A later season: its name and numbers carry on from the series it continues.
+      ...(v.continues ? [`Continues "${v.continues.name}" (${v.continues.parentId}): parts numbered from ${(v.settings.partNumberOffset ?? 0) + 1}.`] : []),
+      ...(v.settings.nameTemplate ? [`Parts named "${v.settings.nameTemplate}".`] : []),
       // Asked to start by itself, it stopped at review: the analysis was not clean.
       ...(v.reviewReasons ?? []).map((r) => `STOPPED AT REVIEW: ${r.message}`),
       ...(v.plan?.notes ?? []).map((n) => `Note: ${n}`),
       ...v.parts.map((p) => {
-        const planned = v.plan?.parts.find((x) => x.index === p.index);
-        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${planned?.summary ? ` (${planned.summary})` : ''}${p.projectId ? ` project ${p.projectId}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}`;
+        const summary = p.summary ?? v.plan?.parts.find((x) => x.index === p.index)?.summary;
+        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${summary ? ` (${summary})` : ''}${p.projectId ? ` project ${p.projectId}${p.name ? ` "${p.name}"` : ''}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}`;
       }),
     ];
-    if (v.state === 'review') lines.push('Next: set_split_plan to change cuts or titles, or start_series to make and dub the parts.');
+    if (v.state === 'review') {
+      lines.push('Next: set_split_plan to change cuts or titles (replan_series to plan again), or start_series to make and dub the parts.');
+    }
     if (v.state === 'parts') {
-      lines.push('The series acts as a whole: pause_dubbing / start_dubbing on its id pause or continue every part in order; rebuild_parts remakes the parts\' transcripts after the series transcript was fixed.');
+      lines.push(
+        'The series acts as a whole: pause_dubbing / start_dubbing on its id pause or continue every part in order; rebuild_parts remakes the parts\' transcripts after the series transcript was fixed (some or all, queued ones where they wait); edit_part renames or retitles a part.',
+      );
     }
     return lines.join('\n');
   };
@@ -1180,21 +1219,46 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Remake the parts from the fixed series transcript',
       description:
-        'After the series transcript was fixed (speakers re-detected, loops repaired, lines replaced on the parent): make each part\'s transcript again from it, copy the series\' character sheet to every part again, and move stale translation checkpoints aside. Parts already translated are left alone unless force=true (their translation is then discarded, kept beside as a file); a part being dubbed is never touched. Reports old and new line counts and speakers per part.',
-      inputSchema: z.object({ projectId: z.string().describe('The series (parent) or any part.'), force: z.boolean().default(false) }),
+        'After the series transcript was fixed (speakers re-detected, loops repaired, lines replaced on the parent): make each part\'s transcript again from it, copy the series\' character sheet to every part again, and move stale translation checkpoints aside. parts=[23, 24] rebuilds only those (their numbers as get_series shows them); all parts otherwise. A part waiting in the queue is rebuilt where it waits and keeps its place (no need to pause anything); a part being dubbed is never touched, and the answer says why. Parts already translated are left alone unless force=true (their translation is then discarded, kept beside as a file, and the part continues at the translation on its next run). Reports old and new line counts and speakers per part; each rebuild is in the part\'s edit history.',
+      inputSchema: z.object({
+        projectId: z.string().describe('The series (parent) or any part.'),
+        parts: z.array(z.number().int().min(1)).max(500).optional().describe('Only these part numbers, e.g. [23, 24].'),
+        force: z.boolean().default(false),
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    guarded(async ({ projectId, force }, ctx) => {
-      type P = { projectId: string; index: number; rebuilt: boolean; skipped?: string; oldLines?: number; newLines?: number; speakers?: number };
-      const res = await api.post<{ parts: P[] }>(`/projects/${encodeURIComponent(projectId)}/series/rebuild-parts`, { force }, { signal: ctx.mcpReq.signal, timeoutMs: 300_000 });
-      const why = (s?: string): string =>
-        s === 'translated' ? 'already translated (force=true discards it)' : s === 'running' ? 'being dubbed: pause it first' : 'not found';
+    guarded(async ({ projectId, parts, force }, ctx) => {
+      type P = {
+        projectId: string;
+        index: number;
+        rebuilt: boolean;
+        skipped?: string;
+        reason?: string;
+        queued?: boolean;
+        translationDiscarded?: boolean;
+        oldLines?: number;
+        newLines?: number;
+        speakers?: number;
+      };
+      const res = await api.post<{ parts: P[] }>(
+        `/projects/${encodeURIComponent(projectId)}/series/rebuild-parts`,
+        { force, ...(parts?.length ? { parts } : {}) },
+        { signal: ctx.mcpReq.signal, timeoutMs: 300_000 },
+      );
+      // The app's reason ("is being dubbed now"), with what to do unless it says so itself.
+      const why = (p: P): string =>
+        p.skipped === 'translated'
+          ? 'already translated (force=true discards it)'
+          : p.skipped === 'running'
+            ? `it ${p.reason ?? 'is being dubbed'}${p.reason?.includes(':') ? '' : '; rebuild it once that is done, or pause it first'}`
+            : 'not found';
       return text(
         [
           ...res.parts.map((p) =>
             p.rebuilt
-              ? `- part ${p.index} (${p.projectId}): ${p.oldLines ?? '?'} -> ${p.newLines ?? '?'} lines, ${p.speakers ?? 0} speaker(s)`
-              : `- part ${p.index} (${p.projectId}): left as it was, ${why(p.skipped)}`,
+              ? `- part ${p.index} (${p.projectId}): ${p.oldLines ?? '?'} -> ${p.newLines ?? '?'} lines, ${p.speakers ?? 0} speaker(s)` +
+                `${p.queued ? ', still waiting in the queue at the same place' : ''}${p.translationDiscarded ? ', translation set aside: it continues at the translation' : ''}`
+              : `- part ${p.index} (${p.projectId}): left as it was: ${why(p)}`,
           ),
           'Rebuilt parts translate from their new transcript on their next run (start_dubbing on the series continues them in order).',
         ].join('\n'),
@@ -1253,14 +1317,14 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId }, ctx) => {
-      const res = await api.post<{ parts: { projectId: string; error?: string; queued?: boolean; waiting?: boolean }[] }>(
+      const res = await api.post<{ parts: { projectId: string; index?: number; error?: string; queued?: boolean; waiting?: boolean }[] }>(
         `/projects/${encodeURIComponent(projectId)}/series/start`,
         {},
         { signal: ctx.mcpReq.signal, timeoutMs: 300_000 },
       );
       return text(
         [
-          ...res.parts.map((p, i) => `- part ${i + 1}: ${p.projectId}${p.error ? ` not started: ${p.error}` : p.waiting ? ' (starts when its models arrive)' : p.queued ? ' queued' : ' dubbing'}`),
+          ...res.parts.map((p, i) => `- part ${p.index ?? i + 1}: ${p.projectId}${p.error ? ` not started: ${p.error}` : p.waiting ? ' (starts when its models arrive)' : p.queued ? ' queued' : ' dubbing'}`),
           `Project ids: ${JSON.stringify(res.parts.map((p) => p.projectId))}`,
         ].join('\n'),
       );
@@ -1447,6 +1511,21 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
               .describe('anthropic | openai | gemini | llama-cpp-chat (or the full ids anthropic-translate, openai-translate, gemini-translate); default Claude through Mother Claude when set up, else the first AI set up.'),
             recapSec: z.number().min(0).max(8).default(4),
             autoStart: z.boolean().default(true).describe('Make and dub the parts without stopping for a review of the cuts.'),
+            nameTemplate: z
+              .string()
+              .max(200)
+              .optional()
+              .describe(
+                'How the parts (and their files in saveTo) are named: {series}, {n}, {nn} (two digits), {total}, {title}, e.g. "{series} - Tập {nn}: {title}". Needs {n} or {nn}. Default "<name> - Phần 01".',
+              ),
+            continues: z
+              .string()
+              .optional()
+              .describe(
+                'A later season: the id of the series this one continues (its parent project, or any of its parts). Its name, numbering (part 49 after 48 parts) and name template carry on, its settings are the starting point, and its voices go to the speakers here whose voice matches one of its speakers (once speakers are detected); the others get the voices for minor speakers.',
+              ),
+            partNumberOffset: z.number().int().min(1).optional().describe('Number the parts after this one (with continues: after its last part).'),
+            totalParts: z.number().int().min(1).optional().describe('The total the title cards say ("Phần 49/60"); default: as many as there are.'),
           })
           .optional()
           .describe('Dub a long video as a series of parts (15-20 min by default). Needs an AI set up in Settings. start=true then transcribes the whole video once, plans the cuts and dubs the parts in order; follow with get_series.'),
@@ -1456,13 +1535,18 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     },
     guarded(async ({ videoPath, targetLanguage, sourceLanguage, name, saveTo, settings, series, start }, ctx) => {
       const signal = ctx.mcpReq.signal;
-      const q = new URLSearchParams({ targetLanguage, sourceLanguage: sourceLanguage ?? '' });
+      // A later season starts from the series it continues: its engines, voices, subtitles and look.
+      const continued = series?.continues ? (await getProject(series.continues, signal)).project : undefined;
+      const fromContinued = continued ? continuedSeriesSettings(continued.settings) : {};
+      const spoken = settings?.sourceLanguage ?? sourceLanguage ?? fromContinued.sourceLanguage ?? '';
+      const q = new URLSearchParams({ targetLanguage, sourceLanguage: spoken });
       const defaults = await api.get<{ settings: ProjectSettings; notes?: string[] }>(`/project-defaults?${q}`, { signal });
       const merged: ProjectSettings = {
         ...defaults.settings,
+        ...fromContinued,
         // The app fills what a partial logo or greeting leaves out (branding/sanitize.ts).
         ...((settings ?? {}) as Partial<ProjectSettings>),
-        sourceLanguage: settings?.sourceLanguage ?? sourceLanguage ?? '',
+        sourceLanguage: spoken,
         targetLanguage: settings?.targetLanguage ?? targetLanguage,
       };
       // A series: when Mother Claude drives, Claude through Mother Claude chooses the cuts by default.
@@ -1477,19 +1561,38 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           ...(ai ? { aiProviderId: ai } : {}),
           recapSec: series.recapSec,
           autoStart: series.autoStart,
+          ...(series.nameTemplate?.trim() ? { nameTemplate: series.nameTemplate.trim() } : {}),
+          ...(continued ? { continues: continued.id } : {}),
+          ...(series.partNumberOffset ? { partNumberOffset: series.partNumberOffset } : {}),
+          ...(series.totalParts ? { totalParts: series.totalParts } : {}),
         };
       }
-      const project = await api.post<Project>(
-        '/projects',
-        {
-          name: name ?? path.parse(videoPath).name,
-          inputVideoPath: videoPath,
-          settings: merged,
-          ...(saveTo?.trim() ? { outputDir: saveTo.trim() } : {}),
-          ...(seriesBody ? { series: seriesBody } : {}),
-        },
-        { signal },
-      );
+      // The video is linked into the project, not copied, when it is on the
+      // projects' drive (a hard link; copied across drives), and the app gets
+      // up to 30 minutes when it must copy. The 60 s default failed an 18 GB
+      // file while the app went on and made the project 6.5 minutes later
+      // (claude-dubber report, 2026-11-23).
+      const projectName = name ?? path.parse(videoPath).name;
+      let project: Project;
+      try {
+        project = await whileCreating(ctx, `Creating "${projectName}" (copying the video when it cannot be linked)`, () =>
+          api.post<Project>(
+            '/projects',
+            {
+              name: projectName,
+              inputVideoPath: videoPath,
+              settings: merged,
+              ...(saveTo?.trim() ? { outputDir: saveTo.trim() } : {}),
+              linkInputVideo: true,
+              ...(seriesBody ? { series: seriesBody } : {}),
+            },
+            { signal, timeoutMs: CREATE_PROJECT_TIMEOUT_MS },
+          ),
+        );
+      } catch (err) {
+        if (!createRequestTimedOut(err) || signal.aborted) throw err;
+        return createTimedOut(projectName, videoPath);
+      }
       const id = encodeURIComponent(project.id);
       await api.post(`/projects/${id}/probe`, {}, { signal, timeoutMs: 120_000 });
       const ensured = await api.post<{ installing: boolean; enginePacks?: string[] }>(`/projects/${id}/ensure-resources`, {}, { signal });
@@ -1501,6 +1604,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       ];
       const downloading = [...(ensured.installing ? ['language models'] : []), ...(ensured.enginePacks ?? [])];
       if (downloading.length > 0) lines.push(`Downloading in the background: ${downloading.join(', ')}. start_dubbing waits for them.`);
+      if (continued) lines.push(continuationNote(project, continued));
       if (series) lines.push(seriesGateNote(series.autoStart));
       if (start) lines.push(await startRun(project.id, undefined, signal));
       else lines.push('Next: start_dubbing.');
@@ -1523,12 +1627,12 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     const res = fromStep
       ? await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/retry`, { stepId: fromStep }, { signal })
       : await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/run`, {}, { signal });
-    const parts = (res as { parts?: { projectId: string; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; error?: string }[] }).parts;
+    const parts = (res as { parts?: { projectId: string; index?: number; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; error?: string }[] }).parts;
     if (parts) {
       // A series parent continues as a whole: its parts, in order.
       return [
         'The series continues: its parts, in order.',
-        ...parts.map((p, i) => `- part ${i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`),
+        ...parts.map((p, i) => `- part ${p.index ?? i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`),
         'Follow them with get_series or get_queue.',
       ].join('\n');
     }
@@ -2309,6 +2413,146 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
 
 
   // [tools: series, create, continue]
+
+  /** create_project gives the app this long when it must copy the video (linking is instant). */
+  const CREATE_PROJECT_TIMEOUT_MS = opts.createProjectTimeoutMs ?? 30 * 60_000;
+
+  /** The request ran out of its time (AbortSignal.timeout), as opposed to the caller cancelling it. */
+  function createRequestTimedOut(err: unknown): boolean {
+    return (err as { name?: string } | undefined)?.name === 'TimeoutError';
+  }
+
+  /** An answer that refuses the call, without "Unexpected error" in front of it. */
+  function seriesRefusal(message: string): CallToolResult {
+    return { content: [{ type: 'text', text: message }], isError: true };
+  }
+
+  /**
+   * Keep a client that waits on a long request informed: progress every 15 s
+   * (a client that resets its own timeout on progress keeps the call open).
+   */
+  async function whileCreating<T>(ctx: ServerContext, message: string, work: () => Promise<T>): Promise<T> {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const sec = Math.round((Date.now() - started) / 1000);
+      void progress(ctx, sec, undefined, `${message}: ${sec} s`);
+    }, 15_000);
+    try {
+      return await work();
+    } finally {
+      clearInterval(timer);
+    }
+  }
+
+  /**
+   * create_project ran out of time: the app may still be copying the video and
+   * make the project after all. Said so, with where it will appear, so the
+   * agent looks for it instead of creating it again (a second 18 GB copy).
+   */
+  async function createTimedOut(projectName: string, videoPath: string): Promise<CallToolResult> {
+    const folder = await api
+      .get<{ projectsDir?: string }>('/storage/projects-folder', { timeoutMs: 10_000 })
+      .then((f) => f.projectsDir, () => undefined);
+    const requestId = requestContext.getStore()?.requestId;
+    const waited = CREATE_PROJECT_TIMEOUT_MS >= 60_000 ? `${Math.round(CREATE_PROJECT_TIMEOUT_MS / 60_000)} minutes` : `${Math.ceil(CREATE_PROJECT_TIMEOUT_MS / 1000)} s`;
+    return seriesRefusal(
+      [
+        `VideoDubber is still making "${projectName}" after ${waited}: it is probably still copying ${videoPath} (a video on another drive than the projects is copied, not linked).`,
+        `The project may still appear. Do not create it again, which would copy the video a second time: look for it with list_projects in a few minutes${folder ? ` (its folder will be in ${folder})` : ''}.`,
+        'get_diagnostics shows what the app is doing.',
+        ...(requestId ? [`Log reference: ${requestId}.`] : []),
+      ].join('\n'),
+    );
+  }
+
+  /** What create_project says about a series that continues another. */
+  function continuationNote(project: Project, continued: Project): string {
+    const s = project.series?.role === 'parent' ? project.series.settings : undefined;
+    return (
+      `Continues "${s?.seriesName ?? continued.name}": its parts are numbered from ${(s?.partNumberOffset ?? 0) + 1}` +
+      `${s?.nameTemplate ? ` and named "${s.nameTemplate}"` : ''}; its settings started from that series'. ` +
+      'Its voices go to the speakers here whose voice matches one of its speakers, once speakers are detected (the get_series notes say which); the others get the voices for minor speakers (cast_voices).'
+    );
+  }
+
+  server.registerTool(
+    'edit_part',
+    {
+      title: 'Rename or retitle a part of a series',
+      description:
+        'After the parts are made: rename a part (its project, and its finished files when they are saved in a chosen folder), change its title (drawn on its title card) or its one-sentence summary (for the post), without redoing its dub. A part already rendered with the old title is set to render again, only the render: start_series (or start_dubbing on the part) does it. A part waiting in the queue keeps its place; a part being dubbed is refused. Before the parts are made, use set_split_plan.',
+      inputSchema: z.object({
+        projectId: z.string().describe("The part's project id, or the series' id together with `part`."),
+        part: z.number().int().min(1).optional().describe('The part number as get_series shows it, when projectId is the series.'),
+        name: z.string().max(200).optional(),
+        title: z.string().max(120).optional().describe('An empty string removes the title.'),
+        summary: z.string().max(600).optional(),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, part, name, title, summary }, ctx) => {
+      const signal = ctx.mcpReq.signal;
+      if (name === undefined && title === undefined && summary === undefined) return seriesRefusal('Give the part a new name, title or summary.');
+      let id = projectId;
+      if (part !== undefined) {
+        const v = await api.get<SeriesViewLite>(`/projects/${encodeURIComponent(projectId)}/series`, { signal });
+        const p = v.parts.find((x) => x.index === part);
+        if (!p) return seriesRefusal(`"${v.name}" has no part ${part}: its parts are ${v.parts[0]?.index ?? 1}–${v.parts.at(-1)?.index ?? 0}.`);
+        if (!p.projectId) return seriesRefusal(`The parts of "${v.name}" are not made yet: change their titles with set_split_plan.`);
+        id = p.projectId;
+      }
+      const res = await api.patch<{ project: Project; renderAgain: boolean }>(
+        `/projects/${encodeURIComponent(id)}/series-part`,
+        { ...(name !== undefined ? { name } : {}), ...(title !== undefined ? { title } : {}), ...(summary !== undefined ? { summary } : {}) },
+        { signal },
+      );
+      const info = res.project.series?.role === 'part' ? res.project.series : undefined;
+      return text(
+        [
+          `Part ${info?.index ?? '?'} (${res.project.id}): "${res.project.name}"${info?.title ? `, titled "${info.title}"` : ', no title'}${info?.summary ? ` — ${info.summary}` : ''}.`,
+          `Saves to: ${projectOutputVideoPath(res.project)}`,
+          res.renderAgain
+            ? 'Its video shows the old title, so it is set to render again (only the render): start_series, or start_dubbing on this part, does it.'
+            : 'Nothing of its dub had to be redone.',
+        ].join('\n'),
+      );
+    }),
+  );
+
+  server.registerTool(
+    'replan_series',
+    {
+      title: 'Plan a series again',
+      description:
+        "Before the parts are made (review, or a failed plan): choose the cuts and name the parts again with the series' AI (after it failed, another AI was set up, or the transcript was fixed). keepTitles=true keeps the titles and summaries written in review (set_split_plan, the series page) on the new parts that cover the same stretch of video. It waits up to ~45 s for the new plan, then answers; follow a longer one with get_series. A series set to start by itself makes and starts its parts after the new plan when its analysis is clean.",
+      inputSchema: z.object({ projectId: z.string().describe('The series, or any of its parts.'), keepTitles: z.boolean().default(false) }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    guarded(async ({ projectId, keepTitles }, ctx) => {
+      const signal = ctx.mcpReq.signal;
+      const url = `/projects/${encodeURIComponent(projectId)}/series`;
+      const before = await api.get<SeriesViewLite>(url, { signal });
+      await api.post(`${url}/replan`, { keepTitles }, { signal });
+      const started = Date.now();
+      let now = before;
+      let seenPlanning = false;
+      // Done once a new plan is written, or this planning failed (not an older failure).
+      const fresh = (): boolean => now.plan?.createdAt !== undefined && now.plan.createdAt !== before.plan?.createdAt;
+      const failedNow = (): boolean =>
+        now.state === 'failed' && (seenPlanning || before.state !== 'failed' || now.error?.message !== before.error?.message);
+      while (Date.now() - started < workBudgetMs && !signal.aborted) {
+        await sleep(pollMs, signal);
+        now = await api.get<SeriesViewLite>(url, { signal });
+        void progress(ctx, Math.round((Date.now() - started) / 1000), undefined, `Planning "${now.name}" (${now.state})`);
+        if (now.state === 'planning') seenPlanning = true;
+        else if (fresh() || failedNow()) break;
+      }
+      if (now.state === 'planning' || (!fresh() && !failedNow())) {
+        return text(`"${now.name}" is being planned again (${now.state}). Follow it with get_series.`);
+      }
+      return text(describeSeries(now));
+    }),
+  );
 
 
   // [tools: join videos]

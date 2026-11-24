@@ -154,6 +154,7 @@ import { isStopped, JobFeed, type JobLine } from './jobFeed.js';
 import { cleanPresetInput, PresetStore } from './workspace/presetStore.js';
 import { BrandKit } from './branding/brandKit.js';
 import { SeriesService } from './series/seriesService.js';
+import { registerSeriesRoutes } from './series/seriesRoutes.js';
 import type { SeriesChat } from './series/seriesAi.js';
 import type { AnalysisChat } from './providers/translation/translationContext.js';
 import { isTranslationRefiner } from './providers/types.js';
@@ -1773,6 +1774,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     sceneChanges: (video, spans) => (media.detectSceneChanges ? media.detectSceneChanges(video, spans) : Promise.resolve([])),
     pause: (id) => orchestrator.pauseJob(id),
     isBusy: (id) => orchestrator.busyProjects().includes(id),
+    // A queued part is rebuilt or renamed where it waits (0.18.0).
+    workOn: (id) => orchestrator.workOn(id),
+    holdQueue: (fn) => orchestrator.whileQueueHeld(fn),
+    renameProject: (id, name) => orchestrator.renameProject(id, name),
     logger: { info: (m) => console.info(`[series] ${m}`), warn: (m) => console.warn(`[series] ${m}`) },
   });
 
@@ -1786,17 +1791,19 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     apply: (partId: string) => Promise<unknown>,
   ): Promise<{ projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[]> {
     const ids = await series.partIdsOf(projectId);
+    // Parts by the numbers they are shown with (a continued series starts at its offset + 1).
+    const offset = ids.length > 0 ? await series.numberOffsetOf(projectId) : 0;
     const out: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[] = [];
     for (const [i, id] of ids.entries()) {
       if (orchestrator.busyProjects().includes(id)) {
-        out.push({ projectId: id, index: i + 1, ok: false, skipped: 'dubbing now: pause it (or the series), then apply again' });
+        out.push({ projectId: id, index: offset + i + 1, ok: false, skipped: 'dubbing now: pause it (or the series), then apply again' });
         continue;
       }
       try {
         await apply(id);
-        out.push({ projectId: id, index: i + 1, ok: true });
+        out.push({ projectId: id, index: offset + i + 1, ok: true });
       } catch (err) {
-        out.push({ projectId: id, index: i + 1, ok: false, error: toAppError(err).message });
+        out.push({ projectId: id, index: offset + i + 1, ok: false, error: toAppError(err).message });
       }
     }
     return out;
@@ -1888,12 +1895,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
   );
 
-  // Make the parts' transcripts again from the series transcript (series/seriesService.ts rebuildParts).
+  // Make the parts' transcripts again from the series transcript (series/seriesService.ts rebuildParts):
+  // `parts` = only these part numbers; a queued part is rebuilt where it waits.
   app.post(
     '/projects/:id/series/rebuild-parts',
-    async (req: FastifyRequest<{ Params: { id: string }; Body: { force?: boolean } }>, reply) => {
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { force?: boolean; parts?: unknown } }>, reply) => {
       try {
-        return { parts: await series.rebuildParts(req.params.id, { force: req.body?.force === true }) };
+        const parts = Array.isArray(req.body?.parts) ? req.body.parts.map(Number).filter((n) => Number.isInteger(n) && n > 0) : undefined;
+        return { parts: await series.rebuildParts(req.params.id, { force: req.body?.force === true, ...(parts?.length ? { parts } : {}) }) };
       } catch (err) {
         return sendError(reply, err);
       }
@@ -1943,14 +1952,15 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   });
 
-  // Plan the cuts again (the AI failed, or another AI was set up since).
-  app.post('/projects/:id/series/replan', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+  // Plan the cuts again (the AI failed, or another AI was set up since);
+  // `keepTitles` keeps the titles and summaries written in review.
+  app.post('/projects/:id/series/replan', async (req: FastifyRequest<{ Params: { id: string }; Body: { keepTitles?: boolean } }>, reply) => {
     try {
       const view = await series.view(req.params.id);
       if (view.parts.some((p) => p.projectId)) {
         return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: 'The parts are already made.' } });
       }
-      void series.analysed(view.parentId);
+      void series.analysed(view.parentId, { again: true, keepTitles: req.body?.keepTitles === true });
       return reply.status(202).send({ planning: true });
     } catch (err) {
       return sendError(reply, err);
@@ -2188,9 +2198,18 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         const minMinutes = body.series.minMinutes ?? 15;
         const maxMinutes = body.series.maxMinutes ?? 20;
         const longer = (body.series.longerThanMinutes ?? maxMinutes * 1.5) * 60;
+        const nameTemplate = body.series.nameTemplate?.trim();
+        if (nameTemplate) series.checkNameTemplate(nameTemplate);
         seriesFor = (durationSec) =>
           durationSec !== undefined && durationSec > longer
-            ? { minMinutes, maxMinutes, aiProviderId: chosen.id, recapSec: body.series!.recapSec ?? 4, autoStart: body.series!.autoStart ?? true }
+            ? {
+                minMinutes,
+                maxMinutes,
+                aiProviderId: chosen.id,
+                recapSec: body.series!.recapSec ?? 4,
+                autoStart: body.series!.autoStart ?? true,
+                ...(nameTemplate ? { nameTemplate } : {}),
+              }
             : undefined;
       }
       const results: DubDownloadResult[] = [];
@@ -2716,6 +2735,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           });
         }
         body.series = { ...body.series, aiProviderId: chosen.id };
+        // Its part name template checked; continuing another series: that one's name and numbers.
+        body.series = await series.prepareSeries(body.series);
       }
       const fromDownload =
         typeof body?.inputVideoPath === 'string'
@@ -2784,6 +2805,16 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           return reply
             .status(400)
             .send({ error: { code: 'UNKNOWN', message: 'Expected { name, settings, inputVideoPath? }.' } });
+        }
+        // "Split into parts" as the form now holds it: checked as at creation.
+        if (body.series) {
+          const chosen = pickSeriesAi(await seriesAiOptions(), body.series.aiProviderId);
+          if (!chosen) {
+            return reply.status(400).send({
+              error: { code: 'CLOUD_CREDENTIALS_MISSING', message: 'Splitting a video into parts needs an AI set up in Settings.' },
+            });
+          }
+          body.series = await series.prepareSeries({ ...body.series, aiProviderId: chosen.id });
         }
         return await orchestrator.reviseProject(req.params.id, body);
       } catch (err) {
@@ -3448,6 +3479,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
 
   // [routes: series, create, continue]
+  // A part renamed or retitled after it was made; the series a new one can continue.
+  registerSeriesRoutes(app, { series, sendError });
 
 
   // [routes: join videos]

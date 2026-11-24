@@ -54,13 +54,31 @@ export const DEFAULT_SERIES: DraftSeries = {
   ai: '',
   recapSec: 4,
   autoStart: false,
+  nameTemplate: '',
+  continues: '',
+  total: 0,
 };
 
-/** The series settings Continue sends, or undefined when the video is not split. */
+/**
+ * The series settings Continue sends, or undefined when the video is not
+ * split. A part name template, the series it continues and a total only when
+ * set: without them a series is named and numbered as it always was.
+ */
 export function seriesRequestOf(s: DraftSeries): CreateProjectInput['series'] | undefined {
   if (!s.split || !s.ai) return undefined;
   const [min = s.min, max = s.max] = s.length === 'custom' ? [s.min, s.max] : s.length.split('-').map(Number);
-  return { minMinutes: min, maxMinutes: Math.max(min, max), aiProviderId: s.ai, recapSec: s.recapSec, autoStart: s.autoStart };
+  const nameTemplate = s.nameTemplate?.trim();
+  const total = Math.floor(Number(s.total) || 0);
+  return {
+    minMinutes: min,
+    maxMinutes: Math.max(min, max),
+    aiProviderId: s.ai,
+    recapSec: s.recapSec,
+    autoStart: s.autoStart,
+    ...(nameTemplate ? { nameTemplate } : {}),
+    ...(s.continues ? { continues: s.continues } : {}),
+    ...(total > 0 ? { totalParts: total } : {}),
+  };
 }
 
 /**

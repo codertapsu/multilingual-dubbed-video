@@ -18,6 +18,7 @@ import {
   toWhisperLanguage,
   segmentsToVtt,
   pausePipelineState,
+  chosenOutputBaseName,
   projectOutputFiles,
   projectOutputVideoPath,
   sanitizeSpeakerVoices,
@@ -359,6 +360,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   private closing = false;
   /** Projects whose finished files are moving to another folder (setProjectOutputDir). */
   private readonly movingOutput = new Set<string>();
+  /** Callers holding the queue (whileQueueHeld): while any does, nothing queued starts. */
+  private queueHolds = 0;
   private pumpAgain = false;
   /** Memoized hardware capacity (specs don't change while the app runs). */
   private capacityPromise: Promise<CapacityRecommendation> | undefined;
@@ -440,6 +443,38 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const editing = [...this.laneRefs.keys()].filter((owner) => owner.startsWith('editor:')).map((owner) => owner.slice('editor:'.length));
     const detecting = [...this.speakerJobs].filter(([, j]) => j.state === 'running').map(([id]) => id);
     return [...new Set([...this.running.keys(), ...this.queued, ...this.movingOutput, ...editing, ...detecting, ...this.lineJobs.keys()])];
+  }
+
+  /**
+   * What works on a project now, the most binding first ({@link busyProjects}
+   * with its reason): a series part that only waits in the queue is rebuilt
+   * or renamed where it waits and keeps its turn (series/seriesService.ts);
+   * anything else working on it leaves it alone.
+   */
+  workOn(projectId: string): 'running' | 'moving' | 'editing' | 'detecting' | 'queued' | undefined {
+    if (this.running.has(projectId)) return 'running';
+    if (this.movingOutput.has(projectId)) return 'moving';
+    if (this.laneRefs.has(`editor:${projectId}`)) return 'editing';
+    if (this.speakerJobs.get(projectId)?.state === 'running') return 'detecting';
+    if (this.queued.has(projectId)) return 'queued';
+    return undefined;
+  }
+
+  /**
+   * Run `fn` while nothing queued starts, then let the queue go on. A part
+   * changed where it waits (its transcript rebuilt, its name and files
+   * changed) must not start half-changed, and taking it out of the queue to
+   * change it lost its turn: the agent of the 27.8-hour series paused all 48
+   * parts to rebuild two. Only seconds of file writes, never a run.
+   */
+  async whileQueueHeld<T>(fn: () => Promise<T>): Promise<T> {
+    this.queueHolds += 1;
+    try {
+      return await fn();
+    } finally {
+      this.queueHolds -= 1;
+      if (this.queueHolds === 0) void this.pump();
+    }
   }
 
   /**
@@ -2335,7 +2370,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
   /** One admission pass. Returns true when at least one run was dispatched. */
   private async pumpOnce(): Promise<boolean> {
-    if (this.queue.length === 0) return false;
+    // Held (whileQueueHeld): its release pumps again.
+    if (this.queue.length === 0 || this.queueHolds > 0) return false;
 
     const capacity = await this.effectiveCapacity();
     const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
@@ -2408,6 +2444,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         this.forget(projectId);
         continue;
       }
+      // Held since this pass began: it stays queued, and the release pumps again.
+      if (this.queueHolds > 0) return dispatched;
+      // Read again: a part changed where it waited (whileQueueHeld) starts as it is now.
+      project = await this.deps.store.getProject(projectId).catch(() => project);
+      if (this.queueHolds > 0 || !this.queued.has(projectId) || this.running.has(projectId)) return dispatched;
       const fromStep = project.queue?.fromStep;
       this.forget(projectId);
       this.startRun({ ...project, queue: undefined }, fromStep);
@@ -2842,6 +2883,37 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       };
       if (samePath(target, paths.renderDir)) return await relocate(undefined);
       return await this.deps.store.withOutputName(target, current.name, current.settings.targetLanguage, projectId, relocate);
+    } finally {
+      this.movingOutput.delete(projectId);
+    }
+  }
+
+  /**
+   * A new name for a project that may have run already (a series part renamed
+   * after it was made: series/seriesService.ts editPart). Nothing it has done
+   * is reset. In a chosen folder its files follow the name, uniquely there,
+   * and files already rendered are renamed along, as when the folder changes;
+   * in its own folder they are output.* and stay. Refused while it runs; a
+   * queued caller holds the queue (whileQueueHeld).
+   */
+  async renameProject(projectId: string, name: string): Promise<Project> {
+    this.assertNotRunning(projectId, 'rename the project');
+    this.assertNotMoving(projectId);
+    const current = await this.deps.store.getProject(projectId);
+    if (current.name === name) return current;
+    const lang = current.settings.targetLanguage;
+    // Only the name changes when its files keep theirs: its own folder, or a
+    // new name that makes the same file name ("Phần 1" → "phần 1" on Windows).
+    const sameFiles = !current.outputFileName || chosenOutputBaseName(name, lang, () => false).toLowerCase() === current.outputFileName.toLowerCase();
+    if (sameFiles) return this.deps.store.saveProject({ ...current, name });
+    this.movingOutput.add(projectId);
+    try {
+      return await this.deps.store.withOutputName(current.outputDir, name, lang, projectId, async (outputFileName) => {
+        const before = await this.deps.store.getProject(projectId);
+        const to = projectOutputFiles({ outputDir: before.outputDir, outputFileName });
+        await moveOutputFiles(projectOutputFiles(before).map((from, i) => [from, to[i]!] as const));
+        return this.deps.store.saveProject({ ...(await this.deps.store.getProject(projectId)), name, outputFileName });
+      });
     } finally {
       this.movingOutput.delete(projectId);
     }

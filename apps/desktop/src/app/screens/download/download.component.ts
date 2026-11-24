@@ -34,6 +34,7 @@ import type {
 import { bilibiliLoginFrom, MAX_COOKIE_FILE_BYTES, type CookieFileProblem } from './cookie-file';
 import { dubResultRows, type DubResultRow } from './dub-results';
 import { sourceErrorKeys } from './source-errors';
+import { PartNameFieldComponent } from '../../shared/series/part-name-field.component';
 
 /**
  * DownloadComponent (route "download") — fetch source videos to dub.
@@ -50,7 +51,7 @@ import { sourceErrorKeys } from './source-errors';
 @Component({
   selector: 'vd-download',
   standalone: true,
-  imports: [LanguageNamePipe, FormsModule, RouterLink, TranslatePipe, ErrorBannerComponent],
+  imports: [LanguageNamePipe, FormsModule, RouterLink, TranslatePipe, ErrorBannerComponent, PartNameFieldComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './download.component.html',
   styleUrl: './download.component.scss',
@@ -117,6 +118,14 @@ export class DownloadComponent implements OnInit, OnDestroy {
   protected readonly dubSplitAi = signal('');
   /** Only videos longer than this are split: below it, two parts would be shorter than the shortest part asked for. */
   protected readonly dubSplitAbove = computed(() => Math.round(Number(this.dubSplitLength().split('-')[1]) * 1.5));
+  /** How the parts of each split video are named ('' = the usual names). */
+  protected readonly dubSplitTemplate = signal('');
+  /** The part names' example: the first ticked video, in the preset's language. */
+  protected readonly dubExampleName = computed(() => {
+    const first = this.selectedDone()[0];
+    return first ? this.titleOf(first) : '';
+  });
+  protected readonly dubTargetLanguage = computed(() => this.presets().find((p) => p.id === this.presetId())?.targetLanguage ?? 'vi');
 
   /** Only multi-part videos need a picker; a single part is implied. */
   protected readonly showPartPicker = computed(() => (this.video()?.parts.length ?? 0) > 1);
@@ -486,7 +495,16 @@ export class DownloadComponent implements OnInit, OnDestroy {
         presetId: this.presetId(),
         start: this.dubStart(),
         ...(split
-          ? { series: { minMinutes: min!, maxMinutes: max!, aiProviderId: this.dubSplitAi(), longerThanMinutes: this.dubSplitAbove(), autoStart: true } }
+          ? {
+              series: {
+                minMinutes: min!,
+                maxMinutes: max!,
+                aiProviderId: this.dubSplitAi(),
+                longerThanMinutes: this.dubSplitAbove(),
+                autoStart: true,
+                ...(this.dubSplitTemplate().trim() ? { nameTemplate: this.dubSplitTemplate().trim() } : {}),
+              },
+            }
           : {}),
       });
       this.dubResults.set(dubResultRows(results, this.items()));

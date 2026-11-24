@@ -10,7 +10,7 @@ import type { AppError } from '../../core/models';
 import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.component';
 import { StatusBadgeComponent } from '../../shared/status-badge/status-badge.component';
 import { formatClock, parseClock } from '../../shared/branding/branding-form.component';
-import { partBadge, partStarts, seriesAiName, startReport, type StartReportLine } from './series-view';
+import { parsePartList, partBadge, partStarts, rebuildReportLine, seriesAiName, startReport, type StartReportLine } from './series-view';
 
 interface Row {
   index: number;
@@ -18,9 +18,20 @@ interface Row {
   endMs: number;
   title: string;
   summary: string;
+  /** The part's project name, once made. */
+  name?: string;
   projectId?: string;
   status?: string;
   progressPercent?: number;
+}
+
+/** A made part being renamed or retitled (one at a time). */
+interface PartEdit {
+  index: number;
+  projectId: string;
+  name: string;
+  title: string;
+  summary: string;
 }
 
 /**
@@ -72,6 +83,16 @@ interface Row {
               </p>
             }
           }
+          <!-- A later season: its name and numbers carry on from the series it continues. -->
+          @if (v.continues; as c) {
+            <p class="muted">
+              {{ 'series.continues-line' | translate: { name: c.name, first: (v.settings.partNumberOffset ?? 0) + 1 } }}
+              <a [routerLink]="['/project', c.parentId, 'series']">{{ 'series.open' | translate }}</a>
+            </p>
+          }
+          @if (v.settings.nameTemplate; as t) {
+            <p class="muted">{{ 'series.name-template-line' | translate: { template: t } }}</p>
+          }
           <!-- Asked to start by itself, it stopped: the analysis was not clean (seriesService.seriesReviewReasons). -->
           @if (v.reviewReasons?.length) {
             <div class="banner-warning stack-sm" role="status">
@@ -116,15 +137,38 @@ interface Row {
                   @if (v.state === 'review') {
                     <input type="text" [(ngModel)]="r.title" [placeholder]="'series.title-ph' | translate" />
                     <input type="text" [(ngModel)]="r.summary" [placeholder]="'series.summary-ph' | translate" />
+                  } @else if (editing()?.index === r.index) {
+                    <!-- A made part renamed or retitled: its dub is kept (PATCH /series-part). -->
+                    @let e = editing()!;
+                    <label class="stack-sm">
+                      <span class="label">{{ 'series.edit-name' | translate }}</span>
+                      <input type="text" maxlength="200" [ngModel]="e.name" (ngModelChange)="patchEdit('name', $event)" />
+                    </label>
+                    <input type="text" maxlength="120" [ngModel]="e.title" (ngModelChange)="patchEdit('title', $event)" [placeholder]="'series.title-ph' | translate" />
+                    <input type="text" maxlength="600" [ngModel]="e.summary" (ngModelChange)="patchEdit('summary', $event)" [placeholder]="'series.summary-ph' | translate" />
+                    <p class="hint muted">{{ 'series.edit-hint' | translate }}</p>
+                    <div class="row">
+                      <button type="button" class="btn btn-primary btn-sm" (click)="saveEdit()" [disabled]="busy() || !e.name.trim()">{{ 'series.edit-save' | translate }}</button>
+                      <button type="button" class="btn btn-sm" (click)="editing.set(null)" [disabled]="busy()">{{ 'series.edit-cancel' | translate }}</button>
+                    </div>
                   } @else {
                     <span>{{ r.title }}</span>
+                    @if (r.name) {
+                      <span class="muted part-name">{{ r.name }}</span>
+                    }
                   }
                   @if (r.projectId) {
                     <div class="row links">
                       <a [routerLink]="['/project', r.projectId, 'processing']">{{ 'series.open-progress' | translate }}</a>
                       <a [routerLink]="['/project', r.projectId, 'editor']">{{ 'series.open-editor' | translate }}</a>
                       <a [routerLink]="['/project', r.projectId, 'export']">{{ 'series.open-export' | translate }}</a>
+                      @if (editing()?.index !== r.index) {
+                        <button type="button" class="link-btn" (click)="startEdit(r)" [disabled]="busy()">{{ 'series.edit-part' | translate }}</button>
+                      }
                     </div>
+                  }
+                  @if (editNotice()?.index === r.index) {
+                    <p class="hint" role="status">{{ editNotice()!.key | translate: { n: r.index } }}</p>
                   }
                 </li>
               }
@@ -134,6 +178,15 @@ interface Row {
                 <button type="button" class="btn" (click)="save()" [disabled]="busy()">{{ 'series.save' | translate }}</button>
                 <button type="button" class="btn btn-primary" (click)="makeAndStart()" [disabled]="busy()">{{ 'series.make-start' | translate }}</button>
               </div>
+              <!-- Plan again (another AI, a fixed transcript), keeping what was written here. -->
+              <div class="row">
+                <button type="button" class="btn" (click)="replan(keepTitles)" [disabled]="busy()">{{ 'series.try-again' | translate }}</button>
+                <label class="row inline">
+                  <input type="checkbox" [(ngModel)]="keepTitles" />
+                  <span>{{ 'series.replan-keep' | translate }}</span>
+                </label>
+              </div>
+              <p class="hint muted">{{ 'series.replan-hint' | translate }}</p>
             }
             @if (v.state === 'parts') {
               <div class="row">
@@ -168,12 +221,25 @@ interface Row {
               </div>
               <div class="stack-sm">
                 <div class="row">
-                  <button type="button" class="btn" (click)="rebuild()" [disabled]="busy()">{{ 'series.rebuild' | translate }}</button>
+                  <button type="button" class="btn" (click)="rebuild()" [disabled]="busy() || rebuildPartsInvalid()">{{ 'series.rebuild' | translate }}</button>
+                  <label class="row inline">
+                    <span class="muted">{{ 'series.rebuild-parts' | translate }}</span>
+                    <input
+                      type="text"
+                      class="parts-input"
+                      [ngModel]="rebuildPartsText()"
+                      (ngModelChange)="rebuildPartsText.set($event)"
+                      [placeholder]="'series.rebuild-parts-ph' | translate"
+                    />
+                  </label>
                   <label class="row inline">
                     <input type="checkbox" [(ngModel)]="rebuildForce" />
                     <span>{{ 'series.rebuild-force' | translate }}</span>
                   </label>
                 </div>
+                @if (rebuildPartsInvalid()) {
+                  <p class="hint warn-text" role="alert">{{ 'series.rebuild-parts-invalid' | translate }}</p>
+                }
                 <p class="hint muted">{{ 'series.rebuild-hint' | translate }}</p>
               </div>
               @if (report().length > 0) {
@@ -238,6 +304,25 @@ interface Row {
       .warn-text {
         color: var(--vd-warning);
       }
+      .part-name {
+        font-size: 0.85rem;
+        overflow-wrap: anywhere;
+      }
+      .parts-input {
+        width: 220px;
+      }
+      .link-btn {
+        background: none;
+        border: none;
+        padding: 0;
+        color: var(--vd-primary);
+        cursor: pointer;
+        font: inherit;
+      }
+      .link-btn:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
     `,
   ],
 })
@@ -271,6 +356,15 @@ export class SeriesComponent implements OnInit, OnDestroy {
   });
   protected readonly badge = partBadge;
   protected rebuildForce = false;
+  /** "Only these parts" for a rebuild ('' = every part). */
+  protected readonly rebuildPartsText = signal('');
+  protected readonly rebuildPartsInvalid = computed(() => parsePartList(this.rebuildPartsText()) === null);
+  /** Planning again keeps the titles written in review. */
+  protected keepTitles = true;
+  /** The made part being renamed or retitled. */
+  protected readonly editing = signal<PartEdit | null>(null);
+  /** What saving a part did, said under it. */
+  protected readonly editNotice = signal<{ index: number; key: string } | null>(null);
   private readonly translate = inject(TranslateService);
   private timer: ReturnType<typeof setInterval> | undefined;
 
@@ -315,7 +409,8 @@ export class SeriesComponent implements OnInit, OnDestroy {
               startText: formatClock(p.startMs),
               endMs: p.endMs,
               title: p.title,
-              summary: planned?.summary ?? '',
+              summary: p.summary ?? planned?.summary ?? '',
+              ...(p.name ? { name: p.name } : {}),
               ...(p.projectId ? { projectId: p.projectId } : {}),
               ...(p.status ? { status: p.status } : {}),
               ...(p.progressPercent !== undefined ? { progressPercent: p.progressPercent } : {}),
@@ -406,25 +501,65 @@ export class SeriesComponent implements OnInit, OnDestroy {
     });
   }
 
-  /** Make the parts' transcripts again from the series transcript (after it was fixed). */
+  /**
+   * Make the parts' transcripts again from the series transcript (after it
+   * was fixed): only the parts typed, else all; a part waiting in the queue is
+   * rebuilt where it waits.
+   */
   protected rebuild(): Promise<boolean> {
+    const parts = parsePartList(this.rebuildPartsText());
+    if (parts === null) return Promise.resolve(false);
     return this.run(async () => {
-      const res = await this.ipc.rebuildSeriesParts(this.view()?.parentId ?? this.id(), this.rebuildForce);
+      const res = await this.ipc.rebuildSeriesParts(this.view()?.parentId ?? this.id(), this.rebuildForce, parts);
       this.report.set(
-        res.parts.map((p) =>
-          p.rebuilt
-            ? this.translate.instant('series.report-rebuilt', { n: p.index, old: p.oldLines ?? 0, lines: p.newLines ?? 0, speakers: p.speakers ?? 0 })
-            : this.translate.instant(`series.report-kept-${p.skipped ?? 'missing'}`, { n: p.index }),
-        ),
+        res.parts.map((p) => {
+          const line = rebuildReportLine(p);
+          return this.translate.instant(line.key, line.params);
+        }),
       );
       await this.load(true);
     });
   }
 
-  protected replan(): Promise<boolean> {
+  /** Plan the cuts again; `keepTitles` keeps the titles written in review. */
+  protected replan(keepTitles = false): Promise<boolean> {
     return this.run(async () => {
       this.planErrorHidden.set(false);
-      await this.ipc.replanSeries(this.id());
+      await this.ipc.replanSeries(this.id(), keepTitles);
+      await this.load(true);
+    });
+  }
+
+  /** Rename or retitle a made part (one at a time). */
+  protected startEdit(r: Row): void {
+    if (!r.projectId) return;
+    this.editNotice.set(null);
+    this.editing.set({ index: r.index, projectId: r.projectId, name: r.name ?? '', title: r.title, summary: r.summary });
+  }
+
+  protected patchEdit(field: 'name' | 'title' | 'summary', value: string): void {
+    const e = this.editing();
+    if (e) this.editing.set({ ...e, [field]: value });
+  }
+
+  /** Save what changed of the part being edited; its dub is kept, a new title renders it again. */
+  protected saveEdit(): Promise<boolean> {
+    const e = this.editing();
+    const row = this.rows().find((r) => r.index === e?.index);
+    if (!e || !row) return Promise.resolve(false);
+    const edit = {
+      ...(e.name.trim() !== (row.name ?? '') ? { name: e.name.trim() } : {}),
+      ...(e.title.trim() !== row.title ? { title: e.title.trim() } : {}),
+      ...(e.summary.trim() !== row.summary ? { summary: e.summary.trim() } : {}),
+    };
+    if (Object.keys(edit).length === 0) {
+      this.editing.set(null);
+      return Promise.resolve(true);
+    }
+    return this.run(async () => {
+      const res = await this.ipc.editSeriesPart(e.projectId, edit);
+      this.editing.set(null);
+      this.editNotice.set({ index: e.index, key: res.renderAgain ? 'series.edit-render-again' : 'series.edit-saved' });
       await this.load(true);
     });
   }

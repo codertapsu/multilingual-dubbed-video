@@ -165,6 +165,8 @@ describe('VideoDubber MCP server', () => {
         'set_split_plan', 'start_series',
         // Production hardening (0.17.0).
         'get_queue', 'get_diagnostics', 'rebuild_parts', 'replace_lines', 'retranscribe_range', 'export_transcript', 'get_speakers', 'detect_speakers', 'cast_voices',
+        // 0.18.0: series, create, continue.
+        'edit_part', 'replan_series',
       ].sort(),
     );
     for (const t of tools) {

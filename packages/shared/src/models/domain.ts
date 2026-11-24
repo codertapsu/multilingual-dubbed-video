@@ -615,4 +615,11 @@ export interface ReviseProjectInput {
   name: string;
   settings: ProjectSettings;
   inputVideoPath?: string;
+  /**
+   * "Split into parts" as the form now holds it: settings replace the old
+   * ones, null makes it a single video again. Absent: unchanged (a client
+   * older than 0.18.0). The first Back-then-Continue kept whatever the first
+   * Continue had chosen, unticking the box included.
+   */
+  series?: SeriesSettings | null;
 }

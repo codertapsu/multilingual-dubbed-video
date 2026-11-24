@@ -16,6 +16,12 @@ export interface DraftSeries {
   ai: string;
   recapSec: number;
   autoStart: boolean;
+  /** How the parts are named ('' = the usual "<name> - Phần 01"). Absent in drafts kept before 0.18.0. */
+  nameTemplate?: string;
+  /** The series this one continues (its parent project id; '' = a new series). */
+  continues?: string;
+  /** The total the title cards say (0 = as many as there are). */
+  total?: number;
 }
 
 /** What the New project form held when the user left it. */

@@ -138,6 +138,20 @@ describe('seriesRequestOf', () => {
     });
     expect(seriesRequestOf({ ...on, length: 'custom', min: 40, max: 20 })).toMatchObject({ minMinutes: 40, maxMinutes: 40 });
   });
+
+  it('sends a part name template, the series it continues and a total only when set', () => {
+    const on = { ...DEFAULT_SERIES, split: true, ai: 'anthropic-translate' };
+    expect(seriesRequestOf({ ...on, nameTemplate: ' {series} - Tập {nn} ', continues: 'proj_s1', total: 60 })).toMatchObject({
+      nameTemplate: '{series} - Tập {nn}',
+      continues: 'proj_s1',
+      totalParts: 60,
+    });
+    const plain = seriesRequestOf({ ...on, nameTemplate: '  ', continues: '', total: 0 })!;
+    expect(['nameTemplate', 'continues', 'totalParts'].some((k) => k in plain)).toBe(false);
+    // A draft kept before these fields existed.
+    const { nameTemplate: _t, continues: _c, total: _n, ...old } = on;
+    expect(seriesRequestOf(old)).toEqual(seriesRequestOf({ ...on }));
+  });
 });
 
 describe('continueBlocker', () => {

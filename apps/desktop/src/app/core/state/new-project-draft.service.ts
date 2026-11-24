@@ -40,6 +40,18 @@ export interface NewProjectDraft {
    * form's own links (Add key), to come back to it.
    */
   created?: { projectId: string; fromVideo: string; step: 1 | 2 };
+  /** "Join several videos" (absent: one video, as before). */
+  join?: DraftJoin;
+}
+
+/** "Join several videos" as the form holds it (screens/new-project-wizard/join-videos). */
+export interface DraftJoin {
+  /** The form joins several videos into one project instead of dubbing one. */
+  on: boolean;
+  /** The files, in the order they play. */
+  paths: string[];
+  /** The user agreed to encode the picture again (asked only when the files differ). */
+  reencode: boolean;
 }
 
 /**

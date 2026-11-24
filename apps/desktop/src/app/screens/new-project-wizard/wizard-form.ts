@@ -5,7 +5,7 @@
  * wizard-form.spec.ts can hold each rule to the incident that made it.
  */
 import type { CreateProjectInput, ProjectSettings } from '../../core/models';
-import type { DraftSeries, NewProjectDraft } from '../../core/state/new-project-draft.service';
+import type { DraftJoin, DraftSeries, NewProjectDraft } from '../../core/state/new-project-draft.service';
 
 /** Everything the form shows, as plain values. */
 export interface DraftForm {
@@ -24,6 +24,8 @@ export interface DraftForm {
   projectId: string | null;
   /** The video that project holds a copy of. */
   createdFromVideo: string | null;
+  /** "Join several videos" (join-videos/); absent or off: one video. */
+  join?: DraftJoin;
 }
 
 /**
@@ -42,6 +44,8 @@ export function draftOf(f: DraftForm): NewProjectDraft {
     preset: { id: f.presetId, name: f.presetName, ...(f.presetOutputDir ? { outputDir: f.presetOutputDir } : {}) },
     moreOptions: f.moreOptions,
     ...(f.projectId ? { created: { projectId: f.projectId, fromVideo: f.createdFromVideo ?? '', step: f.step } } : {}),
+    // Only once the user turned it on or listed files: an untouched form stays untouched.
+    ...(f.join && (f.join.on || f.join.paths.length > 0) ? { join: { ...f.join, paths: [...f.join.paths] } } : {}),
   };
 }
 

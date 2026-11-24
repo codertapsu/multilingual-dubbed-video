@@ -64,6 +64,10 @@ import { LanguageNamePipe, TranslatePipe, TranslateService, languageName } from 
 import { baseLanguage, describeVoice } from '../../shared/voice-library/voice-filter';
 import { keptVoice, libraryEngineFor, voiceOptions } from '../../shared/voice-library/voice-options';
 import { previewSource, sampleSentence } from '../../shared/voice-library/voice-preview';
+import type { JoinProjectRequest, JoinProjectResult, JoinStatus } from '@videodubber/shared';
+import { DEFAULT_JOIN, joinBlocker, joinedNameOf } from './join-videos/join-form';
+import { JoinProgressComponent } from './join-videos/join-progress.component';
+import { JoinVideosComponent, type JoinCheckState } from './join-videos/join-videos.component';
 import { describeStartProblem, packSizeLabel, type ChangeTarget, type StartFix } from './start-problems';
 import {
   DEFAULT_SERIES,
@@ -151,6 +155,8 @@ function defaultSettings(): ProjectSettings {
     DownloadProgressListComponent,
     BusyIndicatorComponent,
     OutputFolderComponent,
+    JoinVideosComponent,
+    JoinProgressComponent,
     TranslatePipe,
     BrandingFormComponent,
   ],
@@ -504,11 +510,11 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   protected readonly outputFolderFallback = signal<string | null>(null);
   protected readonly mediaInfo = signal<MediaInfo | null>(null);
 
-  /** Step 1 is valid once we have a video path and distinct languages. */
+  /** Step 1 is valid once we have a video path (or videos to join) and distinct languages. */
   protected readonly step1Valid = computed(() => {
     const s = this.settings();
     return (
-      this.inputVideoPath().trim().length > 0 &&
+      (this.joinOn() ? this.joinWhy() === null : this.inputVideoPath().trim().length > 0) &&
       s.sourceLanguage.length > 0 &&
       s.targetLanguage.length > 0
     );
@@ -517,7 +523,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   /** Why Continue is not available yet, said beside it (null: it is). */
   protected readonly continueBlocker = computed(() =>
     continueBlocker({
-      videoPath: this.inputVideoPath(),
+      // Joining: the list stands for the video field (joinWhy says what it lacks).
+      videoPath: this.joinOn() ? 'joined' : this.inputVideoPath(),
       sourceLanguage: this.settings().sourceLanguage,
       targetLanguage: this.settings().targetLanguage,
       voiceDownloading: this.voiceDownloading(),
@@ -739,6 +746,136 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
     }
   }
 
+  // ---- Join several videos into one project (join-videos/) ----------------
+  // The video-source block's second choice: files in the order they play,
+  // which the app checks, joins into the project's video in the background,
+  // and records the boundaries of (Project.inputFiles). Hand-joined files
+  // garbled two parts of the 27.8-hour series (claude-dubber, 2026-11-23).
+
+  protected readonly joinOn = signal(DEFAULT_JOIN.on);
+  protected readonly joinPaths = signal<string[]>([]);
+  protected readonly joinReencode = signal(DEFAULT_JOIN.reencode);
+  private readonly joinCheckState = signal<JoinCheckState>({ checking: false, check: null, checkedPaths: null });
+  /** The project Continue made from the list (its join runs in the app). */
+  protected readonly joinedProject = signal<string | null>(null);
+  protected readonly joinStatus = signal<JoinStatus | null>(null);
+  /** Once Continue made a project, what it was made from is fixed (one video, or these videos). */
+  protected readonly sourceLocked = computed(() => this.createdProjectId() !== null);
+  /** Why Continue waits in join mode (null: it can go). */
+  protected readonly joinWhy = computed(() => {
+    if (!this.joinOn() || this.joinedProject()) return null;
+    const s = this.joinCheckState();
+    return joinBlocker({ paths: this.joinPaths(), checking: s.checking, check: s.check, checkedPaths: s.checkedPaths, reencode: this.joinReencode() });
+  });
+  /** Start waits for the joined video (one video is always ready). */
+  protected readonly joinReady = computed(() => !this.joinedProject() || this.joinStatus()?.state === 'done');
+
+  protected setJoinOn(on: boolean): void {
+    if (this.sourceLocked()) return;
+    this.joinOn.set(on);
+    // The name follows what the form dubs now, until the user types one.
+    if (this.name().trim() && this.name() !== this.autoName) return;
+    this.autoName = on ? joinedNameOf(this.joinPaths()) : this.inputVideoPath().trim() ? deriveProjectName(this.inputVideoPath()) : '';
+    this.name.set(this.autoName);
+  }
+
+  protected onJoinPaths(paths: string[]): void {
+    this.joinPaths.set(paths);
+    if (this.name().trim() && this.name() !== this.autoName) return;
+    this.autoName = joinedNameOf(paths);
+    this.name.set(this.autoName);
+  }
+
+  protected onJoinCheck(state: JoinCheckState): void {
+    this.joinCheckState.set(state);
+  }
+
+  /** Step 2 learned how far the join is: once the video is there, it is read like any video. */
+  protected onJoinStatus(status: JoinStatus): void {
+    const was = this.joinStatus()?.state;
+    this.joinStatus.set(status);
+    if (status.state === 'done' && was !== 'done' && !this.mediaInfo()) void this.probeJoined(status.projectId);
+  }
+
+  private async probeJoined(projectId: string): Promise<void> {
+    try {
+      const info = await this.ipc.probeVideo(projectId);
+      if (!this.destroyed) this.mediaInfo.set(info);
+    } catch (err) {
+      if (!this.destroyed) this.error.set(toAppError(err));
+    }
+  }
+
+  /**
+   * Continue in join mode: make the project from the list (the app checks the
+   * files again, refuses a re-encode nobody agreed to and a full drive, then
+   * joins in the background), or, after Back, give the project the form's
+   * name and settings (its videos stay). Step 2 follows the join; Start waits
+   * for it, while the models the project needs download meanwhile.
+   */
+  private async goToStep2Joined(): Promise<void> {
+    if (!this.step1Valid() || this.busy()) return;
+    this.busy.set(true);
+    this.error.set(null);
+    const name = this.name().trim() || joinedNameOf(this.joinPaths()) || this.translate.instant('misc.untitled-project');
+    try {
+      const series = this.seriesRequest();
+      if (series?.aiProviderId) rememberSeriesAi(series.aiProviderId);
+      const existing = this.createdProjectId();
+      let project: Project;
+      if (existing) {
+        project = await this.ipc.reviseProject(existing, { name, settings: this.settings() });
+      } else {
+        const made = await this.createJoined({
+          name,
+          videoPaths: this.joinPaths(),
+          settings: this.settings(),
+          ...(series ? { series } : {}),
+          reencode: this.joinReencode(),
+        });
+        project = made.project;
+        this.joinStatus.set(made.join);
+      }
+      this.drafts.clear();
+      if (this.destroyed) {
+        this.madeWhileAway(project, true);
+        return;
+      }
+      this.createdFromVideo = '';
+      this.createdProjectId.set(project.id);
+      this.createdProject.set(project);
+      this.joinedProject.set(project.id);
+      this.store.setCurrent(project);
+      this.preflightProblems.set([]);
+      await this.prepareModels(project.id);
+      if (this.destroyed) {
+        this.madeWhileAway(project, false);
+        return;
+      }
+      this.step.set(2);
+    } catch (err) {
+      if (this.destroyed) this.failedWhileAway(name, err);
+      else this.error.set(toAppError(err));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  /** createWithLastFolder for a joined project: the last folder while it still works. */
+  private async createJoined(request: JoinProjectRequest): Promise<JoinProjectResult> {
+    this.outputFolderFallback.set(null);
+    const last = this.presetOutputDir() ?? readLastOutputDir();
+    if (!last) return this.ipc.createJoinedProject(request);
+    try {
+      return await this.ipc.createJoinedProject({ ...request, outputDir: last });
+    } catch (err) {
+      if (toAppError(err).code !== 'OUTPUT_NOT_WRITABLE') throw err;
+      forgetLastOutputDir();
+      this.outputFolderFallback.set(last);
+      return this.ipc.createJoinedProject(request);
+    }
+  }
+
   ngOnDestroy(): void {
     this.destroyed = true;
     // Stop listening to the global setup stream when leaving the wizard.
@@ -771,6 +908,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
       step: this.step(),
       projectId: this.createdProjectId(),
       createdFromVideo: this.createdFromVideo,
+      join: { on: this.joinOn(), paths: this.joinPaths(), reencode: this.joinReencode() },
     });
   }
 
@@ -785,10 +923,15 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
     this.presetName.set(draft.preset.name);
     this.presetOutputDir.set(draft.preset.outputDir);
     this.moreOpen.set(draft.moreOptions);
+    const join = draft.join ?? DEFAULT_JOIN;
+    this.joinOn.set(join.on);
+    this.joinPaths.set([...join.paths]);
+    this.joinReencode.set(join.reencode);
     if (!project || !draft.created) return;
     // Continue revises this project rather than making a second one.
     this.createdProjectId.set(project.id);
     this.createdProject.set(project);
+    if (project.inputFiles?.length) this.joinedProject.set(project.id);
     this.createdFromVideo = draft.created.fromVideo;
     this.store.setCurrent(project);
     if (draft.created.step === 2) {
@@ -1299,6 +1442,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
    * probe the media to display its info before committing to a run.
    */
   protected async goToStep2(): Promise<void> {
+    if (this.joinOn()) return this.goToStep2Joined();
     if (!this.step1Valid() || this.busy()) return;
     this.busy.set(true);
     this.error.set(null);

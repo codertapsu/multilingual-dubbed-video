@@ -73,37 +73,60 @@
       <!-- Locked while Continue makes the project: the copy already holds
            these choices, and a change made meanwhile would not be in it. -->
       <fieldset class="form-lock" [disabled]="busy()">
-        <!-- The first questions: the video and its languages. -->
+        <!-- The first questions: the video (or the videos to join) and its languages. -->
         <fieldset>
           <legend>{{ 'wizard.source-video' | translate }}</legend>
-          <div class="row">
-            <div class="grow">
-              <label for="videoPath">{{ 'wizard.video-path' | translate }}</label>
-              <input
-                id="videoPath"
-                type="text"
-                [ngModel]="inputVideoPath()"
-                (ngModelChange)="onPathInput($event)"
-                name="videoPath"
-                [placeholder]="'wizard.video-path-ph' | translate"
-                aria-describedby="videoPathHint"
-              />
-            </div>
-            <div class="pick-btn">
-              <button
-                type="button"
-                class="btn"
-                (click)="pickVideo()"
-                [disabled]="!inTauri"
-                [title]="(inTauri ? 'wizard.browse-title' : 'wizard.browse-title-browser') | translate"
-              >
-                {{ 'wizard.browse' | translate }}
-              </button>
-            </div>
+          <!-- One video, or several joined into one project (join-videos/).
+               Fixed once Continue made the project from it. -->
+          <div class="row source-mode" role="radiogroup" [attr.aria-label]="'join.mode-aria' | translate">
+            <label class="check-row">
+              <input type="radio" name="sourceMode" [checked]="!joinOn()" (change)="setJoinOn(false)" [disabled]="sourceLocked()" />
+              <span>{{ 'join.mode-one' | translate }}</span>
+            </label>
+            <label class="check-row">
+              <input type="radio" name="sourceMode" [checked]="joinOn()" (change)="setJoinOn(true)" [disabled]="sourceLocked()" />
+              <span>{{ 'join.mode-join' | translate }}</span>
+            </label>
           </div>
-          <p id="videoPathHint" class="hint">
-            {{ (inTauri ? 'wizard.video-path-hint' : 'wizard.video-path-hint-browser') | translate }}
-          </p>
+          @if (joinOn()) {
+            <vd-join-videos
+              [paths]="joinPaths()"
+              (pathsChange)="onJoinPaths($event)"
+              [(reencode)]="joinReencode"
+              [locked]="sourceLocked()"
+              [renderQuality]="settings().renderQuality"
+              (checkChange)="onJoinCheck($event)"
+            />
+          } @else {
+            <div class="row">
+              <div class="grow">
+                <label for="videoPath">{{ 'wizard.video-path' | translate }}</label>
+                <input
+                  id="videoPath"
+                  type="text"
+                  [ngModel]="inputVideoPath()"
+                  (ngModelChange)="onPathInput($event)"
+                  name="videoPath"
+                  [placeholder]="'wizard.video-path-ph' | translate"
+                  aria-describedby="videoPathHint"
+                />
+              </div>
+              <div class="pick-btn">
+                <button
+                  type="button"
+                  class="btn"
+                  (click)="pickVideo()"
+                  [disabled]="!inTauri"
+                  [title]="(inTauri ? 'wizard.browse-title' : 'wizard.browse-title-browser') | translate"
+                >
+                  {{ 'wizard.browse' | translate }}
+                </button>
+              </div>
+            </div>
+            <p id="videoPathHint" class="hint">
+              {{ (inTauri ? 'wizard.video-path-hint' : 'wizard.video-path-hint-browser') | translate }}
+            </p>
+          }
         </fieldset>
 
         @if (presetsUpFront()) {
@@ -784,6 +807,17 @@
       <div class="row row-between">
         @if (busy()) {
           <vd-busy-indicator [active]="true" [label]="'wizard.creating-label' | translate" />
+        } @else if (joinWhy(); as why) {
+          <!-- Joining: what the list still needs before Continue. -->
+          <span id="continueWhy" class="hint warn-text" role="status">
+            @switch (why) {
+              @case ('files') { {{ 'join.why.files' | translate }} }
+              @case ('checking') { {{ 'join.why.checking' | translate }} }
+              @case ('unusable') { {{ 'join.why.unusable' | translate }} }
+              @case ('disk') { {{ 'join.why.disk' | translate }} }
+              @case ('confirm') { {{ 'join.why.confirm' | translate }} }
+            }
+          </span>
         } @else {
           <!-- Why Continue is off, beside it: the reason used to be at the top
                of a long form while the disabled button sat at its bottom. -->
@@ -806,7 +840,7 @@
           type="submit"
           class="btn btn-primary"
           [disabled]="!step1Valid() || busy() || voiceDownloading()"
-          [attr.aria-describedby]="continueBlocker() && !busy() ? 'continueWhy' : null"
+          [attr.aria-describedby]="(continueBlocker() || joinWhy()) && !busy() ? 'continueWhy' : null"
         >
           {{ (busy() ? 'wizard.creating' : voiceDownloading() ? 'wizard.downloading-voice' : 'wizard.continue') | translate }}
         </button>
@@ -818,6 +852,12 @@
   @if (step() === 2) {
     <div class="card stack">
       <h2>{{ 'wizard.review-media' | translate }}</h2>
+
+      <!-- A project made from several videos: how far their join is. Its
+           video (and so the facts below) exists once the join is done. -->
+      @if (joinedProject(); as joinedId) {
+        <vd-join-progress [projectId]="joinedId" (statusChange)="onJoinStatus($event)" />
+      }
 
       @if (mediaInfo(); as info) {
         @if (noAudioWarning()) {
@@ -844,7 +884,7 @@
           <dt>{{ 'wizard.audio' | translate }}</dt>
           <dd class="mono">{{ audioCodecLabel(info) }}</dd>
         </dl>
-      } @else {
+      } @else if (joinReady()) {
         <p class="muted">
           {{ 'wizard.probe-failed' | translate }}
         </p>
@@ -993,9 +1033,9 @@
           type="button"
           class="btn btn-primary"
           (click)="start()"
-          [disabled]="busy() || ollamaPulling() || prepare() !== 'ready'"
+          [disabled]="busy() || ollamaPulling() || prepare() !== 'ready' || !joinReady()"
         >
-          {{ (busy() ? 'wizard.starting' : preparingModels() ? 'wizard.preparing-models' : 'wizard.start') | translate }}
+          {{ (busy() ? 'wizard.starting' : !joinReady() ? 'join.start-waits' : preparingModels() ? 'wizard.preparing-models' : 'wizard.start') | translate }}
         </button>
       </div>
     </div>

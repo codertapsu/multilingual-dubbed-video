@@ -2378,6 +2378,7 @@
     "found-marks": "Watermarks found: {{n}}.",
     "found-band": "The video's own subtitles found at {{from}}–{{to}} % of the height.",
     "band-guessed": "The video has no transcript yet, so its subtitles were found from the picture alone: check the yellow band.",
+    "found-no-band": "No subtitles burned into the video were found. If it has some, choose a way to hide them below and place the band yourself.",
     "found-check": "Check them on the picture, drag or resize them if needed, then save.",
     "detect-failed": "The search did not work: {{why}}",
     "frame-alt": "A frame of the video with the boxes to hide and the subtitle band drawn on it",

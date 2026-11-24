@@ -2378,6 +2378,7 @@
     "found-marks": "Tìm thấy {{n}} hình mờ.",
     "found-band": "Tìm thấy phụ đề sẵn có ở khoảng {{from}}–{{to}} % chiều cao khung hình.",
     "band-guessed": "Video chưa có bản chép lời nên phụ đề sẵn có được tìm chỉ dựa vào hình ảnh: hãy kiểm tra lại dải màu vàng.",
+    "found-no-band": "Không tìm thấy phụ đề ghi sẵn trên video. Nếu video có, hãy chọn cách che ở bên dưới rồi tự đặt dải che.",
     "found-check": "Hãy kiểm tra trên khung hình, kéo hoặc chỉnh kích thước nếu cần, rồi bấm Lưu.",
     "detect-failed": "Không tìm được: {{why}}",
     "frame-alt": "Một khung hình của video, có vẽ các ô cần che và dải phụ đề",

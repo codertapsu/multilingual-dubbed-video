@@ -113,6 +113,7 @@ interface Drag {
             }
             <select
               [ngModel]="r.mode"
+              [ngModelOptions]="standalone"
               (ngModelChange)="setMode($index, $event)"
               [disabled]="disabled()"
               [attr.aria-label]="'picture.mode' | translate"
@@ -130,6 +131,7 @@ interface Drag {
                   max="10"
                   step="1"
                   [ngModel]="r.strength ?? 5"
+                  [ngModelOptions]="standalone"
                   (ngModelChange)="setStrength($index, $event)"
                   [disabled]="disabled()"
                 />
@@ -153,7 +155,7 @@ interface Drag {
         <h4>{{ 'picture.band' | translate }}</h4>
         <label class="field">
           <span>{{ 'picture.band-mode' | translate }}</span>
-          <select [ngModel]="mode()" (ngModelChange)="setCoverMode($event)" [disabled]="disabled()">
+          <select [ngModel]="mode()" [ngModelOptions]="standalone" (ngModelChange)="setCoverMode($event)" [disabled]="disabled()">
             <option value="off">{{ 'picture.band-off' | translate }}</option>
             <option value="blur">{{ 'picture.band-blur' | translate }}</option>
             <option value="solid">{{ 'picture.band-solid' | translate }}</option>
@@ -183,6 +185,7 @@ interface Drag {
                 max="10"
                 step="1"
                 [ngModel]="style()?.coverStrength ?? 5"
+                [ngModelOptions]="standalone"
                 (ngModelChange)="setBandStrength($event)"
                 [disabled]="disabled()"
               />
@@ -194,6 +197,7 @@ interface Drag {
             <input
               type="checkbox"
               [ngModel]="style()?.subtitlesInBand === true"
+              [ngModelOptions]="standalone"
               (ngModelChange)="setInBand($event)"
               [disabled]="disabled() || !burnedIn()"
             />
@@ -312,6 +316,9 @@ interface Drag {
       .box-row.selected {
         background: var(--vd-surface-2, rgba(127, 127, 127, 0.12));
       }
+      .box-row select {
+        width: auto;
+      }
       .name {
         min-width: 44px;
         font-weight: 600;
@@ -350,6 +357,8 @@ export class PictureEditorComponent {
   readonly regionsChange = output<EditorRegion[]>();
   readonly styleChange = output<SubtitleStyle>();
 
+  /** The controls here are this editor's, not fields of a form around it (New project's). */
+  protected readonly standalone = { standalone: true };
   private readonly frameEl = viewChild<ElementRef<HTMLElement>>('frameEl');
   private readonly drag = signal<Drag | null>(null);
   protected readonly selected = signal(-1);
@@ -398,8 +407,14 @@ export class PictureEditorComponent {
     if (!rect || rect.width <= 0 || rect.height <= 0) return;
     ev.preventDefault();
     ev.stopPropagation();
-    (ev.currentTarget as Element | null)?.setPointerCapture?.(ev.pointerId);
     this.drag.set({ kind, index, x0: ev.clientX, y0: ev.clientY, width: rect.width, height: rect.height, origin, current: origin });
+    try {
+      // Keeps the moves coming when the pointer leaves the box; a pointer
+      // that is already gone (a pen lifted, a synthetic event) refuses it.
+      (ev.currentTarget as Element | null)?.setPointerCapture?.(ev.pointerId);
+    } catch {
+      /* the frame still gets the moves while the pointer is over it */
+    }
   }
 
   protected onMove(ev: PointerEvent): void {

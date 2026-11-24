@@ -268,6 +268,8 @@ export class PicturePanelComponent implements OnInit, OnDestroy {
       if (result.band) {
         lines.push(this.translate.instant('picture.found-band', { from: percent(result.band.y), to: percent(result.band.y + result.band.h) }));
         if (result.band.method === 'appearance') lines.push(this.translate.instant('picture.band-guessed'));
+      } else {
+        lines.push(this.translate.instant('picture.found-no-band'));
       }
       lines.push(this.translate.instant('picture.found-check'));
     }

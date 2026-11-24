@@ -1,3 +1,5 @@
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { DownloadItem, DownloadQueueEvent, EngineInstallEvent, PipelineState, SetupEvent } from '@videodubber/shared';
 
@@ -219,7 +221,8 @@ describe('installs and downloads as activity', () => {
     expect(reg.list()[0]).toMatchObject({ state: 'running', percent: 33, title: 'Downloading “Xuyên Không”' });
     queue.emit({ type: 'item', item: item({ state: 'queued', heldBy: 'gpu-heavy' }) });
     expect(reg.list()[0]).toMatchObject({ state: 'waiting', message: 'Waiting: a dub is using the GPU' });
-    queue.emit({ type: 'item', item: item({ state: 'done', filePath: 'D:\\v\\x.mp4' }) });
+    // This machine's own kind of path: a Windows one is a single name to path.basename on macOS.
+    queue.emit({ type: 'item', item: item({ state: 'done', filePath: path.join(os.tmpdir(), 'v', 'x.mp4') }) });
     expect(reg.list()[0]).toMatchObject({ state: 'done', result: 'Saved as x.mp4' });
   });
 });

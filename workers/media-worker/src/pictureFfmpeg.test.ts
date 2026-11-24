@@ -4,7 +4,8 @@
  * mark top right, and hardsub lines at 77–80 % of the height while "someone
  * speaks". Detection end to end (fast seeks, rawvideo, analysis, preview), a
  * clean clip, and renders whose filter graph ffmpeg must accept and whose
- * length must stop at the picture. Skipped where no ffmpeg runs.
+ * length must stop at the picture. Skipped where no ffmpeg runs, and the
+ * parts that draw text where that ffmpeg has no libass.
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,6 +22,18 @@ import { buildSubtitlesFilter } from './subtitles.js';
 import { probeVideoLengthMs } from './videoLength.js';
 
 const hasFfmpeg = spawnSync(resolveFfmpegBinary(), ['-hide_banner', '-version'], { windowsHide: true }).status === 0;
+
+/**
+ * Drawing text (the test clips' mark and hardsubs, a burned-in render) needs
+ * ffmpeg's `subtitles` filter, i.e. libass. The app ships an ffmpeg that has
+ * it (fetch-ffmpeg); Homebrew's ffmpeg 8 has neither libass nor freetype, and
+ * on a Mac using it these failed instead of skipping.
+ */
+const hasLibass =
+  hasFfmpeg &&
+  /^\s*\S+\s+subtitles\s/m.test(
+    spawnSync(resolveFfmpegBinary(), ['-hide_banner', '-filters'], { windowsHide: true, encoding: 'utf8' }).stdout ?? '',
+  );
 
 const W = 540;
 const H = 960;
@@ -81,7 +94,7 @@ async function makeClip(dir: string, name: string, withMark: boolean, withSubs: 
   return out;
 }
 
-describe.skipIf(!hasFfmpeg)('picture detection with ffmpeg', () => {
+describe.skipIf(!hasLibass)('picture detection with ffmpeg', () => {
   let dir: string;
   let marked: string;
   let clean: string;
@@ -193,7 +206,7 @@ describe.skipIf(!hasFfmpeg)('rendering hidden regions with ffmpeg', () => {
     expect(await probeDurationMs(out)).toBe(r.durationMs);
   }, 60_000);
 
-  it('burned-in subtitles inside the blurred band, through libass', async () => {
+  it.skipIf(!hasLibass)('burned-in subtitles inside the blurred band, through libass', async () => {
     const srt = join(dir, 'sub.srt');
     writeFileSync(srt, '1\n00:00:00,200 --> 00:00:01,800\nĐã nướng tôi lên.\n', 'utf8');
     const out = join(dir, 'burned.mp4');

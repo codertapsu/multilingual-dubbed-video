@@ -111,11 +111,13 @@ describe.skipIf(!hasFfmpeg)('picture detection with ffmpeg', () => {
     expect(mark.y + mark.h).toBeLessThan(0.1);
     expect(mark.confidence).toBeGreaterThanOrEqual(0.5);
     expect(mark.startMs).toBeUndefined();
-    // The lines' text sits at ~77–80 %; two-line lines reach ~74 %.
+    // The lines' text sits at ~77–80 %; two-line lines reach ~74 %, and the
+    // band (their 95th percentile) takes them in.
     expect(found.band).toBeDefined();
     expect(found.band!.method).toBe('speech');
     expect(found.band!.y).toBeGreaterThan(0.7);
-    expect(found.band!.y).toBeLessThan(0.775);
+    expect(found.band!.y).toBeLessThan(0.76);
+    expect(found.band!.twoLineShare).toBeGreaterThan(0);
     expect(found.band!.y + found.band!.h).toBeGreaterThan(0.795);
     expect(found.band!.y + found.band!.h).toBeLessThan(0.83);
     expect(existsSync(found.framePath!)).toBe(true);

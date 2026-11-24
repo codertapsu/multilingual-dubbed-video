@@ -419,6 +419,18 @@ function meanRows(profiles: readonly RowProfile[], height: number): Float32Array
   return out;
 }
 
+/**
+ * Per row, how far a frame in silence strays from the silent mean: 2.5
+ * standard deviations. A lift below it is the picture, not text.
+ */
+function rowNoise(silence: readonly RowProfile[], base: Float32Array, height: number): Float32Array {
+  const out = new Float32Array(height);
+  if (silence.length < 2) return out;
+  for (const p of silence) for (let y = 0; y < height; y++) out[y]! += (p.rows[y]! - base[y]!) ** 2;
+  for (let y = 0; y < height; y++) out[y] = 2.5 * Math.sqrt(out[y]! / (silence.length - 1));
+  return out;
+}
+
 function quantileRows(profiles: readonly RowProfile[], height: number, q: number): Float32Array {
   const out = new Float32Array(height);
   const col = new Float64Array(profiles.length);
@@ -478,21 +490,30 @@ export function findSubtitleBand(profiles: readonly RowProfile[], height: number
   const coreH = c1 - c0 + 1;
   if (coreH > 0.25 * H) return undefined;
 
-  // Each frame's own text: rows near the core with a clear lift over the
-  // baseline, close rows joined (two lines are one block), the block that
-  // overlaps the core.
-  const wTop = Math.max(0, c0 - 2 * coreH - 2);
+  // Each frame's own text, line by line: rows near the core with a clear
+  // lift over the baseline (and over the row's own noise in silence: a busy
+  // picture lifts rows at random), small dips inside a line bridged, runs
+  // too short to be a line dropped, then the line over the core joined by
+  // the lines stacked within about two line heights of it. Line-aware
+  // because the gap between two lines depends on the script: CJK glyphs fill
+  // their em box (a small gap), a Latin or Vietnamese line's dense rows are
+  // its x-height, and the gap to the next line was twice that (seen on the
+  // scratch backend's two-line test subtitles).
+  const wTop = Math.max(0, c0 - 3 * coreH - 2);
   const wBottom = Math.min(H - 1, c1 + coreH + 2);
   const theta = Math.max(0.008, 0.4 * dMax);
-  const gap = Math.max(2, Math.round(0.6 * coreH));
+  const noise = bySpeech ? rowNoise(silence, base, H) : undefined;
+  const bridge = Math.max(1, Math.round(0.35 * coreH));
+  const minRun = Math.max(2, Math.round(0.4 * coreH));
+  const reach = Math.max(3, Math.round(2.2 * coreH));
   const extents: { top: number; bottom: number; index: number; mass: number }[] = [];
   for (const p of frames) {
     const runs: [number, number][] = [];
     let start = -1;
     let last = -1;
     for (let y = wTop; y <= wBottom; y++) {
-      if (p.rows[y]! - base[y]! < theta) continue;
-      if (start >= 0 && y - last > gap + 1) {
+      if (p.rows[y]! - base[y]! < Math.max(theta, noise ? noise[y]! : 0)) continue;
+      if (start >= 0 && y - last > bridge + 1) {
         runs.push([start, last]);
         start = -1;
       }
@@ -500,19 +521,33 @@ export function findSubtitleBand(profiles: readonly RowProfile[], height: number
       last = y;
     }
     if (start >= 0) runs.push([start, last]);
-    let pick: [number, number] | undefined;
-    let pickOverlap = 0;
+    let core: [number, number] | undefined;
+    let coreOverlap = 0;
     for (const r of runs) {
       const overlap = Math.min(r[1], c1) - Math.max(r[0], c0) + 1;
-      if (overlap > pickOverlap) {
-        pick = r;
-        pickOverlap = overlap;
+      if (overlap > coreOverlap) {
+        core = r;
+        coreOverlap = overlap;
       }
     }
-    if (!pick || pick[1] - pick[0] + 1 < 2) continue;
+    if (!core || core[1] - core[0] + 1 < 2) continue;
+    const block: [number, number] = [core[0], core[1]];
+    const lines = runs.filter((r) => r !== core && r[1] - r[0] + 1 >= minRun);
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const r of lines) {
+        if (r[1] < block[0] && block[0] - r[1] - 1 <= reach) {
+          block[0] = r[0];
+          grew = true;
+        } else if (r[0] > block[1] && r[0] - block[1] - 1 <= reach) {
+          block[1] = r[1];
+          grew = true;
+        }
+      }
+    }
     let mass = 0;
-    for (let y = pick[0]; y <= pick[1]; y++) mass += p.rows[y]! - base[y]!;
-    extents.push({ top: pick[0], bottom: pick[1], index: profiles.indexOf(p), mass });
+    for (let y = block[0]; y <= block[1]; y++) mass += p.rows[y]! - base[y]!;
+    extents.push({ top: block[0], bottom: block[1], index: profiles.indexOf(p), mass });
   }
 
   let top = c0;

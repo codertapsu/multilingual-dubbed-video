@@ -148,6 +148,43 @@ describe('findSubtitleBand', () => {
     expect(band!.confidence).toBeGreaterThanOrEqual(0.6);
   });
 
+  it('a two-line Latin or Vietnamese subtitle: the second line two x-heights up still counts', () => {
+    // Dense rows are a line's x-height (8 rows), with sparse ascenders and
+    // accents above; the next line's x-height starts 22 rows higher.
+    const latin = (f: Uint8Array, r: () => number, top: number): void => {
+      let x = 60;
+      for (let c = 0; c < 14; c++, x += 17) {
+        for (let s = 0; s < 4; s++) {
+          const sx = x + Math.floor(r() * 12);
+          fillRect(f, sx - 1, top + 6, 4, 9, 15);
+          fillRect(f, sx, top + 7, 2, 7, 240);
+        }
+        if (r() < 0.4) {
+          fillRect(f, x + 3, top, 4, 6, 15);
+          fillRect(f, x + 4, top + 1, 2, 4, 240);
+        }
+      }
+    };
+    const r = rng(9);
+    const profiles: RowProfile[] = [];
+    for (let i = 0; i < 100; i++) {
+      const f = scene(r);
+      const speaking = i % 3 !== 0;
+      if (speaking) {
+        latin(f, r, 500);
+        if (i % 10 === 1 || i % 10 === 4) latin(f, r, 478);
+      }
+      profiles.push({ atMs: i * 1000, rows: rowStrokeProfile(f, W, H), label: speaking ? 'speech' : 'silence' });
+    }
+    const band = findSubtitleBand(profiles, H)!;
+    expect(band.method).toBe('speech');
+    expect(band.top).toBeLessThanOrEqual(486);
+    expect(band.top).toBeGreaterThanOrEqual(470);
+    expect(band.bottom).toBeGreaterThanOrEqual(513);
+    expect(band.bottom).toBeLessThanOrEqual(522);
+    expect(band.twoLineShare).toBeGreaterThan(0);
+  });
+
   it('finds the band from the picture alone without a transcript, less sure', () => {
     const band = findSubtitleBand(profilesOf(clip({ mark: true, subs: true }), false), H);
     expect(band).toBeDefined();

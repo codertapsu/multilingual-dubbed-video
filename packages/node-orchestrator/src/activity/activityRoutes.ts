@@ -68,15 +68,15 @@ export interface ActivityRoutesDeps {
       fromMs: number,
       toMs: number,
       lines: { startMs: number; endMs: number; text: string; speakerId?: string }[],
-      opts: { summary?: string; undoOf?: string; precondition?: (current: readonly TranscriptSegment[]) => void },
+      opts: { summary?: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf?: string; precondition?: (current: readonly TranscriptSegment[]) => void },
     ): Promise<unknown>;
     patchSegments(
       projectId: string,
       patches: SegmentPatch[],
-      opts: { summary?: string; undoOf?: string; precondition?: (base: readonly TranscriptSegment[]) => void },
+      opts: { summary?: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf?: string; precondition?: (base: readonly TranscriptSegment[]) => void },
     ): Promise<unknown>;
     /** Lines kept as the original song (mark_song): its changes are undone through it. */
-    markSongs?(projectId: string, request: { lineIds: string[]; song: boolean }, opts: { summary?: string; undoOf?: string }): Promise<unknown>;
+    markSongs?(projectId: string, request: { lineIds: string[]; song: boolean }, opts: { summary?: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf?: string }): Promise<unknown>;
   };
   /** The projects folder is moving: no project file is written meanwhile. */
   projectsMoving?: () => boolean;
@@ -355,7 +355,7 @@ export async function registerActivityRoutes(app: FastifyInstance, deps: Activit
           replaceSourceLines: (projectId, fromMs, toMs, lines, opts) => deps.orchestrator.replaceSourceLines(projectId, fromMs, toMs, lines, opts),
           patchSegments: (projectId, patches, opts) => deps.orchestrator.patchSegments(projectId, patches, opts),
       ...(deps.orchestrator.markSongs
-        ? { markSongs: (projectId: string, request: { lineIds: string[]; song: boolean }, opts: { summary: string; undoOf: string }) => deps.orchestrator.markSongs!(projectId, request, opts) }
+        ? { markSongs: (projectId: string, request: { lineIds: string[]; song: boolean }, opts: { summary: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf: string }) => deps.orchestrator.markSongs!(projectId, request, opts) }
         : {}),
         },
         id,

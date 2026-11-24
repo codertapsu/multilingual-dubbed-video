@@ -158,6 +158,11 @@ describe('undo through the orchestrator, with the history on disk', () => {
     await orchestrator.replaceSourceLines(id, 2500, 7000, [{ startMs: 3000, endMs: 6000, text: 'once', speakerId: 'SPEAKER_02' }]);
     const [replaced] = await listEditSummaries(id);
     expect(replaced).toMatchObject({ target: 'source', range: { fromMs: 2500, toMs: 7000 }, beforeCount: 2, afterCount: 1 });
+    // The History tab words it in the reader's language from its key and values.
+    expect(replaced).toMatchObject({
+      summaryKey: 'history.summary.replaced',
+      summaryParams: { replaced: 2, made: 1, from: '0:03', to: '0:07' },
+    });
 
     const result = await undoEdit(deps(), id, replaced!.id);
     const now = await read(store.paths(id).sourceJson);
@@ -165,10 +170,15 @@ describe('undo through the orchestrator, with the history on disk', () => {
     expect(now[1]!.speakerId).toBe('SPEAKER_01');
     expect(result.undone.undoneAt).toBeDefined();
     expect(result.entry).toMatchObject({ undoOf: replaced!.id, summary: `Undid: ${replaced!.summary}`, range: { fromMs: 2500, toMs: 7000 } });
+    expect(result.entry).toMatchObject({
+      summaryKey: 'history.summary.undo',
+      summaryParams: { of: 'history.summary.replaced', text: replaced!.summary, replaced: 2, made: 1 },
+    });
 
-    // And the undo can be undone in its turn.
-    await undoEdit(deps(), id, result.entry!.id);
+    // And the undo can be undone in its turn: it still names the first change, one undo deeper.
+    const again = await undoEdit(deps(), id, result.entry!.id);
     expect((await read(store.paths(id).sourceJson)).map((s) => s.sourceText)).toEqual(['Before', 'once', 'After']);
+    expect(again.entry).toMatchObject({ summaryKey: 'history.summary.undo', summaryParams: { of: 'history.summary.replaced', depth: 2 } });
   });
 
   it('undoes a speaker change made in the editor, and refuses once the line changed again', async () => {

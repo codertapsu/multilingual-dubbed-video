@@ -9,7 +9,7 @@ import { IpcService } from '../../../core/ipc/ipc.service';
 import type { AppError } from '../../../core/models';
 import { toAppError } from '../../../core/state/project.store';
 import { ConfirmService } from '../../../shared/confirm-dialog/confirm.service';
-import { clock, fieldKey, isFlagValue, lineChanges, lineNumber, rangeView, refusalLines } from './edit-history-view';
+import { clock, fieldKey, historySummary, isFlagValue, lineChanges, lineNumber, rangeView, refusalLines } from './edit-history-view';
 import { StudioStore } from './studio.store';
 
 /**
@@ -72,7 +72,7 @@ import { StudioStore } from './studio.store';
               <span class="badge badge-skipped">{{ 'history.undone' | translate }}</span>
             }
           </div>
-          <p class="summary">{{ e.summary }}</p>
+          <p class="summary">{{ summaryOf(e) }}</p>
           <p class="muted small">
             {{ who(e) }} · {{ 'history.counts' | translate: { before: e.beforeCount, after: e.afterCount } }}
             @if (e.undoOf) {
@@ -288,6 +288,13 @@ export class HistoryPanelComponent {
   protected readonly fieldKey = fieldKey;
   protected readonly isFlagValue = isFlagValue;
 
+  /** The entry's sentence in the reader's language (the English summary for older entries). */
+  protected summaryOf(e: EditHistorySummary): string {
+    // Reads the locale signal through instant(), so a language switch re-renders it.
+    this.i18n.locale();
+    return historySummary(e, (key, params) => this.i18n.instant(key, params));
+  }
+
   constructor() {
     // Read when shown, and again when an edit made here was saved (it is an entry too).
     effect(() => {
@@ -346,7 +353,7 @@ export class HistoryPanelComponent {
   protected async undo(e: EditHistorySummary): Promise<void> {
     const ok = await this.confirm.confirm({
       title: this.i18n.instant('history.confirm-title'),
-      message: this.i18n.instant('history.confirm-body', { summary: e.summary }),
+      message: this.i18n.instant('history.confirm-body', { summary: this.summaryOf(e) }),
       confirmLabel: this.i18n.instant('history.undo'),
       danger: false,
     });
@@ -360,7 +367,7 @@ export class HistoryPanelComponent {
         return;
       }
       await this.ipc.undoEdit(this.store.projectId(), e.id);
-      this.notice.set({ tone: 'success', text: this.i18n.instant('history.undone-notice', { summary: e.summary }), lines: [] });
+      this.notice.set({ tone: 'success', text: this.i18n.instant('history.undone-notice', { summary: this.summaryOf(e) }), lines: [] });
       // The lines changed under the editor: read them again (its own undo steps no longer apply).
       await this.store.load(this.store.projectId());
       await this.load();

@@ -65,6 +65,7 @@ import {
   silenceTest,
   widenToLines,
   windowSummary,
+  windowSummaryParams,
   type HearDeps,
   type RetranscribeJobView,
   type RetranscribeOutcome,
@@ -907,7 +908,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     };
     await this.artifactLock.run(projectId, async () => {
       await writeJsonAtomic(paths.sourceJson, { segments: found.segments });
-      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(found.segments)));
+      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(found.segments, { songSubtitles: await songSubtitlesOn(paths.projectJson) })));
       const translated = await this.tryReadSegments(paths.translatedJson);
       let after: TranscriptSegment[] = found.segments;
       if (translated) {
@@ -920,10 +921,13 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       }
       // The lines the dub uses: the translated ones once they exist.
       const before = translated ?? source;
+      const changedSpeaker = after.filter((s, i) => s.speakerId !== before[i]?.speakerId).length;
       await recordEdit({
         projectId,
         target: translated ? 'translation' : 'source',
-        summary: `Detected speakers again: ${found.speakers.length} speaker(s), ${after.filter((s, i) => s.speakerId !== before[i]?.speakerId).length} line(s) changed speaker`,
+        summary: `Detected speakers again: ${found.speakers.length} speaker(s), ${changedSpeaker} line(s) changed speaker`,
+        summaryKey: 'history.summary.speakers-redetected',
+        summaryParams: { speakers: found.speakers.length, lines: changedSpeaker },
         before,
         after,
       });
@@ -978,7 +982,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       const current = (await this.tryReadSegments(paths.sourceJson)) ?? [];
       const relabelledSource = copySpeakerLabels(current, labels);
       await writeJsonAtomic(paths.sourceJson, { segments: relabelledSource });
-      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(relabelledSource)));
+      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(relabelledSource, { songSubtitles: await songSubtitlesOn(paths.projectJson) })));
       const translated = await this.tryReadSegments(paths.translatedJson);
       let after: TranscriptSegment[] = relabelledSource;
       if (translated) {
@@ -994,6 +998,14 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         summary:
           `Detected speakers at ${formatClock(range.fromMs)}–${formatClock(range.toMs)}: ${found.relabelled} of ${found.lines} line(s) changed speaker` +
           (found.added.length ? `, ${found.added.length} new speaker(s)` : ''),
+        summaryKey: found.added.length ? 'history.summary.speakers-range-added' : 'history.summary.speakers-range',
+        summaryParams: {
+          from: formatClock(range.fromMs),
+          to: formatClock(range.toMs),
+          relabelled: found.relabelled,
+          lines: found.lines,
+          added: found.added.length,
+        },
         before: translated ?? current,
         after,
       });
@@ -1109,7 +1121,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
      * default otherwise. An undo (activity/undo.ts) names the entry it undoes
      * and checks, inside the lock, that the lines are still as it expects.
      */
-    opts: { summary?: string; undoOf?: string; precondition?: (current: readonly TranscriptSegment[]) => void } = {},
+    opts: { summary?: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf?: string; precondition?: (current: readonly TranscriptSegment[]) => void } = {},
   ): Promise<{ replaced: number; lines: { id: string; startMs: number; endMs: number; text: string; speakerId?: string }[] }> {
     this.assertNotRunning(projectId, 'replace lines');
     // The detection writes every line's speaker when it ends: lines changed under it would be lost.
@@ -1163,7 +1175,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       }));
       const all = [...before, ...made, ...after].map((s, i) => ({ ...s, index: i, id: `seg_${String(i + 1).padStart(4, '0')}` }));
       await writeJsonAtomic(paths.sourceJson, { segments: all });
-      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(all)));
+      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(all, { songSubtitles: await songSubtitlesOn(paths.projectJson) })));
       const first = before.length;
       // A structural change: every later line was renumbered, so the history
       // keeps the range's lines as they were and are (undo replaces the range).
@@ -1172,6 +1184,14 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         target: 'source',
         range: { fromMs, toMs },
         summary: opts.summary ?? `Replaced ${replaced} line(s) with ${made.length} at ${formatClock(fromMs)}–${formatClock(toMs)}`,
+        ...(opts.summary
+          ? opts.summaryKey
+            ? { summaryKey: opts.summaryKey, ...(opts.summaryParams ? { summaryParams: opts.summaryParams } : {}) }
+            : {}
+          : {
+              summaryKey: 'history.summary.replaced',
+              summaryParams: { replaced, made: made.length, from: formatClock(fromMs), to: formatClock(toMs) },
+            }),
         before: current.filter(inside),
         after: all.slice(first, first + made.length),
         ...(opts.undoOf ? { undoOf: opts.undoOf } : {}),
@@ -1368,7 +1388,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       };
       if (opts.apply) {
         await saveLoopReport(paths.loopRangesJson, w, heard.loops);
-        const done = await this.replaceSourceLines(projectId, w.fromMs, w.toMs, speakers.lines, { summary });
+        const done = await this.replaceSourceLines(projectId, w.fromMs, w.toMs, speakers.lines, {
+          summary,
+          summaryKey: 'history.summary.retranscribed',
+          summaryParams: windowSummaryParams(w, speakers.lines.length, counts, speakers.unassigned),
+        });
         applied.replaced += done.replaced;
         applied.lines.push(...done.lines);
         result = { ...result, replaced: done.replaced };
@@ -1454,6 +1478,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         projectId,
         target: 'translation',
         summary: `Edited the translation of ${merged.filter((s, i) => s !== base[i]).length} line(s)`,
+        summaryKey: 'history.summary.translation-edited',
+        summaryParams: { n: merged.filter((s, i) => s !== base[i]).length },
         before: base,
         after: merged,
       });
@@ -1662,7 +1688,13 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     projectId: string,
     patches: SegmentPatch[],
     /** As replaceSourceLines': what the history says, the entry an undo undoes, its check inside the lock. */
-    opts: { summary?: string; undoOf?: string; precondition?: (base: readonly TranscriptSegment[]) => void } = {},
+    opts: {
+      summary?: string;
+      summaryKey?: string;
+      summaryParams?: Record<string, string | number>;
+      undoOf?: string;
+      precondition?: (base: readonly TranscriptSegment[]) => void;
+    } = {},
   ): Promise<TimelineDocument> {
     this.assertNotRunning(projectId, 'edit the timeline');
     if (!Array.isArray(patches) || patches.length === 0) {
@@ -1746,6 +1778,21 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         projectId,
         target: translated ? 'translation' : 'source',
         summary: opts.summary ?? `Changed the ${what.join(', ')} line(s)`,
+        ...(opts.summary
+          ? opts.summaryKey
+            ? { summaryKey: opts.summaryKey, ...(opts.summaryParams ? { summaryParams: opts.summaryParams } : {}) }
+            : {}
+          : {
+              summaryKey: 'history.summary.changed',
+              summaryParams: {
+                text: outcome.textChanged.size,
+                timing: outcome.timingChanged.size,
+                speaker: outcome.speakerChanged.size,
+                voice: outcome.voiceChanged.size,
+                pace: outcome.rateChanged.size,
+                lock: outcome.lockChanged.size,
+              },
+            }),
         before: base,
         after: outcome.segments,
         ...(opts.undoOf ? { undoOf: opts.undoOf } : {}),
@@ -2937,7 +2984,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     projectId: string,
     request: SongMarkRequest,
     /** An undo from the history names itself (activity/undo.ts); else the default summary. */
-    opts: { summary?: string; undoOf?: string } = {},
+    opts: { summary?: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf?: string } = {},
   ): Promise<SongMarkResult> {
     this.assertNotRunning(projectId, 'mark songs');
     return this.artifactLock.run(projectId, async () => {
@@ -2989,6 +3036,14 @@ export class LocalJobOrchestrator implements JobOrchestrator {
             (request.song
               ? `Kept ${marked.changed.length} line(s) as the original song${first ? ` at ${formatClock(first.startMs)}` : ''}`
               : `Dubbed ${marked.changed.length} song line(s) again${first ? ` at ${formatClock(first.startMs)}` : ''}`),
+          ...(opts.summary
+            ? opts.summaryKey
+              ? { summaryKey: opts.summaryKey, ...(opts.summaryParams ? { summaryParams: opts.summaryParams } : {}) }
+              : {}
+            : {
+                summaryKey: request.song ? 'history.summary.songs-kept' : 'history.summary.songs-dubbed',
+                summaryParams: { n: marked.changed.length, at: first ? formatClock(first.startMs) : '' },
+              }),
           ...(opts.undoOf ? { undoOf: opts.undoOf } : {}),
           before: base,
           after: lines,

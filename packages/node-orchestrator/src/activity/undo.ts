@@ -286,15 +286,15 @@ export interface UndoDeps {
     fromMs: number,
     toMs: number,
     lines: { startMs: number; endMs: number; text: string; speakerId?: string }[],
-    opts: { summary: string; undoOf: string; precondition: (current: readonly TranscriptSegment[]) => void },
+    opts: { summary: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf: string; precondition: (current: readonly TranscriptSegment[]) => void },
   ): Promise<unknown>;
   patchSegments(
     projectId: string,
     patches: SegmentPatch[],
-    opts: { summary: string; undoOf: string; precondition: (base: readonly TranscriptSegment[]) => void },
+    opts: { summary: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf: string; precondition: (base: readonly TranscriptSegment[]) => void },
   ): Promise<unknown>;
   /** Mark or unmark lines as the original song (Orchestrator.markSongs), recorded as this undo. */
-  markSongs?(projectId: string, request: { lineIds: string[]; song: boolean }, opts: { summary: string; undoOf: string }): Promise<unknown>;
+  markSongs?(projectId: string, request: { lineIds: string[]; song: boolean }, opts: { summary: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf: string }): Promise<unknown>;
 }
 
 async function readSegments(file: string): Promise<TranscriptSegment[] | undefined> {
@@ -336,7 +336,18 @@ export async function undoEdit(deps: UndoDeps, projectId: string, entryId: strin
     const again = planUndo(entry, current, entry.range ? false : translated);
     if (again.kind === 'refused') throw new UndoRefusedError(again.reason, again.changes);
   };
-  const opts = { summary: undoSummary(entry), undoOf: entry.id, precondition };
+  const opts = {
+    summary: undoSummary(entry),
+    summaryKey: 'history.summary.undo',
+    // An undo of an undo keeps the change it is about and counts the undos
+    // (`depth`): the History tab words it "Undid: Undid: …" without nesting keys.
+    summaryParams:
+      entry.summaryKey === 'history.summary.undo'
+        ? { ...(entry.summaryParams ?? {}), depth: Number(entry.summaryParams?.['depth'] ?? 1) + 1 }
+        : { ...(entry.summaryParams ?? {}), of: entry.summaryKey ?? '', text: entry.summary },
+    undoOf: entry.id,
+    precondition,
+  };
   if (plan.kind === 'range') await deps.replaceSourceLines(projectId, plan.fromMs, plan.toMs, plan.lines, opts);
   else if (plan.kind === 'patches') {
     if (plan.patches.length > 0) await deps.patchSegments(projectId, plan.patches, opts);
@@ -344,7 +355,9 @@ export async function undoEdit(deps: UndoDeps, projectId: string, entryId: strin
       // An entry of mark_song's: without this it was marked undone while every
       // line stayed a song (the flag is no field a patch carries).
       if (!deps.markSongs) throw new AppErrorException('INVALID_EDIT', 'This change marked lines as songs and cannot be undone here.');
-      for (const group of plan.songs) await deps.markSongs(projectId, group, { summary: opts.summary, undoOf: opts.undoOf });
+      for (const group of plan.songs) {
+        await deps.markSongs(projectId, group, { summary: opts.summary, summaryKey: opts.summaryKey, summaryParams: opts.summaryParams, undoOf: opts.undoOf });
+      }
     }
   }
 

@@ -2824,7 +2824,31 @@
     "refused-undone": "Thay đổi này đã được hoàn tác rồi.",
     "field-song": "Giữ bài hát gốc",
     "flag-yes": "có",
-    "flag-no": "không"
+    "flag-no": "không",
+    "summary": {
+      "replaced": "Thay {{replaced}} câu bằng {{made}} câu ở đoạn {{from}}–{{to}}",
+      "retranscribed": "Chép lời lại đoạn {{from}}–{{to}}: {{lines}} câu",
+      "part-loops-removed": "bỏ {{n}} đoạn lặp",
+      "part-loops-kept": "giữ {{n}} đoạn vì đúng là được nói lặp lại",
+      "part-loops-left": "{{n}} đoạn vẫn đánh dấu LOOP?",
+      "part-unassigned": "{{n}} câu chưa có người nói",
+      "speakers-redetected": "Nhận diện lại người nói: {{speakers}} người nói, {{lines}} câu đổi người nói",
+      "speakers-range": "Nhận diện người nói ở đoạn {{from}}–{{to}}: {{relabelled}}/{{lines}} câu đổi người nói",
+      "speakers-range-added": "Nhận diện người nói ở đoạn {{from}}–{{to}}: {{relabelled}}/{{lines}} câu đổi người nói, thêm {{added}} người nói mới",
+      "translation-edited": "Sửa bản dịch của {{n}} câu",
+      "changed": "Đổi {{parts}}",
+      "part-text": "lời của {{n}} câu",
+      "part-timing": "thời điểm của {{n}} câu",
+      "part-speaker": "người nói của {{n}} câu",
+      "part-voice": "giọng của {{n}} câu",
+      "part-pace": "tốc độ đọc của {{n}} câu",
+      "part-lock": "khoá của {{n}} câu",
+      "songs-kept": "Giữ bài hát gốc cho {{n}} câu ở {{at}}",
+      "songs-dubbed": "Lồng tiếng lại {{n}} câu hát ở {{at}}",
+      "rebuilt": "Tạo lại từ bản chép lời của bộ phim: {{from}} → {{to}} câu",
+      "rebuilt-set-aside": "Tạo lại từ bản chép lời của bộ phim: {{from}} → {{to}} câu; bản dịch cũ được để riêng",
+      "undo": "Đã hoàn tác: {{what}}"
+    }
   },
   "picture": {
     "heading": "Hình ảnh: hình mờ và phụ đề sẵn có của video",

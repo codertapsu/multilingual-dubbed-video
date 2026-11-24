@@ -112,8 +112,15 @@ export interface EditHistoryEntry {
   projectId: string;
   at: string;
   initiator: ActivityInitiator;
-  /** What changed, in a sentence. */
+  /** What changed, in a sentence (English: for agents and logs). */
   summary: string;
+  /**
+   * The same sentence as a translation key (`history.summary.*`) and its
+   * values, so the History tab shows it in the reader's language; absent on
+   * entries written before 0.18.0 (the tab shows `summary`).
+   */
+  summaryKey?: string;
+  summaryParams?: Record<string, string | number>;
   /** `source` = the transcript (source.json); `translation` = the translated lines. */
   target: 'source' | 'translation';
   /**

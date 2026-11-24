@@ -7,7 +7,7 @@
  * knows this editor's edits since it opened: this is every server-side write
  * of the lines, by anyone (the user, an agent, the app), kept with the project.
  */
-import type { EditHistoryEntry, UndoChange } from '../../../core/activity/activity-models';
+import type { EditHistoryEntry, EditHistorySummary, UndoChange } from '../../../core/activity/activity-models';
 import type { TranscriptSegment } from '../../../core/models';
 
 /** A field the history shows, as an edit changes it. */
@@ -125,6 +125,86 @@ export function rangeView(
     moreBefore: Math.max(0, entry.before.length - max),
     moreAfter: Math.max(0, entry.after.length - max),
   };
+}
+
+/** Translates a key with its values (TranslateService.instant). */
+export type Translate = (key: string, params?: Record<string, string | number>) => string;
+
+const UNDO = 'history.summary.undo';
+
+/** The pieces of a "Changed …" entry, in the order the server lists them. */
+const CHANGED_PARTS: readonly (readonly [string, string])[] = [
+  ['text', 'history.summary.part-text'],
+  ['timing', 'history.summary.part-timing'],
+  ['speaker', 'history.summary.part-speaker'],
+  ['voice', 'history.summary.part-voice'],
+  ['pace', 'history.summary.part-pace'],
+  ['lock', 'history.summary.part-lock'],
+];
+
+/** What a re-transcribed window's loop check did, after its line count. */
+const RETRANSCRIBED_PARTS: readonly (readonly [string, string])[] = [
+  ['removed', 'history.summary.part-loops-removed'],
+  ['kept', 'history.summary.part-loops-kept'],
+  ['left', 'history.summary.part-loops-left'],
+  ['unassigned', 'history.summary.part-unassigned'],
+];
+
+/**
+ * An entry's sentence in the reader's language, from its `summaryKey` and
+ * values (activity/history.ts). The server's English `summary` stays the
+ * answer for entries written before 0.18.0 and for a key this version does
+ * not know (a newer app wrote the history).
+ */
+export function historySummary(entry: Pick<EditHistorySummary, 'summary' | 'summaryKey' | 'summaryParams'>, t: Translate): string {
+  const params = entry.summaryParams ?? {};
+  if (entry.summaryKey !== UNDO) return sentence(entry.summaryKey, params, t) ?? entry.summary;
+  // An undo names the change it undid (`of`, with that change's values), and
+  // how many undos deep it is: an undo of an undo says "Undid: Undid: …".
+  const of = typeof params['of'] === 'string' && params['of'] !== '' ? params['of'] : undefined;
+  let text = sentence(of, params, t) ?? (typeof params['text'] === 'string' ? params['text'] : undefined);
+  if (text === undefined) return entry.summary;
+  const depth = Math.min(10, Math.max(1, Math.floor(Number(params['depth'] ?? 1)) || 1));
+  for (let i = 0; i < depth; i++) {
+    const wrapped = known(t, UNDO, { what: text });
+    if (wrapped === undefined) return entry.summary;
+    text = wrapped;
+  }
+  return text;
+}
+
+/** `t(key)`, or undefined when this version has no such key (instant returns the key). */
+function known(t: Translate, key: string, params?: Record<string, string | number>): string | undefined {
+  const text = t(key, params);
+  return text === key ? undefined : text;
+}
+
+function sentence(key: string | undefined, params: Record<string, string | number>, t: Translate): string | undefined {
+  if (!key || key === UNDO) return undefined;
+  const pieces = (list: readonly (readonly [string, string])[]): string[] | undefined => {
+    const out: string[] = [];
+    for (const [name, pieceKey] of list) {
+      const n = Number(params[name] ?? 0);
+      if (!(n > 0)) continue;
+      const piece = known(t, pieceKey, { n });
+      if (piece === undefined) return undefined;
+      out.push(piece);
+    }
+    return out;
+  };
+  switch (key) {
+    case 'history.summary.changed': {
+      const list = pieces(CHANGED_PARTS);
+      return list && list.length > 0 ? known(t, key, { parts: list.join(', ') }) : undefined;
+    }
+    case 'history.summary.retranscribed': {
+      const head = known(t, key, params);
+      const list = pieces(RETRANSCRIBED_PARTS);
+      return head !== undefined && list ? [head, ...list].join(', ') : undefined;
+    }
+    default:
+      return known(t, key, params);
+  }
 }
 
 /** Why an undo was refused, as translation keys and parameters (one per change, at most `max`). */

@@ -2824,7 +2824,31 @@
     "refused-undone": "It was already undone.",
     "field-song": "Kept as the original song",
     "flag-yes": "yes",
-    "flag-no": "no"
+    "flag-no": "no",
+    "summary": {
+      "replaced": "Replaced {{replaced}} line(s) with {{made}} at {{from}}–{{to}}",
+      "retranscribed": "Re-transcribed {{from}}–{{to}}: {{lines}} line(s)",
+      "part-loops-removed": "{{n}} loop(s) removed",
+      "part-loops-kept": "{{n}} kept as really said",
+      "part-loops-left": "{{n}} left marked LOOP?",
+      "part-unassigned": "{{n}} without a speaker",
+      "speakers-redetected": "Detected speakers again: {{speakers}} speaker(s), {{lines}} line(s) changed speaker",
+      "speakers-range": "Detected speakers at {{from}}–{{to}}: {{relabelled}} of {{lines}} line(s) changed speaker",
+      "speakers-range-added": "Detected speakers at {{from}}–{{to}}: {{relabelled}} of {{lines}} line(s) changed speaker, {{added}} new speaker(s)",
+      "translation-edited": "Edited the translation of {{n}} line(s)",
+      "changed": "Changed {{parts}}",
+      "part-text": "the text of {{n}} line(s)",
+      "part-timing": "the timing of {{n}} line(s)",
+      "part-speaker": "the speaker of {{n}} line(s)",
+      "part-voice": "the voice of {{n}} line(s)",
+      "part-pace": "the pace of {{n}} line(s)",
+      "part-lock": "the lock of {{n}} line(s)",
+      "songs-kept": "Kept {{n}} line(s) as the original song at {{at}}",
+      "songs-dubbed": "Dubbed {{n}} song line(s) again at {{at}}",
+      "rebuilt": "Rebuilt from the series transcript: {{from}} → {{to}} line(s)",
+      "rebuilt-set-aside": "Rebuilt from the series transcript: {{from}} → {{to}} line(s); its translation was set aside",
+      "undo": "Undid: {{what}}"
+    }
   },
   "picture": {
     "heading": "Picture: watermark and the video's own subtitles",

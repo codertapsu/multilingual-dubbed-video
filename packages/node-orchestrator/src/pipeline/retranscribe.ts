@@ -304,6 +304,19 @@ export function loopCounts(ranges: readonly RepairedRange[]): LoopCounts {
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
+/** {@link windowSummary}'s values, for its `history.summary.retranscribed` key (the UI composes the sentence). Pure. */
+export function windowSummaryParams(window: TimeRange, lines: number, loops: LoopCounts, unassigned: number): Record<string, string | number> {
+  return {
+    from: formatClock(window.fromMs),
+    to: formatClock(window.toMs),
+    lines,
+    removed: loops.removed,
+    kept: loops.kept,
+    left: loops.left,
+    unassigned,
+  };
+}
+
 /** "Re-transcribed 24:12:04–24:27:04: 14 lines, 2 loops removed" (the edit history's words). Pure. */
 export function windowSummary(window: TimeRange, lines: number, loops: LoopCounts, unassigned: number): string {
   return (

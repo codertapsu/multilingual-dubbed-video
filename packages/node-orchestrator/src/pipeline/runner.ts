@@ -1063,7 +1063,7 @@ export class PipelineRunner {
     );
 
     await writeSegments(paths.sourceJson, segments);
-    await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(segments)));
+    await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(segments, { songSubtitles: await songSubtitlesOn(paths.projectJson) })));
     this.deps.logger.info(`Transcribed ${segments.length} segments (detected language: ${detectedLanguage}).`);
 
     // The STT chunk clips/checkpoints were scratch space; reclaim the disk now

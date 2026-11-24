@@ -9,6 +9,9 @@ export interface RecordEdit {
   target: 'source' | 'translation';
   /** What changed, in a sentence ("Replaced 14 lines at 24:12:04 (loop fixed)"). */
   summary: string;
+  /** The sentence as a `history.summary.*` key and its values (EditHistoryEntry.summaryKey). */
+  summaryKey?: string;
+  summaryParams?: Record<string, string | number>;
   /**
    * The whole list of lines before and after the write; only the changed ones
    * are kept (matched by id). With `range`, the range's lines as given.
@@ -122,6 +125,7 @@ export async function recordEdit(edit: RecordEdit): Promise<EditHistoryEntry | u
     at: new Date().toISOString(),
     initiator: edit.initiator ?? currentInitiator(),
     summary: edit.summary,
+    ...(edit.summaryKey ? { summaryKey: edit.summaryKey, ...(edit.summaryParams ? { summaryParams: edit.summaryParams } : {}) } : {}),
     target: edit.target,
     ...(edit.range ? { range: { fromMs: edit.range.fromMs, toMs: edit.range.toMs } } : {}),
     before: diff.before,

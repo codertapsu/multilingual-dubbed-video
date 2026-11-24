@@ -786,6 +786,8 @@ export class SeriesService {
         projectId: id,
         target: 'source',
         summary: `Rebuilt from the series transcript: ${old.length} → ${transcript.length} line(s)${translated ? '; its translation was set aside' : ''}`,
+        summaryKey: translated ? 'history.summary.rebuilt-set-aside' : 'history.summary.rebuilt',
+        summaryParams: { from: old.length, to: transcript.length },
         ...(sameIds ? {} : { range: { fromMs: 0, toMs: Math.max(part.endMs - part.recapStartMs, old.at(-1)?.endMs ?? 0) } }),
         before: old,
         after: transcript,

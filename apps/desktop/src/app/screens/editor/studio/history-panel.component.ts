@@ -250,6 +250,10 @@ import { StudioStore } from './studio.store';
         margin: 2px 0;
         overflow-wrap: anywhere;
       }
+      /* Angular drops the whitespace between the label and the old value ("gốc:có"). */
+      .field > .muted {
+        margin-right: 0.35em;
+      }
       del {
         color: var(--vd-danger, #dc2626);
       }

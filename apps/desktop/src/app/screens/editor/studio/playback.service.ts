@@ -1,6 +1,7 @@
 import type { OnDestroy } from '@angular/core';
 import { Injectable, NgZone, computed, inject, signal } from '@angular/core';
 
+import { timelineMs, videoSecondsAt } from './playback-time';
 import { StudioStore } from './studio.store';
 
 /** A dub clip as the preview plays it. */
@@ -51,12 +52,12 @@ export class PlaybackService implements OnDestroy {
 
   /** The timeline's time of the video's current frame (a part's window starts at 0). */
   private videoMs(v: HTMLVideoElement): number {
-    return this.videoMs(v) - (this.range()?.startMs ?? 0);
+    return timelineMs(v.currentTime, this.range()?.startMs ?? 0);
   }
 
   /** The video's time for a timeline time. */
   private toVideoSeconds(ms: number): number {
-    return (ms + (this.range()?.startMs ?? 0)) / 1000;
+    return videoSecondsAt(ms, this.range()?.startMs ?? 0);
   }
 
   readonly currentMs = signal(0);

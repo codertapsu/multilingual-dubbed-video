@@ -247,9 +247,10 @@ What you can do, and how:
   minutes, not the whole pipeline again.
 - **Place burned-in subtitles.** With subtitles burned in, the Project tab has
   **Subtitle position** (bottom, raised above the video's own subtitles, or top)
-  and **Cover the original subtitles**, which lays a solid band over the bottom
-  strip where many videos — Chinese dramas especially — have their own subtitles
-  burned in. **Render quality → Automatic** (the default for new projects) uses
+  and **Cover the original subtitles**, for the many videos (Chinese dramas
+  especially) that have their own subtitles burned in: the **Picture** section
+  finds where they are and blurs them or covers them with a solid band (see
+  *Hiding a watermark and the video's own subtitles* below). **Render quality → Automatic** (the default for new projects) uses
   your graphics card's video encoder when it works, which is several times faster
   with the same picture quality, and the software encoder otherwise.
 
@@ -258,6 +259,71 @@ overflowing lines or polish the translation leave them exactly as you wrote
 them. Unlock a line in the Line tab to let them work on it again.
 
 Press **?** in the editor for the full list of keyboard shortcuts.
+
+### Undoing a change to the lines (History)
+
+The editor's own undo (⌘Z / Ctrl+Z) knows only what you did since you opened
+it. The **History** tab, beside **Line** and **Project**, keeps every change to a
+project's lines, whoever made it: you in the editor, an AI agent through MCP
+(Claude replacing a looped stretch, say), or the app itself (a stretch
+transcribed again, speakers detected again). Each entry says what changed, who
+did it and when; **Show the changes** lists the lines before and after.
+**Undo** puts those lines back as they were, speakers included, and the undo is
+an entry of its own that can be undone in turn. An undo is refused, with the
+reason, when its lines were changed again afterwards: undo the later changes
+first, newest first. The last 200 changes of each project are kept.
+
+### Hiding a watermark and the video's own subtitles
+
+The Project tab's **Picture** section hides parts of the picture in the finished
+video: a watermark (a channel's name or logo in a corner) and the subtitles
+burned into the video. **Find them** looks at about a hundred frames, in 10 to
+60 seconds, without AI and without sending anything off your computer: a mark
+that stays still in a corner becomes a box, and the rows where text comes and
+goes as people speak become a yellow band. Check them on the frame: drag a box
+to move it and its corner to resize it, drag the band or its top and bottom
+edges. **Add a box** for anything it missed.
+
+- **How to hide it**, per box: **Blur**, **Pixelate**, or **Remove (fill in)**
+  from the picture around it, which works best for small marks. A box can be
+  hidden for part of the video only.
+- **Hide them**, for the video's own subtitles: **Blur a band over them** (works
+  with every subtitle option) or **Cover them with a solid band** (only with
+  subtitles burned into the picture). **Put my subtitles inside the band** puts
+  your burned-in subtitles where the original ones were.
+- In a series, **Apply to every part of the series** gives every part the same
+  boxes and band; each part takes its own stretch of the video.
+
+Then **Save**: it takes effect the next time the video is rendered. **Render
+again** renders only the picture, in a few minutes, keeping the voices and the
+mix; in a series, **Render the finished parts again** does it for every
+finished part, one after another.
+
+### Songs: keeping the original
+
+A sung line (an opening song, a ballad in a funeral scene) is usually better
+left alone. **Keep the original song** (Line tab, or several selected lines):
+the line gets no dub voice and the original plays there. Dialogue between the
+lyrics stays dubbed, so mark lines, not a whole scene. After speech-to-text, the
+Project tab's **Songs** section lists the **Lines that look sung** (lyrics in
+traditional characters, a chorus that repeats unchanged, very slow held
+syllables). Nothing is changed by itself: listen, then choose **Keep the
+original song** or **Not a song**. **Subtitles for songs** is off by default,
+so the original song plays untouched; turn it on to subtitle the song lines
+too.
+
+### Voices for minor speakers
+
+With speakers detected, **Choose voices by gender** (Project tab → Cast) gives
+each main speaker a voice of their gender and lets the minor speakers (a few
+lines each) share a small pool of built-in voices: 3 to 6 per gender, by how
+many minor speakers there are, or the number you set in **Voices for minor
+speakers**. Two minor speakers who answer each other get different voices
+where possible. Your cloned voices are never shared out to the crowd, and a
+built-in voice that sounds like one of your clones is left out of the pool.
+Speakers whose gender is unknown are listed with how long they speak and their
+longest lines, so you can listen and choose. You see the choice before anything
+changes.
 
 ### Getting the finished file
 
@@ -360,6 +426,52 @@ the series transcript** gives each part its share of the series transcript again
 after you fixed it (speakers detected again, loops repaired), with the character
 sheet. A part already translated is kept unless you tick the box to discard its
 translation.
+
+**Part names** (in New project, with the series options) follows a template:
+`{series}` is the series' name, `{n}` the part's number, `{nn}` the number with
+two digits, `{total}` how many parts there are and `{title}` the part's title.
+Leave it empty for the usual "<name> - Phần 01". Once the parts exist,
+**Edit** on the series screen renames a part or changes its title or summary
+without dubbing it again (a new title shows at the next render). **Only these
+parts** (for example `23, 24` or `23-30`) rebuilds just those; parts waiting in
+the queue are rebuilt in place and keep their turn, and a part being dubbed is
+never touched. **Plan again** with **Keep the titles and summaries I wrote**
+keeps yours on the parts that cover the same stretch.
+
+### Joining several videos into one project
+
+A season is often uploaded as several videos. In New project, choose **Join
+several videos** and list them in the order they play. They become one project:
+one transcript, one cast of voices, and one series whose part numbers run across
+all of them. The app first checks that they fit together. When they do, the
+picture is copied as it is, which is quick. When they differ (size, frame rate,
+codec), the picture must be encoded again: the app says how long that takes and
+how much space the result needs, measured on your computer, and waits for you
+to agree. Each video's sound is timed to its own picture, so nothing drifts at
+the joins, and the joins are preferred as places to split the parts. Joining
+runs in the background (**Background work** shows it); if VideoDubber closes
+meanwhile, it starts again the next time the app opens.
+
+### Continuing a series later
+
+For a later season of a series already dubbed, start a new project from the new
+video and choose the series under **Continues a series**. The new parts keep
+that series' name and part names and are numbered on from where it ended (part
+49 after 48). Once the new video's speakers are detected, those who sound like a
+speaker of the earlier series get that speaker's voice; the others get the
+voices for minor speakers. **Use the settings of** that series copies its
+engines, voices, subtitles and mix.
+
+### Everything the app works on (Activity)
+
+The **Background work** button in the top bar lists what runs now (dubs,
+renders, downloads, installs, speaker detection, transcribing a stretch again,
+rebuilding parts, joining videos, finding a watermark) and the AI agents
+connected in the last hour. **See all activity** opens the full list: who
+started each job (you, an AI agent by name, or the app itself), how far it got,
+how it ended and a log reference to quote when asking for help. It survives a
+restart. Each project has its own list (**Activity** on its progress screen,
+**All activity of this project** in the History tab).
 
 Each part is a project of its own (*My video - Part 01*, *Part 02*…), listed
 under its series in Projects, with its own progress, editor and Export screen. The parts share one

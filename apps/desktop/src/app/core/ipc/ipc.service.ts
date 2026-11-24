@@ -1084,12 +1084,17 @@ export class IpcService {
 
   // ----- Activity and edit history (node-orchestrator activity/; HTTP in both modes) -----
 
-  /** GET /activity — everything the app works on, newest first (one project's, or what still runs). */
-  async activity(params: { projectId?: string; active?: boolean; limit?: number } = {}): Promise<ActivityEntry[]> {
+  /**
+   * GET /activity — everything the app works on, newest first (one project's,
+   * or what still runs); `since` (an `updatedAt` already seen): only what
+   * changed at or after it.
+   */
+  async activity(params: { projectId?: string; active?: boolean; limit?: number; since?: string } = {}): Promise<ActivityEntry[]> {
     const q = new URLSearchParams();
     if (params.projectId) q.set('projectId', params.projectId);
     if (params.active) q.set('active', '1');
     if (params.limit) q.set('limit', String(params.limit));
+    if (params.since) q.set('since', params.since);
     const qs = q.toString();
     return (await this.http<{ entries: ActivityEntry[] }>('GET', `/activity${qs ? `?${qs}` : ''}`)).entries ?? [];
   }

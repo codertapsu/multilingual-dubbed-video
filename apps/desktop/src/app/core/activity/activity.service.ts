@@ -29,7 +29,7 @@ import {
   type QueueView,
   type RunOutcome,
 } from './activity-logic';
-import type { ActivityAgentSession, ActivityEntry, ActivityStreamEvent } from './activity-models';
+import type { ActivityAgentSession, ActivityEntry } from './activity-models';
 
 /** One piece of background work: an engine pack, a model, a dub, a video download, the projects-folder move. */
 export interface ActivityTask {
@@ -147,11 +147,6 @@ export class ActivityService {
   readonly engineChanges = signal(0);
   /** Bumped when a model download run ended: lists that show models reload. */
   readonly setupChanges = signal(0);
-  /**
-   * The last change of the server's activity list (every kind, the ones the
-   * top bar follows from elsewhere too): the Activity page merges it in.
-   */
-  readonly registryEntry = signal<ActivityEntry | null>(null);
   /** The AI agents (MCP sessions) seen in the last hour, newest first. */
   readonly agents = signal<ActivityAgentSession[]>([]);
 
@@ -178,7 +173,7 @@ export class ActivityService {
     this.downloads.onChange((change) => this.onDownloadChange(change));
     this.downloads.connect();
     this.pollQueueLater(0);
-    this.connectActivity(0);
+    this.pollRegistryLater(0);
     this.pollAgentsLater(0);
   }
 
@@ -750,42 +745,58 @@ export class ActivityService {
   // ---------------------------------------------------------------- the server's list
 
   /**
-   * The server's activity list (GET /activity/events): every long piece of
-   * work, whoever started it. The kinds this service already follows from
-   * their own streams are left to them (activity-logic.ts FOLLOWED_ELSEWHERE:
-   * no row twice); the rest (speaker detection, re-transcription, re-voicing,
+   * The server's activity list (GET /activity): every long piece of work,
+   * whoever started it. The kinds this service already follows from their
+   * own streams are left to them (activity-logic.ts FOLLOWED_ELSEWHERE: no
+   * row twice); the rest (speaker detection, re-transcription, re-voicing,
    * joins, picture detection, series planning and rebuilds, what agents
    * report) were invisible here, and an agent's work was invisible
    * everywhere (claude-dubber report, 2026-11-23, R3).
+   *
+   * Polled (`since` the last change seen), not streamed: the window already
+   * holds three event streams to the orchestrator for its whole life
+   * (engines, models, downloads) and a project's own on its pages, and the
+   * webview (Chromium) opens at most six connections to one host. A fourth
+   * stream for the app's life left one connection for every other request;
+   * two windows' worth hung the second outright (UI check, 2026-11-24).
+   * GET /activity/events stays for other clients.
    */
-  private activitySource: EventSource | null = null;
+  private registrySince = '';
+  private registryPrimed = false;
+  private registryFailures = 0;
+  /** The `updatedAt` of each entry last applied (a poll repeats the one at `since`). */
+  private readonly registrySeen = new Map<string, string>();
   /** Entries seen while they ran: a later end of one is news, a replayed end of another is not. */
   private readonly seenRunning = new Set<string>();
 
-  private connectActivity(attempt: number): void {
-    const es = new EventSource(`${environment.orchestratorUrl}/activity/events`);
-    this.activitySource = es;
-    es.onopen = () => {
-      attempt = 0;
-    };
-    es.onmessage = (ev: MessageEvent<string>) => {
-      let event: ActivityStreamEvent;
-      try {
-        event = JSON.parse(ev.data) as ActivityStreamEvent;
-      } catch {
-        return;
+  private pollRegistryLater(delay: number): void {
+    setTimeout(() => void this.pollRegistry(), delay);
+  }
+
+  private async pollRegistry(): Promise<void> {
+    try {
+      const replay = !this.registryPrimed;
+      const entries = await this.ipc.activity({ limit: replay ? 200 : 100, ...(this.registrySince ? { since: this.registrySince } : {}) });
+      this.registryFailures = 0;
+      // Oldest change first, so the latest state of each entry is the one kept.
+      for (const entry of [...entries].reverse()) {
+        const key = `${entry.updatedAt}|${entry.state}|${entry.percent}|${entry.message ?? ''}`;
+        if (this.registrySeen.get(entry.id) === key) continue;
+        this.registrySeen.set(entry.id, key);
+        if (entry.updatedAt > this.registrySince) this.registrySince = entry.updatedAt;
+        this.onRegistryEntry(entry, replay);
       }
-      if (event.type === 'entry' && event.entry) this.onRegistryEntry(event.entry, event.replay === true);
-    };
-    es.onerror = () => {
-      if (es.readyState !== EventSource.CLOSED) return;
-      this.activitySource = null;
-      setTimeout(() => this.connectActivity(attempt + 1), Math.min(30_000, 1000 * 2 ** attempt));
-    };
+      this.registryPrimed = true;
+      while (this.registrySeen.size > 1000) this.registrySeen.delete(this.registrySeen.keys().next().value!);
+    } catch {
+      // The backend is starting or down: the list stays as it was.
+      this.registryFailures++;
+    } finally {
+      this.pollRegistryLater(queuePollDelay(this.registryFailures));
+    }
   }
 
   private onRegistryEntry(entry: ActivityEntry, replay: boolean): void {
-    this.registryEntry.set(entry);
     const seen = this.seenRunning.has(entry.id);
     if (entry.endedAt) this.seenRunning.delete(entry.id);
     else this.seenRunning.add(entry.id);

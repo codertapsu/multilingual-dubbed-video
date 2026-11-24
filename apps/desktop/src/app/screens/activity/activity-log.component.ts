@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, effect, inject, input, signal, untracked, type OnInit } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, signal, type OnDestroy, type OnInit } from '@angular/core';
 import { RouterLink } from '@angular/router';
 
 import { entryLink, initiatorView, kindLabelKey, mergeEntries } from '../../core/activity/activity-logic';
@@ -12,6 +12,8 @@ import { ErrorBannerComponent } from '../../shared/error-banner/error-banner.com
 
 /** How many entries the page reads (the server keeps the last 1000 app-wide, a project's own log holds more). */
 const LIMIT = 200;
+/** How often the open page looks for changes. */
+const POLL_MS = 4000;
 
 /**
  * The Activity page (routes `activity` and `project/:id/activity`): every
@@ -23,7 +25,7 @@ const LIMIT = 200;
  * production: an agent ran speaker detection for five hours, 33
  * re-transcriptions and the part rebuilds over MCP, and nothing in the window
  * showed them, nor who had started what (claude-dubber report, 2026-11-23,
- * R3). Live: changes arrive through ActivityService's stream.
+ * R3). Live while open: it asks every few seconds for what changed since.
  */
 @Component({
   selector: 'vd-activity-log',
@@ -198,7 +200,7 @@ const LIMIT = 200;
     `,
   ],
 })
-export class ActivityLogComponent implements OnInit {
+export class ActivityLogComponent implements OnInit, OnDestroy {
   /** The project, on `project/:id/activity`; absent on `activity` (all of it). */
   readonly id = input<string | undefined>(undefined);
 
@@ -216,21 +218,13 @@ export class ActivityLogComponent implements OnInit {
   protected readonly shown = computed(() => (this.onlyActive() ? this.entries().filter((e) => !e.endedAt) : this.entries()));
   protected readonly projectName = computed(() => this.name() || this.entries().find((e) => e.projectName)?.projectName || this.id() || '');
 
-  constructor() {
-    // Live: every change of the server's list, as the top bar receives it.
-    effect(() => {
-      const e = this.activity.registryEntry();
-      if (!e) return;
-      untracked(() => {
-        const pid = this.id();
-        if (pid && e.projectId !== pid) return;
-        this.entries.update((list) => mergeEntries(list, [e], LIMIT));
-      });
-    });
-  }
+  /** The latest `updatedAt` read: the next look asks only for what changed since. */
+  private since = '';
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private destroyed = false;
 
   ngOnInit(): void {
-    void this.load();
+    void this.load().finally(() => this.pollLater());
     const pid = this.id();
     if (pid) {
       this.ipc
@@ -240,18 +234,45 @@ export class ActivityLogComponent implements OnInit {
     }
   }
 
+  ngOnDestroy(): void {
+    this.destroyed = true;
+    if (this.timer) clearTimeout(this.timer);
+  }
+
+  /** The whole list again (on open, and Refresh). */
   async load(): Promise<void> {
     this.loading.set(true);
     try {
-      const pid = this.id();
-      const list = await this.ipc.activity({ ...(pid ? { projectId: pid } : {}), limit: LIMIT });
-      this.entries.update((now) => mergeEntries(now, list, LIMIT));
+      this.take(await this.ipc.activity({ ...this.scope(), limit: LIMIT }));
       this.error.set(null);
     } catch (err) {
       this.error.set(toAppError(err));
     } finally {
       this.loading.set(false);
     }
+  }
+
+  /** Live while open: what changed since the last look, every few seconds (no stream: see ActivityService). */
+  private pollLater(): void {
+    if (this.destroyed) return;
+    this.timer = setTimeout(async () => {
+      try {
+        this.take(await this.ipc.activity({ ...this.scope(), limit: LIMIT, ...(this.since ? { since: this.since } : {}) }));
+      } catch {
+        /* the backend is busy or restarting: look again */
+      }
+      this.pollLater();
+    }, POLL_MS);
+  }
+
+  private scope(): { projectId?: string } {
+    const pid = this.id();
+    return pid ? { projectId: pid } : {};
+  }
+
+  private take(list: readonly ActivityEntry[]): void {
+    for (const e of list) if (e.updatedAt > this.since) this.since = e.updatedAt;
+    this.entries.update((now) => mergeEntries(now, list, LIMIT));
   }
 
   protected label(e: ActivityEntry): string {

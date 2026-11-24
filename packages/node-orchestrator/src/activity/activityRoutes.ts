@@ -2,7 +2,7 @@
  * One place for all the work, and an edit history (docs/plans/
  * production-requests-2026-11-23.md, Phase 3):
  *
- *   GET  /activity?projectId=&active=1&limit=      the list, newest first
+ *   GET  /activity?projectId=&active=1&limit=&since=  the list, newest first (since: changed at or after)
  *   GET  /activity/events?projectId=                 SSE: {type:'entry', entry, replay?}
  *   GET  /activity/agents                            the MCP sessions of the last hour
  *   POST /activity/report                            an agent's own outside work (report_activity)
@@ -200,14 +200,19 @@ export async function registerActivityRoutes(app: FastifyInstance, deps: Activit
 
   app.get(
     '/activity',
-    async (req: FastifyRequest<{ Querystring: { projectId?: string; active?: string; limit?: string } }>, reply) => {
+    async (req: FastifyRequest<{ Querystring: { projectId?: string; active?: string; limit?: string; since?: string } }>, reply) => {
       try {
         const projectId = req.query.projectId?.trim() || undefined;
         if (projectId && !PROJECT_ID.test(projectId)) return badRequest(reply, 'Not a project id.');
         const active = req.query.active === '1' || req.query.active === 'true';
         const limit = clampLimit(req.query.limit, 100, 500);
+        // `since` (an updatedAt the caller saw): only what changed at or after it,
+        // for a client that polls (the window: see core/activity/activity.service.ts).
+        const since = req.query.since?.trim() || undefined;
+        if (since && Number.isNaN(Date.parse(since))) return badRequest(reply, '"since" is an ISO time, as the entries\' updatedAt.');
         let entries = registry.list({ ...(projectId ? { projectId } : {}), active });
-        if (projectId && !active) {
+        if (since) entries = entries.filter((e) => e.updatedAt >= since);
+        else if (projectId && !active) {
           // The project's own log holds what the app no longer keeps in memory.
           const known = new Set(entries.map((e) => e.id));
           const older = settleInterrupted((await log.readProject(projectId, limit)).filter((e) => !known.has(e.id)));

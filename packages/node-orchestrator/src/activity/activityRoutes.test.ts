@@ -135,6 +135,19 @@ describe('reported activity and connected agents', () => {
     expect((await app.inject({ method: 'GET', url: `/activity?projectId=${id}&active=1` })).json()).toEqual({ entries: [] });
   });
 
+  it('answers a poll with only what changed since the last one', async () => {
+    const id = await project();
+    const first = ((await app.inject({ method: 'POST', url: '/activity/report', payload: { projectId: id, title: 'First' } })).json() as { entry: ActivityEntry }).entry;
+    const since = first.updatedAt;
+    await new Promise((r) => setTimeout(r, 5));
+    const second = ((await app.inject({ method: 'POST', url: '/activity/report', payload: { projectId: id, title: 'Second' } })).json() as { entry: ActivityEntry }).entry;
+    const polled = (await app.inject({ method: 'GET', url: `/activity?projectId=${id}&since=${encodeURIComponent(second.updatedAt)}` })).json() as { entries: ActivityEntry[] };
+    expect(polled.entries.map((e) => e.title)).toEqual(['Second']);
+    const both = (await app.inject({ method: 'GET', url: `/activity?projectId=${id}&since=${encodeURIComponent(since)}` })).json() as { entries: ActivityEntry[] };
+    expect(both.entries.map((e) => e.title).sort()).toEqual(['First', 'Second']);
+    expect((await app.inject({ method: 'GET', url: '/activity?since=yesterday' })).statusCode).toBe(400);
+  });
+
   it('lists the MCP sessions that called', async () => {
     await app.inject({ method: 'GET', url: '/health', headers: MCP });
     await app.inject({ method: 'GET', url: '/queue', headers: { ...MCP, 'x-request-id': 'mcp-call2', 'x-vd-tool': 'get_queue' } });

@@ -2435,6 +2435,13 @@
   "warning": {
     "gpu-fallback-busy": "Card đồ hoạ đang bận việc khác nên một bước đã chạy bằng bản dùng CPU, chậm hơn ({{pack}}).",
     "gpu-fallback-failed": "Không khởi động được engine GPU ({{pack}}) nên một bước đã chạy bằng bản dùng CPU, chậm hơn. Nếu lặp lại, hãy cài lại nó trong Cài đặt → Engine.",
+    "audio-drift": "Âm thanh dài hơn phần hình {{seconds}} giây: âm thanh đã được căn lại theo phần hình, nên lời lồng tiếng vẫn khớp và video giữ nguyên độ dài.",
+    "stt-no-speech": "Đoạn nhận dạng giọng nói {{chunk}}/{{chunks}} không nghe thấy ai nói ở {{from}}–{{to}} mà vẫn ghi ra {{count}} câu: các câu đó đã được nhận dạng lại, và bị xoá ở chỗ không ai nói.",
+    "stt-no-speech-whole": "Nhận dạng giọng nói đã ghi ra {{count}} câu ở {{from}}–{{to}}, chỗ không có ai nói: các câu đó đã được nhận dạng lại, và bị xoá ở chỗ không ai nói.",
+    "digital-silence": "{{minutes}} phút hoàn toàn không có âm thanh ở {{from}}–{{to}}, trong một video nhiều lời thoại: nhiều khả năng video nguồn hoặc khâu mã hoá bị lỗi ở đó (ghép nối lỗi, tải về bị hỏng). Hãy kiểm tra đoạn đó của video.",
+    "transcript-mismatch": "Bản chép lời không khớp với âm thanh quanh {{at}}: nhận dạng lại phút đó chỉ trùng {{percent}}% với các câu. Hãy nghe lại, và nhận dạng lại đoạn đó trong trình chỉnh sửa nếu sai.",
+    "transcript-mismatch-span": "Bản chép lời không khớp với âm thanh từ {{from}} đến {{to}} ({{failed}} lần kiểm tra thử không đạt): nhiều khả năng video nguồn bị lỗi ở đó (ghép nối lỗi, tải về bị hỏng). Hãy kiểm tra đoạn đó và nhận dạng lại trong trình chỉnh sửa.",
+    "more-ranges": "…và {{count}} chỗ tương tự nữa (tất cả đều có trong nhật ký).",
     "no-speech-lines": "{{count}} câu không có chữ nào để đọc ({{examples}}): bản lồng tiếng để im lặng ở những câu này, phụ đề vẫn giữ nguyên.",
     "speakers-failed": "Không nhận diện được người nói ({{cause}}), nên cả bản lồng tiếng dùng một giọng. Hãy nhận diện lại người nói trong trình chỉnh sửa.",
     "speakers-unassigned": "{{count}} câu chưa có người nói ({{ranges}}), nên sẽ được lồng tiếng bằng giọng của dự án. Hãy chọn người nói cho các câu này trong trình chỉnh sửa, hoặc nhận diện lại người nói (thẻ Dự án → Người nói).",
@@ -2491,6 +2498,8 @@
     "voicing": "Đang lồng tiếng {{done}}/{{total}}",
     "transcribing": "Đang chuyển giọng nói thành chữ, phần {{done}}/{{total}}",
     "speakers": "Đang nhận diện người nói {{done}}/{{total}}",
+    "spot-check": "Đang kiểm tra thử bản chép lời {{done}}/{{total}}",
+    "silence-check": "Đang tìm những đoạn hoàn toàn không có âm thanh",
     "loops": "Đang kiểm tra các đoạn lặp do chép lời {{done}}/{{total}}"
   },
   "activity": {
@@ -2538,5 +2547,14 @@
     "move-failed-title": "Không chuyển được thư mục dự án",
     "move-failed-body": "Các dự án vẫn ở chỗ cũ, không mất gì.",
     "label-update": "Bản cập nhật VideoDubber {{ version }}"
+  },
+  "source-checks": {
+    "spot-check": "Kiểm tra thử bản chép lời",
+    "spot-check-hint": "Nhận dạng lại một phút trong mỗi nửa giờ rồi so với bản chép lời, để tìm những đoạn bản chép lời không khớp với âm thanh (ghép nối lỗi hoặc tải về bị hỏng). Tốn thêm khoảng 3–5% thời gian nhận dạng giọng nói. Mặc định bật với video dài hơn 2 giờ; dùng được cho tiếng Trung, tiếng Nhật và tiếng Hàn.",
+    "drift-label": "Âm thanh so với phần hình",
+    "drift-longer": "Âm thanh dài hơn phần hình {{seconds}} giây: đã căn lại theo phần hình",
+    "drift-match": "Khớp với phần hình ({{seconds}} giây)",
+    "drift-shorter": "Âm thanh kết thúc sớm hơn phần hình {{seconds}} giây: phần còn lại là khoảng lặng",
+    "drift-hint": "Đo từ chính các mẫu âm thanh khi tách âm thanh ra. Âm thanh tách ra luôn theo đồng hồ của phần hình và kết thúc cùng phần hình, nên lời lồng tiếng vẫn khớp và video giữ nguyên độ dài."
   }
 }

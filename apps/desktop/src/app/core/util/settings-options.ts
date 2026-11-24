@@ -95,6 +95,7 @@ export const SETTING_AFFECTS_STEP: Partial<Record<keyof ProjectSettings, Pipelin
   forcedAlignment: 'stt',
   diarize: 'stt',
   diarizeSpeakers: 'stt',
+  transcriptSpotCheck: 'stt',
   targetLanguage: 'translation',
   translationProviderId: 'translation',
   autoFitOverflow: 'translation',

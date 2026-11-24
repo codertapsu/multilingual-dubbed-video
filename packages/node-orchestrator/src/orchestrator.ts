@@ -272,6 +272,7 @@ const EDITABLE_SETTING_KEYS = [
   'subtitleExportMode',
   'forcedAlignment',
   'diarize',
+  'transcriptSpotCheck',
   'useSourceSubtitles',
 ] as const satisfies readonly (keyof ProjectSettings)[];
 

@@ -38,6 +38,7 @@ import type {
 } from '../../../core/models';
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, WhisperModelInfo } from '../../../core/models/setup';
 import { OutputFolderComponent } from '../../../shared/output-folder/output-folder.component';
+import { audioDriftView, spotCheckApplies, spotCheckOn } from '../../../core/util/source-checks';
 import { describeCastNote } from './notes';
 import { handLockedCount, retranslates } from './redub';
 import { StudioStore } from './studio.store';
@@ -277,6 +278,17 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   });
   protected readonly settingsDirty = computed(() => this.changedKeys().length > 0);
   protected readonly recommendedStep = computed<PipelineStepId | null>(() => earliestStepForChanges(this.changedKeys()));
+
+  /** The source's audio against its picture, measured when the audio was extracted (core/util/source-checks.ts). */
+  protected readonly audioDrift = computed(() => audioDriftView(this.store.project()?.mediaInfo?.audioDrift));
+  /** The transcript spot check: CJK speech only, and never on a series part (its parent transcribed it). */
+  protected readonly spotCheckOffered = computed(
+    () => spotCheckApplies(this.draft()?.sourceLanguage) && this.store.project()?.series?.role !== 'part',
+  );
+  /** Whether it runs with these settings: on by default above 2 hours. */
+  protected readonly spotCheck = computed(() =>
+    spotCheckOn(this.draft()?.transcriptSpotCheck, this.store.project()?.mediaInfo?.durationMs),
+  );
   protected readonly draftHasVoices = computed(() => this.draftVoices().length > 0);
 
   protected readonly outputPath = computed(() => this.store.media()?.outputPath ?? null);

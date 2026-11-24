@@ -41,11 +41,15 @@ interface FfprobeStream {
   channels?: number;
   sample_rate?: string;
   bit_rate?: string;
+  duration?: string;
+  start_time?: string;
+  disposition?: Record<string, number>;
   tags?: Record<string, string>;
 }
 interface FfprobeFormat {
   format_name?: string;
   duration?: string;
+  start_time?: string;
   size?: string;
   bit_rate?: string;
 }
@@ -76,6 +80,45 @@ function toKbps(bitRate: string | undefined): number | undefined {
   return Math.round(bits / 1000);
 }
 
+/** ffprobe seconds ("9826.357000") to whole ms; undefined for "N/A" or nothing. */
+function secondsToMs(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined;
+  const sec = Number(value);
+  return Number.isFinite(sec) ? Math.round(sec * 1000) : undefined;
+}
+
+/**
+ * A stream's own duration in ms: ffprobe's `duration`, else the DURATION tag
+ * Matroska/WebM files carry per track ("00:00:10.000000000"). Pure.
+ */
+export function streamDurationMs(stream: { duration?: string; tags?: Record<string, string> }): number | undefined {
+  const own = secondsToMs(stream.duration);
+  if (own !== undefined && own > 0) return own;
+  const tag = stream.tags?.DURATION ?? stream.tags?.duration;
+  const m = tag?.trim().match(/^(\d+):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$/);
+  if (!m) return undefined;
+  const ms = Math.round((Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3])) * 1000);
+  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
+
+/**
+ * How long the picture lasts on the clock every extracted audio track uses,
+ * ms; undefined for audio-only input (or a picture of unknown length). Pure.
+ *
+ * ffmpeg times every stream from the container's start, so a picture that
+ * starts after it (an MPEG-TS whose video opens later than its audio) ends
+ * that much later on the audio's clock. A cover picture (an MP3's album art)
+ * is not a picture that plays.
+ */
+export function pictureDurationMs(info: MediaInfo): number | undefined {
+  const video = info.videoStreams.find((v) => v.attachedPicture !== true);
+  if (!video) return undefined;
+  const length = video.durationMs ?? (info.durationMs > 0 ? info.durationMs : undefined);
+  if (length === undefined || !(length > 0)) return undefined;
+  const offset = video.startMs !== undefined && info.startMs !== undefined ? Math.max(0, video.startMs - info.startMs) : 0;
+  return Math.round(offset + length);
+}
+
 /**
  * Pure transform: ffprobe JSON (already parsed) -> MediaInfo.
  * Throws UNSUPPORTED_MEDIA if the JSON has no usable streams/format.
@@ -95,6 +138,15 @@ export function ffprobeJsonToMediaInfo(json: FfprobeJson, inputPath: string): Me
 
   const durationSec = Number(format.duration);
   const durationMs = Number.isFinite(durationSec) ? Math.round(durationSec * 1000) : 0;
+  // Per stream, what the container claims: the picture's length cuts the
+  // audio (pictureDurationMs), and the audio's claim is logged beside what it
+  // really holds (drift.ts). Only set when known, so older readers see no change.
+  const timing = (s: FfprobeStream): { durationMs?: number; startMs?: number } => {
+    const d = streamDurationMs(s);
+    const start = secondsToMs(s.start_time);
+    return { ...(d !== undefined ? { durationMs: d } : {}), ...(start !== undefined ? { startMs: start } : {}) };
+  };
+  const formatStartMs = secondsToMs(format.start_time);
 
   const videoStreams: VideoStreamInfo[] = streams
     .filter((s) => s.codec_type === 'video')
@@ -106,6 +158,8 @@ export function ffprobeJsonToMediaInfo(json: FfprobeJson, inputPath: string): Me
       // Prefer avg_frame_rate, fall back to r_frame_rate.
       fps: parseFrameRate(s.avg_frame_rate) || parseFrameRate(s.r_frame_rate),
       bitrateKbps: toKbps(s.bit_rate),
+      ...timing(s),
+      ...(s.disposition?.attached_pic === 1 ? { attachedPicture: true } : {}),
     }));
 
   const audioStreams: AudioStreamInfo[] = streams
@@ -117,6 +171,7 @@ export function ffprobeJsonToMediaInfo(json: FfprobeJson, inputPath: string): Me
       sampleRate: s.sample_rate ? Number(s.sample_rate) : 0,
       bitrateKbps: toKbps(s.bit_rate),
       language: s.tags?.language ?? s.tags?.LANGUAGE,
+      ...timing(s),
     }));
 
   return {
@@ -126,6 +181,7 @@ export function ffprobeJsonToMediaInfo(json: FfprobeJson, inputPath: string): Me
     hasAudio: audioStreams.length > 0,
     videoStreams,
     audioStreams,
+    ...(formatStartMs !== undefined ? { startMs: formatStartMs } : {}),
   };
 }
 

@@ -414,6 +414,22 @@
                   </span>
                 </label>
               }
+              <!-- A second decode of a minute every half hour, compared with the
+                   transcript (on by default above 2 hours; CJK speech only). -->
+              @if (spotCheckOffered()) {
+                <label class="radio-row">
+                  <input
+                    type="checkbox"
+                    name="transcriptSpotCheck"
+                    [ngModel]="spotCheck()"
+                    (ngModelChange)="patchSettings('transcriptSpotCheck', $event)"
+                  />
+                  <span class="radio-body">
+                    <span class="radio-title">{{ 'source-checks.spot-check' | translate }}</span>
+                    <span class="hint">{{ 'source-checks.spot-check-hint' | translate }}</span>
+                  </span>
+                </label>
+              }
               <label class="radio-row">
                 <input
                   type="checkbox"

@@ -4,6 +4,14 @@
  *  - extractAudio: full-rate stereo 48k WAV ("original.wav") for mixing.
  *  - extract16kMono: 16k mono pcm_s16le WAV for STT (faster-whisper).
  *
+ * Both follow the PICTURE's clock (pictureClockFilter): the audio is placed by
+ * its timestamps, not by counting its samples, and cut (or padded) to exactly
+ * the picture's length. Part 4 of the 27.8-hour series held 4.8 s more audio
+ * samples than its timestamps said (+4.81 s over 2.73 h, claude-dubber report
+ * 2026-11-23); decoding every sample baked that drift into both WAVs, so the
+ * dub drifted behind the picture, and the mix (amix `longest`) made the
+ * finished video longer than its picture.
+ *
  * Arg-builders are pure (testable); the exported async functions spawn ffmpeg
  * and then probe the result for its real duration.
  */
@@ -16,7 +24,7 @@ import {
   runFfmpeg,
   type RunOptions,
 } from './exec.js';
-import { probe } from './probe.js';
+import { pictureDurationMs, probe } from './probe.js';
 
 /** A window of the input (a series part), in ms. */
 export interface MediaWindow {
@@ -31,14 +39,60 @@ export function windowArgs(range?: MediaWindow): string[] {
   return ['-ss', (start / 1000).toFixed(3), '-t', (Math.max(0, range.endMs - start) / 1000).toFixed(3)];
 }
 
-/** ffmpeg args: input -> 48kHz stereo WAV (pcm_s16le), drop video. */
-export function buildExtractAudioArgs(inputPath: string, outputPath: string, range?: MediaWindow): string[] {
+/**
+ * Most samples per second aresample may add or drop to keep the audio on its
+ * timestamps (its `async`). P4's drift was 0.05 % (~24 samples/s at 48 kHz);
+ * a gap or overlap above aresample's hard limit (0.1 s) is filled or cut at once.
+ */
+export const AUDIO_ASYNC_SAMPLES_PER_SEC = 1000;
+
+/**
+ * How long the extracted audio must be, ms: the picture's length, or for a
+ * window (a series part) its share of the picture. Undefined when the input
+ * has no picture of known length (audio only): then nothing is cut. Pure.
+ */
+export function extractKeepMs(range: MediaWindow | undefined, pictureMs: number | undefined): number | undefined {
+  if (!range) return pictureMs !== undefined && pictureMs > 0 ? pictureMs : undefined;
+  const start = Math.max(0, range.startMs);
+  const end = pictureMs !== undefined && pictureMs > start ? Math.min(range.endMs, pictureMs) : range.endMs;
+  return end > start ? end - start : undefined;
+}
+
+/**
+ * The audio filter that puts the audio on the picture's clock. Pure.
+ *
+ * `aresample=<rate>:async=1000:first_pts=0` places every sample by its
+ * timestamp (stretching or squeezing up to 1000 samples/s, padding gaps,
+ * dropping overlaps) from time 0, so audio that starts late is preceded by
+ * silence and the encoder's priming is dropped. `apad,atrim=end_sample=N`
+ * then makes it exactly N samples: padded with silence when the audio ends
+ * before the picture, cut where it runs past it. Without a picture length
+ * (audio-only input) only the re-timing applies.
+ */
+export function pictureClockFilter(sampleRate: number, keepMs: number | undefined): string {
+  const retime = `aresample=${sampleRate}:async=${AUDIO_ASYNC_SAMPLES_PER_SEC}:first_pts=0`;
+  if (keepMs === undefined || !(keepMs > 0)) return retime;
+  return `${retime},apad,atrim=end_sample=${Math.round((keepMs * sampleRate) / 1000)}`;
+}
+
+/**
+ * ffmpeg args: input -> 48kHz stereo WAV (pcm_s16le), drop video, on the
+ * picture's clock and exactly its length (`pictureMs`: pictureDurationMs of the input).
+ */
+export function buildExtractAudioArgs(
+  inputPath: string,
+  outputPath: string,
+  range?: MediaWindow,
+  pictureMs?: number,
+): string[] {
   return [
     '-y', // overwrite output (idempotent for resume)
     ...windowArgs(range),
     '-i',
     inputPath,
     '-vn', // no video
+    '-af',
+    pictureClockFilter(48000, extractKeepMs(range, pictureMs)),
     '-ac',
     '2', // stereo
     '-ar',
@@ -53,14 +107,21 @@ export function buildExtractAudioArgs(inputPath: string, outputPath: string, ran
   ];
 }
 
-/** ffmpeg args: input -> 16kHz mono WAV (pcm_s16le) for STT. */
-export function buildExtract16kMonoArgs(inputPath: string, outputPath: string, range?: MediaWindow): string[] {
+/** ffmpeg args: input -> 16kHz mono WAV (pcm_s16le) for STT, on the picture's clock like the 48k track. */
+export function buildExtract16kMonoArgs(
+  inputPath: string,
+  outputPath: string,
+  range?: MediaWindow,
+  pictureMs?: number,
+): string[] {
   return [
     '-y',
     ...windowArgs(range),
     '-i',
     inputPath,
     '-vn',
+    '-af',
+    pictureClockFilter(16000, extractKeepMs(range, pictureMs)),
     '-ac',
     '1', // mono
     '-ar',
@@ -69,6 +130,20 @@ export function buildExtract16kMonoArgs(inputPath: string, outputPath: string, r
     'pcm_s16le',
     outputPath,
   ];
+}
+
+/**
+ * The input's picture length, ms (pictureDurationMs), or undefined: audio-only
+ * input, or a probe that failed. Never fails the extraction: without it the
+ * audio is still re-timed, only not cut.
+ */
+async function inputPictureMs(inputPath: string, opts: RunOptions): Promise<number | undefined> {
+  try {
+    return pictureDurationMs(await probe(inputPath, opts));
+  } catch (err) {
+    if (opts.signal?.aborted) throw err;
+    return undefined;
+  }
 }
 
 /**
@@ -86,8 +161,9 @@ export async function extractAudio(
 ): Promise<AudioExtractResult> {
   assertInputReadable(inputPath);
   assertOutputWritable(outputPath);
+  const pictureMs = await inputPictureMs(inputPath, opts);
   await writeAtomically(outputPath, (partial) =>
-    runFfmpeg(buildExtractAudioArgs(inputPath, partial, range), opts),
+    runFfmpeg(buildExtractAudioArgs(inputPath, partial, range, pictureMs), opts),
   );
   return measure(outputPath);
 }
@@ -108,8 +184,9 @@ export async function extract16kMono(
 ): Promise<AudioExtractResult> {
   assertInputReadable(inputPath);
   assertOutputWritable(outputPath);
+  const pictureMs = await inputPictureMs(inputPath, opts);
   await writeAtomically(outputPath, (partial) =>
-    runFfmpeg(buildExtract16kMonoArgs(inputPath, partial, range), opts),
+    runFfmpeg(buildExtract16kMonoArgs(inputPath, partial, range, pictureMs), opts),
   );
   return measure(outputPath);
 }

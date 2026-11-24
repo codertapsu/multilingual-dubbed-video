@@ -132,7 +132,9 @@ import type { AlignmentService } from '../providers/alignment/whisperxProvider.j
 import type { DiarizationService } from '../providers/diarization/sherpaDiarizationProvider.js';
 import { detectLineSpeakers, readSpeakerProfiles, speakerDetectionProgress } from './diarization.js';
 import { hasSpeakableText, writeSilentClip } from './speakable.js';
-import { findLoopRanges, repairLoops, type RepairedRange } from './loopRepair.js';
+import { findLoopRanges, repairLoops, type LoopRange, type RepairedRange } from './loopRepair.js';
+import { mergeLoopRanges } from './sttChecks.js';
+import { checkDigitalSilence, linesOverSilence, recordAudioDrift, speechMapForChecks, spotCheckTranscript } from './sourceChecksStep.js';
 import { expectedSpeechMs } from '../alignment/clipSpeech.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
@@ -873,7 +875,7 @@ export class PipelineRunner {
       case 'probe-video':
         return this.stepProbe(project, paths, signal);
       case 'extract-audio':
-        return this.stepExtractAudio(project, paths, signal);
+        return this.stepExtractAudio(project, paths, signal, onProgress);
       case 'stt':
         return this.stepStt(project, paths, signal, onProgress);
       case 'translation':
@@ -918,7 +920,12 @@ export class PipelineRunner {
     );
   }
 
-  private async stepExtractAudio(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
+  private async stepExtractAudio(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress?: StepProgress,
+  ): Promise<void> {
     throwIfCancelled(signal);
     const range = project.sourceRange;
     this.deps.logger.info(`Extracting full-rate audio (original.wav)${range ? ' of this part' : ''}...`);
@@ -926,6 +933,8 @@ export class PipelineRunner {
     throwIfCancelled(signal);
     this.deps.logger.info('Extracting 16 kHz mono audio for STT (original_16k_mono.wav)...');
     await this.deps.media.extract16kMono(project.inputVideoPath, paths.original16kMonoWav, signal, range);
+    // How far the source's audio was off its picture (sourceChecksStep.ts).
+    await recordAudioDrift(this.deps, project, signal, onProgress);
   }
 
   private async stepStt(
@@ -1018,9 +1027,22 @@ export class PipelineRunner {
     // Transcription loops (pipeline/loopRepair.ts): found, decoded again
     // without context, repaired; what is left is flagged and said. Before
     // speaker detection, so the repaired lines get their speakers.
+    // The STT self-checks (sttChecks.ts, spotCheck.ts) around it: lines
+    // written over silence go through the same pass, a minute of every half
+    // hour is decoded again, and the audio is searched for digital silence.
+    let speech: { regions?: SpeechRegion[] } | undefined;
     if (!fromSite) {
-      segments = await this.repairTranscriptLoops(paths, provider, model, detectedLanguage || explicitLanguage, segments, signal, onProgress);
+      speech = await speechMapForChecks(this.deps, paths, segments, totalDurationMs, signal);
+      const lastEnd = segments.reduce((m, s) => Math.max(m, s.endMs), totalDurationMs);
+      const silent = speech?.regions
+        ? linesOverSilence(segments, speech.regions, canChunk ? plan : [{ startMs: 0, endMs: lastEnd }], onProgress)
+        : undefined;
+      segments = await this.repairTranscriptLoops(paths, provider, model, detectedLanguage || explicitLanguage, segments, signal, onProgress, silent);
+      const language = detectedLanguage || explicitLanguage;
+      const check = { project, paths, provider, model, language, segments, totalMs: totalDurationMs, regions: speech?.regions };
+      await spotCheckTranscript(this.deps, check, signal, onProgress);
     }
+    await checkDigitalSilence(this.deps, paths, segments, totalDurationMs, speech?.regions, signal, onProgress);
 
     // Speaker detection: who says each line, before anchoring so a line it
     // splits keeps its speaker (pipeline/diarization.ts).
@@ -1034,6 +1056,7 @@ export class PipelineRunner {
       segments,
       detectedLanguage || project.settings.sourceLanguage || '',
       signal,
+      speech,
     );
 
     await writeSegments(paths.sourceJson, segments);
@@ -1119,8 +1142,10 @@ export class PipelineRunner {
     segments: TranscriptSegment[],
     signal: AbortSignal,
     onProgress: StepProgress,
+    /** The speech map's verdict (linesOverSilence): its `inSilence`, and the lines written over silence. */
+    silence?: { inSilence: (fromMs: number, toMs: number) => boolean; ranges: readonly LoopRange[] },
   ): Promise<TranscriptSegment[]> {
-    const ranges = findLoopRanges(segments);
+    const ranges = mergeLoopRanges(findLoopRanges(segments, silence?.inSilence), silence?.ranges ?? []);
     if (ranges.length === 0) {
       await fsp.rm(paths.loopRangesJson, { force: true }).catch(() => undefined);
       return segments;
@@ -1142,7 +1167,7 @@ export class PipelineRunner {
         await onProgress(0.97, { key: 'step-detail.loops', params: { done, total: ranges.length }, text: `Checking transcription loops ${done}/${ranges.length}` });
       }
     };
-    const outcome = await repairLoops(segments, ranges, { redecode, expectedSpeechMs }, signal);
+    const outcome = await repairLoops(segments, ranges, { redecode, expectedSpeechMs, ...(silence ? { inSilence: silence.inSilence } : {}) }, signal);
     // Lines still inside a range left as it was: a person must look at them.
     const left = outcome.ranges.filter((r) => r.status === 'left');
     const lines = outcome.lines.map((l) =>
@@ -1281,12 +1306,16 @@ export class PipelineRunner {
     segments: TranscriptSegment[],
     language: string,
     signal: AbortSignal,
+    /** The map the STT checks already measured (or failed to: then not asked again). */
+    measured?: { regions?: SpeechRegion[] },
   ): Promise<TranscriptSegment[]> {
     let regions: SpeechRegion[] | undefined;
     if (this.deps.speechMap && needsSpeechMap(segments)) {
       throwIfCancelled(signal);
       try {
-        regions = await cachedSpeechRegions(this.deps.speechMap, paths.original16kMonoWav, paths.speechRegionsJson, signal);
+        regions = measured
+          ? measured.regions
+          : await cachedSpeechRegions(this.deps.speechMap, paths.original16kMonoWav, paths.speechRegionsJson, signal);
       } catch (err) {
         if (signal.aborted) throw err;
         this.deps.logger.warn(

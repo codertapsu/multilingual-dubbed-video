@@ -73,6 +73,15 @@
             <span class="label">{{ 'editor.processing' | translate }}</span>
             <span class="value">{{ processingLabels[s.processingMode] | translate }}</span>
           </div>
+          <!-- The source's audio against its picture (measured when the audio
+               is extracted; it always follows the picture either way). -->
+          @if (audioDrift(); as d) {
+            <div class="setting-row">
+              <span class="label">{{ 'source-checks.drift-label' | translate }}</span>
+              <span class="value">{{ d.key | translate: d.params }}</span>
+            </div>
+            <p class="hint">{{ 'source-checks.drift-hint' | translate }}</p>
+          }
         </div>
 
         <!-- Speech-to-Text -->
@@ -123,6 +132,18 @@
               <span>{{ 'wizard.diarize' | translate }}</span>
             </label>
             <p class="hint">{{ 'editor.diarize-hint' | translate }}</p>
+          }
+          @if (spotCheckOffered()) {
+            <label class="setting-row check-row">
+              <input
+                type="checkbox"
+                [ngModel]="spotCheck()"
+                (ngModelChange)="onSettingChange('transcriptSpotCheck', $event)"
+                [disabled]="redubbing()"
+              />
+              <span>{{ 'source-checks.spot-check' | translate }}</span>
+            </label>
+            <p class="hint">{{ 'source-checks.spot-check-hint' | translate }}</p>
           }
         </div>
 

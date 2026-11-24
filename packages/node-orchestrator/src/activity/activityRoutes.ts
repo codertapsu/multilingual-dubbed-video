@@ -75,6 +75,8 @@ export interface ActivityRoutesDeps {
       patches: SegmentPatch[],
       opts: { summary?: string; undoOf?: string; precondition?: (base: readonly TranscriptSegment[]) => void },
     ): Promise<unknown>;
+    /** Lines kept as the original song (mark_song): its changes are undone through it. */
+    markSongs?(projectId: string, request: { lineIds: string[]; song: boolean }, opts: { summary?: string; undoOf?: string }): Promise<unknown>;
   };
   /** The projects folder is moving: no project file is written meanwhile. */
   projectsMoving?: () => boolean;
@@ -352,6 +354,9 @@ export async function registerActivityRoutes(app: FastifyInstance, deps: Activit
           paths: (projectId) => store.paths(projectId),
           replaceSourceLines: (projectId, fromMs, toMs, lines, opts) => deps.orchestrator.replaceSourceLines(projectId, fromMs, toMs, lines, opts),
           patchSegments: (projectId, patches, opts) => deps.orchestrator.patchSegments(projectId, patches, opts),
+      ...(deps.orchestrator.markSongs
+        ? { markSongs: (projectId: string, request: { lineIds: string[]; song: boolean }, opts: { summary: string; undoOf: string }) => deps.orchestrator.markSongs!(projectId, request, opts) }
+        : {}),
         },
         id,
         entryId,

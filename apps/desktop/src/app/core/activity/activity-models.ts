@@ -27,6 +27,7 @@ export interface UndoChange {
     | 'timing'
     | 'speakerId'
     | 'voiceId'
+    | 'song'
     | 'speakingRate'
     | 'locked'
     | 'missing'

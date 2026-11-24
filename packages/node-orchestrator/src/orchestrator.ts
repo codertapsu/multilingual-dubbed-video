@@ -2933,7 +2933,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * synthesized here: the re-voicing is the editor's Regenerate, or the next
    * run from alignment.
    */
-  async markSongs(projectId: string, request: SongMarkRequest): Promise<SongMarkResult> {
+  async markSongs(
+    projectId: string,
+    request: SongMarkRequest,
+    /** An undo from the history names itself (activity/undo.ts); else the default summary. */
+    opts: { summary?: string; undoOf?: string } = {},
+  ): Promise<SongMarkResult> {
     this.assertNotRunning(projectId, 'mark songs');
     return this.artifactLock.run(projectId, async () => {
       const project = await this.deps.store.getProject(projectId);
@@ -2979,9 +2984,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         await recordEdit({
           projectId,
           target: translated ? 'translation' : 'source',
-          summary: request.song
-            ? `Kept ${marked.changed.length} line(s) as the original song${first ? ` at ${formatClock(first.startMs)}` : ''}`
-            : `Dubbed ${marked.changed.length} song line(s) again${first ? ` at ${formatClock(first.startMs)}` : ''}`,
+          summary:
+            opts.summary ??
+            (request.song
+              ? `Kept ${marked.changed.length} line(s) as the original song${first ? ` at ${formatClock(first.startMs)}` : ''}`
+              : `Dubbed ${marked.changed.length} song line(s) again${first ? ` at ${formatClock(first.startMs)}` : ''}`),
+          ...(opts.undoOf ? { undoOf: opts.undoOf } : {}),
           before: base,
           after: lines,
         });

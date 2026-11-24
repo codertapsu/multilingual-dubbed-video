@@ -2821,7 +2821,10 @@
     "change-count": "Đoạn đó của bản chép lời hiện có {{now}} câu, trong khi thay đổi này để lại {{expected}} câu.",
     "refused-translated": "Dự án đã được dịch sau đó nên không thể sắp xếp lại các câu nữa.",
     "refused-structure": "Thay đổi này đã thêm hoặc bớt câu: hãy thay lại các câu trong đoạn của nó.",
-    "refused-undone": "Thay đổi này đã được hoàn tác rồi."
+    "refused-undone": "Thay đổi này đã được hoàn tác rồi.",
+    "field-song": "Giữ bài hát gốc",
+    "flag-yes": "có",
+    "flag-no": "không"
   },
   "picture": {
     "heading": "Hình ảnh: hình mờ và phụ đề sẵn có của video",

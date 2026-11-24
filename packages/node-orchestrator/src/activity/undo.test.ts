@@ -50,6 +50,18 @@ describe('planUndo (pure)', () => {
     });
   });
 
+  it('gives lines kept as the song their dub back, through mark_song (no patch can carry the flag)', () => {
+    // An entry of mark_song's: undo used to find "nothing to write", mark it
+    // undone, and leave every line a song.
+    const before = [line('seg_0004', 4000, 5000, '红婴孩儿回家啦'), line('seg_0005', 5000, 6000, '啊')];
+    const after = before.map((l) => ({ ...l, song: true, ttsStale: true }));
+    const plan = planUndo(entry({ before, after }), after, true);
+    expect(plan).toEqual({ kind: 'patches', patches: [], songs: [{ song: false, lineIds: ['seg_0004', 'seg_0005'] }] });
+    // Marked again by hand since: refused, as for any other field.
+    const changed = planUndo(entry({ before, after }), [{ ...after[0]!, song: false }, after[1]!], true);
+    expect(changed.kind).toBe('refused');
+  });
+
   it('refuses when a line changed since, and says which and how', () => {
     const before = line('seg_0002', 1000, 2000, 'a', { translatedText: 'one' });
     const after = line('seg_0002', 1000, 2000, 'a', { translatedText: 'two', locked: true });

@@ -2821,7 +2821,10 @@
     "change-count": "That part of the transcript now has {{now}} line(s) where this change left {{expected}}.",
     "refused-translated": "The project was translated since, so its lines can no longer be restructured.",
     "refused-structure": "This change added or removed lines: replace the lines of its range instead.",
-    "refused-undone": "It was already undone."
+    "refused-undone": "It was already undone.",
+    "field-song": "Kept as the original song",
+    "flag-yes": "yes",
+    "flag-no": "no"
   },
   "picture": {
     "heading": "Picture: watermark and the video's own subtitles",

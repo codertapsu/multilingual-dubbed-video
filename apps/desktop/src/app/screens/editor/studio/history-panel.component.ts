@@ -9,7 +9,7 @@ import { IpcService } from '../../../core/ipc/ipc.service';
 import type { AppError } from '../../../core/models';
 import { toAppError } from '../../../core/state/project.store';
 import { ConfirmService } from '../../../shared/confirm-dialog/confirm.service';
-import { clock, fieldKey, lineChanges, lineNumber, rangeView, refusalLines } from './edit-history-view';
+import { clock, fieldKey, isFlagValue, lineChanges, lineNumber, rangeView, refusalLines } from './edit-history-view';
 import { StudioStore } from './studio.store';
 
 /**
@@ -124,7 +124,7 @@ import { StudioStore } from './studio.store';
                       @for (f of l.fields; track f.field) {
                         <p class="field">
                           <span class="muted">{{ fieldKey(f.field) | translate }}:</span>
-                          <del>{{ f.before || '—' }}</del> → <ins>{{ f.after || '—' }}</ins>
+                          <del>{{ isFlagValue(f.before) ? (f.before | translate) : f.before || '—' }}</del> → <ins>{{ isFlagValue(f.after) ? (f.after | translate) : f.after || '—' }}</ins>
                         </p>
                       }
                     </div>
@@ -286,6 +286,7 @@ export class HistoryPanelComponent {
   protected readonly clock = clock;
   protected readonly lineNumber = lineNumber;
   protected readonly fieldKey = fieldKey;
+  protected readonly isFlagValue = isFlagValue;
 
   constructor() {
     // Read when shown, and again when an edit made here was saved (it is an entry too).
@@ -371,7 +372,12 @@ export class HistoryPanelComponent {
           tone: 'error',
           text: this.i18n.instant('history.refused'),
           lines: refusalLines(changes).map((l) =>
-            this.i18n.instant(l.key, { ...l.params, ...(l.params['field'] ? { field: this.i18n.instant(l.params['field']) } : {}) }),
+            this.i18n.instant(l.key, {
+              ...l.params,
+              ...(l.params['field'] ? { field: this.i18n.instant(l.params['field']) } : {}),
+              ...(isFlagValue(l.params['now'] ?? '') ? { now: this.i18n.instant(l.params['now']!) } : {}),
+              ...(isFlagValue(l.params['expected'] ?? '') ? { expected: this.i18n.instant(l.params['expected']!) } : {}),
+            }),
           ),
         });
       } else {

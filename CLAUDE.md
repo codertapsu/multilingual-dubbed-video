@@ -134,6 +134,37 @@ from such a folder, never the folder.
 project's **JSON** files (`rebaseJson`), so a new artifact that names a workspace path must be JSON,
 and code must take the folder from the store (`store.projectsDir`), never `config.projectsDir`.
 
+**Audio runs on the picture's clock.** Some sources hold more audio samples than their
+timestamps cover (a 2.73 h upload: +4.8 s), and a plain extraction played them all, so the dub
+drifted behind the picture. Both extractions (and a part's window, and every file of a join)
+decode with `aresample=<rate>:async=1000:first_pts=0,apad,atrim=end_sample=<picture length>`,
+and the drift is measured from the DECODED sample count (`drift.ts`), never from container or
+stream durations, which hid it. Every normal render is capped at the picture's length (`-t`),
+so a long mix can never lengthen the video.
+
+**Everything long is visible, with who asked.** Every request carries its initiator
+(`x-vd-initiator: ui|mcp`, the MCP client's name and session; the app's own starts run inside
+`runAsScheduler`), and every long job reports through `activity` (`activity/registry.ts`,
+kinds `speakers.detect`, `lines.retranscribe`, `series.*`, `project.join`, `picture.detect`…),
+persisted and shown in the app. Every server-side write of a project's lines goes through
+`replaceSourceLines` / `saveTranslatedSegments` / `patchSegments` (which record the edit
+history) or calls `recordEdit` itself; a structural edit renumbers ids, so its entry is a
+`range` and undo replaces the range. The window may hold no more permanent `EventSource`s than it
+has (engines, models, downloads, plus a project's own): a webview keeps six connections per host,
+and a fourth app-long stream hung every other request on "Loading". New lists poll.
+
+**Songs and pictures.** A line flagged `song` gets no voice and no alignment; the mix keeps the
+original in its window (each original-audio mode has its rule in `mix.ts`); its subtitle exists
+only with `songSubtitles` (through `displayCuesFor`). Blur regions and the blurred subtitle band
+are drawn FIRST in the render's filter graph, then the logo, title cards and subtitles on top;
+region times are the input video's time, so a series part shifts its parent's regions to its
+window.
+
+**Tests never reach a running app.** `node-orchestrator/vitest.config.ts` points the worker URLs
+at port 1: the server tests build the real server, whose readiness probes would otherwise call a
+running VideoDubber's own workers on 5101–5103 (a 48-part production ran on the development PC
+while 0.18.0 was built).
+
 ### The lazy media proxy
 
 `createLazyMediaService()` in `server.ts` generates its forwarders from `MEDIA_SERVICE_METHODS`,

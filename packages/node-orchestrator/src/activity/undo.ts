@@ -35,7 +35,7 @@ import {
 import { formatClock, getEdit, listEditSummaries, markEditUndone, summarizeEdit } from './history.js';
 
 /** A field undo compares and restores. */
-export type UndoField = 'sourceText' | 'translatedText' | 'timing' | 'speakerId' | 'voiceId' | 'speakingRate' | 'locked';
+export type UndoField = 'sourceText' | 'translatedText' | 'timing' | 'speakerId' | 'voiceId' | 'speakingRate' | 'locked' | 'song';
 
 /** What stops an undo, per line or for the whole entry (the UI words each kind). */
 export interface UndoChange {
@@ -56,15 +56,20 @@ export interface UndoChange {
 }
 
 export type UndoPlan =
-  | { kind: 'patches'; patches: SegmentPatch[] }
+  /**
+   * `songs`: lines whose song flag goes back (mark_song's changes). They are
+   * written through markSongs, never as a patch: marking re-plans the voice
+   * clips of those lines (a song line has none), which a patch cannot.
+   */
+  | { kind: 'patches'; patches: SegmentPatch[]; songs?: { song: boolean; lineIds: string[] }[] }
   | { kind: 'range'; fromMs: number; toMs: number; lines: { startMs: number; endMs: number; text: string; speakerId?: string }[] }
   /** The lines already read as before the change: nothing to write. */
   | { kind: 'nothing' }
   | { kind: 'refused'; reason: string; changes: UndoChange[] };
 
 /** What a source edit can change, and a translation edit. */
-const SOURCE_FIELDS: readonly UndoField[] = ['sourceText', 'timing', 'speakerId'];
-const TRANSLATION_FIELDS: readonly UndoField[] = ['sourceText', 'translatedText', 'timing', 'speakerId', 'voiceId', 'speakingRate', 'locked'];
+const SOURCE_FIELDS: readonly UndoField[] = ['sourceText', 'timing', 'speakerId', 'song'];
+const TRANSLATION_FIELDS: readonly UndoField[] = ['sourceText', 'translatedText', 'timing', 'speakerId', 'voiceId', 'speakingRate', 'locked', 'song'];
 
 function valueOf(line: TranscriptSegment, field: UndoField): string {
   switch (field) {
@@ -72,6 +77,8 @@ function valueOf(line: TranscriptSegment, field: UndoField): string {
       return `${line.startMs}-${line.endMs}`;
     case 'locked':
       return line.locked === true ? 'locked' : 'unlocked';
+    case 'song':
+      return line.song === true ? 'kept as the original song' : 'dubbed';
     case 'speakingRate':
       return line.speakingRate === undefined ? '' : String(line.speakingRate);
     case 'translatedText':
@@ -111,6 +118,7 @@ function describe(changes: readonly UndoChange[]): string {
     voiceId: 'its voice',
     speakingRate: 'its pace',
     locked: 'its lock',
+    song: 'whether it is kept as the song',
     missing: '',
     count: '',
     translated: '',
@@ -201,6 +209,7 @@ function planLines(entry: EditHistoryEntry, lines: readonly TranscriptSegment[])
   const byId = new Map(lines.map((l) => [l.id, l]));
   const changes: UndoChange[] = [];
   const patches: SegmentPatch[] = [];
+  const songs = new Map<boolean, string[]>();
   for (const left of entry.after) {
     let now = byId.get(left.id);
     if (!now || firstDifference(now, left, fields)) {
@@ -222,9 +231,15 @@ function planLines(entry: EditHistoryEntry, lines: readonly TranscriptSegment[])
     const patch = patchBack(now.id, before, left);
     if (patch === 'source-text') return refused([{ id: now.id, atMs: now.startMs, what: 'sourceText', now: shown(now, 'sourceText'), expected: shown(before, 'sourceText') }]);
     if (patch) patches.push(patch);
+    if ((before.song === true) !== (left.song === true)) {
+      const back = before.song === true;
+      songs.set(back, [...(songs.get(back) ?? []), now.id]);
+    }
   }
   if (changes.length > 0) return refused(changes);
-  return patches.length > 0 ? { kind: 'patches', patches } : { kind: 'nothing' };
+  const songBack = [...songs].map(([song, lineIds]) => ({ song, lineIds }));
+  if (patches.length === 0 && songBack.length === 0) return { kind: 'nothing' };
+  return { kind: 'patches', patches, ...(songBack.length > 0 ? { songs: songBack } : {}) };
 }
 
 /**
@@ -278,6 +293,8 @@ export interface UndoDeps {
     patches: SegmentPatch[],
     opts: { summary: string; undoOf: string; precondition: (base: readonly TranscriptSegment[]) => void },
   ): Promise<unknown>;
+  /** Mark or unmark lines as the original song (Orchestrator.markSongs), recorded as this undo. */
+  markSongs?(projectId: string, request: { lineIds: string[]; song: boolean }, opts: { summary: string; undoOf: string }): Promise<unknown>;
 }
 
 async function readSegments(file: string): Promise<TranscriptSegment[] | undefined> {
@@ -321,7 +338,15 @@ export async function undoEdit(deps: UndoDeps, projectId: string, entryId: strin
   };
   const opts = { summary: undoSummary(entry), undoOf: entry.id, precondition };
   if (plan.kind === 'range') await deps.replaceSourceLines(projectId, plan.fromMs, plan.toMs, plan.lines, opts);
-  else if (plan.kind === 'patches') await deps.patchSegments(projectId, plan.patches, opts);
+  else if (plan.kind === 'patches') {
+    if (plan.patches.length > 0) await deps.patchSegments(projectId, plan.patches, opts);
+    if (plan.songs?.length) {
+      // An entry of mark_song's: without this it was marked undone while every
+      // line stayed a song (the flag is no field a patch carries).
+      if (!deps.markSongs) throw new AppErrorException('INVALID_EDIT', 'This change marked lines as songs and cannot be undone here.');
+      for (const group of plan.songs) await deps.markSongs(projectId, group, { summary: opts.summary, undoOf: opts.undoOf });
+    }
+  }
 
   await markEditUndone(projectId, entry.id);
   const summaries = await listEditSummaries(projectId);

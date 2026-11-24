@@ -11,9 +11,21 @@ import type { EditHistoryEntry, UndoChange } from '../../../core/activity/activi
 import type { TranscriptSegment } from '../../../core/models';
 
 /** A field the history shows, as an edit changes it. */
-export type DiffField = 'sourceText' | 'translatedText' | 'timing' | 'speakerId' | 'voiceId' | 'speakingRate' | 'locked';
+export type DiffField = 'sourceText' | 'translatedText' | 'timing' | 'speakerId' | 'voiceId' | 'speakingRate' | 'locked' | 'song';
 
-const FIELDS: readonly DiffField[] = ['sourceText', 'translatedText', 'timing', 'speakerId', 'voiceId', 'speakingRate', 'locked'];
+const FIELDS: readonly DiffField[] = ['sourceText', 'translatedText', 'timing', 'speakerId', 'voiceId', 'speakingRate', 'locked', 'song'];
+
+/**
+ * Yes/no fields: their values are translation keys (`history.flag-yes`), shown
+ * in the reader's language. They were the English words "yes"/"no".
+ */
+const FLAG_YES = 'history.flag-yes';
+const FLAG_NO = 'history.flag-no';
+
+/** Whether a shown value is a translation key rather than text (a yes/no field's). */
+export function isFlagValue(value: string): boolean {
+  return value === FLAG_YES || value === FLAG_NO;
+}
 
 const FIELD_KEYS: Record<DiffField, string> = {
   sourceText: 'history.field-source-text',
@@ -23,6 +35,7 @@ const FIELD_KEYS: Record<DiffField, string> = {
   voiceId: 'history.field-voice',
   speakingRate: 'history.field-pace',
   locked: 'history.field-lock',
+  song: 'history.field-song',
 };
 
 /** The translation key naming a field. */
@@ -50,7 +63,9 @@ function valueOf(line: TranscriptSegment, field: DiffField): string {
     case 'timing':
       return `${clock(line.startMs)}–${clock(line.endMs)}`;
     case 'locked':
-      return line.locked ? 'yes' : 'no';
+      return line.locked ? FLAG_YES : FLAG_NO;
+    case 'song':
+      return line.song === true ? FLAG_YES : FLAG_NO;
     case 'speakingRate':
       return line.speakingRate === undefined ? '1×' : `${line.speakingRate}×`;
     case 'sourceText':
@@ -127,8 +142,12 @@ export function refusalLines(changes: readonly UndoChange[], max = 5): { key: st
         return { key: 'history.refused-structure', params: {} };
       case 'already-undone':
         return { key: 'history.refused-undone', params: {} };
-      default:
-        return { key: 'history.change-field', params: { ...line, field: fieldKey(c.what), now: c.now ?? '', expected: c.expected ?? '' } };
+      default: {
+        // The server words a yes/no field's values in English (undo.ts): shown as yes/no keys.
+        const flag = (v: string | undefined): string =>
+          c.what === 'locked' ? (v === 'locked' ? FLAG_YES : FLAG_NO) : c.what === 'song' ? (v === 'dubbed' ? FLAG_NO : FLAG_YES) : (v ?? '');
+        return { key: 'history.change-field', params: { ...line, field: fieldKey(c.what), now: flag(c.now), expected: flag(c.expected) } };
+      }
     }
   });
 }

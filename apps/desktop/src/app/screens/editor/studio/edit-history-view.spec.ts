@@ -19,7 +19,8 @@ describe('the History panel\'s views', () => {
         fields: [
           { field: 'translatedText', before: 'Chào', after: 'Xin chào' },
           { field: 'speakerId', before: 'SPEAKER_01', after: 'SPEAKER_04' },
-          { field: 'locked', before: 'no', after: 'yes' },
+          // Yes/no values are translation keys, shown in the reader's language.
+        { field: 'locked', before: 'history.flag-no', after: 'history.flag-yes' },
         ],
       },
     ]);

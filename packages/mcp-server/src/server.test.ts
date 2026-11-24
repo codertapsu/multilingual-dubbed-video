@@ -173,6 +173,8 @@ describe('VideoDubber MCP server', () => {
         'edit_part', 'replan_series',
         // Activity and edit history (0.18.0).
         'get_activity', 'report_activity', 'get_history', 'undo_edit',
+        // Picture options (0.18.0).
+        'detect_watermark',
       ].sort(),
     );
     for (const t of tools) {
@@ -818,6 +820,64 @@ describe('VideoDubber MCP server', () => {
     await connect();
     const r = await call('update_settings', { projectId: 'proj_1', settings: { ttsVoiceId: 'vieneu-v3-ngoc-huyen', subtitleExportMode: 'srt-file' } });
     expect(r.text).toContain('fromStep="tts"');
+  });
+
+  it('detect_watermark: proposals with their confidence, the preview to look at, and the settings to apply', async () => {
+    let answer: unknown = { state: 'running', percent: 40, message: 'Looking at frames (40/100)' };
+    fake.routes.set('POST /projects/proj_1/picture/detect', () => answer);
+    await connect();
+
+    const running = await call('detect_watermark', { projectId: 'proj_1' });
+    expect(running.text).toBe('Still looking (40 %: Looking at frames (40/100)). Call detect_watermark again in a minute: it continues this detection.');
+    expect(fake.calls.at(-1)!.body).toEqual({ fresh: false, waitMs: 45_000 });
+
+    answer = {
+      state: 'done',
+      result: {
+        at: '2026-11-23T10:00:00Z',
+        videoWidth: 1080,
+        videoHeight: 1920,
+        regions: [{ x: 0.66, y: 0.014, w: 0.31, h: 0.04, mode: 'blur', corner: 'top-right', confidence: 0.82 }],
+        band: { y: 0.755, h: 0.06, confidence: 0.77, method: 'speech', twoLineShare: 0.08 },
+        previewPath: 'C:/p/proj_1/picture/preview.jpg',
+        frameAtMs: 61_000,
+        frames: 100,
+        notes: [],
+      },
+    };
+    const done = await call('detect_watermark', { projectId: 'proj_1', fresh: true });
+    expect(done.isError).toBe(false);
+    expect(done.text).toContain('- top-right: x=0.66 y=0.014 w=0.31 h=0.04, confidence 0.82');
+    expect(done.text).toContain('y=0.755 h=0.06 (76 %–82 % of the height), from frames during speech against silence, confidence 0.77; 8 % of the frames with text had two lines.');
+    expect(done.text).toContain('Preview (boxes red, band yellow): C:/p/proj_1/picture/preview.jpg');
+    expect(done.text).toContain(
+      'update_settings with settings={"blurRegions":[{"x":0.66,"y":0.014,"w":0.31,"h":0.04,"mode":"blur"}],"burnSubtitleStyle":{"coverOriginal":"blur","coverBand":{"y":0.755,"h":0.06},"subtitlesInBand":true}}',
+    );
+
+    answer = { state: 'failed', error: { code: 'UNSUPPORTED_MEDIA', message: 'No video stream', remediation: 'Check the file.' } };
+    const failed = await call('detect_watermark', { projectId: 'proj_1' });
+    expect(failed.isError).toBe(true);
+    expect(failed.text).toContain('The detection failed: No video stream\nHow to fix: Check the file.');
+  });
+
+  it('update_settings takes the picture options and redoes from the render', async () => {
+    fake.routes.set('PUT /projects/proj_1/settings', (_req, body) => ({ project: project({ settings: { ...project().settings, ...(body as object) } }) }));
+    await connect();
+    const r = await call('update_settings', {
+      projectId: 'proj_1',
+      settings: {
+        blurRegions: [{ x: 0.66, y: 0.014, w: 0.31, h: 0.04, mode: 'pixelate', strength: 7 }],
+        burnSubtitleStyle: { coverOriginal: 'blur', coverBand: { y: 0.755, h: 0.06 }, subtitlesInBand: true },
+      },
+      applyToParts: true,
+    });
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain('hides 1 part(s) of the picture; source subtitles blurred at 76 % of the height');
+    expect(r.text).toContain('fromStep="render"');
+    expect(fake.calls.at(-1)!.path).toBe('/projects/proj_1/settings?applyToParts=true');
+
+    const bad = await call('update_settings', { projectId: 'proj_1', settings: { blurRegions: [{ x: 2, y: 0, w: 0.1, h: 0.1, mode: 'blur' }] } });
+    expect(bad.isError).toBe(true);
   });
 
   it('the dub_video prompt walks Claude through the best-quality path', async () => {

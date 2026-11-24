@@ -2969,6 +2969,9 @@ export class PipelineRunner {
         copyVideoStream: mode !== 'burned-in',
         ...(project.settings.renderQuality ? { renderQuality: project.settings.renderQuality } : {}),
         ...(logo ? { logo } : {}),
+        // Watermarks hidden (picture options), in the input video's time: a
+        // part's render moves them to its window.
+        ...(project.settings.blurRegions?.length ? { blurRegions: project.settings.blurRegions } : {}),
         // A series part: its window of the video, its recap, title and end cards.
         ...(project.sourceRange ? { range: project.sourceRange } : {}),
         ...(project.series?.role === 'part'

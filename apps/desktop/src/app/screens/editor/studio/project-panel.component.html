@@ -326,15 +326,11 @@
                 }
               </select>
             </label>
-            <label class="setting-row">
+            <!-- Set in the Picture block below (the band's way, place and strength). -->
+            <div class="setting-row">
               <span class="label">{{ 'editor.cover-original' | translate }}</span>
-              <input
-                type="checkbox"
-                [ngModel]="s.burnSubtitleStyle?.coverOriginal ?? false"
-                (ngModelChange)="onBurnStyleChange({ coverOriginal: $event })"
-                [disabled]="redubbing()"
-              />
-            </label>
+              <span class="value">{{ coverLabel(s.burnSubtitleStyle) | translate }}</span>
+            </div>
             <p class="hint">{{ 'editor.cover-original-hint' | translate }}</p>
           }
           <label class="setting-row">
@@ -387,6 +383,12 @@
   <!-- Logo & greeting: applied at once, like the speakers block. -->
   @if (store.project()) {
     <vd-branding-panel />
+  }
+
+  <!-- Picture: watermarks and the video's own subtitles hidden in the render,
+       found by the app and adjusted on a frame; saved with its own button. -->
+  @if (store.project()) {
+    <vd-picture-panel />
   }
 
   <!-- Speakers: who says the lines, and each speaker's voice. Applied at once

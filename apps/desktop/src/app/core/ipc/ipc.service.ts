@@ -56,6 +56,7 @@ import type {
 } from '../models/setup';
 import type { BrandAsset, GreetingPlacement, GreetingPlan, SeriesAiOption, SeriesView, DownloadsWhileDubbing } from '@videodubber/shared';
 import type { SeriesListItem } from '@videodubber/shared';
+import type { PictureDetectionJob, PictureFrame } from '@videodubber/shared';
 import type {
   AddDownloadsResult,
   DownloadItem,
@@ -1053,6 +1054,32 @@ export class IpcService {
   /** The editor moved, added or removed greetings (kept until the greeting settings change). */
   saveGreetingPlan(projectId: string, placements: GreetingPlacement[]): Promise<{ plan: GreetingPlan }> {
     return this.http('PUT', `/projects/${encodeURIComponent(projectId)}/greeting-plan`, { placements });
+  }
+
+  // ----- Picture options: watermarks and the source's own subtitles (picture/pictureRoutes.ts) -----
+
+  /** Start (or join) the detection of a project's watermark and subtitle band; answers with its state. */
+  detectPicture(projectId: string, opts: { fresh?: boolean; waitMs?: number } = {}): Promise<PictureDetectionJob> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/picture/detect`, opts);
+  }
+
+  /** What a project's picture detection is doing, or its last result. */
+  getPictureDetection(projectId: string): Promise<PictureDetectionJob> {
+    return this.http('GET', `/projects/${encodeURIComponent(projectId)}/picture/detect`);
+  }
+
+  /** One frame of a project's video (`atMs`: the input's time; default the detection's frame or the middle). */
+  pictureFrame(projectId: string, atMs?: number): Promise<PictureFrame> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/picture/frame`, atMs === undefined ? {} : { atMs });
+  }
+
+  /** The same for a video that is no project yet (New project); asking again follows the same detection. */
+  detectPictureOfFile(videoPath: string, opts: { fresh?: boolean; waitMs?: number } = {}): Promise<PictureDetectionJob> {
+    return this.http('POST', '/picture/detect', { videoPath, ...opts });
+  }
+
+  pictureFrameOfFile(videoPath: string, atMs?: number): Promise<PictureFrame> {
+    return this.http('POST', '/picture/frame', { videoPath, ...(atMs === undefined ? {} : { atMs }) });
   }
 
   /** POST /downloads/clear-finished — Settings → Storage: finished downloads and their videos. */

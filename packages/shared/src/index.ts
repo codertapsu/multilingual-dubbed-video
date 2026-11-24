@@ -211,7 +211,15 @@ export {
   seriesCardWords,
 } from './pipeline/seriesNames.js';
 export type { PartNameInput, PartNameTemplateProblem, SeriesCardWords } from './pipeline/seriesNames.js';
-export type { BlurRegion } from './models/picture.js';
+export type {
+  BlurRegion,
+  PictureCorner,
+  PictureDetection,
+  PictureDetectionJob,
+  PictureFrame,
+  SubtitleBandProposal,
+  WatermarkProposal,
+} from './models/picture.js';
 export type {
   ActivityAgentSession,
   ActivityEntry,

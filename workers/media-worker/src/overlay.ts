@@ -20,6 +20,7 @@
 import type { RenderCard, RenderEffects, RenderLogo, SubtitleExportMode } from '@videodubber/shared';
 
 import { formatAssTime } from './ass.js';
+import { buildRegionFilters, type PixelRegion } from './pictureFilters.js';
 import { buildSubtitlesFilter } from './subtitles.js';
 
 /** Seconds with millisecond precision, for ffmpeg. */
@@ -139,6 +140,18 @@ export interface FilteredRenderContext {
   effects?: RenderEffects;
   /** The cards' ASS script (effects.cards), written by the caller. */
   cardsScriptPath?: string;
+  /**
+   * Parts of the picture to hide (watermarks, the blurred band over the
+   * source's subtitles; pictureFilters.ts), in pixels and render time. Hidden
+   * FIRST, so the subtitles, cards and logo are drawn on the clean picture.
+   */
+  regions?: readonly PixelRegion[];
+  /**
+   * The longest the output may run: the picture's length. Without it a mix
+   * that runs long made the video longer than its picture (claude-dubber
+   * report, 2026-11-23). A part (`range`) is capped at its window instead.
+   */
+  maxDurationMs?: number;
   videoCodec: string;
   videoCodecArgs: string[];
   audioArgs: readonly string[];
@@ -167,7 +180,10 @@ export function buildFilteredRenderArgs(ctx: FilteredRenderContext): string[] {
   }
   if (ctx.cardsScriptPath) picture.push(buildSubtitlesFilter(ctx.cardsScriptPath, undefined, ctx.platform, ctx.fontsDir));
 
-  const graph: string[] = [`[0:v]${picture.length > 0 ? picture.join(',') : 'null'}[v0]`];
+  const graph: string[] = [];
+  const hidden = ctx.regions ? buildRegionFilters(ctx.regions, ctx.width, ctx.height, { input: '0:v', output: 'vh' }) : undefined;
+  if (hidden) graph.push(hidden);
+  graph.push(`[${hidden ? 'vh' : '0:v'}]${picture.length > 0 ? picture.join(',') : 'null'}[v0]`);
   let current = 'v0';
   if (ctx.logo) {
     graph.push(buildLogoFilter(ctx.logo, ctx.width, ctx.height, { logo: `${logoIndex}:v`, base: current, out: 'v1' }));
@@ -191,8 +207,10 @@ export function buildFilteredRenderArgs(ctx: FilteredRenderContext): string[] {
 
   args.push('-filter_complex', graph.join(';'), '-map', `[${current}]`, '-map', audioFades.length > 0 ? '[af]' : '1:a:0');
   if (softIndex >= 0) args.push('-map', `${softIndex}:0`);
-  // The window's audio is exactly the part's length; never run past it.
+  // The window's audio is exactly the part's length; never run past it. A
+  // whole video never runs past its picture.
   if (ctx.range) args.push('-t', sec(ctx.range.endMs - ctx.range.startMs));
+  else if (ctx.maxDurationMs && ctx.maxDurationMs > 0) args.push('-t', sec(ctx.maxDurationMs));
   args.push('-c:v', ctx.videoCodec, ...ctx.videoCodecArgs, ...ctx.audioArgs);
   if (softIndex >= 0) args.push('-c:s', 'mov_text');
   args.push(...ctx.metadataArgs, ctx.outputPath);

@@ -159,6 +159,65 @@ function finite(n: number | undefined): n is number {
 const round1 = (n: number): number => Math.round(n * 10) / 10;
 
 /**
+ * How the source's own subtitles are hidden: `solid` (the opaque band drawn
+ * with the burned-in subtitles; `true` is the same), `blur` (a picture filter,
+ * pictureFilters.ts), or not at all. Pure.
+ */
+export function coverModeOf(style: SubtitleStyle | undefined): 'solid' | 'blur' | undefined {
+  const c = style?.coverOriginal;
+  return c === true || c === 'solid' ? 'solid' : c === 'blur' ? 'blur' : undefined;
+}
+
+/** The dub's text size on a `w`x`h` frame: its em (px), ASS Fontsize and family. */
+function textMetrics(s: SubtitleStyle, w: number, h: number): { em: number; fontSize: number; fontName: string } {
+  const shortSide = Math.min(w, h);
+  const fontName = (s.fontFamily?.trim() || BUNDLED_FONT_FAMILY).replace(/,/g, ' ');
+  const cellRatio = fontName === BUNDLED_FONT_FAMILY ? BUNDLED_FONT_CELL_RATIO : DEFAULT_FONT_CELL_RATIO;
+  // Size: sizePercent (em), else the legacy 288-canvas fontSize (an ASS cell
+  // size already, so no cell conversion), else the default em.
+  if (finite(s.sizePercent) && s.sizePercent > 0) {
+    const em = (s.sizePercent / 100) * shortSide;
+    return { em, fontSize: em * cellRatio, fontName };
+  }
+  if (finite(s.fontSize) && s.fontSize > 0) {
+    const fontSize = (s.fontSize / LEGACY_CANVAS) * shortSide;
+    return { em: fontSize / cellRatio, fontSize, fontName };
+  }
+  const em = (DEFAULT_SIZE_PERCENT / 100) * shortSide;
+  return { em, fontSize: em * cellRatio, fontName };
+}
+
+/**
+ * Where the band over the source's own subtitles is on a `width`x`height`
+ * frame, in pixels (full width), or undefined when the style hides nothing.
+ * One rectangle for both ways of hiding: the solid band draws it, the blurred
+ * band blurs it. Pure.
+ *
+ * `coverBand` (0–1, found by the picture detection) places it anywhere: the
+ * 27.8-hour series' hardsubs sit at 76–81 % of the height, not at the bottom
+ * edge. Without it, the bottom strip as before: `coverHeightPercent` high and
+ * tall enough for two lines of the dub's text sitting on it.
+ */
+export function coverBandRect(style: SubtitleStyle | undefined, width: number, height: number): { top: number; height: number } | undefined {
+  const s = style ?? {};
+  if (!coverModeOf(s)) return undefined;
+  const w = Math.max(16, Math.round(width));
+  const h = Math.max(16, Math.round(height));
+  const b = s.coverBand;
+  if (b && finite(b.y) && finite(b.h) && b.h > 0 && b.y >= 0 && b.y < 1) {
+    const top = Math.min(h - 2, Math.max(0, Math.round(b.y * h)));
+    return { top, height: Math.min(h - top, Math.max(2, Math.round(Math.min(1, b.h) * h))) };
+  }
+  const { em } = textMetrics(s, w, h);
+  const pct = finite(s.coverHeightPercent) && s.coverHeightPercent > 0 ? Math.min(60, s.coverHeightPercent) : DEFAULT_COVER_HEIGHT_PERCENT;
+  // Tall enough for the requested strip AND for two lines of the dub's text
+  // sitting on it (bottom margin + two lines + a little air).
+  const bottomMargin = (BOTTOM_MARGIN_PERCENT / 100) * h;
+  const bandHeight = Math.round(Math.min(h, Math.max((pct / 100) * h, bottomMargin + 2 * em * LINE_HEIGHT_PER_EM + 0.3 * em)));
+  return { top: h - bandHeight, height: bandHeight };
+}
+
+/**
  * Lay out burned subtitles for a `width`x`height` frame (display orientation).
  * Pure; see SubtitleStyle for what each field means and its default.
  */
@@ -167,23 +226,7 @@ export function computeAssLayout(style: SubtitleStyle | undefined, width: number
   const w = Math.max(16, Math.round(width));
   const h = Math.max(16, Math.round(height));
   const shortSide = Math.min(w, h);
-  const fontName = (s.fontFamily?.trim() || BUNDLED_FONT_FAMILY).replace(/,/g, ' ');
-  const cellRatio = fontName === BUNDLED_FONT_FAMILY ? BUNDLED_FONT_CELL_RATIO : DEFAULT_FONT_CELL_RATIO;
-
-  // Size: sizePercent (em), else the legacy 288-canvas fontSize (an ASS cell
-  // size already, so no cell conversion), else the default em.
-  let em: number;
-  let fontSize: number;
-  if (finite(s.sizePercent) && s.sizePercent > 0) {
-    em = (s.sizePercent / 100) * shortSide;
-    fontSize = em * cellRatio;
-  } else if (finite(s.fontSize) && s.fontSize > 0) {
-    fontSize = (s.fontSize / LEGACY_CANVAS) * shortSide;
-    em = fontSize / cellRatio;
-  } else {
-    em = (DEFAULT_SIZE_PERCENT / 100) * shortSide;
-    fontSize = em * cellRatio;
-  }
+  const { em, fontSize, fontName } = textMetrics(s, w, h);
 
   const outline = finite(s.outlineWidth) && s.outlineWidth >= 0
     ? (s.outlineWidth / LEGACY_CANVAS) * shortSide
@@ -191,21 +234,27 @@ export function computeAssLayout(style: SubtitleStyle | undefined, width: number
 
   const position = s.position ?? (s.alignment === 'top' ? 'top' : s.alignment === 'center' ? 'center' : 'bottom');
   const bottomMargin = (BOTTOM_MARGIN_PERCENT / 100) * h;
-  const twoLines = 2 * em * LINE_HEIGHT_PER_EM;
 
+  // The band over the source's subtitles: drawn here when solid; a blurred
+  // one is the filter graph's, but the text still keeps clear of it (raised)
+  // or goes inside it, the same either way.
+  const cover = coverBandRect(s, w, h);
   let band: AssLayout['band'];
-  if (s.coverOriginal) {
-    const pct = finite(s.coverHeightPercent) && s.coverHeightPercent > 0 ? Math.min(60, s.coverHeightPercent) : DEFAULT_COVER_HEIGHT_PERCENT;
-    // Tall enough for the requested strip AND for two lines of the dub's text
-    // sitting on it (bottom margin + two lines + a little air).
-    const bandHeight = Math.round(Math.min(h, Math.max((pct / 100) * h, bottomMargin + twoLines + 0.3 * em)));
+  if (cover && coverModeOf(s) === 'solid') {
     const opacity = finite(s.coverOpacity) ? Math.min(1, Math.max(0, s.coverOpacity)) : DEFAULT_COVER_OPACITY;
-    band = { top: h - bandHeight, height: bandHeight, opacity };
+    band = { top: cover.top, height: cover.height, opacity };
   }
 
   let alignment = 2;
   let marginV = bottomMargin;
-  if (position === 'top') {
+  if (s.subtitlesInBand && cover) {
+    // Where the source's own subtitles were: one line centred in the band,
+    // or two when the band is tall enough for two (a second line grows
+    // upward, as the source's own did).
+    const line = em * LINE_HEIGHT_PER_EM;
+    const lines = cover.height >= 2 * line ? 2 : 1;
+    marginV = h - (cover.top + cover.height) + Math.max(0, (cover.height - lines * line) / 2);
+  } else if (position === 'top') {
     alignment = 8;
   } else if (position === 'center') {
     alignment = 5;
@@ -213,7 +262,7 @@ export function computeAssLayout(style: SubtitleStyle | undefined, width: number
   } else if (position === 'raised') {
     // Above the original's strip — and above the band when one is drawn, so
     // the text never straddles its edge.
-    marginV = Math.max((RAISED_MARGIN_PERCENT / 100) * h, band ? band.height + 0.02 * h : 0);
+    marginV = Math.max((RAISED_MARGIN_PERCENT / 100) * h, cover ? h - cover.top + 0.02 * h : 0);
   }
 
   return {

@@ -214,6 +214,43 @@ export { detectSilences, silenceTimeoutMs, type DetectSilencesOptions } from './
 export { referenceClip, buildReferenceClipArgs, REFERENCE_MAX_MS, type ReferenceClipOptions } from './reference.js';
 export { prepareLogo, prepareGreeting, buildPrepareLogoArgs, buildPrepareGreetingArgs, MAX_GREETING_MS } from './brand.js';
 export { buildCardsAss, buildFilteredRenderArgs, buildLogoFilter, logoPlacement } from './overlay.js';
+// Picture options: hiding watermarks and the source's subtitles, and finding them.
+export {
+  blurBandRegion,
+  blurRadii,
+  buildRegionFilters,
+  hidesPicture,
+  pictureRegionsFor,
+  pictureStrength,
+  pixelBlock,
+  pixelRect,
+  regionWindow,
+  requiredPictureFilters,
+  resolveRegions,
+  type PixelRegion,
+} from './pictureFilters.js';
+export {
+  buildPictureFrameArgs,
+  detectPicture,
+  FRAME_LONG_SIDE,
+  mergeAcrossSegments,
+  renderPictureFrame,
+  type DetectPictureInput,
+  type DetectPictureOptions,
+  type FrameDrawing,
+} from './pictureDetect.js';
+export { analysisSize, buildFrameSampleArgs, parseFirstFrameTime, sampleGrayFrames, spreadTimes, type GrayFrame } from './frameSample.js';
+export {
+  cornerBounds,
+  findStaticMarks,
+  findSubtitleBand,
+  labelTimes,
+  rowStrokeProfile,
+  type BandFinding,
+  type MarkFinding,
+  type RowProfile,
+} from './pictureAnalysis.js';
+export { buildVideoLengthArgs, parseVideoLengthMs, probeVideoLengthMs } from './videoLength.js';
 export {
   renderThumbnail,
   detectSceneChanges,
@@ -333,6 +370,8 @@ export {
   parseSubtitleCues,
   cueTextToAss,
   computeAssLayout,
+  coverBandRect,
+  coverModeOf,
   buildAssDocument,
   formatAssTime,
   type SubtitleCue,

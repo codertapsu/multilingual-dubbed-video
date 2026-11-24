@@ -14,6 +14,7 @@ import type { Dirent } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { sanitizeBranding } from '../branding/sanitize.js';
+import { sanitizeBlurRegions } from '../picture/pictureSanitize.js';
 import { sanitizeSeriesSettings } from '../series/seriesSanitize.js';
 import { renameReplacing } from '../fsRename.js';
 import {
@@ -88,9 +89,11 @@ function normalizedSettings(input: ProjectSettings): ProjectSettings {
     throw new AppErrorException('INVALID_LANGUAGE', `Invalid target language code: "${input.targetLanguage}".`);
   }
   // Logo and greeting are checked field by field; a broken choice is dropped.
-  const { branding: rawBranding, ...rest } = input;
+  // So are the regions hidden in the render (picture options).
+  const { branding: rawBranding, blurRegions: rawRegions, ...rest } = input;
   const branding = sanitizeBranding(rawBranding);
-  return { ...rest, sourceLanguage, targetLanguage, ...(branding ? { branding } : {}) };
+  const blurRegions = sanitizeBlurRegions(rawRegions);
+  return { ...rest, sourceLanguage, targetLanguage, ...(branding ? { branding } : {}), ...(blurRegions ? { blurRegions } : {}) };
 }
 
 /**

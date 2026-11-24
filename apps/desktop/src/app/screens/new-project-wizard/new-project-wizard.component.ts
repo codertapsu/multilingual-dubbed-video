@@ -62,6 +62,7 @@ import type { BrandAsset, SeriesAiOption } from '@videodubber/shared';
 import { continuedSeriesSettings, type SeriesListItem } from '@videodubber/shared';
 import { PartNameFieldComponent } from '../../shared/series/part-name-field.component';
 import { BrandingFormComponent } from '../../shared/branding/branding-form.component';
+import { PictureSetupComponent } from '../../shared/picture/picture-setup.component';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { LanguageNamePipe, TranslatePipe, TranslateService, languageName } from '../../core/i18n';
 import { baseLanguage, describeVoice } from '../../shared/voice-library/voice-filter';
@@ -163,6 +164,7 @@ function defaultSettings(): ProjectSettings {
     TranslatePipe,
     BrandingFormComponent,
     PartNameFieldComponent,
+    PictureSetupComponent,
   ],
   templateUrl: './new-project-wizard.component.html',
   styleUrl: './new-project-wizard.component.scss',

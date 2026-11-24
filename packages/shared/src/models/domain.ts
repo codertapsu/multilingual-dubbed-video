@@ -134,8 +134,28 @@ export interface SubtitleStyle {
    * Draw a full-width band over the bottom strip of the frame, where sources
    * burn in their own subtitles, to hide them. It covers that strip whatever
    * `position` says (with `bottom`, the dub's text sits on the band). Default false.
+   *
+   * `true` and `'solid'` are the same opaque band, drawn with the burned-in
+   * subtitles (so only in that mode, as it always was). `'blur'` blurs the
+   * band instead, the picture still showing through: a picture filter, so it
+   * applies whatever the subtitle mode (the 27.8-hour series asked for it
+   * over its Chinese hardsubs, claude-dubber report 2026-11-23).
    */
-  coverOriginal?: boolean;
+  coverOriginal?: boolean | 'solid' | 'blur';
+  /**
+   * Where the band is, full width: its top `y` and height `h`, 0–1 of the
+   * frame height (the series' hardsubs sit at 76–81 %, not at the bottom
+   * edge). Found by the picture detection (POST /projects/:id/picture/detect).
+   * Absent: the bottom strip, `coverHeightPercent` high.
+   */
+  coverBand?: { y: number; h: number };
+  /** How strongly a blurred band blurs, 1–10. Default 5. */
+  coverStrength?: number;
+  /**
+   * Put the dub's burned-in subtitles inside the band, where the source's own
+   * were, instead of where `position` says.
+   */
+  subtitlesInBand?: boolean;
   /**
    * Band opacity, 0..1. Default 1 (opaque): on a real 720p source a white
    * hardsub still ghosted through behind the dub's text at 0.9 and even 0.96.

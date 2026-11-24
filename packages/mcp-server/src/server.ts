@@ -31,6 +31,7 @@ import { AppNotRunningError, VideoDubberApiError, requestContext, type VideoDubb
 import { cookiesOfSite, takeCookieExport } from './cookies.js';
 import { ensureAppRunning, type LaunchTarget } from './launcher.js';
 import { registerJoinTools } from './joinTools.js';
+import { registerPictureTools } from './pictureTools.js';
 import {
   renderProjectJobs,
   renderRetranscribeJob,
@@ -110,6 +111,7 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   subtitleExportMode: 'render',
   renderQuality: 'render',
   burnSubtitleStyle: 'render',
+  blurRegions: 'render',
 };
 
 const subtitleMode = z
@@ -150,11 +152,41 @@ const editableSettings = z
           .enum(['bottom', 'raised', 'top'])
           .describe('Where burned-in subtitles sit: bottom (standard), raised (above a source\'s own hardsubs), top.'),
         coverOriginal: z
+          .union([z.boolean(), z.enum(['solid', 'blur'])])
+          .describe(
+            "Hide the source's own burned-in subtitles: 'blur' blurs a band over them (the picture shows through; works in every subtitle mode), 'solid' or true covers them with an opaque band (with burned-in subtitles only), false shows them.",
+          ),
+        coverBand: z
+          .object({ y: z.number().min(0).max(1), h: z.number().gt(0).max(1) })
+          .nullable()
+          .describe("Where that band is: its top y and height h, 0-1 of the frame height (detect_watermark finds it); null = the bottom strip."),
+        coverStrength: z.number().int().min(1).max(10).nullable().describe('How strongly a blurred band blurs, 1-10 (default 5).'),
+        subtitlesInBand: z
           .boolean()
-          .describe('Hide the source\'s own burned-in subtitles under a solid band at the bottom of the picture.'),
+          .nullable()
+          .describe("Put the dub's burned-in subtitles inside that band, where the source's own were (instead of position)."),
       })
       .partial()
-      .describe('Only for subtitleExportMode burned-in. Many Chinese videos have their own subtitles burned in at the bottom.'),
+      .describe(
+        "Where burned-in subtitles sit, and hiding the source's own (many Chinese videos burn theirs in). position is for subtitleExportMode burned-in; a blurred band works in every mode.",
+      ),
+    blurRegions: z
+      .array(
+        z.object({
+          x: z.number().min(0).max(1),
+          y: z.number().min(0).max(1),
+          w: z.number().gt(0).max(1),
+          h: z.number().gt(0).max(1),
+          startMs: z.number().int().min(0).optional(),
+          endMs: z.number().int().min(1).optional(),
+          mode: z.enum(['blur', 'pixelate', 'delogo']),
+          strength: z.number().int().min(1).max(10).optional(),
+        }),
+      )
+      .max(20)
+      .describe(
+        "Parts of the picture hidden in the render (a watermark), boxes in 0-1 of the frame: blur (soft), pixelate (blocks) or delogo (filled in from around it, for small marks); strength 1-10 (default 5). startMs/endMs (the whole video's time, also on a series part) limit a box to a while. Replaces the list; [] removes them. detect_watermark proposes them; redo from \"render\".",
+      ),
     diarize: z.boolean().describe('Detect who says each line (needs the "Speaker detection" engine, list_engines).'),
     diarizeSpeakers: z
       .number()
@@ -340,6 +372,10 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       `voice ${s.ttsProviderId}${s.ttsVoiceId ? ` (${s.ttsVoiceId})` : ''}`,
       `subtitles ${s.subtitleExportMode}`,
       ...(s.reviewBeforeSynthesis ? ['pauses for review before voicing'] : []),
+      ...(s.blurRegions?.length ? [`hides ${s.blurRegions.length} part(s) of the picture`] : []),
+      ...(s.burnSubtitleStyle?.coverOriginal
+        ? [`source subtitles ${s.burnSubtitleStyle.coverOriginal === 'blur' ? 'blurred' : 'covered'}${s.burnSubtitleStyle.coverBand ? ` at ${Math.round(s.burnSubtitleStyle.coverBand.y * 100)} % of the height` : ''}`]
+        : []),
     ].join('; ');
 
   // ------------------------------------------------------------ status & setup
@@ -2726,6 +2762,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
 
 
   // [tools: picture options]
+  registerPictureTools(server, { api, guarded, text, workBudgetMs });
 
 
   // [tools: activity and edit history]

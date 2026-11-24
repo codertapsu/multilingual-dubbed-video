@@ -92,6 +92,18 @@ export {
   MIN_GPU_RESIDENT_FRACTION,
 } from './models/engines.js';
 
+// ---- Joining several videos into one project (New project → "Join several videos")
+export type {
+  JoinCheck,
+  JoinFileInfo,
+  JoinMismatch,
+  JoinMode,
+  JoinProjectRequest,
+  JoinProjectResult,
+  JoinState,
+  JoinStatus,
+} from './models/join.js';
+
 // ---- Media types -----------------------------------------------------------
 export type {
   MediaInfo,

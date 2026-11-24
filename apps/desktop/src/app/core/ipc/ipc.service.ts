@@ -2,6 +2,7 @@ import type { DiagnosticsSummaryView } from '../../shared/diagnostics/diagnostic
 import { Injectable, signal } from '@angular/core';
 
 import { environment } from '../environment';
+import type { JoinCheck, JoinProjectRequest, JoinProjectResult, JoinStatus, RenderQuality } from '@videodubber/shared';
 import type {
   CreateProjectInput,
   ReviseProjectInput,
@@ -156,6 +157,35 @@ export class IpcService {
    */
   reviseProject(projectId: string, input: ReviseProjectInput): Promise<Project> {
     return this.http<Project>('PUT', `/projects/${encodeURIComponent(projectId)}`, input);
+  }
+
+  /**
+   * POST /join/check — New project → "Join several videos": can these files
+   * be joined into one, how (the picture copied, or encoded again at a
+   * measured cost), and is there room on the drive. HTTP in both modes.
+   */
+  checkJoin(videoPaths: string[], renderQuality?: RenderQuality): Promise<JoinCheck> {
+    return this.http<JoinCheck>('POST', '/join/check', { videoPaths, ...(renderQuality ? { renderQuality } : {}) });
+  }
+
+  /** POST /projects/join — a project made from several videos, joined into its video in the background. */
+  createJoinedProject(input: JoinProjectRequest): Promise<JoinProjectResult> {
+    return this.http<JoinProjectResult>('POST', '/projects/join', input);
+  }
+
+  /** GET /projects/:id/join — where a joined project's join stands (percent, time left, file). */
+  getJoin(projectId: string): Promise<JoinStatus> {
+    return this.http<JoinStatus>('GET', `/projects/${encodeURIComponent(projectId)}/join`);
+  }
+
+  /** POST /projects/:id/join/cancel — stop the join; the project stays, without a video yet. */
+  cancelJoin(projectId: string): Promise<JoinStatus> {
+    return this.http<JoinStatus>('POST', `/projects/${encodeURIComponent(projectId)}/join/cancel`, {});
+  }
+
+  /** POST /projects/:id/join/restart — join again after a failure or a cancel. */
+  restartJoin(projectId: string, reencode = false): Promise<JoinStatus> {
+    return this.http<JoinStatus>('POST', `/projects/${encodeURIComponent(projectId)}/join/restart`, { reencode });
   }
 
   /** DELETE /projects/:id — remove a project and its folder (refused while it is busy). */

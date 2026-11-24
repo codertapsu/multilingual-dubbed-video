@@ -25,6 +25,7 @@ import {
   type CreateProjectInput,
   type PipelineState,
   type Project,
+  type ProjectInputFile,
   type ProjectSettings,
   type ReviseProjectInput,
 } from '@videodubber/shared';
@@ -124,6 +125,16 @@ async function copyInputVideo(source: string, paths: WorkspacePaths, opts: { lin
   return dest;
 }
 
+/** How {@link ProjectStore.createProject} gets the project's input. */
+export interface CreateProjectOptions {
+  /**
+   * The input is joined from several files after the project exists
+   * (join/joinService.ts): it will be `input/original.<ext>`, and these are
+   * the files with where each starts. Nothing is copied now.
+   */
+  joined?: { ext: string; files: ProjectInputFile[] };
+}
+
 /**
  * Persistence layer for projects. Stateless beyond the projects-root path, so
  * it can be freely shared and is trivially mockable in tests via a temp dir.
@@ -204,9 +215,11 @@ export class ProjectStore {
   /**
    * Create a new project: allocate an id, build the workspace, copy the input
    * video into `input/original.<ext>`, and persist `project.json` +
-   * `pipeline.json`.
+   * `pipeline.json`. `opts.joined`: the input is made from several files
+   * afterwards (join/joinService.ts writes it, whole, at that path); nothing
+   * is copied and `inputFiles` is recorded.
    */
-  async createProject(input: CreateProjectInput): Promise<Project> {
+  async createProject(input: CreateProjectInput, opts: CreateProjectOptions = {}): Promise<Project> {
     const settings = normalizedSettings(input.settings);
     const { targetLanguage } = settings;
 
@@ -220,7 +233,9 @@ export class ProjectStore {
     await ensureWorkspaceDirs(paths);
 
     // Copy the source video into the workspace so the project is self-contained.
-    const internalInput = await copyInputVideo(input.inputVideoPath, paths, { link: input.linkInputVideo === true });
+    const internalInput = opts.joined
+      ? paths.inputVideo(opts.joined.ext)
+      : await copyInputVideo(input.inputVideoPath, paths, { link: input.linkInputVideo === true });
 
     const now = new Date().toISOString();
     const project: Project = {
@@ -238,6 +253,7 @@ export class ProjectStore {
       ...(input.series
         ? { series: { role: 'parent' as const, settings: sanitizeSeriesSettings(input.series, input.series.aiProviderId ?? ''), state: 'analysing' as const } }
         : {}),
+      ...(opts.joined ? { inputFiles: opts.joined.files } : {}),
     };
 
     await this.savePipeline(createInitialPipelineState(id));

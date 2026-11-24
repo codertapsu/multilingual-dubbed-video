@@ -3484,6 +3484,44 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
 
   // [routes: join videos]
+  // One project from several videos (join/): checked, made, then joined in
+  // the background as a job of the activity list. Imported here rather than
+  // at the top so this area's change stays inside its anchor.
+  {
+    const { JoinService } = await import('./join/joinService.js');
+    const { registerJoinRoutes } = await import('./join/joinRoutes.js');
+    const joins = new JoinService({
+      store,
+      probeProject: (id) => orchestrator.probe(id),
+      startRun: (id) => startWhenReady(id),
+      logger: { info: (m) => console.info(`[join] ${m}`), warn: (m) => console.warn(`[join] ${m}`) },
+    });
+    registerJoinRoutes(app, {
+      joins,
+      sendError,
+      // As POST /projects: a series needs an AI from Settings to choose the cuts.
+      resolveSeries: async (s) => {
+        const chosen = pickSeriesAi(await seriesAiOptions(), s.aiProviderId);
+        if (!chosen) {
+          throw new AppErrorException(
+            'CLOUD_CREDENTIALS_MISSING',
+            s.aiProviderId
+              ? `The AI "${s.aiProviderId}" is not set up here, so the video cannot be split into parts with it.`
+              : 'Splitting a video into parts needs an AI set up in Settings.',
+            {
+              remediation:
+                'Set up Claude (an API key, or your Claude plan through Mother Claude), OpenAI or Gemini in Settings → Cloud API keys, or install the built-in Gemma chat model in Settings → Engines.',
+            },
+          );
+        }
+        // As POST /projects: the name template checked, a continuation's
+        // numbering and settings resolved (series agent's prepareSeries).
+        return series.prepareSeries({ ...s, aiProviderId: chosen.id });
+      },
+    });
+    // A join the app was closed (or died) during starts again.
+    void joins.resumeInterrupted();
+  }
 
 
   // [routes: picture options]

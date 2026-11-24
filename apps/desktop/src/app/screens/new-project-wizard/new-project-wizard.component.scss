@@ -137,6 +137,16 @@
   gap: var(--vd-sp-2);
 }
 
+/* One video, or several joined into one project. */
+.source-mode {
+  flex-wrap: wrap;
+  gap: var(--vd-sp-4);
+  margin-bottom: var(--vd-sp-3);
+}
+.source-mode .check-row {
+  margin: 0;
+}
+
 .series-grid {
   flex-wrap: wrap;
   gap: var(--vd-sp-3);

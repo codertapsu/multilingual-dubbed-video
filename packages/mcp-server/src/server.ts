@@ -28,6 +28,7 @@ import type {
 import { AppNotRunningError, VideoDubberApiError, requestContext, type VideoDubberApi } from './api.js';
 import { cookiesOfSite, takeCookieExport } from './cookies.js';
 import { ensureAppRunning, type LaunchTarget } from './launcher.js';
+import { registerJoinTools } from './joinTools.js';
 import {
   renderProjectJobs,
   renderRetranscribeJob,
@@ -2556,6 +2557,18 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
 
 
   // [tools: join videos]
+  // join_videos, get_join, retry_join (joinTools.ts): one project from several files.
+  registerJoinTools(server, {
+    api,
+    guarded,
+    settingsSchema: editableSettings,
+    progress,
+    sleep,
+    settingsSummary,
+    seriesGateNote,
+    pollMs,
+    workBudgetMs,
+  });
 
 
   // [tools: picture options]

@@ -135,7 +135,20 @@ import { VoicePreviewCache } from './voices/previewCache.js';
 import { registerProfileRoutes } from './voices/profileRoutes.js';
 import { VoiceProfileService } from './voices/profileService.js';
 import { PROFILE_FILES, VoiceProfileStore } from './voices/profileStore.js';
-import { castCandidates, castSettings, proposeCast, speakerRows, VoiceMeasureCache, withSwaps, type CastResult, type VoiceMeasure } from './voices/speakerCast.js';
+import {
+  castCandidates,
+  castChoices,
+  castSettings,
+  proposeCast,
+  speakerRows,
+  unknownSpeakers,
+  VoiceMeasureCache,
+  withSwaps,
+  type CastResult,
+  type VoiceMeasure,
+} from './voices/speakerCast.js';
+import { dialogueAdjacency } from './voices/casting.js';
+import { registerSongRoutes } from './songs/songRoutes.js';
 import { suggestGender } from './voices/casting.js';
 import { libraryItems } from './voices/voiceLibrary.js';
 import { readSpeakerProfiles } from './pipeline/diarization.js';
@@ -3161,13 +3174,22 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // Cast a voice for every speaker by gender (voices/casting.ts): a proposal,
   // or saved with `apply`. While a clone of the user's is left out for an
   // unconfirmed gender, applying needs `allowWithoutClones` (the user's rule
-  // is their clones first: claude-dubber, 2026-11-21).
+  // is their clones first: claude-dubber, 2026-11-21). The minor speakers
+  // share a pool per gender: `minorVoices` sizes it (saved with `apply`, as
+  // the project's setting), `minorPool` picks its voices (clones allowed).
   app.post(
     '/projects/:id/speakers/cast',
     async (
       req: FastifyRequest<{
         Params: { id: string };
-        Body: { apply?: boolean; applyToParts?: boolean; allowWithoutClones?: boolean; swaps?: { speakerId: string; voiceId: string }[] };
+        Body: {
+          apply?: boolean;
+          applyToParts?: boolean;
+          allowWithoutClones?: boolean;
+          swaps?: { speakerId: string; voiceId: string }[];
+          minorVoices?: number | null;
+          minorPool?: { male?: string[]; female?: string[] };
+        };
       }>,
       reply,
     ) => {
@@ -3193,8 +3215,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         }));
         const items = await castableVoices(project);
         const voices = await castCandidates(items, speakers, { measure: measureVoice });
-        const proposal = withSwaps(proposeCast(speakers, voices), body.swaps, voices);
-        const result: CastResult = { ...proposal };
+        // null asks for the automatic size again; absent keeps the project's setting.
+        const askedSize = typeof body.minorVoices === 'number' && Number.isFinite(body.minorVoices) ? Math.round(body.minorVoices) : undefined;
+        const minorVoices = body.minorVoices === null ? undefined : (askedSize ?? project.settings.minorVoices);
+        const minorPool = {
+          ...(Array.isArray(body.minorPool?.male) ? { male: body.minorPool.male.filter((v) => typeof v === 'string') } : {}),
+          ...(Array.isArray(body.minorPool?.female) ? { female: body.minorPool.female.filter((v) => typeof v === 'string') } : {}),
+        };
+        const proposal = withSwaps(
+          proposeCast(speakers, voices, { ...(minorVoices ? { minorVoices } : {}), adjacency: dialogueAdjacency(lines), minorPool }),
+          body.swaps,
+          voices,
+        );
+        const result: CastResult = {
+          ...proposal,
+          unknown: unknownSpeakers(rows, proposal),
+          candidates: castChoices(voices),
+          ...(minorVoices ? { minorVoices } : {}),
+        };
         if (body.apply === true) {
           if (proposal.unconfirmed.length > 0 && body.allowWithoutClones !== true) {
             return {
@@ -3203,7 +3241,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
               message: `${proposal.unconfirmed.length} cloned voice(s) would be left out (gender not confirmed): confirm them in Voices → My voices, or apply with allowWithoutClones.`,
             };
           }
-          const patch = castSettings(proposal, speakers);
+          const patch = {
+            ...castSettings(proposal, speakers, project.settings.speakerVoices),
+            // The pool size asked for becomes the project's (0 = automatic again).
+            ...(body.minorVoices !== undefined ? { minorVoices: askedSize ?? 0 } : {}),
+          };
           await orchestrator.updateProjectSettings(req.params.id, patch);
           result.applied = true;
           if (body.applyToParts === true) {
@@ -3476,6 +3518,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
 
   // [routes: casting and songs]
+  // Lines kept as the original song (songs/songRoutes.ts). The cast route is
+  // above (/projects/:id/speakers/cast).
+  registerSongRoutes(app, { store, orchestrator, forEachPart, sendError });
 
 
   // [routes: series, create, continue]

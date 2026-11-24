@@ -20,6 +20,20 @@ import {
 } from '@videodubber/shared';
 import { writeJsonAtomic } from './projectStore.js';
 
+/**
+ * Whether a project shows subtitles for its song lines (settings.songSubtitles),
+ * read from its project.json: for the writers of subtitle files that are
+ * handed only the workspace's paths. Off when it cannot be read.
+ */
+export async function songSubtitlesOn(projectJson: string): Promise<boolean> {
+  try {
+    const project = JSON.parse(await fsp.readFile(projectJson, 'utf8')) as { settings?: { songSubtitles?: unknown } };
+    return project.settings?.songSubtitles === true;
+  } catch {
+    return false;
+  }
+}
+
 /** One cue's overridden start/end (ms). */
 export interface CueTiming {
   startMs: number;
@@ -102,6 +116,10 @@ export interface PlacedUnit {
  * flashed. When the dub is known (`units` + `groups`), each unit's last line
  * stays up until its voice has finished: the subtitle audit found the voice
  * still talking after its subtitle had gone in 15–54 lines per video.
+ *
+ * Lines kept as the original song (`song`) get a subtitle only with
+ * `songSubtitles` (the project's setting, default off: the user chose "the
+ * original song plays untouched"). Here, so every subtitle file honours it.
  */
 export function displayCuesFor(
   segments: readonly TranscriptSegment[],
@@ -109,9 +127,12 @@ export function displayCuesFor(
     overrides?: ReadonlyMap<string, CueTiming>;
     groups?: readonly { id: string; segmentIds: readonly string[] }[];
     units?: readonly PlacedUnit[];
+    /** Show the lines kept as the original song (ProjectSettings.songSubtitles). */
+    songSubtitles?: boolean;
   } = {},
 ): IndexedCue[] {
-  const timed = dub.overrides ? applyCueOverrides(segments, dub.overrides) : [...segments];
+  const shown = dub.songSubtitles === true ? segments : segments.filter((s) => s.song !== true);
+  const timed = dub.overrides ? applyCueOverrides(shown, dub.overrides) : [...shown];
   const groupOf = new Map<string, string>();
   for (const g of dub.groups ?? []) for (const id of g.segmentIds) groupOf.set(id, g.id);
   const voiceEnd = new Map<string, number>();

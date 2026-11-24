@@ -254,6 +254,45 @@
   font-size: 0.8rem;
 }
 
+/* Voices for minor speakers, and the cast proposal's pools and unknown speakers (plan 1.4). */
+.minor-voices {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vd-sp-2);
+
+  select {
+    max-width: 50%;
+  }
+}
+.cast-pool ul,
+.cast-unknown ul {
+  margin: 0;
+  padding-left: var(--vd-sp-3);
+}
+.pool-voice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--vd-sp-2);
+  margin-bottom: 2px;
+
+  select {
+    max-width: 60%;
+    font-size: 0.8rem;
+  }
+}
+.samples {
+  list-style: none;
+  padding-left: 0 !important;
+
+  li {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 /* A speaker detection that ended without a result, with Retry. */
 .detect-failed {
   padding: var(--vd-sp-2);

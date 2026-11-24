@@ -17,6 +17,8 @@ import type { VoiceProfile } from '../../../core/models';
 import { formatTimecode } from '../../../core/util/format';
 import { VoiceCloneDialogComponent } from '../../../shared/voice-library/voice-clone-dialog.component';
 import { describeFitNote } from './notes';
+import { IpcService } from '../../../core/ipc/ipc.service';
+import { markSongLines, songActionFor, voicedOnly } from './songs';
 import { PlaybackService } from './playback.service';
 import { MAX_CPS, StudioStore, type LineVm } from './studio.store';
 import { VOICE_DRAG_TYPE } from './timeline.component';
@@ -38,6 +40,7 @@ import { constrainDrag, MIN_SEGMENT_MS, parseTimecode, type DragEdge } from './t
 export class InspectorComponent {
   protected readonly store = inject(StudioStore);
   protected readonly playback = inject(PlaybackService);
+  private readonly ipc = inject(IpcService);
   private readonly translate = inject(TranslateService);
   private readonly textArea = viewChild<ElementRef<HTMLTextAreaElement>>('text');
   private readonly timeInput = viewChild<ElementRef<HTMLInputElement>>('timeInput');
@@ -238,7 +241,29 @@ export class InspectorComponent {
    */
   protected regenerate(): void {
     const ids = this.selectedIds().length ? this.selectedIds() : this.line() ? [this.line()!.seg.id] : [];
-    void this.store.regenerate(ids, 200);
+    // A line kept as the original song has no voice to make.
+    void this.store.regenerate(voicedOnly(ids, this.store.segments()), 200);
+  }
+
+  /** The selected lines (or the shown one), as the timeline has them. */
+  private readonly targetLines = computed(() => {
+    const ids = this.selectedIds().length ? this.selectedIds() : this.line() ? [this.line()!.seg.id] : [];
+    const byId = this.store.indexById();
+    return ids.map((id) => this.store.segments()[byId.get(id) ?? -1]).filter((s): s is NonNullable<typeof s> => s !== undefined);
+  });
+  /** Keep the selection as the original song, or (all songs already) dub it again. */
+  protected readonly songAction = computed(() => songActionFor(this.targetLines()));
+  protected readonly songBusy = signal(false);
+
+  protected async toggleSong(): Promise<void> {
+    const action = this.songAction();
+    if (!action || this.songBusy()) return;
+    this.songBusy.set(true);
+    try {
+      await markSongLines(this.store, this.ipc, this.targetLines().map((l) => l.id), action === 'keep');
+    } finally {
+      this.songBusy.set(false);
+    }
   }
 
   /** "Make a voice from these lines": one speaker's lines, taken from the video. */

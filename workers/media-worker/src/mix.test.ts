@@ -15,10 +15,15 @@ vi.mock('./probe.js', () => ({ probeDurationMs: vi.fn(async () => 1234) }));
 
 import { runFfmpeg } from './exec.js';
 import {
+  balancedSum,
+  buildMixArgs,
   buildMixFilterComplex,
   duckAndMix,
+  graphFromFile,
   loudnormMeasurementsUsable,
+  MAX_INLINE_GRAPH_CHARS,
   parseLoudnormJson,
+  songGateExpr,
   type DuckAndMixInput,
   type LoudnormMeasurements,
 } from './mix.js';
@@ -88,6 +93,77 @@ describe('mix filtergraph (unchanged behavior sanity)', () => {
     expect(fc).toContain('[1:a]');
     expect(fc).toContain('[tts]loudnorm');
     expect(fc).not.toContain('[0:a]'); // original unused
+  });
+});
+
+// Lines kept as the original song (F7): the original plays as it is in their
+// windows. Checked against ffmpeg 8.1.1 on synthetic audio while writing it:
+// in a window the original came out at its own level (-21.1 dB), the bed
+// around it at -12 dB, the vocal stem only inside it.
+describe('song windows: the original as it is', () => {
+  const songs = [{ startMs: 3000, endMs: 5000 }];
+  const base: DuckAndMixInput = {
+    originalAudio: 'orig.wav',
+    ttsTimeline: 'tts.wav',
+    output: 'out.wav',
+    duckingLevelDb: -12,
+    ttsGainDb: 0,
+    includeBackground: true,
+    duck: true,
+  };
+
+  it('leaves every graph exactly as it was without songs', () => {
+    for (const opts of [base, { ...base, duck: false }, { ...base, includeBackground: false }, { ...base, includeBackground: false, roomTone: true }]) {
+      expect(buildMixFilterComplex({ ...opts, keepOriginal: [] })).toBe(buildMixFilterComplex(opts));
+      expect(buildMixFilterComplex(opts)).not.toContain('eval=frame');
+    }
+  });
+
+  it('gates 1 inside a window, ramping outside it', () => {
+    expect(songGateExpr(songs)).toBe('min(1,clip(min(t-2.75,5.25-t)/0.25,0,1))');
+    expect(songGateExpr([])).toBe('0');
+  });
+
+  it('keep: the ducked bed is lowered everywhere but in the songs', () => {
+    const fc = buildMixFilterComplex({ ...base, keepOriginal: songs });
+    expect(fc).toContain("[ducked]volume='0.251189+0.748811*min(1,clip(min(t-2.75,5.25-t)/0.25,0,1))':eval=frame[bg]");
+    const flat = buildMixFilterComplex({ ...base, duck: false, keepOriginal: songs });
+    expect(flat).toContain("[orig]volume='0.251189+0.748811*");
+  });
+
+  it('replace-vocals: the vocal stem comes back in the songs only (a third input)', () => {
+    const opts: DuckAndMixInput = { ...base, duck: false, duckingLevelDb: 0, originalAudio: 'me.wav', originalVocals: 'vocals.wav', keepOriginal: songs };
+    const fc = buildMixFilterComplex(opts);
+    expect(fc).toContain("[2:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume='min(1,");
+    expect(fc).toContain('[tts][bg][voc]amix=inputs=3');
+    expect(fc).toContain('[orig]volume=0dB[bg]');
+    expect(buildMixArgs(opts).slice(0, 7)).toEqual(['-y', '-i', 'me.wav', '-i', 'tts.wav', '-i', 'vocals.wav']);
+    // No song: no third input.
+    expect(buildMixArgs({ ...opts, keepOriginal: [] })).not.toContain('vocals.wav');
+  });
+
+  it('remove: the original plays in the songs, under the room tone', () => {
+    const fc = buildMixFilterComplex({ ...base, includeBackground: false, roomTone: true, keepOriginal: songs });
+    expect(fc).toContain("[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume='min(1,");
+    expect(fc).toContain('[tts][room][song]amix=inputs=3:duration=first');
+    const bare = buildMixFilterComplex({ ...base, includeBackground: false, keepOriginal: songs });
+    expect(bare).toContain('[tts][song]amix=inputs=2:duration=first');
+  });
+
+  it('sums many windows as a shallow tree: ffmpeg refuses a chain of ~150 terms', () => {
+    const terms = Array.from({ length: 700 }, (_, i) => `x${i}`);
+    const sum = balancedSum(terms);
+    for (const chain of sum.split(/[()]/)) expect(chain.split('+').filter(Boolean).length).toBeLessThanOrEqual(16);
+    expect(sum.match(/x\d+/g)).toHaveLength(700);
+  });
+
+  it('moves a graph too long for a command line into a file', () => {
+    expect(graphFromFile(['-filter_complex', 'short', '-map', '[out]'], 'g.txt')).toBeUndefined();
+    const long = 'x'.repeat(MAX_INLINE_GRAPH_CHARS + 1);
+    expect(graphFromFile(['-y', '-filter_complex', long, '-map', '[out]'], 'g.txt')).toEqual({
+      args: ['-y', '-/filter_complex', 'g.txt', '-map', '[out]'],
+      graph: long,
+    });
   });
 });
 

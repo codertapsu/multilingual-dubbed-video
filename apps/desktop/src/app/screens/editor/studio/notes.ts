@@ -110,7 +110,42 @@ export function describeCastNote(note: string, instant: Translate): string {
     return isFemale(m[1]!) ? instant('editor.cast-note.none-female', count) : instant('editor.cast-note.none-male', count);
   }
   if ((m = /^(\d+) speaker\(s\) of unknown gender\b/i.exec(n))) return instant('editor.cast-note.unknown', { n: Number(m[1]) });
+  // The minor speakers' pool (voices/casting.ts, plan 1.4).
+  if ((m = /^(male|female): (\d+) minor speaker\(s\) share (\d+) voice\(s\), about (\d+) each\b/i.exec(n))) {
+    const p = { n: Number(m[2]), k: Number(m[3]), each: Number(m[4]) };
+    return isFemale(m[1]!) ? instant('editor.cast-note.pool-female', p) : instant('editor.cast-note.pool-male', p);
+  }
+  if ((m = /^(male|female): (?:no spare built-in voice|only \d+ spare built-in voice\(s\)), so the voices of the least-heard cast speaker\(s\) (.+) are shared too/i.exec(n))) {
+    const p = { speakers: speakerNumbers(m[2]!) };
+    return isFemale(m[1]!) ? instant('editor.cast-note.reused-female', p) : instant('editor.cast-note.reused-male', p);
+  }
+  if ((m = /^(male|female): no built-in voice is free for (\d+) minor speaker\(s\)/i.exec(n))) {
+    const p = { n: Number(m[2]) };
+    return isFemale(m[1]!) ? instant('editor.cast-note.no-pool-female', p) : instant('editor.cast-note.no-pool-male', p);
+  }
+  if ((m = /^Built-in voice "(.+)" is left out of shared use: it sounds like your cloned voice "(.+)" \(/i.exec(n))) {
+    return instant('editor.cast-note.soundalike', { voice: m[1]!, clone: m[2]! });
+  }
   return n;
+}
+
+/**
+ * The casting notes the cast panel already shows as lists (the pools, the
+ * soundalikes left out), so they are not said twice.
+ */
+export function castNoteShownElsewhere(note: string): boolean {
+  return /^(male|female): \d+ minor speaker\(s\) share\b/i.test(note.trim()) || /^Built-in voice ".+" is left out of shared use\b/i.test(note.trim());
+}
+
+/** "SPEAKER_17, SPEAKER_16" as the numbers people see ("18, 17"). */
+function speakerNumbers(list: string): string {
+  return list
+    .split(/,\s*/)
+    .map((id) => {
+      const k = /^SPEAKER_(\d+)$/.exec(id.trim());
+      return k ? String(Number(k[1]) + 1) : id.trim();
+    })
+    .join(', ');
 }
 
 function isFemale(word: string): boolean {

@@ -46,7 +46,7 @@ describe('speakerRows', () => {
 });
 
 describe('castSettings / withSwaps', () => {
-  it('writes only the distinct voices, the genders and a default per gender', () => {
+  it('never leaves a clone as the default the crowd falls back to (F4)', () => {
     const speakers = [
       { speakerId: 'SPEAKER_00', minutes: 50, gender: 'male' as const, f0Hz: 110 },
       { speakerId: 'SPEAKER_01', minutes: 10, gender: 'male' as const, f0Hz: 130 },
@@ -55,14 +55,79 @@ describe('castSettings / withSwaps', () => {
     const voices = [{ voiceId: 'vp_thien', name: 'Thiện', kind: 'profile' as const, gender: 'male' as const, genderConfirmed: true, f0Hz: 116 }];
     const proposal = proposeCast(speakers, voices);
     const patch = castSettings(proposal, speakers);
+    // The one male voice is a clone of the main speaker's: the minor one gets
+    // none, and the default (the user's clone, before) is cleared.
     expect(patch).toEqual({
       speakerVoices: [{ speakerId: 'SPEAKER_00', voiceId: 'vp_thien' }],
       speakerGenders: { SPEAKER_00: 'male', SPEAKER_01: 'male' },
-      defaultMaleVoiceId: 'vp_thien',
+      defaultMaleVoiceId: '',
     });
-    // The user swaps a speaker to another castable voice; unknown voices are ignored.
+    // The user swaps a speaker to another castable voice (a clone, their
+    // choice); unknown voices are ignored.
     const swapped = withSwaps(proposal, [{ speakerId: 'SPEAKER_00', voiceId: 'vp_thien' }, { speakerId: 'SPEAKER_01', voiceId: 'nope' }], voices);
-    expect(swapped.assignments.find((a) => a.speakerId === 'SPEAKER_01')!.voiceId).toBe('vp_thien');
+    expect(swapped.assignments.find((a) => a.speakerId === 'SPEAKER_01')).toBeUndefined();
+    const picked = withSwaps(proposal, [{ speakerId: 'SPEAKER_01', voiceId: 'vp_thien' }], voices);
+    expect(picked.assignments.find((a) => a.speakerId === 'SPEAKER_01')).toMatchObject({ voiceId: 'vp_thien', by: 'order' });
+  });
+
+  it('writes a voice for every minor speaker (a pool is not one default), most heard first; the default is the pool\'s', () => {
+    const speakers = [
+      { speakerId: 'SPEAKER_00', minutes: 50, gender: 'male' as const, f0Hz: 110 },
+      { speakerId: 'SPEAKER_01', minutes: 3, gender: 'male' as const, f0Hz: 130 },
+      { speakerId: 'SPEAKER_02', minutes: 2, gender: 'male' as const, f0Hz: 140 },
+      { speakerId: 'SPEAKER_03', minutes: 1, gender: 'unknown' as const },
+    ];
+    const voices = [
+      { voiceId: 'vp_thien', name: 'Thiện', kind: 'profile' as const, gender: 'male' as const, genderConfirmed: true, f0Hz: 116 },
+      { voiceId: 'builtin-a', name: 'A', kind: 'preset' as const, gender: 'male' as const, f0Hz: 120 },
+    ];
+    const proposal = proposeCast(speakers, voices);
+    // The user had given the unknown speaker a voice by hand: it stays.
+    const patch = castSettings(proposal, speakers, [
+      { speakerId: 'SPEAKER_03', voiceId: 'hand-picked' },
+      { speakerId: 'SPEAKER_09', voiceId: 'gone-speaker' },
+    ]);
+    expect(patch.speakerVoices).toEqual([
+      { speakerId: 'SPEAKER_00', voiceId: 'vp_thien' },
+      { speakerId: 'SPEAKER_01', voiceId: 'builtin-a' },
+      { speakerId: 'SPEAKER_02', voiceId: 'builtin-a' },
+      { speakerId: 'SPEAKER_03', voiceId: 'hand-picked' },
+    ]);
+    expect(patch.defaultMaleVoiceId).toBe('builtin-a');
+    expect(patch.defaultFemaleVoiceId).toBeUndefined();
+    // SPEAKER_02 is the minor one, on the built-in SPEAKER_01 has too; swapped,
+    // it leaves the pool voice's list.
+    expect(proposal.pools.male!.voices).toMatchObject([{ voiceId: 'builtin-a', from: 'reused', sharedWith: 'SPEAKER_01', speakers: ['SPEAKER_02'] }]);
+    const swapped = withSwaps(proposal, [{ speakerId: 'SPEAKER_02', voiceId: 'vp_thien' }], voices);
+    expect(swapped.pools.male!.voices[0]!.speakers).toEqual([]);
+    expect(proposal.pools.male!.voices[0]!.speakers).toEqual(['SPEAKER_02']);
+  });
+
+  it('lists the speakers of unknown gender with their three longest lines and talk time', async () => {
+    const { unknownSpeakers } = await import('./speakerCast.js');
+    const rows = speakerRows(
+      lines([
+        [0, 1000, 'a', 'SPEAKER_05'],
+        [1000, 5000, 'the longest', 'SPEAKER_05'],
+        [5000, 7000, 'second', 'SPEAKER_05'],
+        [7000, 8500, 'third', 'SPEAKER_05'],
+        [9000, 9500, 'known', 'SPEAKER_06'],
+      ]),
+      [],
+      { speakerGenders: { SPEAKER_06: 'male' } } as unknown as ProjectSettings,
+    );
+    expect(unknownSpeakers(rows, { unassigned: ['SPEAKER_05'] })).toEqual([
+      {
+        speakerId: 'SPEAKER_05',
+        minutes: 0.14,
+        lines: 4,
+        samples: [
+          { id: 'seg_0002', text: 'the longest', startMs: 1000, endMs: 5000 },
+          { id: 'seg_0003', text: 'second', startMs: 5000, endMs: 7000 },
+          { id: 'seg_0004', text: 'third', startMs: 7000, endMs: 8500 },
+        ],
+      },
+    ]);
   });
 });
 

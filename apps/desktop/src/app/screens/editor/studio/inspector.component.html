@@ -28,6 +28,12 @@
       <button type="button" class="btn btn-primary btn-sm" (click)="regenerate()" [disabled]="store.busy().size > 0">
         {{ 'studio.regenerate-selected' | translate }}
       </button>
+      <!-- Lines kept as the original song (plan 6.2): no voice, the original plays. -->
+      @if (songAction(); as action) {
+        <button type="button" class="btn btn-sm" (click)="toggleSong()" [disabled]="songBusy()" [title]="'songs.keep-title' | translate">
+          {{ (action === 'keep' ? 'songs.keep-selected' : 'songs.dub-selected') | translate: { n: store.selection().size } }}
+        </button>
+      }
     </section>
   </fieldset>
 } @else if (line(); as l) {
@@ -71,6 +77,10 @@
       <!-- Speaker detection gave this line only a best guess (diarization.ts). -->
       @if (l.seg.speakerLowConfidence) {
         <span class="badge badge-warning" [title]="'editor.speaker-guess-title' | translate">{{ 'editor.speaker-guess' | translate }}</span>
+      }
+      <!-- Kept as the original song: no voice; its subtitle only with "Subtitles for songs". -->
+      @if (l.seg.song) {
+        <span class="badge badge-info" [title]="'songs.chip-title' | translate">♪ {{ 'songs.chip' | translate }}</span>
       }
     </div>
   </section>
@@ -178,10 +188,19 @@
       class="btn btn-sm"
       [class.btn-primary]="l.stale"
       (click)="regenerate()"
-      [disabled]="lineBusy() || !store.translated() || store.dubRunning()"
+      [disabled]="lineBusy() || !store.translated() || store.dubRunning() || l.seg.song === true"
       [title]="'studio.regenerate-title' | translate"
     >
       {{ (lineBusy() ? 'editor.synthesizing' : 'editor.regenerate') | translate }}
+    </button>
+    <button
+      type="button"
+      class="btn btn-ghost btn-sm"
+      (click)="toggleSong()"
+      [disabled]="songBusy() || store.dubRunning()"
+      [title]="'songs.keep-title' | translate"
+    >
+      {{ (l.seg.song ? 'songs.dub-line' : 'songs.keep-line') | translate }}
     </button>
     @if (l.status === 'timing-conflict' || l.status === 'needs-review') {
       <button

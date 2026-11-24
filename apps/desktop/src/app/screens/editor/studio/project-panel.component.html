@@ -445,16 +445,87 @@
             {{ 'editor.cast-propose' | translate }}
           </button>
           <p class="hint">{{ 'editor.cast-hint' | translate }}</p>
+          <!-- How many voices the crowd shares (plan 1.4): applied with the cast. -->
+          <label class="minor-voices">
+            <span class="label">{{ 'editor.cast-minor-voices' | translate }}</span>
+            <select [ngModel]="minorVoices()" (ngModelChange)="onMinorVoicesChange(+$event)" [disabled]="casting() || store.dubRunning()">
+              <option [ngValue]="0">{{ 'editor.cast-minor-auto' | translate }}</option>
+              @for (n of minorVoiceChoices; track n) {
+                <option [ngValue]="n">{{ n }}</option>
+              }
+            </select>
+          </label>
+          <p class="hint">{{ 'editor.cast-minor-hint' | translate }}</p>
           @if (cast(); as c) {
             <div class="cast stack-sm" role="status">
               @if (c.unconfirmed.length > 0) {
                 <p class="warn-text small">{{ 'editor.cast-unconfirmed' | translate: { n: c.unconfirmed.length, names: unconfirmedNames(c) } }}</p>
               }
               <ul class="small">
-                @for (a of c.assignments; track a.speakerId) {
+                @for (a of castMains(); track a.speakerId) {
                   <li>{{ 'studio.speaker-n' | translate: { n: speakerN(a.speakerId) } }} → {{ a.voiceName }}</li>
                 }
               </ul>
+              <!-- The minor speakers, by the pool voice they share. -->
+              @for (g of castGenders; track g) {
+                @if (c.pools?.[g]; as pool) {
+                  <div class="cast-pool stack-sm">
+                    <p class="small">
+                      <strong>{{ (g === 'female' ? 'editor.cast-pool-female' : 'editor.cast-pool-male') | translate: { n: pool.minorSpeakers, k: pool.voices.length } }}</strong>
+                    </p>
+                    <ul class="small">
+                      @for (v of pool.voices; track v.voiceId; let i = $index) {
+                        <li class="pool-voice">
+                          <select
+                            [attr.aria-label]="'editor.cast-pool-voice' | translate: { n: i + 1 }"
+                            (change)="pickPoolVoice(g, i, $any($event.target).value)"
+                            [disabled]="casting() || store.dubRunning()"
+                          >
+                            @for (o of poolChoices(g, v.voiceId); track o.voiceId) {
+                              <option [value]="o.voiceId" [selected]="o.voiceId === v.voiceId">{{ o.name }}</option>
+                            }
+                          </select>
+                          <span class="muted">
+                            {{ 'editor.cast-pool-speakers' | translate: { n: v.speakers.length } }}
+                            @if (v.from === 'reused' && v.sharedWith) {
+                              · {{ 'editor.cast-pool-shared' | translate: { n: speakerN(v.sharedWith) } }}
+                            } @else if (v.from === 'picked') {
+                              · {{ 'editor.cast-pool-picked' | translate }}
+                            }
+                          </span>
+                        </li>
+                      }
+                    </ul>
+                  </div>
+                }
+              }
+              @for (s of c.soundalikes ?? []; track s.voiceId) {
+                <p class="hint">{{ 'editor.cast-soundalike' | translate: { voice: s.name, clone: s.cloneName } }}</p>
+              }
+              <!-- Who the speakers of unknown gender are: their longest lines and talk time. -->
+              @if (c.unknown?.length) {
+                <div class="cast-unknown stack-sm">
+                  <p class="small"><strong>{{ 'editor.cast-unknown-title' | translate: { n: c.unknown!.length } }}</strong></p>
+                  <ul class="small">
+                    @for (u of c.unknown; track u.speakerId) {
+                      <li>
+                        {{ 'studio.speaker-n' | translate: { n: speakerN(u.speakerId) } }}
+                        <span class="muted">{{ 'editor.cast-unknown-stats' | translate: { min: u.minutes.toFixed(1), lines: u.lines } }}</span>
+                        <ul class="samples">
+                          @for (s of u.samples; track s.id) {
+                            <li>
+                              <button type="button" class="btn btn-ghost btn-sm mono" (click)="showLine(s.id)" [title]="'editor.cast-unknown-show' | translate">
+                                {{ fmtClock(s.startMs) }}
+                              </button>
+                              “{{ s.text }}”
+                            </li>
+                          }
+                        </ul>
+                      </li>
+                    }
+                  </ul>
+                </div>
+              }
               @for (n of castNotes(); track $index) {
                 <p class="hint">{{ n }}</p>
               }
@@ -523,6 +594,11 @@
         </ul>
       }
     </section>
+  }
+
+  <!-- Songs kept as the original: the suggestions to review, the subtitles option (plan 6.2). -->
+  @if (store.project()) {
+    <vd-songs-panel />
   }
 
   <!-- Cast & translation context: the project's character sheet. Context-aware

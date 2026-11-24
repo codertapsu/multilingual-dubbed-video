@@ -39,7 +39,9 @@ import type {
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, WhisperModelInfo } from '../../../core/models/setup';
 import { OutputFolderComponent } from '../../../shared/output-folder/output-folder.component';
 import { audioDriftView, spotCheckApplies, spotCheckOn } from '../../../core/util/source-checks';
-import { describeCastNote } from './notes';
+import { castNoteShownElsewhere, describeCastNote } from './notes';
+import { formatTimecode } from '../../../core/util/format';
+import { SongsPanelComponent } from './songs-panel.component';
 import { handLockedCount, retranslates } from './redub';
 import { StudioStore } from './studio.store';
 
@@ -88,6 +90,7 @@ const CONTEXT_BLIND_TRANSLATION_PROVIDERS: readonly string[] = ['argos', 'libret
     TranslatePipe,
     VoiceCloneDialogComponent,
     SpeakerVoicesDialogComponent,
+    SongsPanelComponent,
     BrandingPanelComponent,
   ],
   templateUrl: './project-panel.component.html',
@@ -156,10 +159,27 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
   protected readonly cast = signal<Awaited<ReturnType<IpcService['castVoices']>> | null>(null);
   protected readonly casting = signal(false);
   protected readonly castWithoutClones = signal(false);
-  /** The proposal's notes in the user's language (the server writes them in English). */
+  /** The proposal's notes in the user's language (the server writes them in English); the lists below say the rest. */
   protected readonly castNotes = computed(() =>
-    (this.cast()?.notes ?? []).map((note) => describeCastNote(note, (key, params) => this.translate.instant(key, params))),
+    (this.cast()?.notes ?? [])
+      .filter((note) => !castNoteShownElsewhere(note))
+      .map((note) => describeCastNote(note, (key, params) => this.translate.instant(key, params))),
   );
+
+  /**
+   * "Voices for minor speakers": how many voices the speakers past the
+   * distinct ones share per gender. 0 = automatic (3 to 6 by how many there
+   * are); saved as the project's setting when the cast is applied. One voice
+   * for 59 minor characters, the user's own clone, was what the 27.8-hour
+   * series sounded like (plan 1.4).
+   */
+  protected readonly minorVoices = signal(0);
+  protected readonly minorVoiceChoices = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
+  /** Pool voices the user chose by hand, per gender (their clones allowed). */
+  private readonly minorPool = signal<{ male?: string[]; female?: string[] }>({});
+  protected readonly castGenders = ['male', 'female'] as const;
+  /** The proposal's distinct voices (the minor speakers are listed by pool voice instead). */
+  protected readonly castMains = computed(() => (this.cast()?.assignments ?? []).filter((a) => a.by !== 'pool'));
 
   protected async proposeCast(): Promise<void> {
     await this.castCall({});
@@ -169,16 +189,54 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     const done = await this.castCall({ apply: true, allowWithoutClones: this.castWithoutClones() });
     if (done?.applied) {
       this.cast.set(null);
+      this.minorPool.set({});
       // The speakers' voices changed (project settings), and lines were marked for re-voicing (the timeline).
       await this.store.refreshProject().catch(() => undefined);
       await this.store.reload();
     }
   }
 
+  /** A new pool size: the voices picked by hand no longer fit it; propose again if a proposal is shown. */
+  protected async onMinorVoicesChange(n: number): Promise<void> {
+    this.minorVoices.set(n);
+    this.minorPool.set({});
+    if (this.cast()) await this.castCall({});
+  }
+
+  /** Swap one voice of a gender's pool for another (a clone is the user's choice to make). */
+  protected async pickPoolVoice(gender: 'male' | 'female', index: number, voiceId: string): Promise<void> {
+    const current = this.cast()?.pools?.[gender]?.voices.map((v) => v.voiceId) ?? [];
+    if (!voiceId || current[index] === voiceId) return;
+    const next = current.map((id, i) => (i === index ? voiceId : id));
+    this.minorPool.update((p) => ({ ...p, [gender]: [...new Set(next)] }));
+    await this.castCall({});
+  }
+
+  /** The choices for a pool voice: the castable voices of the gender, the current one first. */
+  protected poolChoices(gender: 'male' | 'female', currentId: string): { voiceId: string; name: string }[] {
+    const all = this.cast()?.candidates?.[gender] ?? [];
+    return all.some((v) => v.voiceId === currentId) ? all : [{ voiceId: currentId, name: currentId }, ...all];
+  }
+
+  /** Show one line (an unknown speaker's sample): selected, in the Line tab. */
+  protected showLine(id: string): void {
+    this.store.select(id);
+    this.store.sideTab.set('line');
+  }
+
+  protected fmtClock(ms: number | undefined): string {
+    return ms === undefined ? '' : formatTimecode(ms);
+  }
+
   private async castCall(body: { apply?: boolean; allowWithoutClones?: boolean }): Promise<Awaited<ReturnType<IpcService['castVoices']>> | null> {
     this.casting.set(true);
     try {
-      const res = await this.ipc.castVoices(this.store.projectId(), body);
+      const pool = this.minorPool();
+      const res = await this.ipc.castVoices(this.store.projectId(), {
+        ...body,
+        minorVoices: this.minorVoices() > 0 ? this.minorVoices() : null,
+        ...(pool.male?.length || pool.female?.length ? { minorPool: pool } : {}),
+      });
       this.cast.set(res);
       return res;
     } catch (err) {
@@ -320,6 +378,7 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
       this.store.adoptProject(project, pipeline ?? null);
       this.edits.set({});
       this.detectCount.set(project.settings.diarizeSpeakers ?? 0);
+      this.minorVoices.set(project.settings.minorVoices ?? 0);
       const [providers, catalog, engines] = await Promise.all([
         this.ipc.getProviders().catch(() => null),
         this.ipc.setupGetCatalog().catch(() => null),

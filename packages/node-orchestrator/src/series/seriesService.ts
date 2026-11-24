@@ -149,6 +149,16 @@ export function seriesReviewReasons(
       message: 'The transcript still has repeated lines flagged as transcription loops. Check them (get_transcript, the editor), then start the parts.',
     });
   }
+  // A garbled stretch or minutes of digital silence (a bad join or download):
+  // the 27.8-hour series' outside join left 5.3 h garbled and 2 h silent, and
+  // every part made from it would have carried that (claude-dubber, 2026-11-23).
+  if (warnings.some((w) => w.code === 'transcript-mismatch' || w.code === 'digital-silence')) {
+    reasons.push({
+      code: 'transcript-mismatch',
+      message:
+        'Spot checks found stretches where the transcript does not match the audio, or minutes of complete silence (a bad join or download). get_project lists their times: check them, re-transcribe them (retranscribe_range) or fix the source, then start the parts.',
+    });
+  }
   return reasons;
 }
 

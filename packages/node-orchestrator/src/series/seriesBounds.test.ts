@@ -56,6 +56,15 @@ describe('the review gate (Phase 4.1)', () => {
     // A repaired loop, or a GPU fallback, is no reason to stop.
     expect(seriesReviewReasons(settings(true), { warnings: [warning('loops-repaired'), warning('gpu-fallback')] })).toEqual([]);
   });
+
+  it('stops on a transcript that does not match its audio, or minutes of digital silence (a bad join)', () => {
+    expect(seriesReviewReasons(settings(false), { warnings: [warning('transcript-mismatch')] })[0]).toMatchObject({ code: 'transcript-mismatch' });
+    expect(seriesReviewReasons(settings(false), { warnings: [warning('digital-silence')] })[0]).toMatchObject({ code: 'transcript-mismatch' });
+    // One reason for both, never two.
+    expect(seriesReviewReasons(settings(false), { warnings: [warning('digital-silence'), warning('transcript-mismatch')] })).toHaveLength(1);
+    // A re-timed audio drift is fixed already: no reason to stop.
+    expect(seriesReviewReasons(settings(false), { warnings: [warning('audio-drift')] })).toEqual([]);
+  });
 });
 
 describe('source corrections (heard as -> is)', () => {

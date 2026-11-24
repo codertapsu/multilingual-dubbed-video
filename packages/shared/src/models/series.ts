@@ -79,7 +79,7 @@ export interface SeriesParentInfo {
 
 /** Why a series stopped at review (the code is for the UI's words, the message for agents). */
 export interface SeriesReviewReason {
-  code: 'speakers-failed' | 'loops-left';
+  code: 'speakers-failed' | 'loops-left' | 'transcript-mismatch';
   message: string;
 }
 

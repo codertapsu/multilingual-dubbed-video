@@ -2464,7 +2464,8 @@
     "report-rebuilt-forced": "Phần {{n}}: đã tạo lại, {{old}} → {{lines}} câu, {{speakers}} người nói; bản dịch cũ đã được cất riêng, nên phần này sẽ tiếp tục từ bước dịch.",
     "report-kept-busy": "Phần {{n}}: không động đến ({{why}}).",
     "replan-keep": "Giữ tên và tóm tắt tôi đã viết",
-    "replan-hint": "AI sẽ chọn lại chỗ cắt và đặt lại tên các phần. Nếu đánh dấu ô, những tên bạn đã viết được giữ cho các phần phủ cùng đoạn video."
+    "replan-hint": "AI sẽ chọn lại chỗ cắt và đặt lại tên các phần. Nếu đánh dấu ô, những tên bạn đã viết được giữ cho các phần phủ cùng đoạn video.",
+    "reason-transcript-mismatch": "có những đoạn bản chép lời không khớp với âm thanh, hoặc âm thanh hoàn toàn im lặng nhiều phút (ghép nối lỗi hoặc tải về bị hỏng). Hãy kiểm tra những thời điểm đó (màn hình Xử lý có liệt kê), nhận dạng lại trong trình chỉnh sửa, rồi tạo và bắt đầu các phần."
   },
   "warning": {
     "gpu-fallback-busy": "Card đồ hoạ đang bận việc khác nên một bước đã chạy bằng bản dùng CPU, chậm hơn ({{pack}}).",

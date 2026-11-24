@@ -2464,7 +2464,8 @@
     "report-rebuilt-forced": "Part {{n}}: rebuilt, {{old}} → {{lines}} lines, {{speakers}} speaker(s); its translation was set aside, so it continues from the translation.",
     "report-kept-busy": "Part {{n}}: not touched ({{why}}).",
     "replan-keep": "Keep the titles and summaries I wrote",
-    "replan-hint": "The AI chooses the cuts and names the parts again. With the box ticked, the titles you wrote stay on the parts that cover the same stretch of the video."
+    "replan-hint": "The AI chooses the cuts and names the parts again. With the box ticked, the titles you wrote stay on the parts that cover the same stretch of the video.",
+    "reason-transcript-mismatch": "the transcript does not match the audio in places, or the audio is completely silent for minutes (a bad join or download). Check those times (Processing lists them), re-transcribe them in the editor, then make and start the parts."
   },
   "warning": {
     "gpu-fallback-busy": "The graphics card was busy with another job, so a step ran on the slower CPU build ({{pack}}).",

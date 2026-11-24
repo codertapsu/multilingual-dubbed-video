@@ -70,11 +70,39 @@ describe('casting notes (voices/casting.ts) in words', () => {
     ['female: no pitch measured for every speaker and voice, so the most-heard speakers got the voices in list order.', 'editor.cast-note.order-female'],
     ['No female voice to cast: 2 female speaker(s) keep the project voice.', 'editor.cast-note.none-female {"n":2}'],
     ['3 speaker(s) of unknown gender keep the project voice (set them in the editor).', 'editor.cast-note.unknown {"n":3}'],
+    // The minor speakers' pool (plan 1.4), verbatim from casting.ts.
+    [
+      'male: 61 minor speaker(s) share 6 voice(s), about 10 each; speakers who answer each other get different voices where possible.',
+      'editor.cast-note.pool-male {"n":61,"k":6,"each":10}',
+    ],
+    [
+      'male: no spare built-in voice, so the voices of the least-heard cast speaker(s) SPEAKER_17, SPEAKER_16 are shared too.',
+      'editor.cast-note.reused-male {"speakers":"18, 17"}',
+    ],
+    [
+      'female: only 1 spare built-in voice(s), so the voices of the least-heard cast speaker(s) SPEAKER_93 are shared too.',
+      'editor.cast-note.reused-female {"speakers":"94"}',
+    ],
+    [
+      'female: no built-in voice is free for 4 minor speaker(s): they keep the project voice (choose voices for them).',
+      'editor.cast-note.no-pool-female {"n":4}',
+    ],
+    [
+      'Built-in voice "Thiện Minh" is left out of shared use: it sounds like your cloned voice "Thiện Minh - Nam - Miền Bắc" (0.84).',
+      'editor.cast-note.soundalike {"voice":"Thiện Minh","clone":"Thiện Minh - Nam - Miền Bắc"}',
+    ],
   ])('%s', (note, said) => {
     expect(describeCastNote(note, t)).toBe(said);
   });
 
   it('keeps a note it does not know', () => {
     expect(describeCastNote('Something else.', t)).toBe('Something else.');
+  });
+
+  it('knows the notes the cast panel shows as lists instead', async () => {
+    const { castNoteShownElsewhere } = await import('./notes');
+    expect(castNoteShownElsewhere('male: 61 minor speaker(s) share 6 voice(s), about 10 each; speakers who answer…')).toBe(true);
+    expect(castNoteShownElsewhere('Built-in voice "A" is left out of shared use: it sounds like your cloned voice "B" (0.80).')).toBe(true);
+    expect(castNoteShownElsewhere('male: no spare built-in voice, so the voices of …')).toBe(false);
   });
 });

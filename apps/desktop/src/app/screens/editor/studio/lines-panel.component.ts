@@ -131,6 +131,10 @@ function fold(text: string): string {
                 @if (r.line.locked) {
                   <i class="lock" [title]="'studio.locked' | translate">●</i>
                 }
+                <!-- Kept as the original song: no voice (plan 6.2). -->
+                @if (r.line.seg.song) {
+                  <i class="song" [title]="'songs.chip-title' | translate">♪</i>
+                }
               </span>
             </div>
             <div class="tr">{{ r.line.text || ('studio.empty-line' | translate) }}</div>
@@ -243,6 +247,11 @@ function fold(text: string): string {
         font-style: normal;
         font-size: 0.6rem;
         color: var(--vd-text-subtle);
+      }
+      .song {
+        font-style: normal;
+        font-size: 0.72rem;
+        color: var(--vd-info);
       }
       .spk {
         padding: 0 5px;

@@ -2,6 +2,7 @@ import type { DiagnosticsSummaryView } from '../../shared/diagnostics/diagnostic
 import { Injectable, signal } from '@angular/core';
 
 import { environment } from '../environment';
+import type { CastProposalView, SongsView } from './cast-songs.types';
 import type {
   CreateProjectInput,
   ReviseProjectInput,
@@ -645,21 +646,35 @@ export class IpcService {
     return this.http('GET', `/projects/${encodeURIComponent(projectId)}/speakers`);
   }
 
-  /** POST /projects/:id/speakers/cast — voices for the speakers by gender (a proposal, or saved with `apply`). */
+  /**
+   * POST /projects/:id/speakers/cast — voices for the speakers by gender (a
+   * proposal, or saved with `apply`). The minor speakers share a pool per
+   * gender: `minorVoices` sizes it (null = automatic), `minorPool` picks it.
+   */
   castVoices(
     projectId: string,
-    body: { apply?: boolean; allowWithoutClones?: boolean; swaps?: { speakerId: string; voiceId: string }[] },
-  ): Promise<{
-    assignments: { speakerId: string; voiceId: string; voiceName: string; by: string }[];
-    defaults: { male?: string; female?: string };
-    unassigned: string[];
-    unconfirmed: { voiceId: string; name: string }[];
-    notes: string[];
-    applied?: boolean;
-    refused?: boolean;
-    message?: string;
-  }> {
+    body: {
+      apply?: boolean;
+      allowWithoutClones?: boolean;
+      swaps?: { speakerId: string; voiceId: string }[];
+      minorVoices?: number | null;
+      minorPool?: { male?: string[]; female?: string[] };
+    },
+  ): Promise<CastProposalView> {
     return this.http('POST', `/projects/${encodeURIComponent(projectId)}/speakers/cast`, body);
+  }
+
+  /** GET /projects/:id/songs — the lines kept as the original song, and the lines that look sung (suggestions). */
+  getSongs(projectId: string): Promise<SongsView> {
+    return this.http('GET', `/projects/${encodeURIComponent(projectId)}/songs`);
+  }
+
+  /** POST /projects/:id/songs — keep lines as the original song (song: true) or dub them again. */
+  markSongs(
+    projectId: string,
+    body: { lineIds?: string[]; fromMs?: number; toMs?: number; song: boolean; applyToParts?: boolean },
+  ): Promise<{ song: boolean; changed: { id: string }[]; revoice: string[]; songs: number }> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/songs`, body);
   }
 
   /**

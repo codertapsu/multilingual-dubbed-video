@@ -83,6 +83,8 @@ import {
   type SpeakerJobView,
 } from './pipeline/speakerJob.js';
 import { refreshTranscriptWarnings } from './pipeline/transcriptWarnings.js';
+import { runAsScheduler } from './activity/context.js';
+import { dubRuns } from './activity/dubRuns.js';
 import { measureClip, type ClipTiming } from './alignment/clipSpeech.js';
 import {
   rateForGroup,
@@ -1091,8 +1093,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     fromMs: number,
     toMs: number,
     lines: readonly { startMs: number; endMs: number; text: string; speakerId?: string; speakerLowConfidence?: boolean; loopSuspect?: boolean }[],
-    /** What the project's edit history says about it (activity/history.ts); a default otherwise. */
-    opts: { summary?: string } = {},
+    /**
+     * What the project's edit history says about it (activity/history.ts); a
+     * default otherwise. An undo (activity/undo.ts) names the entry it undoes
+     * and checks, inside the lock, that the lines are still as it expects.
+     */
+    opts: { summary?: string; undoOf?: string; precondition?: (current: readonly TranscriptSegment[]) => void } = {},
   ): Promise<{ replaced: number; lines: { id: string; startMs: number; endMs: number; text: string; speakerId?: string }[] }> {
     this.assertNotRunning(projectId, 'replace lines');
     // The detection writes every line's speaker when it ends: lines changed under it would be lost.
@@ -1130,6 +1136,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     }
     return this.artifactLock.run(projectId, async () => {
       const current = (await this.tryReadSegments(paths.sourceJson)) ?? [];
+      opts.precondition?.(current);
       const inside = (s: TranscriptSegment): boolean => s.startMs < toMs && s.endMs > fromMs;
       const before = current.filter((s) => !inside(s) && s.endMs <= fromMs);
       const after = current.filter((s) => !inside(s) && s.startMs >= toMs);
@@ -1156,6 +1163,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         summary: opts.summary ?? `Replaced ${replaced} line(s) with ${made.length} at ${formatClock(fromMs)}–${formatClock(toMs)}`,
         before: current.filter(inside),
         after: all.slice(first, first + made.length),
+        ...(opts.undoOf ? { undoOf: opts.undoOf } : {}),
       });
       // A loop left LOOP? may be gone now, or lines may have lost their speaker.
       await this.refreshWarnings(projectId);
@@ -1639,7 +1647,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * single line. Text/voice/rate edits only mark the clip stale; the editor
    * regenerates it on demand.
    */
-  async patchSegments(projectId: string, patches: SegmentPatch[]): Promise<TimelineDocument> {
+  async patchSegments(
+    projectId: string,
+    patches: SegmentPatch[],
+    /** As replaceSourceLines': what the history says, the entry an undo undoes, its check inside the lock. */
+    opts: { summary?: string; undoOf?: string; precondition?: (base: readonly TranscriptSegment[]) => void } = {},
+  ): Promise<TimelineDocument> {
     this.assertNotRunning(projectId, 'edit the timeline');
     if (!Array.isArray(patches) || patches.length === 0) {
       throw new AppErrorException('INVALID_EDIT', 'No changes were sent.');
@@ -1651,6 +1664,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       const source = await this.tryReadSegments(paths.sourceJson);
       const base = translated ?? source;
       if (!base) throw new AppErrorException('INVALID_EDIT', 'This project has no transcript to edit yet.');
+      opts.precondition?.(base);
 
       const outcome = applySegmentPatches(base, patches, {
         durationMs: project.mediaInfo?.durationMs,
@@ -1720,9 +1734,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       await recordEdit({
         projectId,
         target: translated ? 'translation' : 'source',
-        summary: `Changed the ${what.join(', ')} line(s)`,
+        summary: opts.summary ?? `Changed the ${what.join(', ')} line(s)`,
         before: base,
         after: outcome.segments,
+        ...(opts.undoOf ? { undoOf: opts.undoOf } : {}),
       });
       // A speaker set by hand may be one a re-transcription left out (speakers-unassigned).
       if (outcome.speakerChanged.size > 0) await this.refreshWarnings(projectId);
@@ -2310,6 +2325,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
     if (decision.start.includes(project.id)) {
       this.workloads.set(project.id, workload);
+      dubRuns.scheduled(project, { queued: false, ...(retryFromStep ? { fromStep: retryFromStep } : {}) });
       this.startRun(project, retryFromStep);
       return { started: true, queued: false };
     }
@@ -2330,6 +2346,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     this.workloads.set(project.id, workload);
     this.queue.push(project.id);
     this.queued.add(project.id);
+    dubRuns.scheduled(project, { queued: true, ...(retryFromStep ? { fromStep: retryFromStep } : {}) });
     return { started: false, queued: true, position: this.queuePosition(project.id) };
   }
 
@@ -2514,6 +2531,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     if (!this.queued.has(projectId)) return;
     this.forget(projectId);
     this.workloads.delete(projectId);
+    dubRuns.dequeued(projectId);
     try {
       const project = await this.deps.store.getProject(projectId);
       await this.deps.store.saveProject({
@@ -2600,6 +2618,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       );
       this.queue.push(p.id);
       this.queued.add(p.id);
+      dubRuns.scheduled(p, { queued: true, restored: true, ...(p.queue?.fromStep ? { fromStep: p.queue.fromStep } : {}) });
     }
     // A dub the app died on (closed, the computer turned off) is paused, not
     // silently resumed. After a backend crash the shell restarted us for, the
@@ -2613,7 +2632,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     if (opts.resumeInterrupted) {
       interrupted.sort((a, b) => (a.updatedAt < b.updatedAt ? -1 : 1));
       for (const p of interrupted) {
-        void this.runPipeline(p.id).catch((err: unknown) =>
+        void runAsScheduler(() => this.runPipeline(p.id)).catch((err: unknown) =>
           this.deps.bus.get(p.id).emit({ type: 'error', error: toAppError(err) }),
         );
       }
@@ -2772,6 +2791,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     })
       .finally(() => {
         stopWatching();
+        dubRuns.ended(project.id);
         this.running.delete(project.id);
         this.workloads.delete(project.id);
         this.deps.engines?.releaseHeavyLane(project.id);

@@ -8,7 +8,8 @@
  * `createServer()` is exported for tests/embedding; a main guard starts the
  * server when this file is run directly.
  */
-import { initiatorFromHeaders, runWithInitiator } from './activity/context.js';
+import { initiatorFromHeaders, runAsScheduler, runWithInitiator } from './activity/context.js';
+import { registerActivityRoutes } from './activity/activityRoutes.js';
 import { DiagnosticsService } from './diagnostics/diagnosticsService.js';
 import { StructuredLog } from './diagnostics/logFiles.js';
 import { WarningInbox } from './diagnostics/warningInbox.js';
@@ -716,6 +717,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       else cb(null, false);
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    // The window sends `x-vd-initiator` with every request (who asked,
+    // activity/context.ts), which makes even a GET ask first; the allowed
+    // headers are the ones asked for (the plugin's default), and the answer
+    // is kept 10 minutes instead of 5 seconds.
+    maxAge: 600,
   });
 
   /**
@@ -768,7 +774,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       first.unref();
       slowTimers.set(req, first);
     }
-    runWithInitiator(initiatorFromHeaders(req.headers), done);
+    // The agent's tool call id too: the log reference of what it starts.
+    const toolCall = req.headers['x-request-id'];
+    runWithInitiator(initiatorFromHeaders(req.headers), done, typeof toolCall === 'string' ? { requestId: toolCall.slice(0, 80) } : {});
   });
 
   // What a request did, for the structured log: failures, slow ones, and every
@@ -2152,7 +2160,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
             return;
           }
           waitingForModels.delete(projectId);
-          void orchestrator.runPipeline(projectId).catch((e: unknown) => {
+          void runAsScheduler(() => orchestrator.runPipeline(projectId)).catch((e: unknown) => {
             bus.get(projectId).emit({ type: 'error', error: toAppError(e) });
           });
         };
@@ -3573,6 +3581,19 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
 
   // [routes: activity and edit history]
+  await registerActivityRoutes(app, {
+    logsDir,
+    store,
+    bus,
+    engineBus,
+    setupBus,
+    downloads,
+    orchestrator,
+    projectsMoving: () => projectsFolder.moving,
+    structured,
+    sseHeaders,
+    sendError,
+  });
 
 
   return app;

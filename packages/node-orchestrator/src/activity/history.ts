@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import type { ActivityInitiator, EditHistoryEntry, TranscriptSegment } from '@videodubber/shared';
+import type { ActivityInitiator, EditHistoryEntry, EditHistorySummary, TranscriptSegment } from '@videodubber/shared';
 
 import { currentInitiator } from './context.js';
 
@@ -19,13 +19,29 @@ export interface RecordEdit {
   range?: { fromMs: number; toMs: number };
   /** Defaults to the current request's initiator (context.ts). */
   initiator?: ActivityInitiator;
+  /** This write undoes that entry (activity/undo.ts). */
+  undoOf?: string;
 }
 
-/** Where a project's history lives, and how it is read and written (persistence plugs in here). */
+/**
+ * Where a project's history lives, and how it is read and written (persistence
+ * plugs in here: historyStore.ts keeps it in the project's folder).
+ */
 export interface EditHistoryStore {
   append(entry: EditHistoryEntry): Promise<void>;
+  /** Every entry with its lines, newest first. */
   list(projectId: string): Promise<EditHistoryEntry[]>;
+  /** Newest first, without the lines: what the list shows (falls back to {@link list}). */
+  summaries?(projectId: string): Promise<EditHistorySummary[]>;
+  /** One entry with its lines (falls back to {@link list}). */
+  get?(projectId: string, entryId: string): Promise<EditHistoryEntry | undefined>;
   markUndone(projectId: string, entryId: string, at: string): Promise<void>;
+}
+
+/** An entry without its lines, as the history list shows it. */
+export function summarizeEdit(entry: EditHistoryEntry): EditHistorySummary {
+  const { before, after, ...rest } = entry;
+  return { ...rest, beforeCount: before.length, afterCount: after.length };
 }
 
 /** In memory, until a persistent store is configured (`configureEditHistory`). */
@@ -38,6 +54,12 @@ class MemoryStore implements EditHistoryStore {
   }
   async list(projectId: string): Promise<EditHistoryEntry[]> {
     return [...(this.byProject.get(projectId) ?? [])].reverse();
+  }
+  async summaries(projectId: string): Promise<EditHistorySummary[]> {
+    return (await this.list(projectId)).map(summarizeEdit);
+  }
+  async get(projectId: string, entryId: string): Promise<EditHistoryEntry | undefined> {
+    return this.byProject.get(projectId)?.find((x) => x.id === entryId);
   }
   async markUndone(projectId: string, entryId: string, at: string): Promise<void> {
     const e = this.byProject.get(projectId)?.find((x) => x.id === entryId);
@@ -104,6 +126,7 @@ export async function recordEdit(edit: RecordEdit): Promise<EditHistoryEntry | u
     ...(edit.range ? { range: { fromMs: edit.range.fromMs, toMs: edit.range.toMs } } : {}),
     before: diff.before,
     after: diff.after,
+    ...(edit.undoOf ? { undoOf: edit.undoOf } : {}),
   };
   try {
     await store.append(entry);
@@ -113,12 +136,30 @@ export async function recordEdit(edit: RecordEdit): Promise<EditHistoryEntry | u
   }
 }
 
-/** A project's history, newest first. */
+/** A project's history, newest first, with the lines of every entry. */
 export async function listEdits(projectId: string): Promise<EditHistoryEntry[]> {
   try {
     return await store.list(projectId);
   } catch {
     return [];
+  }
+}
+
+/** A project's history, newest first, without the lines (the list the UI and get_history show). */
+export async function listEditSummaries(projectId: string): Promise<EditHistorySummary[]> {
+  try {
+    return store.summaries ? await store.summaries(projectId) : (await store.list(projectId)).map(summarizeEdit);
+  } catch {
+    return [];
+  }
+}
+
+/** One entry with its lines, or undefined. */
+export async function getEdit(projectId: string, entryId: string): Promise<EditHistoryEntry | undefined> {
+  try {
+    return store.get ? await store.get(projectId, entryId) : (await store.list(projectId)).find((e) => e.id === entryId);
+  } catch {
+    return undefined;
   }
 }
 

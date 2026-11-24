@@ -12,9 +12,11 @@
  * call open for minutes — MCP clients time those out. They work for at most
  * ~50 s, report where they got to, and can simply be called again.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomBytes } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { McpServer, type CallToolResult, type ServerContext } from '@modelcontextprotocol/server';
+import { CLIENT_INFO_META_KEY, McpServer, type CallToolResult, type ServerContext } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import { continuedSeriesSettings, projectOutputFiles, projectOutputVideoPath } from '@videodubber/shared';
 import type {
@@ -234,6 +236,21 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     },
   );
 
+  // Who is calling, sent with every request to the app (api.ts
+  // initiatorHeaders): the tool's name (registerTool is wrapped once, so no
+  // tool changes for it), the client's name from its handshake, the session.
+  const toolName = new AsyncLocalStorage<string>();
+  const register = server.registerTool.bind(server) as (name: string, config: unknown, cb: (...a: unknown[]) => unknown) => unknown;
+  (server as unknown as { registerTool: typeof register }).registerTool = (name, config, cb) =>
+    register(name, config, (...a: unknown[]) => toolName.run(name, () => cb(...a)));
+  const ownSession = `mcp-${randomBytes(6).toString('hex')}`;
+  const caller = (ctx: ServerContext): { client?: string; session: string; tool?: string } => {
+    const fromEnvelope = (ctx.mcpReq.envelope as Record<string, { name?: string } | undefined> | undefined)?.[CLIENT_INFO_META_KEY]?.name;
+    const client = fromEnvelope ?? server.server.getClientVersion()?.name;
+    const tool = toolName.getStore();
+    return { ...(client ? { client } : {}), session: ctx.sessionId ?? ownSession, ...(tool ? { tool } : {}) };
+  };
+
   // ------------------------------------------------------------------ helpers
 
   const text = (body: string): CallToolResult => ({ content: [{ type: 'text', text: body }] });
@@ -261,7 +278,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     <A>(fn: (args: A, ctx: ServerContext) => Promise<CallToolResult>) =>
     async (args: A, ctx: ServerContext): Promise<CallToolResult> => {
       const requestId = `mcp-${Math.random().toString(36).slice(2, 10)}`;
-      return requestContext.run({ requestId }, async () => {
+      return requestContext.run({ requestId, ...caller(ctx) }, async () => {
         try {
           const state = await ensureAppRunning(api, {
             ...(opts.launch ? { target: opts.launch } : {}),
@@ -2285,7 +2302,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         const res = await api.post<{ engineFallback?: { packId: string; reason: 'busy' | 'failed'; busyWith?: string } }>(
           `/projects/${encodeURIComponent(projectId)}/segments/${encodeURIComponent(next.id)}/tts`,
           {},
-          { signal, timeoutMs: 300_000 },
+          // How many are left, this one included: the app's activity list shows the batch's progress.
+          { signal, timeoutMs: 300_000, headers: { 'x-vd-batch-left': String(pending.length) } },
         );
         if (res?.engineFallback) {
           onCpu++;
@@ -2711,6 +2729,173 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
 
 
   // [tools: activity and edit history]
+  // Everything the app works on, whoever started it (GET /activity), the
+  // agents' own outside work in the same list (report_activity), and each
+  // project's edit history with undo (activity/ in the orchestrator).
+  type Who = { kind: 'ui' | 'mcp' | 'scheduler' | 'unknown'; client?: string; session?: string };
+  type Activity = {
+    id: string;
+    kind: string;
+    title: string;
+    projectId?: string;
+    projectName?: string;
+    initiator: Who;
+    state: string;
+    percent: number | null;
+    message?: string;
+    startedAt: string;
+    updatedAt: string;
+    endedAt?: string;
+    etaSec?: number;
+    result?: string;
+    error?: { code: string; message: string };
+    external?: boolean;
+    logRef?: string;
+  };
+  type HistorySummary = {
+    id: string;
+    at: string;
+    initiator: Who;
+    summary: string;
+    target: 'source' | 'translation';
+    range?: { fromMs: number; toMs: number };
+    beforeCount: number;
+    afterCount: number;
+    undoneAt?: string;
+    undoOf?: string;
+  };
+  const whoText = (w: Who, external?: boolean): string => {
+    const by = w.kind === 'ui' ? 'the user in the app' : w.kind === 'mcp' ? `${w.client ?? 'an agent'} (MCP)` : w.kind === 'scheduler' ? 'VideoDubber by itself' : 'unknown';
+    return external ? `reported by ${by}` : `by ${by}`;
+  };
+  const ago = (iso: string): string => `${duration(Math.max(0, (Date.now() - Date.parse(iso)) / 1000))} ago`;
+
+  server.registerTool(
+    'get_activity',
+    {
+      title: 'What the app is working on',
+      description:
+        'Every long piece of work, newest first, whoever started it (the user, an agent, the app itself): dubs and renders with their step, speaker detection, re-transcription, re-voicing, downloads, installs, series planning, and work agents reported. Each with its progress, result or error and a log reference. active=true for what still runs or waits.',
+      inputSchema: z.object({
+        projectId: z.string().optional().describe('Only this project\'s (its older activity included).'),
+        active: z.boolean().optional(),
+        limit: z.number().int().min(1).max(100).default(30),
+      }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, active, limit }, ctx) => {
+      const q = new URLSearchParams({ limit: String(limit), ...(projectId ? { projectId } : {}), ...(active ? { active: '1' } : {}) });
+      const { entries } = await api.get<{ entries: Activity[] }>(`/activity?${q}`, { signal: ctx.mcpReq.signal });
+      if (entries.length === 0) return text(active ? 'Nothing is running or waiting.' : 'No activity recorded yet.');
+      const lines = entries.map((e) => {
+        const status =
+          e.state === 'running' ? `running${e.percent !== null ? ` ${e.percent}%` : ''}${e.etaSec !== undefined ? `, about ${duration(e.etaSec)} left` : ''}` : e.state;
+        const outcome = e.error ? `error: ${e.error.message}` : (e.result ?? e.message);
+        return [
+          `- ${e.id} [${status}] ${e.title}`,
+          outcome ? ` — ${outcome}` : '',
+          ` · ${whoText(e.initiator, e.external)}`,
+          ` · started ${ago(e.startedAt)}${e.endedAt ? `, ended ${ago(e.endedAt)}` : ''}`,
+          e.projectId ? ` · project ${e.projectId}${e.projectName ? ` "${e.projectName}"` : ''}` : '',
+          e.logRef ? ` · log ${e.logRef}` : '',
+        ].join('');
+      });
+      return text([`Activity (newest first, ${entries.length}):`, ...lines].join('\n'));
+    }),
+  );
+
+  server.registerTool(
+    'report_activity',
+    {
+      title: 'Report your own work in the app',
+      description:
+        'Show work you do outside the app (joining files, editing in another tool, a long analysis) in its activity list, beside its own work and marked as reported, so the user sees it. The first call (no id) creates the entry and returns its id; call again with that id to update it, and with state done/failed/cancelled when it ends.',
+      inputSchema: z.object({
+        id: z.string().optional().describe('The id the first report returned, to update it.'),
+        projectId: z.string().optional().describe('The project it is for, if any.'),
+        title: z.string().max(200).optional().describe('What the work is, in a few words (required on the first report).'),
+        state: z.enum(['running', 'waiting', 'done', 'failed', 'cancelled']),
+        progress: z.number().min(0).max(100).optional().describe('Percent done, when you know it.'),
+        detail: z.string().max(1000).optional().describe('The step it is on, or how it ended.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    guarded(async ({ id, projectId, title, state, progress, detail }, ctx) => {
+      if (!id && !title) return { content: [{ type: 'text', text: 'Give a title on the first report (what the work is).' }], isError: true };
+      const { entry } = await api.post<{ entry: Activity }>(
+        '/activity/report',
+        {
+          ...(id ? { id } : {}),
+          ...(projectId ? { projectId } : {}),
+          ...(title ? { title } : {}),
+          state,
+          ...(progress !== undefined ? { percent: progress } : {}),
+          ...(detail ? { detail } : {}),
+        },
+        { signal: ctx.mcpReq.signal },
+      );
+      return text(
+        entry.endedAt
+          ? `Reported "${entry.title}" as ${entry.state}. It stays in the app's activity list.`
+          : `${id ? 'Updated' : 'Reported'} "${entry.title}" (${entry.state}${entry.percent !== null ? `, ${entry.percent}%` : ''}) as ${entry.id}: it shows in the app's activity list, marked as reported. Report again with id="${entry.id}" to update it, and with state "done" (or "failed") when it ends.`,
+      );
+    }),
+  );
+
+  server.registerTool(
+    'get_history',
+    {
+      title: 'Edit history of a project',
+      description:
+        'Every change to a project\'s lines, newest first (the last 200): who made it (the user, which agent, the app), when, what (replace_lines, re-transcription, set_translations, adjust_lines, the editor), and whether it was undone. undo_edit undoes one.',
+      inputSchema: z.object({ projectId: z.string(), limit: z.number().int().min(1).max(200).default(30) }),
+      annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, limit }, ctx) => {
+      const { entries } = await api.get<{ entries: HistorySummary[] }>(
+        `/projects/${encodeURIComponent(projectId)}/history?limit=${limit}`,
+        { signal: ctx.mcpReq.signal },
+      );
+      if (entries.length === 0) return text('No change to this project\'s lines is recorded yet.');
+      const lines = entries.map(
+        (e) =>
+          `- ${e.id} · ${e.at} (${ago(e.at)}) · ${whoText(e.initiator)} · ${e.target === 'source' ? 'transcript' : 'translation'}: ${e.summary}` +
+          ` (${e.beforeCount} line(s) before, ${e.afterCount} after)` +
+          (e.undoOf ? ` · undo of ${e.undoOf}` : '') +
+          (e.undoneAt ? ` · UNDONE ${ago(e.undoneAt)}` : ''),
+      );
+      return text(
+        [
+          `History of ${projectId} (newest first):`,
+          ...lines,
+          'undo_edit undoes one when its lines have not changed since; undo the newest first.',
+        ].join('\n'),
+      );
+    }),
+  );
+
+  server.registerTool(
+    'undo_edit',
+    {
+      title: 'Undo a change to the lines',
+      description:
+        'Undo one entry of get_history: its lines get back their text, translation, timing, speaker, voice and pace as they were before it. Refused, with what changed, when those lines were changed again since (undo the later change first). The undo is itself an entry, so it can be undone too. Not while the project is dubbing.',
+      inputSchema: z.object({ projectId: z.string(), entryId: z.string().describe('An id from get_history (edit_…).') }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    guarded(async ({ projectId, entryId }, ctx) => {
+      const res = await api.post<{ undone: HistorySummary; entry?: HistorySummary }>(
+        `/projects/${encodeURIComponent(projectId)}/history/${encodeURIComponent(entryId)}/undo`,
+        {},
+        { signal: ctx.mcpReq.signal, timeoutMs: 120_000 },
+      );
+      return text(
+        res.entry
+          ? `Undone: ${res.undone.summary}. Recorded as ${res.entry.id} (undo_edit on it puts the change back). Lines whose text, voice or pace changed need regenerate_voices.`
+          : `Undone: ${res.undone.summary}. The lines already read as before it, so nothing had to be written.`,
+      );
+    }),
+  );
 
 
   return server;

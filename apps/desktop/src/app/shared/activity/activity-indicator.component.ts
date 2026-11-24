@@ -1,8 +1,9 @@
 import { ChangeDetectionStrategy, Component, ElementRef, HostListener, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 
+import { agentName } from '../../core/activity/activity-logic';
 import { ActivityService, type ActivityTask } from '../../core/activity/activity.service';
-import { TranslatePipe } from '../../core/i18n';
+import { TranslatePipe, TranslateService } from '../../core/i18n';
 
 /**
  * The top bar's "what is going on" button (core/activity/activity.service.ts):
@@ -18,14 +19,14 @@ import { TranslatePipe } from '../../core/i18n';
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterLink, TranslatePipe],
   template: `
-    @if (activity.tasks().length > 0) {
+    @if (activity.tasks().length > 0 || activity.agents().length > 0) {
       <div class="activity">
         <button
           type="button"
           class="activity-btn"
           [class.busy]="activity.running().length > 0"
           [class.failed]="activity.running().length === 0 && activity.failed().length > 0"
-          (click)="open.set(!open())"
+          (click)="toggle()"
           [attr.aria-expanded]="open()"
           aria-haspopup="dialog"
           [title]="summary()"
@@ -38,6 +39,9 @@ import { TranslatePipe } from '../../core/i18n';
             <span aria-hidden="true">!</span>
           } @else if (activity.waiting().length > 0) {
             <span aria-hidden="true">…</span>
+          } @else if (activity.tasks().length === 0) {
+            <!-- Only agents connected: a small robot head. -->
+            <svg class="agent-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg>
           } @else {
             <span aria-hidden="true">✓</span>
           }
@@ -54,7 +58,12 @@ import { TranslatePipe } from '../../core/i18n';
               @for (t of activity.tasks(); track t.id) {
                 <li class="task" [attr.data-state]="t.state">
                   <div class="task-head">
-                    <span class="task-label">{{ t.label }}</span>
+                    <span class="task-label">
+                      {{ t.label }}
+                      @if (t.by) {
+                        <span class="task-by">{{ t.by }}</span>
+                      }
+                    </span>
                     <span class="task-state">
                       @switch (t.state) {
                         @case ('running') { {{ t.percent !== null ? t.percent + '%' : ('activity.working' | translate) }} }
@@ -81,7 +90,28 @@ import { TranslatePipe } from '../../core/i18n';
                 </li>
               }
             </ul>
+            @if (activity.agents().length > 0) {
+              <!-- The AI agents driving the app (MCP sessions of the last hour). -->
+              <div class="agents">
+                <strong class="agents-head">{{ 'activity.agents-heading' | translate }}</strong>
+                <ul class="tasks">
+                  @for (a of activity.agents(); track a.session) {
+                    <li class="agent">
+                      <span class="task-label">{{ agentLabel(a.client) }}</span>
+                      <span class="task-msg">
+                        {{ 'activity.agent-times' | translate: { first: clock(a.firstAt), last: ago(a.lastAt), calls: a.calls } }}
+                      </span>
+                      @if (a.tools.length > 0) {
+                        <span class="task-msg mono">{{ 'activity.agent-tools' | translate: { tools: a.tools.slice(0, 5).join(', ') } }}</span>
+                      }
+                    </li>
+                  }
+                </ul>
+                <p class="hint">{{ 'activity.agents-hint' | translate }}</p>
+              </div>
+            }
             <p class="hint">{{ 'activity.hint' | translate }}</p>
+            <a class="all-link" routerLink="/activity" (click)="open.set(false)">{{ 'activity.see-all' | translate }}</a>
           </div>
         }
       </div>
@@ -227,11 +257,42 @@ import { TranslatePipe } from '../../core/i18n';
         font-size: 0.8rem;
         color: var(--vd-text-muted, #6b7280);
       }
+      .task-by {
+        display: block;
+        font-weight: 400;
+        font-size: 0.75rem;
+        color: var(--vd-text-muted, #6b7280);
+      }
+      .agent-icon {
+        width: 16px;
+        height: 16px;
+      }
+      .agents {
+        margin-top: var(--vd-sp-3, 12px);
+        padding-top: var(--vd-sp-3, 12px);
+        border-top: 1px solid var(--vd-border, #e5e7eb);
+      }
+      .agents-head {
+        display: block;
+        margin-bottom: var(--vd-sp-2, 8px);
+      }
+      .agent .task-label {
+        display: block;
+      }
+      .mono {
+        font-family: var(--vd-mono, ui-monospace, monospace);
+      }
+      .all-link {
+        display: inline-block;
+        margin-top: var(--vd-sp-2, 8px);
+        font-size: 0.85rem;
+      }
     `,
   ],
 })
 export class ActivityIndicatorComponent {
   protected readonly activity = inject(ActivityService);
+  private readonly i18n = inject(TranslateService);
   private readonly host = inject(ElementRef<HTMLElement>);
   protected readonly open = signal(false);
 
@@ -245,6 +306,29 @@ export class ActivityIndicatorComponent {
 
   /** Something ended (done or failed) that "Clear finished" would remove. */
   protected readonly hasFinished = computed(() => this.activity.tasks().some((t) => t.state === 'done' || t.state === 'failed'));
+
+  /** Open or close the list; opening looks at the connected agents again. */
+  protected toggle(): void {
+    const opening = !this.open();
+    this.open.set(opening);
+    if (opening) this.activity.refreshAgents();
+  }
+
+  /** An agent's name as people know it ("Claude Code"), or "An AI agent". */
+  protected agentLabel(client: string | undefined): string {
+    return agentName(client) ?? this.i18n.instant('activity.agent-unnamed');
+  }
+
+  /** `14:05`, in the user's language. */
+  protected clock(iso: string): string {
+    return new Date(iso).toLocaleTimeString(this.i18n.locale(), { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /** "2 min ago" / "just now". */
+  protected ago(iso: string): string {
+    const min = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+    return min < 1 ? this.i18n.instant('activity.just-now') : this.i18n.instant('activity.minutes-ago', { n: min });
+  }
 
   /**
    * A failure says what went wrong in the user's language (an engine's error

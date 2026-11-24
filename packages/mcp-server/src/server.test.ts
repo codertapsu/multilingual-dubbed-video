@@ -171,6 +171,8 @@ describe('VideoDubber MCP server', () => {
         'get_queue', 'get_diagnostics', 'rebuild_parts', 'replace_lines', 'retranscribe_range', 'export_transcript', 'get_speakers', 'detect_speakers', 'cast_voices',
         // 0.18.0: series, create, continue.
         'edit_part', 'replan_series',
+        // Activity and edit history (0.18.0).
+        'get_activity', 'report_activity', 'get_history', 'undo_edit',
       ].sort(),
     );
     for (const t of tools) {

@@ -96,8 +96,9 @@ describe.skipIf(!ffmpegHere)('audio on the picture clock (real ffmpeg)', () => {
     expect(flac!.driftMs).toBeLessThanOrEqual(520);
   }, 60_000);
 
-  it('an audio-only input has no picture to follow: no drift to measure', async () => {
+  it('an audio-only input has no picture to follow: no drift to measure, in a window neither', async () => {
     expect(await measureAudioDrift(file('slow.m4a'))).toBeUndefined();
+    expect(await measureAudioDrift(file('slow.m4a'), { range: { startMs: 1000, endMs: 4000 } })).toBeUndefined();
   }, 60_000);
 
   it('finds a minute of digital silence in a track', async () => {

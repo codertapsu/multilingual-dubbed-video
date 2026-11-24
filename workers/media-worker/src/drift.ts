@@ -224,7 +224,9 @@ export async function measureAudioDrift(
   assertInputReadable(input);
   const { range, ...rest } = opts;
   const run: RunOptions = { timeoutMs: COUNT_TIMEOUT_MS, ...rest };
-  const pictureMs = extractKeepMs(range, pictureDurationMs(await probe(input, run)));
+  // Audio-only input has no picture to be off from (a window of it neither).
+  const picture = pictureDurationMs(await probe(input, run));
+  const pictureMs = picture === undefined ? undefined : extractKeepMs(range, picture);
   if (pictureMs === undefined) return undefined;
 
   const packetsOf = async (countPackets: boolean): Promise<AudioPackets | undefined> => {

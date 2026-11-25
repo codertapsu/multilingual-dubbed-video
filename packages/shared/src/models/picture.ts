@@ -30,6 +30,16 @@ export interface BlurRegion {
 }
 
 /** Which corner of the picture a detected mark sits in. */
+/**
+ * "Find the watermark and blur it" (ProjectSettings.watermarkAuto): how the
+ * marks the app finds by itself are hidden.
+ */
+export interface WatermarkAutoSettings {
+  mode: BlurRegion['mode'];
+  /** 1–10, as BlurRegion.strength. */
+  strength?: number;
+}
+
 export type PictureCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
 /**

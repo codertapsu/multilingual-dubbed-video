@@ -309,6 +309,25 @@ const UV_REQUIREMENTS: Record<string, UvRequirementSpec> = {
   'diarization-sherpa': {
     base: ['sherpa-onnx==2.0.1', 'sherpa-onnx-core==2.0.1', 'numpy==2.5.4', 'fastapi==0.162.0', 'uvicorn==0.54.0'],
   },
+  // Reading burned-in subtitles (workers/ocr-engine). rapidocr-onnxruntime
+  // carries the PP-OCRv4 models; it asks for the GUI OpenCV, which the
+  // override swaps for the headless build (no window code, no libGL). The set
+  // was installed and read Chinese subtitles on Windows (2026-11-25).
+  'ocr-rapid': {
+    base: [
+      'rapidocr-onnxruntime==1.4.4',
+      'onnxruntime==1.31.1',
+      'opencv-python-headless==4.14.0.94',
+      'numpy==2.5.4',
+      'shapely==2.1.2',
+      'pyclipper==1.3.0.post6',
+      'pillow==12.3.0',
+      'pyyaml==6.0.3',
+      'fastapi==0.162.0',
+      'uvicorn==0.54.0',
+    ],
+    overrides: ["opencv-python ; sys_platform == 'never'"],
+  },
   // Other uv packs — kept at their existing (loose) sets.
   'separation-audio': {
     base: ['audio-separator>=0.18', 'onnxruntime>=1.20', 'fastapi>=0.110', 'uvicorn>=0.29'],

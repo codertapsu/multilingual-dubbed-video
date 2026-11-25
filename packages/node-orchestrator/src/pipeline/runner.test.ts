@@ -1201,7 +1201,8 @@ describe('PipelineRunner — speech-to-text timing and fallback', () => {
     expect((await readSource(paths.sourceJson))[0]!.speakerId).toBeUndefined();
     const state = await store.getPipeline(project.id);
     expect(state.steps.find((s) => s.id === 'stt')!.status).toBe('completed');
-    expect(state.warnings).toEqual([
+    // The speech-to-text step's own (the fake translator leaves Chinese: lines-flagged at refine).
+    expect(state.warnings?.filter((w) => w.step === 'stt')).toEqual([
       expect.objectContaining({
         code: 'speakers-failed',
         step: 'stt',
@@ -1239,7 +1240,7 @@ describe('PipelineRunner — speech-to-text timing and fallback', () => {
     await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
     expect(details).toEqual(['Detecting speakers 0/2', 'Detecting speakers 1/2', 'Detecting speakers 2/2']);
     const state = await store.getPipeline(project.id);
-    expect(state.warnings).toEqual([
+    expect(state.warnings?.filter((w) => w.step === 'stt')).toEqual([
       expect.objectContaining({ code: 'speakers-low-confidence', step: 'stt', key: 'warning.speakers-low-confidence', params: { count: 1 } }),
     ]);
   });
@@ -1923,5 +1924,79 @@ describe('PipelineRunner — picture options in the render', () => {
     const { project, deps, media } = await buildProject();
     await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
     expect(media.renderInputs.at(-1)).not.toHaveProperty('blurRegions');
+  });
+
+  const detection = (confidence: number) => ({
+    at: '2026-11-25T00:00:00Z',
+    videoWidth: 1280,
+    videoHeight: 720,
+    regions: [{ x: 0.7, y: 0.02, w: 0.28, h: 0.06, mode: 'blur' as const, corner: 'top-right' as const, confidence }],
+    frameAtMs: 5_000,
+    frames: 100,
+    notes: [],
+  });
+
+  it('finds the watermark at render when asked to, saves the box in the project and blurs it', async () => {
+    const { project, deps, media } = await buildProject({ settings: { ...defaultSettings(), watermarkAuto: { mode: 'pixelate', strength: 6 } } });
+    const asked: string[] = [];
+    await new PipelineRunner({ ...deps, watermark: { detect: async (id) => (asked.push(id), detection(0.83)) } }).run(project, {
+      signal: new AbortController().signal,
+    });
+    const box = { x: 0.7, y: 0.02, w: 0.28, h: 0.06, mode: 'pixelate', strength: 6 };
+    expect(asked).toEqual([project.id]);
+    expect(media.renderInputs.at(-1)!.blurRegions).toEqual([box]);
+    // Saved: the editor shows it, and the next render uses it without looking again.
+    expect((await store.getProject(project.id)).settings.blurRegions).toEqual([box]);
+    await new PipelineRunner({ ...deps, watermark: { detect: async (id) => (asked.push(id), detection(0.83)) } }).run(
+      await store.getProject(project.id),
+      { retryFromStep: 'render', signal: new AbortController().signal },
+    );
+    expect(asked).toHaveLength(1);
+  });
+
+  it('renders without a box when the mark is faint or the search fails, and never fails the dub for it', async () => {
+    for (const watermark of [
+      { detect: async () => detection(0.3) },
+      {
+        detect: async () => {
+          throw new Error('ffmpeg could not seek');
+        },
+      },
+    ]) {
+      const { project, deps, media } = await buildProject({ settings: { ...defaultSettings(), watermarkAuto: { mode: 'blur' } } });
+      await new PipelineRunner({ ...deps, watermark }).run(project, { signal: new AbortController().signal });
+      expect((await store.getPipeline(project.id)).status).toBe('completed');
+      expect(media.renderInputs.at(-1)).not.toHaveProperty('blurRegions');
+      expect((await store.getProject(project.id)).settings.blurRegions).toBeUndefined();
+    }
+  });
+
+  it('uses the boxes a project already has instead of looking (a series part gets its series\' boxes)', async () => {
+    const regions = [{ x: 0.1, y: 0.1, w: 0.2, h: 0.05, mode: 'blur' as const }];
+    const { project, deps, media } = await buildProject({ settings: { ...defaultSettings(), watermarkAuto: { mode: 'blur' }, blurRegions: regions } });
+    let looked = false;
+    await new PipelineRunner({ ...deps, watermark: { detect: async () => ((looked = true), detection(0.9)) } }).run(project, {
+      signal: new AbortController().signal,
+    });
+    expect(looked).toBe(false);
+    expect(media.renderInputs.at(-1)!.blurRegions).toEqual(regions);
+  });
+
+  it('mixes and renders with the settings as saved when they start, not as the run began', async () => {
+    const { project, deps, media } = await buildProject();
+    const regions = [{ x: 0.5, y: 0.5, w: 0.1, h: 0.1, mode: 'delogo' as const }];
+    // A change saved while the dub was being timed (Orchestrator.updateProjectSettings allows it before the mix).
+    const probe = media.probe.bind(media);
+    let changed = false;
+    media.probe = async (file: string) => {
+      if (!changed && file.includes('tts_segments')) {
+        changed = true;
+        const fresh = await store.getProject(project.id);
+        await store.saveProject({ ...fresh, settings: { ...fresh.settings, blurRegions: regions } });
+      }
+      return probe(file);
+    };
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    expect(media.renderInputs.at(-1)!.blurRegions).toEqual(regions);
   });
 });

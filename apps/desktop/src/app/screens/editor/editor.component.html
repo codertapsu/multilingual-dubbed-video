@@ -67,7 +67,11 @@
   </div>
 } @else if (store.awaitingReview()) {
   <div class="notice review" role="status">
-    <span class="text"><strong>{{ 'editor.review-title' | translate }}</strong> {{ 'editor.review-hint' | translate }}</span>
+    @if (store.heldCount() > 0) {
+      <span class="text"><strong>{{ 'editor.held-title' | translate: { count: store.heldCount() } }}</strong> {{ 'editor.held-hint' | translate }}</span>
+    } @else {
+      <span class="text"><strong>{{ 'editor.review-title' | translate }}</strong> {{ 'editor.review-hint' | translate }}</span>
+    }
   </div>
 }
 

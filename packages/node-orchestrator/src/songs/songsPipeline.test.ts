@@ -172,6 +172,15 @@ describe('marking songs (the editor, mark_song)', () => {
     expect((await orchestrator.markSongs(project.id, { song: false, lineIds: ['seg_0002'] })).changed).toEqual([]);
   });
 
+  it('refuses to make a voice for a line kept as the original song, saying how to dub it again', async () => {
+    const { project, media } = await dubbed();
+    const orchestrator = orchestratorFor(media);
+    await orchestrator.markSongs(project.id, { song: true, lineIds: ['seg_0002'] });
+    const refused = await orchestrator.synthesizeSingleSegment(project.id, 'seg_0002', {}).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ appError: { code: 'INVALID_EDIT' } });
+    expect((refused as Error).message).toContain('original song');
+  });
+
   it('keeps the minor-voice setting within 1..12, automatic otherwise', async () => {
     const { project, media } = await dubbed();
     const orchestrator = orchestratorFor(media);

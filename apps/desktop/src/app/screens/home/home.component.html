@@ -76,6 +76,9 @@
                 @case ('heavy-busy') {
                   {{ 'home.queue-entry-heavy-busy' | translate: { position: e.position, name: e.name } }}
                 }
+                @case ('pressure') {
+                  {{ 'home.queue-entry-pressure' | translate: { position: e.position, name: e.name } }}
+                }
                 @case ('paused') {
                   {{ 'home.queue-entry-paused' | translate: { position: e.position, name: e.name } }}
                 }

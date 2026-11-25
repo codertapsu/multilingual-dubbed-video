@@ -7,7 +7,7 @@ import type { BrandingSettings, TimeSpan } from './branding.js';
 import type { DownloadSource } from './download.js';
 import type { SeriesInfo, SeriesSettings } from './series.js';
 import type { MediaInfo } from './media.js';
-import type { BlurRegion } from './picture.js';
+import type { BlurRegion, WatermarkAutoSettings } from './picture.js';
 
 /**
  * A BCP-47-ish language code such as `"en"`, `"en-US"`, or `"vi-VN"`.
@@ -238,6 +238,15 @@ export interface ProjectSettings {
    * editor's "Continue dubbing") resumes from the TTS step. Default off.
    */
   reviewBeforeSynthesis?: boolean;
+  /**
+   * Stop before any voice is made when lines still fail the translation checks
+   * (Chinese letters or a pinyin name in a Vietnamese line, no diacritics, an
+   * "anh/chị" hedge, untranslated) after both automatic repairs, so they are
+   * fixed first. Continuing voices what is there. Default off: those lines are
+   * voiced and named in a warning (lines-flagged). claude-dubber asked for it
+   * after parts of 《反相之地》 were voiced with pinyin names (2026-11-25).
+   */
+  holdFlaggedLines?: boolean;
   /** Time-stretch engine for fitting clips to windows (default `auto`). */
   timeStretchEngine?: TimeStretchEngine;
   /**
@@ -275,6 +284,27 @@ export interface ProjectSettings {
    * on shorter videos. Costs about 3-5 % of the speech-to-text time.
    */
   transcriptSpotCheck?: boolean;
+  /**
+   * Check speech-to-text against the video's own burned-in subtitles: read the
+   * subtitle band (picture detection's, or the cover band set here) five times
+   * a second to know when a subtitle is on screen; lines there are never taken
+   * for silence by the loop check, and the warnings name subtitles with no line
+   * under them (speech lost) and lines with no subtitle (maybe hallucinated).
+   * Absent: on for Chinese, Japanese and Korean video (shared subtitleCheckOn).
+   * 《反相之地》 lost about 780 real lines that its subtitles showed
+   * (claude-dubber, 2026-11-25).
+   */
+  subtitleCoverageCheck?: boolean;
+  /**
+   * Take the transcript from the subtitles burned into the picture, read as
+   * text on this computer (the ocr-rapid engine pack, RapidOCR), instead of
+   * speech-to-text: each subtitle on screen becomes a line, timed by when it
+   * shows. The subtitles are the script, with its names right (claude-dubber's
+   * 《反相之地》, 2026-11-25). Chinese (and English) subtitles. Speech-to-text
+   * runs instead, with a warning, when the engine is not installed or the
+   * subtitles cannot be read. Default off.
+   */
+  useBurnedInSubtitles?: boolean;
   /** Per-speaker TTS voice assignments (used when diarization is on). */
   speakerVoices?: SpeakerVoiceAssignment[];
   /** Each detected speaker's gender (speaker detection writes it), for the default voices below. */
@@ -299,6 +329,15 @@ export interface ProjectSettings {
    * coordinates, so they work at any resolution (models/picture.ts).
    */
   blurRegions?: BlurRegion[];
+  /**
+   * Find the watermark and hide it, without anyone drawing a box: a series
+   * looks once in the whole video during its analysis and gives the boxes to
+   * every part (shown at review); a single video, or a part whose series found
+   * none, looks when it renders. What is found is saved as `blurRegions`
+   * (shown in the editor, changed or cleared there; clearing them turns this
+   * off). Only clear marks (confidence 0.5 and up) are hidden by themselves.
+   */
+  watermarkAuto?: WatermarkAutoSettings;
   /**
    * Phases whose engine the APP picked for this project (an installed GPU
    * engine, recommendProjectSettings) rather than the user. Speech-to-text and
@@ -614,6 +653,13 @@ export interface CreateProjectInput {
   source?: DownloadSource;
   /** Dub the video as a series of parts (a parent project; models/series.ts). */
   series?: SeriesSettings;
+  /**
+   * A dub preset to make it from (GET /presets): the machine's recommended
+   * settings, the preset's over them, `settings` over both (partial then);
+   * the preset's save folder and, for a long video, its series block, unless
+   * the request gives its own.
+   */
+  presetId?: string;
 }
 
 /** Where a finished dub was posted (POST /projects/:id/published, Mother Claude). */

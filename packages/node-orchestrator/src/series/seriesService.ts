@@ -31,6 +31,7 @@ import {
   sanitizeSpeakerVoices,
   toAppError,
   type CreateProjectInput,
+  type PictureDetection,
   type PipelineState,
   type Project,
   type RunScheduleResult,
@@ -49,10 +50,12 @@ import {
 
 import { runAsScheduler } from '../activity/context.js';
 import { recordEdit } from '../activity/history.js';
-import { activity, type ActivityHandle } from '../activity/registry.js';
+import { activity, said, type ActivityHandle } from '../activity/registry.js';
 import { readSpeakerProfiles } from '../pipeline/diarization.js';
 import { languageName } from '../providers/translation/llmTranslationProvider.js';
 import { generateCharacterSheet, type AnalysisChat } from '../providers/translation/translationContext.js';
+import { autoBlurRegions, describeMarks, faintMarks } from '../picture/watermarkAuto.js';
+import { sourceNameHints } from './sourceHints.js';
 import { writeJsonAtomic, type ProjectStore } from '../workspace/projectStore.js';
 import { aiChooseCut, aiTitlePart, type SeriesChat } from './seriesAi.js';
 import { continuedVoices, matchSpeakersByVoice } from './seriesContinue.js';
@@ -71,6 +74,7 @@ import {
   partsFromCuts,
   partsOutsideBounds,
   partTranscript,
+  snapToFileBoundary,
   validateCuts,
   type CutWindow,
 } from './seriesPlanner.js';
@@ -124,6 +128,12 @@ export interface SeriesServiceDeps {
   holdQueue?: <T>(fn: () => Promise<T>) => Promise<T>;
   /** Rename a project, its finished files in a chosen folder along (Orchestrator.renameProject). */
   renameProject?: (projectId: string, name: string) => Promise<Project>;
+  /**
+   * Find a project's watermark, run to its end: a series whose settings ask
+   * for the watermark to be blurred (watermarkAuto) looks once in the whole
+   * video during its analysis and makes every part with the boxes.
+   */
+  detectWatermark?: (projectId: string) => Promise<PictureDetection>;
   logger?: { info(message: string): void; warn(message: string): void };
 }
 
@@ -271,12 +281,19 @@ export class SeriesService {
       const before = opts.keepTitles ? await this.readPlan(parent) : undefined;
       job = activity.start({
         kind: 'series.plan',
-        title: `${opts.again ? 'Planning again' : 'Planning'} the parts of "${seriesNameOf(parent)}"`,
+        title: said(
+          `${opts.again ? 'Planning again' : 'Planning'} the parts of "${seriesNameOf(parent)}"`,
+          opts.again ? 'activity.text.series-replan' : 'activity.text.series-plan',
+          { name: seriesNameOf(parent) },
+        ),
         projectId: parentId,
       });
       await this.setState(parentId, 'planning');
+      // The watermark, once for the whole video, while the AI plans (a picture
+      // job beside a chat): every part is made with the boxes.
+      const marks = this.findWatermark(parent, job);
       // The character sheet first: the part titles use its names.
-      job.progress(null, 'Making the character sheet from the whole transcript');
+      job.progress(null, said('Making the character sheet from the whole transcript', 'activity.text.series-sheet'));
       await this.sharedSheet(parent).catch((err: unknown) =>
         this.deps.logger?.warn(`series ${parentId}: no shared character sheet (${toAppError(err).message}); each part makes its own.`),
       );
@@ -286,7 +303,7 @@ export class SeriesService {
         voiceNotes.push(`Voices were not matched to the series this one continues (${toAppError(err).message}).`),
       );
       const plan = await this.makePlan(parent, (percent, message) => job?.progress(percent, message));
-      plan.notes.push(...voiceNotes);
+      plan.notes.push(...voiceNotes, ...(await marks));
       if (before) {
         const kept = keepEditedTitles(plan.parts, before.parts);
         if (kept > 0) plan.notes.push(`The titles or summaries written in review were kept for ${kept} part(s).`);
@@ -305,17 +322,59 @@ export class SeriesService {
           await this.createParts(parentId);
           await this.startParts(parentId);
         });
-        job.done(`${plan.parts.length} parts planned, made and started`);
+        job.done(said(`${plan.parts.length} parts planned, made and started`, 'activity.text.series-started', { n: plan.parts.length }));
       } else {
         if (reasons.length > 0) this.deps.logger?.warn(`series ${parentId}: stopped at review: ${reasons.map((r) => r.message).join(' ')}`);
         await this.setState(parentId, 'review', reasons.length > 0 ? { reviewReasons: reasons } : {});
-        job.done(`${plan.parts.length} parts planned, ready for review`);
+        job.done(said(`${plan.parts.length} parts planned, ready for review`, 'activity.text.series-review', { n: plan.parts.length }));
       }
     } catch (err) {
       job?.fail(err);
       await this.setState(parentId, 'failed', { error: toAppError(err) }).catch(() => undefined);
     } finally {
       this.busy.delete(parentId);
+    }
+  }
+
+  /** One part per joined file, or parts by length (replan_series perFile), before the parts are made. */
+  async setPerFile(parentId: string, perFile: boolean): Promise<void> {
+    const parent = await this.parentOf(parentId);
+    if (parent.series.partIds?.length) throw new AppErrorException('INVALID_EDIT', 'The parts are already made.');
+    const { perFile: _was, ...rest } = parent.series.settings;
+    await this.deps.store.saveProject({ ...parent, series: { ...parent.series, settings: perFile ? { ...rest, perFile: true } : rest } });
+  }
+
+  /**
+   * "Find the watermark and blur it" for a whole series (watermarkAuto): look
+   * once in the whole video and save the clear marks as the series' boxes, so
+   * every part is made with them and review shows them (the plan's notes).
+   * Per-part detection at render stays the fallback when nothing is found
+   * (claude-dubber's design, 2026-11-25). Never fails the plan: what happened
+   * is a note.
+   */
+  private async findWatermark(parent: Project & { series: SeriesParentInfo }, job: ActivityHandle | undefined): Promise<string[]> {
+    const auto = parent.settings.watermarkAuto;
+    if (!auto || !this.deps.detectWatermark) return [];
+    if ((parent.settings.blurRegions?.length ?? 0) > 0) {
+      return [`The ${parent.settings.blurRegions!.length} box(es) the series already hides are used in every part (no watermark search).`];
+    }
+    try {
+      job?.progress(null, said('Looking for a watermark in the whole video', 'activity.text.series-watermark'));
+      const detection = await this.deps.detectWatermark(parent.id);
+      const regions = autoBlurRegions(detection, auto);
+      if (regions.length === 0) {
+        const faint = faintMarks(detection);
+        return [
+          `No watermark stood out in the whole video${faint > 0 ? ` (${faint} faint mark(s))` : ''}: each part looks for its own when it renders.`,
+        ];
+      }
+      const fresh = await this.deps.store.getProject(parent.id);
+      await this.deps.store.saveProject({ ...fresh, settings: { ...fresh.settings, blurRegions: regions } });
+      return [
+        `Found ${describeMarks(detection)} in the whole video: every part is made with it blurred. Check it in the series' picture (detect_watermark shows the frame), or change it with update_settings blurRegions on the series before the parts are made.`,
+      ];
+    } catch (err) {
+      return [`The watermark could not be looked for (${toAppError(err).message}): each part looks for its own when it renders.`];
     }
   }
 
@@ -347,12 +406,21 @@ export class SeriesService {
     const sourceLanguageName = languageName(parent.settings.sourceLanguage || 'auto');
     const minMs = settings.minMinutes * 60_000;
     const maxMs = Math.max(minMs, settings.maxMinutes * 60_000);
-    const cuts: { ms: number; by: 'ai' | 'pause' }[] = [];
+    const cuts: { ms: number; by: 'ai' | 'pause' | 'file' }[] = [];
+    // One part per joined file: the cuts are where the files meet.
+    const perFile = settings.perFile === true && boundaries.length > 0;
+    if (settings.perFile === true && boundaries.length === 0) {
+      notes.push('One part per file was asked for, but this video is not joined from several files: it is cut by length.');
+    }
+    if (perFile) {
+      cuts.push(...boundaries.map((ms) => ({ ms, by: 'file' as const })));
+      notes.push(`One part per file: ${boundaries.length + 1} parts, cut where each file begins.`);
+    }
     // Progress over the cuts, then the titles.
-    const steps = Math.max(1, windows.length + count);
+    const steps = Math.max(1, (perFile ? 0 : windows.length) + count);
     let stepsDone = 0;
     let previous = 0;
-    for (const spread of windows) {
+    for (const spread of perFile ? [] : windows) {
       onProgress?.((100 * stepsDone++) / steps, `Choosing cut ${spread.index} of ${windows.length}`);
       // Each cut where the parts it leaves can all stay within the bounds:
       // inside the usual window around the even split when that fits them,
@@ -391,6 +459,12 @@ export class SeriesService {
         }
       }
       const chosen = ms !== undefined ? { ms, by: 'ai' as const } : { ms: fallbackCut(w), by: 'pause' as const };
+      // Where two joined files meet close by: there (one source video per part).
+      const snapped = snapToFileBoundary(chosen.ms, boundaries, { previousMs: previous, durationMs, minPartMs: MIN_PART_MS });
+      if (snapped !== undefined) {
+        notes.push(`Cut ${spread.index}: moved ${(Math.abs(snapped - chosen.ms) / 1000).toFixed(1)} s to where the next video file begins.`);
+        chosen.ms = snapped;
+      }
       cuts.push(chosen);
       previous = chosen.ms;
     }
@@ -409,6 +483,7 @@ export class SeriesService {
     if (chat) {
       const targetLanguageName = languageName(targetLanguage);
       const names = await this.sheetNames(parent);
+      const speakers = await this.speakerNames(parent);
       for (const part of parts) {
         onProgress?.((100 * stepsDone++) / steps, `Naming part ${part.index}`);
         let named: { title: string; summary: string } | undefined;
@@ -416,7 +491,7 @@ export class SeriesService {
         let cause: string | undefined = said ? undefined : 'nothing is said in it';
         for (let attempt = 1; said && attempt <= 2 && !named; attempt++) {
           try {
-            named = await aiTitlePart(chat, part, total, lines, { seriesName, sourceLanguageName, targetLanguageName, names });
+            named = await aiTitlePart(chat, part, total, lines, { seriesName, sourceLanguageName, targetLanguageName, names, speakers });
             if (!named) cause = 'no usable answer';
           } catch (err) {
             cause = toAppError(err).message;
@@ -446,6 +521,16 @@ export class SeriesService {
       ].filter((n) => n && n.trim());
     } catch {
       return [];
+    }
+  }
+
+  /** Who each speaker id is, from the shared sheet (cast[].speakerId): the part summaries name the right person. */
+  private async speakerNames(parent: Project): Promise<Map<string, string>> {
+    try {
+      const sheet = JSON.parse(await fsp.readFile(this.deps.store.paths(parent.id).translationContextJson, 'utf8')) as TranslationDocContext;
+      return new Map((sheet.cast ?? []).filter((c) => c.speakerId && c.name).map((c) => [c.speakerId!, c.name]));
+    } catch {
+      return new Map();
     }
   }
 
@@ -492,7 +577,10 @@ export class SeriesService {
     const outcome = await generateCharacterSheet(chat, {
       sourceLanguage: parent.settings.sourceLanguage,
       targetLanguage: parent.settings.targetLanguage,
-      segments: lines.map((l) => ({ id: l.id, sourceText: l.sourceText, startMs: l.startMs, endMs: l.endMs })),
+      // With who speaks: without the ids the sheet could map no speaker and
+      // plan no forms of address (claude-dubber, 2026-11-25, F2).
+      segments: lines.map((l) => ({ id: l.id, sourceText: l.sourceText, startMs: l.startMs, endMs: l.endMs, ...(l.speakerId ? { speakerId: l.speakerId } : {}) })),
+      hints: sourceNameHints(parent),
     });
     if (outcome.analysis) await writeJsonAtomic(paths.translationContextJson, outcome.analysis);
   }
@@ -517,7 +605,7 @@ export class SeriesService {
       if (!checked.ok) throw new AppErrorException('INVALID_EDIT', checked.reason);
       cuts = checked.cuts;
     }
-    const byOf = (ms: number): 'ai' | 'pause' | 'manual' => {
+    const byOf = (ms: number): 'ai' | 'pause' | 'manual' | 'file' => {
       const same = plan.parts.slice(1).find((p) => Math.abs(p.startMs - ms) < 500);
       return same && same.cutBy !== 'start' ? same.cutBy : 'manual';
     };
@@ -706,7 +794,11 @@ export class SeriesService {
     const chosen = [...ids.entries()].filter(([i]) => !wanted || wanted.has(numberAt(i)));
     const job = activity.start({
       kind: 'series.rebuild',
-      title: `Rebuilding ${wanted ? `part ${partList([...wanted])}` : 'every part'} of "${seriesNameOf(parent)}" from the series transcript`,
+      title: said(
+        `Rebuilding ${wanted ? `part ${partList([...wanted])}` : 'every part'} of "${seriesNameOf(parent)}" from the series transcript`,
+        wanted ? 'activity.text.series-rebuild-some' : 'activity.text.series-rebuild-all',
+        { parts: wanted ? partList([...wanted]) : '', name: seriesNameOf(parent) },
+      ),
       projectId: parent.id,
     });
     try {
@@ -715,12 +807,12 @@ export class SeriesService {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const out: RebuiltPart[] = [];
       for (const [k, [i, id]] of chosen.entries()) {
-        job.progress((100 * k) / chosen.length, `Part ${numberAt(i)}`);
+        job.progress((100 * k) / chosen.length, said(`Part ${numberAt(i)}`, 'activity.text.part-n', { n: numberAt(i) }));
         out.push(await this.rebuildPart(id, plan.parts[i], numberAt(i), lines, sheet, stamp, opts.force === true));
       }
       const rebuilt = out.filter((p) => p.rebuilt).length;
       this.deps.logger?.info(`series ${parent.id}: rebuilt ${rebuilt} of ${out.length} part(s) from the series transcript.`);
-      job.done(`${rebuilt} of ${out.length} part(s) rebuilt`);
+      job.done(said(`${rebuilt} of ${out.length} part(s) rebuilt`, 'activity.text.series-rebuilt', { n: rebuilt, total: out.length }));
       return out;
     } catch (err) {
       job.fail(err);

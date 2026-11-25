@@ -5,6 +5,7 @@ import {
   projectOutputFiles,
   projectOutputThumbnailPath,
   projectOutputVideoPath,
+  resolveOutputDir,
   safeFileStem,
 } from './output.js';
 
@@ -29,6 +30,15 @@ describe('where a project saves its finished files', () => {
 
   it('keeps a Windows folder path in its own separators (the UI shows it as the user knows it)', () => {
     expect(projectOutputVideoPath({ outputDir: 'D:\\Dubs\\', outputFileName: 'Clip.vi' })).toBe('D:\\Dubs\\Clip.vi.mp4');
+  });
+});
+
+describe('resolveOutputDir', () => {
+  it('fills {series} or {name} with the job name as a folder name, and leaves other folders as they are', () => {
+    expect(resolveOutputDir(String.raw`D:\Dubs\{series}`, 'Tiệm phim: Phần 1/2')).toBe(String.raw`D:\Dubs\Tiệm phim Phần 1 2`);
+    expect(resolveOutputDir('/Users/me/Dubs/{NAME}/final', 'Clip')).toBe('/Users/me/Dubs/Clip/final');
+    expect(resolveOutputDir(String.raw`D:\Dubs`, 'Clip')).toBe(String.raw`D:\Dubs`);
+    expect(resolveOutputDir('/Dubs/{series}', '  ')).toBe('/Dubs/video');
   });
 });
 

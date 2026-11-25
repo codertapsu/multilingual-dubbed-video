@@ -54,6 +54,8 @@ export interface EnsureAppOptions {
   target?: LaunchTarget;
   /** How long a cold start may take: the app boots three Python workers. */
   timeoutMs?: number;
+  /** How long to wait for an app that took the connection but did not answer (default 20 s). */
+  slowTimeoutMs?: number;
   pollMs?: number;
   spawnImpl?: (command: string, args: string[], options: SpawnOptions) => { unref(): void };
   signal?: AbortSignal;
@@ -65,7 +67,17 @@ export interface EnsureAppOptions {
  * started (dev run) or does not come up in time.
  */
 export async function ensureAppRunning(api: VideoDubberApi, opts: EnsureAppOptions = {}): Promise<'running' | 'started'> {
-  if (await api.isUp()) return 'running';
+  const first = await api.probe();
+  if (first === 'up') return 'running';
+  // Slow is busy, not gone: under event-loop stalls of 3-4 s the 1.5 s probe
+  // gave up, and the app was launched again while it dubbed part 2
+  // (claude-dubber, 2026-11-24). Wait for it; only a refused connection
+  // means nothing runs. A second silence is still a busy app: the tool's own
+  // request says if it really cannot get through.
+  if (first === 'slow') {
+    await api.probe(opts.slowTimeoutMs ?? 20_000);
+    return 'running';
+  }
   const target = opts.target;
   if (!target) throw new AppNotRunningError(api.baseUrl);
   // Detached and silent: the app must outlive this MCP server (Claude Desktop

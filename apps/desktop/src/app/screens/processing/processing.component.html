@@ -107,6 +107,9 @@
           @case ('heavy-busy') {
             {{ 'processing.queue-reason-heavy-busy' | translate }}
           }
+          @case ('pressure') {
+            {{ 'processing.queue-reason-pressure' | translate }}
+          }
           @case ('paused') {
             {{ 'processing.queue-reason-paused' | translate }}
             <a routerLink="/settings/performance" fragment="opt-pause-queue">{{ 'processing.queue-resume' | translate }}</a>
@@ -137,10 +140,15 @@
        user can adjust the segments before any voice is synthesized. -->
   @if (awaitingReview()) {
     <div class="card banner-info stack" role="status">
-      <strong>{{ 'processing.review-title' | translate }}</strong>
-      <p class="muted">
-        {{ 'processing.review-body' | translate }}
-      </p>
+      @if (heldCount() > 0) {
+        <strong>{{ 'processing.held-title' | translate: { count: heldCount() } }}</strong>
+        <p class="muted">{{ 'processing.held-body' | translate }}</p>
+      } @else {
+        <strong>{{ 'processing.review-title' | translate }}</strong>
+        <p class="muted">
+          {{ 'processing.review-body' | translate }}
+        </p>
+      }
       <div class="row">
         <button type="button" class="btn btn-primary" (click)="goToEditor()">
           {{ 'processing.review-edit' | translate }}
@@ -219,7 +227,15 @@
       <strong>{{ 'processing.warnings' | translate }}</strong>
       <ul class="stack-sm warning-list">
         @for (w of warnings(); track $index) {
-          <li>{{ warningText(w) }}@if (w.step) { <span class="muted"> · {{ stepLabels[w.step] | translate }}</span> }</li>
+          <li>
+            {{ warningText(w) }}@if (w.step) { <span class="muted"> · {{ stepLabels[w.step] | translate }}</span> }
+            <!-- Checked: set it aside (it comes back if the step runs again and finds the same). -->
+            @if (!isRunning()) {
+              <button type="button" class="btn btn-ghost btn-sm" [title]="'processing.dismiss-warning-hint' | translate" (click)="dismissWarning(w)">
+                {{ 'processing.dismiss-warning' | translate }}
+              </button>
+            }
+          </li>
         }
       </ul>
     </div>

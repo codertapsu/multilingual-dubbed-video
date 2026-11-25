@@ -15,6 +15,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { sanitizeBranding } from '../branding/sanitize.js';
 import { sanitizeBlurRegions } from '../picture/pictureSanitize.js';
+import { sanitizeWatermarkAuto } from '../picture/watermarkAuto.js';
 import { sanitizeSeriesSettings } from '../series/seriesSanitize.js';
 import { renameReplacing } from '../fsRename.js';
 import {
@@ -90,10 +91,18 @@ function normalizedSettings(input: ProjectSettings): ProjectSettings {
   }
   // Logo and greeting are checked field by field; a broken choice is dropped.
   // So are the regions hidden in the render (picture options).
-  const { branding: rawBranding, blurRegions: rawRegions, ...rest } = input;
+  const { branding: rawBranding, blurRegions: rawRegions, watermarkAuto: rawAuto, ...rest } = input;
   const branding = sanitizeBranding(rawBranding);
   const blurRegions = sanitizeBlurRegions(rawRegions);
-  return { ...rest, sourceLanguage, targetLanguage, ...(branding ? { branding } : {}), ...(blurRegions ? { blurRegions } : {}) };
+  const watermarkAuto = sanitizeWatermarkAuto(rawAuto);
+  return {
+    ...rest,
+    sourceLanguage,
+    targetLanguage,
+    ...(branding ? { branding } : {}),
+    ...(blurRegions ? { blurRegions } : {}),
+    ...(watermarkAuto ? { watermarkAuto } : {}),
+  };
 }
 
 /**

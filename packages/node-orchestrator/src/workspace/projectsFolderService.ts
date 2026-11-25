@@ -13,7 +13,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { AppErrorException, toAppError, type ProjectsFolderInfo } from '@videodubber/shared';
-import { activity, type ActivityHandle } from '../activity/registry.js';
+import { activity, said, type ActivityHandle } from '../activity/registry.js';
 import type { ProjectStore } from './projectStore.js';
 import { isWithin, moveFolder, projectsDirOf, rewriteMovedPaths, writeProjectsRoot } from './projectsFolder.js';
 
@@ -117,7 +117,7 @@ export class ProjectsFolderService {
     this.progress = { to: toDir, done: 0, total: projects.length };
     this.lastError = undefined;
     // In the activity list too (activity/registry.ts), with who asked for it.
-    const job = activity.start({ kind: 'projects.move', title: `Moving the projects to ${toDir}` });
+    const job = activity.start({ kind: 'projects.move', title: said(`Moving the projects to ${toDir}`, 'activity.text.projects-move', { dir: toDir }) });
     void this.run(
       projects.map((p) => p.id),
       fromDir,
@@ -139,7 +139,10 @@ export class ProjectsFolderService {
         await rewriteMovedPaths(to, from, to);
         if (!whole) this.deps.logger?.warn(`moved ${id}, but some of its old files stay in ${from} (still in use)`);
         this.progress!.done++;
-        job?.progress((100 * this.progress!.done) / Math.max(1, ids.length), `${this.progress!.done} of ${ids.length} projects moved`);
+        job?.progress(
+          (100 * this.progress!.done) / Math.max(1, ids.length),
+          said(`${this.progress!.done} of ${ids.length} projects moved`, 'activity.text.projects-moved-of', { done: this.progress!.done, total: ids.length }),
+        );
       }
       await writeProjectsRoot(this.deps.configDir, rootToKeep);
       this.deps.store.setProjectsDir(toDir);
@@ -165,7 +168,7 @@ export class ProjectsFolderService {
       job?.fail(this.lastError);
     } finally {
       this.progress = null;
-      job?.done(`The projects are in ${toDir}`);
+      job?.done(said(`The projects are in ${toDir}`, 'activity.text.projects-moved', { dir: toDir }));
     }
   }
 

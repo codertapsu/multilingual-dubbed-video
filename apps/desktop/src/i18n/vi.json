@@ -406,7 +406,8 @@
     "delete-confirm": "Xoá",
     "series-badge": "Bộ phim",
     "part-badge": "Phần {{n}}/{{count}}",
-    "published-badge": "Đã đăng"
+    "published-badge": "Đã đăng",
+    "queue-entry-pressure": "#{{ position }} {{ name }} — đang chờ: máy đang thiếu bộ nhớ trong lúc một bản lồng tiếng chạy"
   },
   "settings": {
     "title": "Cài đặt",
@@ -886,6 +887,10 @@
       "alignment": {
         "title": "Căn chỉnh thời gian",
         "desc": "Thời gian chính xác tới từng từ, để khớp tiếng tốt hơn."
+      },
+      "subtitle-reading": {
+        "title": "Đọc phụ đề in trên hình",
+        "desc": "Đọc chữ của phụ đề in trên hình video, chạy trên bộ xử lý (RapidOCR), để phụ đề có sẵn của video được dùng làm bản chép lời thay cho việc chép lời từ giọng nói: bật cho từng dự án (“Dùng phụ đề in sẵn trên hình làm bản chép lời”). Phụ đề tiếng Trung và tiếng Anh, mất vài phút cho mỗi giờ video."
       }
     },
     "engine-notes": {
@@ -1104,7 +1109,12 @@
     "paused-title": "⏸ Đã tạm dừng",
     "paused-title-at": "⏸ Đã tạm dừng ở bước “{{ step }}”",
     "paused-body": "Mọi phần đã làm đều được lưu, kể cả khi bạn đóng VideoDubber hay tắt máy. Bấm Tiếp tục lồng tiếng để làm tiếp từ chỗ đã dừng: các bước đã xong không phải làm lại, và bước đang dở vẫn giữ phần đã hoàn thành (các câu đã dịch, các đoạn giọng đọc).",
-    "warnings": "Những việc bản lồng tiếng này đã tự xử lý"
+    "warnings": "Những việc bản lồng tiếng này đã tự xử lý",
+    "queue-reason-pressure": "Máy đang thiếu bộ nhớ trong lúc một bản lồng tiếng khác chạy, nên lần xuất video này chờ bản đó xong: chạy cùng lúc, cả hai sẽ chậm hẳn đi.",
+    "dismiss-warning": "Bỏ qua",
+    "dismiss-warning-hint": "Ẩn cảnh báo này sau khi bạn đã kiểm tra. Nó sẽ xuất hiện lại nếu bước đó chạy lại và vẫn gặp đúng vấn đề này.",
+    "held-title": "⚠️ Còn {{count}} câu dịch chưa đạt kiểm tra",
+    "held-body": "Quá trình lồng tiếng đã dừng trước khi tạo giọng vì bạn đã bật \"Dừng trước khi tạo giọng nếu còn câu dịch chưa đạt kiểm tra\". Hãy sửa các câu được đánh dấu trong trình chỉnh sửa (mục Vấn đề), rồi tiếp tục lồng tiếng: các câu sẽ được đọc đúng như lúc đó."
   },
   "onboarding": {
     "title": "Chào mừng đến với VideoDubber",
@@ -1351,7 +1361,10 @@
       "no-pool-female": "Không còn giọng nữ có sẵn nào cho {{ n }} vai phụ: họ dùng giọng của dự án. Hãy chọn giọng cho họ.",
       "soundalike": "Giọng có sẵn “{{ voice }}” không được dùng chung: nó nghe giống giọng nhân bản “{{ clone }}” của bạn.",
       "unknown": "{{ n }} người nói chưa rõ giới tính vẫn dùng giọng của dự án: hãy chọn giọng cho họ ở danh sách bên dưới."
-    }
+    },
+    "held-title": "⚠️ Còn {{count}} câu dịch chưa đạt kiểm tra.",
+    "held-hint": "Chưa tạo giọng nào. Hãy sửa các câu được đánh dấu ở mục Vấn đề (chỉnh sửa được lưu tự động), rồi bấm Tiếp tục lồng tiếng.",
+    "use-burned-in-hint": "Mỗi phụ đề in trên hình trở thành một câu, thay vì chép lời từ giọng nói (phụ đề tiếng Trung và tiếng Anh; cần cài trình đọc phụ đề ở Cài đặt → Engine & mô hình). Có hiệu lực khi bước chép lời chạy lại (Lồng tiếng lại từ: Nhận dạng lời thoại (STT))."
   },
   "studio": {
     "back": "Quay lại danh sách dự án",
@@ -1686,6 +1699,9 @@
     "preset-save": "Lưu thành mẫu",
     "preset-saved": "Đã lưu mẫu \"{{name}}\".",
     "preset-folder": "Mẫu cũng ghi nhớ nơi lưu video hoàn chỉnh: {{folder}}",
+    "preset-folder-named": "{{token}} trong đường dẫn sẽ được thay bằng tên của từng dự án, nên mỗi bộ phim có thư mục riêng.",
+    "preset-series": "Với mẫu này, video dài hơn {{over}} phút sẽ được lồng tiếng thành nhiều phần, mỗi phần {{min}}–{{max}} phút. Các lựa chọn của mẫu đã được điền sẵn ở mục \"Chia thành nhiều phần\": hãy bật mục đó khi lồng tiếng video dài.",
+    "preset-series-kept": "Khi lưu, mẫu vẫn giữ cách chia nhiều phần này, kể cả khi video này không bật \"Chia thành nhiều phần\".",
     "preset-delete": "Xoá mẫu",
     "preset-delete-title": "Xoá mẫu \"{{name}}\"?",
     "preset-delete-body": "Các dự án đã tạo bằng mẫu này không bị thay đổi.",
@@ -1694,7 +1710,8 @@
     "continue-why": {
       "video": "Hãy chọn một video ở trên để tiếp tục.",
       "languages": "Hãy chọn ngôn ngữ đang nói trong video và ngôn ngữ muốn lồng tiếng.",
-      "voice": "Hãy đợi giọng đọc tải xong."
+      "voice": "Hãy đợi giọng đọc tải xong.",
+      "series-ai": "Hãy chọn AI lên kế hoạch chia phần (mục Chia thành nhiều phần), hoặc cài mô hình trò chuyện Gemma có sẵn trong Cài đặt → Engine."
     },
     "leave": {
       "creating-title": "Rời đi khi dự án đang được tạo?",
@@ -1734,7 +1751,38 @@
         "tts": "Giọng đọc",
         "other": "Xử lý"
       }
-    }
+    },
+    "builtin-group": "Có sẵn (chỉ chạy trên máy này)",
+    "builtin": {
+      "name-quality": "Chất lượng cao nhất",
+      "name-balanced": "Cân bằng",
+      "name-economy": "Tiết kiệm nhất",
+      "local": "Mọi thứ chạy trên máy này: không dùng AI trên mạng, không gửi gì ra ngoài.",
+      "kept-local": "Cài đặt của bạn chọn {{name}} cho {{phase}}; các mẫu có sẵn chỉ chạy trên máy này. Muốn dùng nó, hãy chọn lại trong biểu mẫu.",
+      "phase-stt": "nhận dạng giọng nói",
+      "phase-translation": "dịch",
+      "phase-tts": "giọng đọc",
+      "quality-stt": "Mô hình nhận dạng lớn nhất (large-v3): ít lỗi nghe nhầm nhất, chậm nhất, và lần đầu phải tải về khoảng 3 GB.",
+      "quality-stt-kept": "Mô hình nhận dạng lớn nhất (large-v3), đúng như gợi ý cho máy này.",
+      "quality-stt-special": "Giữ mô hình nhận dạng dành riêng cho ngôn ngữ này ({{model}}).",
+      "quality-review": "Mô hình trò chuyện Gemma trên máy này đọc lại toàn bộ bản dịch để thống nhất tên riêng, cách xưng hô và văn phong: câu thoại tốt hơn, nhưng chậm hơn.",
+      "quality-review-missing": "Muốn đọc lại bản dịch cần có mô hình trò chuyện Gemma (Cài đặt → Engine); khi chưa cài, bản dịch sẽ không được đọc lại.",
+      "quality-fit": "Câu nào quá dài so với thời lượng sẽ được viết lại ngắn hơn ngay trên máy này, trước khi phải tăng tốc giọng đọc.",
+      "quality-speakers": "Nhận diện người nói: mỗi nhân vật giữ một giọng riêng, và bản dịch dùng đúng cách xưng hô.",
+      "quality-speakers-missing": "Muốn nhận diện người nói cần cài engine của nó (Cài đặt → Engine); khi chưa cài, mọi người nói cùng một giọng.",
+      "quality-render": "Xuất video ở chất lượng hình cao nhất: xuất lâu hơn, file lớn hơn.",
+      "balanced": "Đúng như Dự án mới tự chọn cho máy này: các engine tốt nhất đã cài, với các bước xử lý thường dùng.",
+      "economy-stt": "Dùng mô hình nhận dạng nhanh hơn (large-v3-turbo) thay cho large-v3: nhanh hơn nhiều lần, kém chính xác hơn một chút.",
+      "economy-text": "Bản dịch không được đọc lại và câu dài không được viết ngắn lại: câu nào không vừa sẽ được tăng tốc (tối đa {{ratio}}×).",
+      "economy-speakers": "Không nhận diện người nói: mọi câu đều đọc bằng giọng chung của dự án.",
+      "economy-render": "Xuất video nhanh: nhanh hơn, chất lượng hình thấp hơn một chút."
+    },
+    "hold-flagged": "Dừng trước khi tạo giọng nếu còn câu dịch chưa đạt kiểm tra",
+    "hold-flagged-hint": "Ứng dụng kiểm tra từng câu dịch (còn chữ Hán hay tên phiên âm pinyin trong câu tiếng Việt, thiếu dấu, viết kiểu \"anh/chị\", câu chưa dịch) và sửa câu lỗi hai lần bằng mô hình rà soát hoặc Gemma. Khi bật, nếu vẫn còn câu lỗi, quá trình lồng tiếng dừng lại trước khi tạo giọng để bạn sửa trước; bấm tiếp tục thì các câu được đọc đúng như lúc đó. Khi tắt: các câu ấy vẫn được đọc và được liệt kê trong một cảnh báo.",
+    "use-burned-in": "Dùng phụ đề in sẵn trên hình làm bản chép lời",
+    "use-burned-in-hint": "Dành cho video có phụ đề in sẵn trên hình (phần lớn phim Trung Quốc): ứng dụng đọc chữ của phụ đề ngay trên máy này và biến mỗi phụ đề thành một câu, theo đúng lúc nó hiện, thay vì chép lời từ giọng nói. Tên riêng và câu chữ giữ đúng như trong video. Đọc được phụ đề tiếng Trung và tiếng Anh, mất vài phút cho mỗi giờ video. Nếu không đọc được, giọng nói sẽ được chép lời như bình thường và một cảnh báo sẽ nói lý do.",
+    "ocr-install": "Cài trình đọc phụ đề (~250 MB)",
+    "ocr-installing": "Đang cài trình đọc phụ đề…"
   },
   "status": {
     "created": "Đã tạo",
@@ -2185,7 +2233,9 @@
     "my-gender-suggest": "Gợi ý",
     "my-gender-suggesting": "Đang nghe…",
     "my-gender-suggest-help": "So sánh giọng này với các giọng có sẵn đã biết giới tính. Đây chỉ là gợi ý: bạn là người xác nhận.",
-    "my-gender-no-suggestion": "Không có gợi ý: giọng này khó phân biệt, hoặc không có giọng có sẵn nào để so sánh. Hãy tự chọn giới tính."
+    "my-gender-no-suggestion": "Không có gợi ý: giọng này khó phân biệt, hoặc không có giọng có sẵn nào để so sánh. Hãy tự chọn giới tính.",
+    "my-main-only": "Chỉ dùng cho một nhân vật chính",
+    "my-main-only-help": "Khi phân vai, giọng này chỉ dành cho tối đa một nhân vật chính: không bao giờ dùng chung cho các nhân vật phụ, cũng không làm giọng mặc định cho những người chưa có giọng riêng. Phù hợp với giọng của chính bạn."
   },
   "voice-clone": {
     "title": "Tạo giọng nhân bản",
@@ -2486,7 +2536,10 @@
     "report-kept-busy": "Phần {{n}}: không động đến ({{why}}).",
     "replan-keep": "Giữ tên và tóm tắt tôi đã viết",
     "replan-hint": "AI sẽ chọn lại chỗ cắt và đặt lại tên các phần. Nếu đánh dấu ô, những tên bạn đã viết được giữ cho các phần phủ cùng đoạn video.",
-    "reason-transcript-mismatch": "có những đoạn bản chép lời không khớp với âm thanh, hoặc âm thanh hoàn toàn im lặng nhiều phút (ghép nối lỗi hoặc tải về bị hỏng). Hãy kiểm tra những thời điểm đó (màn hình Xử lý có liệt kê), nhận dạng lại trong trình chỉnh sửa, rồi tạo và bắt đầu các phần."
+    "reason-transcript-mismatch": "có những đoạn bản chép lời không khớp với âm thanh, hoặc âm thanh hoàn toàn im lặng nhiều phút (ghép nối lỗi hoặc tải về bị hỏng). Hãy kiểm tra những thời điểm đó (màn hình Xử lý có liệt kê), nhận dạng lại trong trình chỉnh sửa, rồi tạo và bắt đầu các phần.",
+    "ai-choose": "Chọn một AI…",
+    "per-file": "Mỗi tệp video là một phần",
+    "per-file-hint": "Mỗi tệp được ghép sẽ thành một phần, cắt đúng chỗ tệp bắt đầu, bất kể dài ngắn. Nếu không chọn, các phần theo độ dài ở trên và AI chọn chỗ cắt (ưu tiên gần chỗ hết mỗi tệp)."
   },
   "warning": {
     "gpu-fallback-busy": "Card đồ hoạ đang bận việc khác nên một bước đã chạy bằng bản dùng CPU, chậm hơn ({{pack}}).",
@@ -2504,7 +2557,18 @@
     "speakers-unassigned": "{{count}} câu chưa có người nói ({{ranges}}), nên sẽ được lồng tiếng bằng giọng của dự án. Hãy chọn người nói cho các câu này trong trình chỉnh sửa, hoặc nhận diện lại người nói (thẻ Dự án → Người nói).",
     "speakers-low-confidence": "{{count}} câu được gán cho người nói gần nhất, chưa chắc chắn. Hãy kiểm tra chúng ở mục Vấn đề trong trình chỉnh sửa.",
     "loops-repaired": "Đã sửa {{count}} đoạn lặp do chép lời hoặc dòng chữ quảng cáo: chép lời lại, hoặc xoá ở chỗ không ai nói.",
-    "loops-left": "Không sửa được {{count}} đoạn có vẻ bị lặp do chép lời: các câu đó được đánh dấu trong trình chỉnh sửa (mục Vấn đề). Hãy kiểm tra trước khi lồng tiếng."
+    "loops-left": "Không sửa được {{count}} đoạn có vẻ bị lặp do chép lời: các câu đó được đánh dấu trong trình chỉnh sửa (mục Vấn đề). Hãy kiểm tra trước khi lồng tiếng.",
+    "stt-no-speech-checked": "{{count}} câu ({{minutes}} phút) được ghi ở chỗ bản đồ giọng nói không nghe thấy tiếng nói. Một lần nhận dạng lại (không dùng ngữ cảnh) đã kiểm tra chúng: {{kept}} câu nghe lại được và giữ nguyên, {{added}} câu chỉ lần nhận dạng lại nghe được và được thêm vào, {{removed}} câu bị bỏ. Đoạn lớn nhất: {{biggest}}. Mỗi thay đổi đều nằm trong Lịch sử và có thể hoàn tác.",
+    "lines-flagged": "Sau hai lần tự sửa vẫn còn {{count}} câu dịch chưa đạt kiểm tra và vẫn được đọc như hiện tại ({{ids}}). Hãy sửa chúng trong trình chỉnh sửa (mục Vấn đề) rồi tạo lại giọng cho các câu đó.",
+    "lines-flagged-held": "Sau hai lần tự sửa vẫn còn {{count}} câu dịch chưa đạt kiểm tra ({{ids}}): quá trình lồng tiếng đã dừng trước khi tạo giọng để bạn sửa.",
+    "timing-conflicts": "{{count}} câu không vừa thời lượng của mình kể cả ở tốc độ nhanh nhất cho phép ({{speed}}×), nên lấn sang phần sau ({{ids}}). Hãy rút gọn chúng trong trình chỉnh sửa, hoặc cho phép đọc nhanh hơn.",
+    "subtitles-without-lines": "{{count}} phụ đề có sẵn của video ({{seconds}} giây) không có câu nào bên dưới: nhiều khả năng lời thoại đã bị mất. Các đoạn lớn nhất: {{biggest}}. Hãy chép lời lại các đoạn đó trong trình chỉnh sửa, hoặc tự viết các câu.",
+    "lines-without-subtitles": "{{count}} câu không có phụ đề nào của video bên dưới, trong khi ở chỗ khác phụ đề vẫn theo sát lời thoại: có thể đó là câu bịa ra. Những câu đầu tiên ở {{examples}}. Hãy kiểm tra chúng trong trình chỉnh sửa.",
+    "burned-in-not-installed": "Không dùng được phụ đề in sẵn của video làm bản chép lời: chưa cài trình đọc phụ đề (Cài đặt → Engine & mô hình → Đọc phụ đề in trên hình). Đã chép lời từ giọng nói thay thế.",
+    "burned-in-no-band": "Không dùng được phụ đề in sẵn của video làm bản chép lời: không tìm thấy vùng phụ đề nào trên hình. Đã chép lời từ giọng nói thay thế.",
+    "burned-in-few": "Không dùng được phụ đề in sẵn của video làm bản chép lời: chỉ có {{count}} phụ đề hiện trên hình. Đã chép lời từ giọng nói thay thế.",
+    "burned-in-failed": "Không dùng được phụ đề in sẵn của video làm bản chép lời: đọc phụ đề bị lỗi ({{reason}}). Đã chép lời từ giọng nói thay thế.",
+    "burned-in-unreadable": "Không dùng được phụ đề in sẵn của video làm bản chép lời: chỉ đọc được {{count}} trên {{total}} phụ đề. Đã chép lời từ giọng nói thay thế."
   },
   "diagnostics": {
     "heading": "Chẩn đoán",
@@ -2557,7 +2621,10 @@
     "speakers": "Đang nhận diện người nói {{done}}/{{total}}",
     "spot-check": "Đang kiểm tra thử bản chép lời {{done}}/{{total}}",
     "silence-check": "Đang tìm những đoạn hoàn toàn không có âm thanh",
-    "loops": "Đang kiểm tra các đoạn lặp do chép lời {{done}}/{{total}}"
+    "loops": "Đang kiểm tra các đoạn lặp do chép lời {{done}}/{{total}}",
+    "subtitle-check": "Đang đọc phụ đề có sẵn của video {{percent}}%",
+    "subtitle-frames": "Đang cắt phụ đề từ hình {{percent}}%",
+    "subtitle-reading": "Đang đọc phụ đề {{done}}/{{total}}"
   },
   "activity": {
     "heading": "Việc đang chạy",
@@ -2667,7 +2734,84 @@
     "move-done-body": "Các dự án của bạn giờ nằm trong {{folder}}.",
     "move-failed-title": "Không chuyển được thư mục dự án",
     "move-failed-body": "Các dự án vẫn ở chỗ cũ, không mất gì.",
-    "label-update": "Bản cập nhật VideoDubber {{ version }}"
+    "label-update": "Bản cập nhật VideoDubber {{ version }}",
+    "text": {
+      "dub-render": "Xuất video “{{name}}”",
+      "dub-parent": "Chép lời “{{name}}” để chia phần",
+      "dub-run": "Lồng tiếng “{{name}}”",
+      "revoice": "Tạo lại giọng cho các câu",
+      "engine-install": "Cài {{name}}",
+      "model-whisper": "Tải mô hình nhận dạng giọng nói {{model}}",
+      "model-argos": "Tải gói dịch {{from}} → {{to}}",
+      "model-piper": "Tải giọng đọc {{voice}}",
+      "download": "Tải “{{name}}”",
+      "join": "Ghép {{n}} video thành “{{name}}”",
+      "speakers": "Nhận diện người nói",
+      "speakers-range": "Nhận diện người nói ở đoạn {{from}}–{{to}}",
+      "retranscribe": "Chép lời lại đoạn {{from}}–{{to}}",
+      "picture": "Tìm hình mờ và phụ đề có sẵn",
+      "picture-new": "Tìm hình mờ và phụ đề có sẵn của một video mới",
+      "series-plan": "Chia phần cho “{{name}}”",
+      "series-replan": "Chia phần lại cho “{{name}}”",
+      "series-rebuild-all": "Tạo lại mọi phần của “{{name}}” từ bản chép lời của bộ phim",
+      "series-rebuild-some": "Tạo lại phần {{parts}} của “{{name}}” từ bản chép lời của bộ phim",
+      "songs-keep": "Giữ bài hát gốc trong các phần của “{{name}}”",
+      "songs-dub": "Lồng tiếng lại bài hát trong các phần của “{{name}}”",
+      "projects-move": "Chuyển các dự án sang {{dir}}",
+      "queue-waiting": "Đang chờ trong hàng đợi",
+      "starting": "Đang bắt đầu",
+      "revoice-progress": "Đã tạo lại giọng cho {{n}} câu",
+      "part-failed": "{{n}} câu lỗi",
+      "part-left": "còn {{n}} câu",
+      "wait-gpu": "Đang chờ: một bản lồng tiếng đang dùng card đồ hoạ",
+      "wait-dubbing": "Đang chờ: một bản lồng tiếng đang chạy",
+      "wait-memory": "Đang chờ: máy đang thiếu bộ nhớ",
+      "wait-until": "Đang chờ đến {{at}} (trang web giới hạn lượt tải)",
+      "wait-turn": "Đang chờ đến lượt",
+      "asking-site": "Đang hỏi trang web",
+      "merging": "Đang ghép hình và tiếng",
+      "downloading-video": "Đang tải hình",
+      "downloading-audio": "Đang tải tiếng",
+      "join-waiting": "Đang chờ lần ghép khác xong",
+      "checking-files": "Đang kiểm tra các tệp",
+      "join-file": "Tệp {{n}}/{{count}}: {{name}}",
+      "join-file-reencode": "Tệp {{n}}/{{count}}: {{name}}, đang mã hoá lại hình",
+      "part-of": "Phần {{done}}/{{total}}",
+      "windows-planned": "{{n}} đoạn, mỗi đoạn tối đa 15 phút",
+      "window-of": "Đoạn {{done}}/{{total}}",
+      "series-sheet": "Đang làm bảng nhân vật từ toàn bộ bản chép lời",
+      "series-watermark": "Đang tìm hình mờ trong toàn bộ video",
+      "part-n": "Phần {{n}}",
+      "projects-moved-of": "Đã chuyển {{done}}/{{total}} dự án",
+      "dequeued": "Đã rút khỏi hàng đợi",
+      "stopped": "Đã dừng",
+      "finished": "Đã xong",
+      "review-ready": "Chờ bạn duyệt: bản dịch nháp đã xong",
+      "paused-at": "Tạm dừng ở bước “{{step}}”: sẽ tiếp tục từ chỗ đã dừng",
+      "paused": "Tạm dừng: sẽ tiếp tục từ chỗ đã dừng",
+      "revoiced": "Đã tạo lại giọng cho {{n}} câu",
+      "installed": "Đã cài xong",
+      "downloaded": "Đã tải xong",
+      "saved-as": "Đã lưu thành {{file}}",
+      "removed": "Đã xoá khỏi danh sách",
+      "cancelled": "Đã huỷ",
+      "joined": "Đã ghép {{n}} video: {{duration}}, {{size}} GB",
+      "join-interrupted": "Đã dừng vì VideoDubber đang đóng (lần mở sau sẽ chạy tiếp)",
+      "speakers-relabelled": "{{n}} câu đổi người nói",
+      "part-speakers-added": "thêm {{n}} người nói mới",
+      "part-saved-detection": "dùng kết quả nhận diện đã lưu",
+      "speakers-found": "{{n}} người nói",
+      "part-best-guesses": "{{n}} câu chỉ đoán được người nói",
+      "picture-marks": "{{n}} hình mờ ({{frames}} khung hình)",
+      "picture-no-marks": "Không thấy hình mờ ({{frames}} khung hình)",
+      "part-band-at": "phụ đề có sẵn ở {{from}}–{{to}} % chiều cao",
+      "part-no-band": "không thấy phụ đề có sẵn",
+      "series-started": "Đã chia {{n}} phần, tạo và bắt đầu lồng tiếng",
+      "series-review": "Đã chia {{n}} phần, chờ bạn duyệt",
+      "series-rebuilt": "Đã tạo lại {{n}}/{{total}} phần",
+      "songs-done": "Đã đổi {{n}} câu trong {{parts}} phần",
+      "projects-moved": "Các dự án đã ở {{dir}}"
+    }
   },
   "source-checks": {
     "spot-check": "Kiểm tra thử bản chép lời",
@@ -2676,7 +2820,9 @@
     "drift-longer": "Âm thanh dài hơn phần hình {{seconds}} giây: đã căn lại theo phần hình",
     "drift-match": "Khớp với phần hình ({{seconds}} giây)",
     "drift-shorter": "Âm thanh kết thúc sớm hơn phần hình {{seconds}} giây: phần còn lại là khoảng lặng",
-    "drift-hint": "Đo từ chính các mẫu âm thanh khi tách âm thanh ra. Âm thanh tách ra luôn theo đồng hồ của phần hình và kết thúc cùng phần hình, nên lời lồng tiếng vẫn khớp và video giữ nguyên độ dài."
+    "drift-hint": "Đo từ chính các mẫu âm thanh khi tách âm thanh ra. Âm thanh tách ra luôn theo đồng hồ của phần hình và kết thúc cùng phần hình, nên lời lồng tiếng vẫn khớp và video giữ nguyên độ dài.",
+    "subtitle-check": "Đối chiếu với phụ đề có sẵn trong video",
+    "subtitle-check-hint": "Khi video có phụ đề in sẵn trên hình, ứng dụng đọc vùng phụ đề (năm lần mỗi giây, không cần nhận dạng chữ) để biết lúc nào có người nói. Câu nằm dưới một phụ đề sẽ không bao giờ bị xoá vì bị coi là im lặng, và một cảnh báo sẽ liệt kê các phụ đề không có câu nào bên dưới (lời thoại bị mất) cùng các câu không có phụ đề (có thể là câu bịa ra). Mất thêm vài phút cho mỗi giờ video. Mặc định bật cho video tiếng Trung, Nhật và Hàn."
   },
   "join": {
     "mode-aria": "Lồng tiếng cho gì",
@@ -2847,10 +2993,16 @@
       "songs-dubbed": "Lồng tiếng lại {{n}} câu hát ở {{at}}",
       "rebuilt": "Tạo lại từ bản chép lời của bộ phim: {{from}} → {{to}} câu",
       "rebuilt-set-aside": "Tạo lại từ bản chép lời của bộ phim: {{from}} → {{to}} câu; bản dịch cũ được để riêng",
-      "undo": "Đã hoàn tác: {{what}}"
+      "undo": "Đã hoàn tác: {{what}}",
+      "stt-checked": "Nhận dạng giọng nói kiểm tra lại {{from}}–{{to}}: {{before}} → {{after}} câu",
+      "replaced-many": "Đã thay {{replaced}} câu bằng {{made}} câu ở {{ranges}} đoạn, {{from}}–{{to}}"
     }
   },
   "picture": {
+    "auto": "Tự tìm hình mờ và làm mờ nó",
+    "auto-mode": "Cách che những gì tìm thấy",
+    "auto-hint": "Khi xuất video, VideoDubber tìm dấu đứng yên ở một góc (khoảng một trăm khung hình, không dùng AI) và che nó nếu dấu đó hiện rõ (chắc chắn từ 50 % trở lên). Thứ tìm được sẽ thành một ô ở đây: bạn có thể di chuyển, sửa hoặc xoá. Xoá hết các ô sẽ tắt tuỳ chọn này.",
+    "auto-hint-series": "Bộ phim tìm một lần trong toàn bộ video khi đang phân tích, và mọi phần đều được tạo với ô che đó (bạn sẽ thấy khi duyệt). Nếu không thấy gì nổi bật, mỗi phần sẽ tự tìm khi xuất video. Xoá hết các ô sẽ tắt tuỳ chọn này.",
     "heading": "Hình ảnh: hình mờ và phụ đề sẵn có của video",
     "intro": "Che hình mờ (tên hoặc logo của kênh ở một góc) và phụ đề đã được ghi sẵn lên video. VideoDubber tự tìm cả hai bằng cách xem khoảng một trăm khung hình: không dùng AI, không gửi gì ra khỏi máy. Chúng được che khi xuất video, nằm dưới phụ đề, logo và tiêu đề của bạn.",
     "detect": "Tự tìm",

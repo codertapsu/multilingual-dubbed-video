@@ -247,6 +247,14 @@ const AUDIOCPP_GGUF = 'https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/7
 export const DIARIZATION_EMBEDDING = {
   url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_eres2net_base_200k_sv_zh-cn_16k-common.onnx',
   sha256: 'e2d2048292e055f7b61cdec3db010503f35369b245bf0b3bbad021c9a91e4053',
+  /**
+   * The same model as GitHub serves it since 2026-11-19: re-exported by a newer
+   * PyTorch (ONNX producer 2.4.1 -> 2.14.1), one byte longer, and its
+   * embeddings measured identical (cosine 1.0 on five windows of a real dub,
+   * 2026-11-25). `sha256` stays the pin: the detection cache, the parts'
+   * checkpoints and cloned voices' prints are keyed by it (modelKey).
+   */
+  alsoSha256: ['78d4730ad5a6dc1ed86914e2d76c796c6bfc6852f558dd1cbb9b16abd3c3f672'],
   approxSizeMb: 40,
   threshold: 0.7,
   licence: '3D-Speaker ERes2Net speaker embedding (Apache-2.0).',
@@ -980,12 +988,39 @@ export const ENGINE_PACKS: readonly EnginePackInfo[] = [
       {
         url: DIARIZATION_EMBEDDING.url,
         sha256: DIARIZATION_EMBEDDING.sha256,
+        alsoSha256: DIARIZATION_EMBEDDING.alsoSha256,
         approxSizeMb: DIARIZATION_EMBEDDING.approxSizeMb,
         // vd_diarize/core.py reads it under this name, whichever model it is.
         destPath: 'models/embedding.onnx',
       },
     ],
     licenseNote: `sherpa-onnx Apache-2.0 (k2-fsa); pyannote segmentation 3.0 MIT; ${DIARIZATION_EMBEDDING.licence}`,
+  },
+
+  // --- Reading burned-in subtitles (workers/ocr-engine, RapidOCR) -------------
+  // The video's own subtitles as its transcript (settings.useBurnedInSubtitles).
+  // PP-OCRv4's three models ship INSIDE the rapidocr-onnxruntime wheel, so
+  // nothing downloads at run time and the pin is the model's pin. Measured on
+  // the development PC (2026-11-25): a line's box read in ~30 ms, ~90 ms a
+  // subtitle with the line finding, 4 threads; the wheels install to ~250 MB.
+  {
+    id: 'ocr-rapid',
+    kind: 'ocr',
+    packKind: 'python-uv',
+    displayName: 'Burned-in subtitle reader (RapidOCR)',
+    description:
+      "Reads the subtitles burned into a video's picture as text, so a Chinese video's own subtitles can be its transcript instead of speech-to-text (names and lines exactly as the video writes them). Runs on the processor: a few minutes per hour of video.",
+    providerId: 'subtitle-ocr',
+    family: 'subtitle-reading',
+    variantLabel: 'RapidOCR (PP-OCRv4)',
+    // rapidocr-onnxruntime 1.4.4 and its bundled PP-OCRv4 models.
+    version: '1.4.4',
+    accel: 'cpu',
+    tier: 'balanced',
+    minRamMb: 2048,
+    approxSizeMb: 250,
+    artifacts: [{ url: 'uv-env://ocr-rapid', approxSizeMb: 250, destPath: 'venv' }],
+    licenseNote: 'RapidOCR Apache-2.0 (RapidAI); PP-OCRv4 models Apache-2.0 (PaddlePaddle); ONNX Runtime MIT; OpenCV Apache-2.0.',
   },
 
   // --- audio.cpp runtimes + HTDemucs (music & voice separation) ---------------

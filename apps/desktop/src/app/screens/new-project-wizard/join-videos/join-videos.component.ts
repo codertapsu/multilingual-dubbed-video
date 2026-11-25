@@ -176,7 +176,7 @@ export interface JoinCheckState {
             name="joinPath"
             autocomplete="off"
             [placeholder]="'join.path-ph' | translate"
-            [ngModel]="typed()"
+            [ngModelOptions]="{ standalone: true }" [ngModel]="typed()"
             (ngModelChange)="typed.set($event)"
             (keydown.enter)="addTyped($event)"
           />

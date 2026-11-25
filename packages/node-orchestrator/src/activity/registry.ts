@@ -1,26 +1,48 @@
 import crypto from 'node:crypto';
 
-import { toAppError, type ActivityEntry, type ActivityInitiator, type AppError } from '@videodubber/shared';
+import { toAppError, type ActivityEntry, type ActivityInitiator, type ActivityPhrase, type AppError } from '@videodubber/shared';
 
 import { currentInitiator, currentRequestId } from './context.js';
+
+/**
+ * A sentence for the activity list: English (agents, logs), and optionally
+ * the same as a phrase the app shows in the reader's language ({@link said}).
+ */
+export type ActivityText = string | { text: string; phrase?: ActivityPhrase };
+
+/** English text with its phrase: `said('Finished', 'activity.text.finished')`. */
+export function said(text: string, key: string, params?: Record<string, string | number>, parts?: ActivityPhrase[]): ActivityText {
+  return { text, phrase: { key, ...(params ? { params } : {}), ...(parts && parts.length > 0 ? { parts } : {}) } };
+}
+
+/** The English text of an {@link ActivityText}. */
+export function textOf(t: ActivityText): string {
+  return typeof t === 'string' ? t : t.text;
+}
+
+/** An entry's field and its phrase from an {@link ActivityText}; a plain string clears an older phrase. */
+function textFields(field: 'title' | 'message' | 'result', t: ActivityText): Partial<ActivityEntry> {
+  const phrase = typeof t === 'string' ? undefined : t.phrase;
+  return { [field]: textOf(t), [`${field}Phrase`]: phrase } as Partial<ActivityEntry>;
+}
 
 /** How a job reports itself while it runs. Every method is safe to call after it ended (ignored). */
 export interface ActivityHandle {
   readonly id: string;
   /** `percent` 0..100 or null (unknown); `message` the step it is on; `etaSec` when it can tell. */
-  progress(percent: number | null, message?: string, etaSec?: number): void;
-  done(result?: string): void;
+  progress(percent: number | null, message?: ActivityText, etaSec?: number): void;
+  done(result?: ActivityText): void;
   fail(error: unknown): void;
-  cancelled(message?: string): void;
+  cancelled(message?: ActivityText): void;
 }
 
 export interface StartActivity {
   kind: string;
-  title: string;
+  title: ActivityText;
   projectId?: string;
   /** Defaults to the current request's initiator (context.ts). */
   initiator?: ActivityInitiator;
-  message?: string;
+  message?: ActivityText;
   /** Queued, not yet running. */
   waiting?: boolean;
   /** Reported by an agent for work outside the app (MCP `report_activity`). */
@@ -52,12 +74,13 @@ export class ActivityRegistry {
     this.put({
       id,
       kind: opts.kind,
-      title: opts.title,
+      title: textOf(opts.title),
+      ...(typeof opts.title !== 'string' && opts.title.phrase ? { titlePhrase: opts.title.phrase } : {}),
       ...(opts.projectId ? { projectId: opts.projectId } : {}),
       initiator: opts.initiator ?? currentInitiator(),
       state: opts.waiting ? 'waiting' : 'running',
       percent: null,
-      ...(opts.message ? { message: opts.message } : {}),
+      ...(opts.message && textOf(opts.message) ? textFields('message', opts.message) : {}),
       startedAt: now,
       updatedAt: now,
       ...(opts.external ? { external: true } : {}),
@@ -78,15 +101,16 @@ export class ActivityRegistry {
         patch({
           state: 'running',
           percent: percent === null ? null : Math.max(0, Math.min(100, Math.round(percent))),
-          ...(message !== undefined ? { message } : {}),
+          ...(message !== undefined ? textFields('message', message) : {}),
           ...(etaSec !== undefined ? { etaSec: Math.max(0, Math.round(etaSec)) } : {}),
         }),
-      done: (result) => end({ state: 'done', percent: 100, ...(result ? { result, message: result } : {}) }),
+      done: (result) =>
+        end({ state: 'done', percent: 100, ...(result !== undefined && textOf(result) ? { ...textFields('result', result), ...textFields('message', result) } : {}) }),
       fail: (error) => {
         const err: AppError = toAppError(error);
-        end({ state: 'failed', error: err, message: err.message });
+        end({ state: 'failed', error: err, message: err.message, messagePhrase: undefined });
       },
-      cancelled: (message) => end({ state: 'cancelled', ...(message ? { message } : {}) }),
+      cancelled: (message) => end({ state: 'cancelled', ...(message !== undefined && textOf(message) ? textFields('message', message) : {}) }),
     };
   }
 
@@ -109,12 +133,19 @@ export class ActivityRegistry {
    */
   patch(
     id: string,
-    patch: Partial<Pick<ActivityEntry, 'title' | 'state' | 'percent' | 'message' | 'etaSec' | 'initiator'>>,
+    patch: Partial<Pick<ActivityEntry, 'state' | 'percent' | 'etaSec' | 'initiator'>> & { title?: ActivityText; message?: ActivityText },
   ): void {
     const cur = this.entries.get(id);
     if (!cur || cur.endedAt) return;
     if (patch.state && patch.state !== 'running' && patch.state !== 'waiting') return;
-    this.put({ ...cur, ...patch, updatedAt: new Date().toISOString() });
+    const { title, message, ...rest } = patch;
+    this.put({
+      ...cur,
+      ...rest,
+      ...(title !== undefined ? textFields('title', title) : {}),
+      ...(message !== undefined ? textFields('message', message) : {}),
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   get(id: string): ActivityEntry | undefined {

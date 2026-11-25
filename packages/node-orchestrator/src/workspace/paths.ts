@@ -47,6 +47,10 @@ export interface WorkspacePaths {
   readonly diarizationJson: string;
   /** What the loop check found in the transcript and did (pipeline/loopRepair.ts). */
   readonly loopRangesJson: string;
+  /** When the video's own subtitles are on screen (pipeline/subtitleCoverage.ts). */
+  readonly subtitlePresenceJson: string;
+  /** What each of them says, read from the picture (pipeline/burnedInTranscript.ts). */
+  readonly subtitleOcrJson: string;
   /**
    * Speaker detection's finished 10-minute parts of long audio, one JSON each,
    * so a pause or a retry resumes at the first missing part
@@ -151,6 +155,8 @@ export function workspacePaths(projectsDir: string, projectId: string): Workspac
     speechRegionsJson: path.join(audioDir, 'speech_regions.json'),
     diarizationJson: path.join(audioDir, 'diarization.json'),
     loopRangesJson: path.join(audioDir, 'loop_ranges.json'),
+    subtitlePresenceJson: path.join(audioDir, 'subtitle_presence.json'),
+    subtitleOcrJson: path.join(audioDir, 'subtitle_ocr.json'),
     diarizationChunksDir: path.join(audioDir, 'diarization-chunks'),
 
     sttChunksDir,

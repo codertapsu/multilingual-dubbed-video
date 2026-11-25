@@ -185,6 +185,8 @@ export class ProcessingComponent implements OnInit, OnDestroy {
   });
   /** Paused at the transcript-review checkpoint (reviewBeforeSynthesis). */
   protected readonly awaitingReview = computed(() => this.pipeline()?.awaitingReview === true);
+  /** Stopped before voicing for lines that still fail the translation checks (holdFlaggedLines). */
+  protected readonly heldCount = computed(() => this.pipeline()?.heldLines?.length ?? 0);
   /**
    * Paused by the user, or by the app closing mid-run: Continue picks it up.
    * Not once Continue has put it in the queue (its pipeline stays "paused"
@@ -436,6 +438,17 @@ export class ProcessingComponent implements OnInit, OnDestroy {
       this.actionError.set(toAppError(err));
     } finally {
       this.retrying.set(null);
+    }
+  }
+
+  /** Set a warning aside (all of its kind): the server emits the new state to the open stream. */
+  protected async dismissWarning(w: ProjectWarning): Promise<void> {
+    this.actionError.set(null);
+    try {
+      await this.ipc.dismissWarnings(this.id(), [w.code]);
+      this.events.connect(this.id());
+    } catch (err) {
+      this.actionError.set(toAppError(err));
     }
   }
 

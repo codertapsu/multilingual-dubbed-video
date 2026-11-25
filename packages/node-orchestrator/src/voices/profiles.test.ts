@@ -271,6 +271,10 @@ describe('voice profiles', () => {
     const a = await analysed();
     const p = await service.create({ analysisId: a.analysisId, window: a.window, name: 'x', consent });
     expect((await service.rename(p.id, { name: 'Giọng kể chuyện', note: 'đọc chậm' })).name).toBe('Giọng kể chuyện');
+    // Kept for one main character, and shared again; a rename leaves the flag as it is.
+    expect((await service.rename(p.id, { mainOnly: true })).mainOnly).toBe(true);
+    expect((await service.rename(p.id, { name: 'Giọng của tôi' })).mainOnly).toBe(true);
+    expect(await service.rename(p.id, { mainOnly: false })).not.toHaveProperty('mainOnly');
     expect(await service.delete(p.id)).toBe(true);
     await expect(fsp.stat(store.dirOf(p.id))).rejects.toThrow();
     expect(await service.delete(p.id)).toBe(false);

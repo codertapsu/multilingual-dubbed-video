@@ -13,6 +13,7 @@
  * package staged here is importable as `python -m <package>`:
  *   - workers/tts-engine-neural/vd_tts_engine   (VieNeu and the preset-voice engines)
  *   - workers/diarization-engine/vd_diarize     (speaker detection)
+ *   - workers/ocr-engine/vd_ocr                 (reading burned-in subtitles)
  *
  * (workers/tts-engine-omnivoice/vd_omnivoice is deliberately NOT staged: the
  * OmniVoice pack is disabled for releases pending output-quality work — see
@@ -34,6 +35,8 @@ const SOURCES = [
   path.join(repoRoot, 'workers', 'tts-engine-neural', 'vd_tts_engine'),
   // Speaker detection (the diarization-sherpa pack).
   path.join(repoRoot, 'workers', 'diarization-engine', 'vd_diarize'),
+  // Reading burned-in subtitles (the ocr-rapid pack).
+  path.join(repoRoot, 'workers', 'ocr-engine', 'vd_ocr'),
 ];
 
 rmSync(destDir, { recursive: true, force: true });

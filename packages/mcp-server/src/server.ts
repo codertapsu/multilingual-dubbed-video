@@ -20,6 +20,7 @@ import { CLIENT_INFO_META_KEY, McpServer, type CallToolResult, type ServerContex
 import * as z from 'zod';
 import { continuedSeriesSettings, projectOutputFiles, projectOutputVideoPath } from '@videodubber/shared';
 import type {
+  DubPreset,
   PipelineState,
   PipelineStepId,
   Project,
@@ -31,6 +32,7 @@ import { AppNotRunningError, VideoDubberApiError, requestContext, type VideoDubb
 import { cookiesOfSite, takeCookieExport } from './cookies.js';
 import { ensureAppRunning, type LaunchTarget } from './launcher.js';
 import { registerJoinTools } from './joinTools.js';
+import { SERIES_ARG_DEFAULTS, describeBuiltinPreset, describePresetSeries, findPreset, missingLanguage, seriesRequest } from './presetJobs.js';
 import { registerPictureTools } from './pictureTools.js';
 import {
   renderProjectJobs,
@@ -87,9 +89,12 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   diarize: 'stt',
   diarizeSpeakers: 'stt',
   transcriptSpotCheck: 'stt',
+  subtitleCoverageCheck: 'stt',
+  useBurnedInSubtitles: 'stt',
   targetLanguage: 'translation',
   translationProviderId: 'translation',
   refineProviderId: 'refine',
+  holdFlaggedLines: 'refine',
   ttsProviderId: 'tts',
   ttsVoiceId: 'tts',
   synthesisGrouping: 'tts',
@@ -112,6 +117,7 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   renderQuality: 'render',
   burnSubtitleStyle: 'render',
   blurRegions: 'render',
+  watermarkAuto: 'render',
 };
 
 const subtitleMode = z
@@ -133,6 +139,21 @@ const editableSettings = z
     reviewBeforeSynthesis: z
       .boolean()
       .describe('Pause after translation, before any voice is made, so the translation can be reviewed (recommended when you will rewrite it).'),
+    subtitleCoverageCheck: z
+      .boolean()
+      .describe(
+        "Check speech-to-text against the video's own burned-in subtitles (the band picture detection found, or burnSubtitleStyle.coverBand): lines under a subtitle are never removed as silence, and get_project names subtitles with no line (speech lost) and lines with no subtitle (maybe hallucinated). Default: on for Chinese, Japanese and Korean video. Costs a read of the picture, a few minutes per hour of video.",
+      ),
+    useBurnedInSubtitles: z
+      .boolean()
+      .describe(
+        "Take the transcript from the subtitles burned into the picture, read as text on this computer, instead of speech-to-text: each subtitle becomes a line, timed by when it shows (names and wording as the video writes them). Needs the subtitle reader engine (install_engine ocr-rapid, ~250 MB); Chinese and English subtitles. When the engine is missing or the subtitles cannot be read, the speech is transcribed and get_project says why.",
+      ),
+    holdFlaggedLines: z
+      .boolean()
+      .describe(
+        'Stop before any voice is made when lines still fail the translation checks after the two automatic repairs (Chinese letters or a pinyin name in a Vietnamese line, no diacritics, "/" alternatives, untranslated). get_project then names them; fix them with set_translations and start_dubbing. Off by default: they are voiced, and named in a lines-flagged warning.',
+      ),
     originalAudioMode: z.enum(['keep', 'remove', 'replace-vocals']).describe('What happens to the original soundtrack.'),
     duckingLevelDb: z.number().describe('How much the original audio is lowered under the dub, in dB (e.g. -12).'),
     ttsGainDb: z.number().describe('Dub voice gain in dB.'),
@@ -185,7 +206,16 @@ const editableSettings = z
       )
       .max(20)
       .describe(
-        "Parts of the picture hidden in the render (a watermark), boxes in 0-1 of the frame: blur (soft), pixelate (blocks) or delogo (filled in from around it, for small marks); strength 1-10 (default 5). startMs/endMs (the whole video's time, also on a series part) limit a box to a while. Replaces the list; [] removes them. detect_watermark proposes them; redo from \"render\".",
+        "Parts of the picture hidden in the render (a watermark), boxes in 0-1 of the frame: blur (soft), pixelate (blocks) or delogo (filled in from around it, for small marks); strength 1-10 (default 5). startMs/endMs (the whole video's time, also on a series part) limit a box to a while. Replaces the list; [] removes them (and turns watermarkAuto off). detect_watermark proposes them; redo from \"render\".",
+      ),
+    watermarkAuto: z
+      .object({
+        mode: z.enum(['blur', 'pixelate', 'delogo']).default('blur'),
+        strength: z.number().int().min(1).max(10).optional(),
+      })
+      .nullable()
+      .describe(
+        'Find the watermark and hide it without drawing boxes: a series looks once in the whole video during its analysis and makes every part with the boxes (its plan notes say what was found, shown at review); a single video, or a part whose series found none, looks when it renders. Only clear marks (confidence 0.5 and up) are hidden; what is found is saved as blurRegions. null turns it off. While a series is still being analysed it can be set (with blurRegions) and is used for the parts.',
       ),
     diarize: z.boolean().describe('Detect who says each line (needs the "Speaker detection" engine, list_engines).'),
     diarizeSpeakers: z
@@ -376,7 +406,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       `voice ${s.ttsProviderId}${s.ttsVoiceId ? ` (${s.ttsVoiceId})` : ''}`,
       `subtitles ${s.subtitleExportMode}`,
       ...(s.reviewBeforeSynthesis ? ['pauses for review before voicing'] : []),
+      ...(s.holdFlaggedLines ? ['stops before voicing while lines fail the translation checks'] : []),
       ...(s.blurRegions?.length ? [`hides ${s.blurRegions.length} part(s) of the picture`] : []),
+      ...(s.watermarkAuto ? [`finds the watermark and ${s.watermarkAuto.mode === 'pixelate' ? 'pixelates' : s.watermarkAuto.mode === 'delogo' ? 'removes' : 'blurs'} it`] : []),
       ...(s.burnSubtitleStyle?.coverOriginal
         ? [`source subtitles ${s.burnSubtitleStyle.coverOriginal === 'blur' ? 'blurred' : 'covered'}${s.burnSubtitleStyle.coverBand ? ` at ${Math.round(s.burnSubtitleStyle.coverBand.y * 100)} % of the height` : ''}`]
         : []),
@@ -477,7 +509,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'What went wrong, and where',
       description:
-        'The app\'s own health and evidence: uptime, memory and event-loop delay; GPU memory and who holds the GPU lane; the queue; engines running or failed, with their last output; disk used per project and free disk; recent warnings and errors (with the log references tool errors give); crash reports. bundle=true also writes a support bundle (a zip of logs and reports, no keys or logins) and returns its path.',
+        'The app\'s own health and evidence: uptime, memory and event-loop delay; GPU memory and who holds the GPU lane; the queue; engines running or failed, with their last output; disk used per project and free disk; recent warnings and errors (with the log references tool errors give); crash reports; each project\'s measured audio drift against its picture. bundle=true also writes a support bundle (a zip of logs and reports, no keys or logins) and returns its path.',
       inputSchema: z.object({ bundle: z.boolean().optional() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -492,6 +524,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         disk: { freeBytes?: number; projectsDir: string; projects: { id: string; name: string; bytes: number }[] };
         recent: { warnings: R[]; errors: R[] };
         crashes: { file: string; at: string; kind: string }[];
+        /** Absent from apps before 0.18.1. */
+        audioDrift?: { id: string; name: string; driftMs: number }[];
       };
       const d = await api.get<D>('/diagnostics/summary', { signal: ctx.mcpReq.signal, timeoutMs: 120_000 });
       const gb = (b: number): string => `${(b / 1024 ** 3).toFixed(1)} GB`;
@@ -516,6 +550,14 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         ...(d.recent.errors.length ? ['Recent errors:', ...d.recent.errors.slice(-10).map((r) => `- ${r.t ?? ''} ${r.msg}${r.projectId ? ` [${r.projectId}]` : ''}${r.mcpRequestId ? ` (ref ${r.mcpRequestId})` : ''}`)] : ['No recent errors.']),
         ...(d.recent.warnings.length ? ['Recent warnings:', ...d.recent.warnings.slice(-10).map((r) => `- ${r.t ?? ''} ${r.msg}${r.projectId ? ` [${r.projectId}]` : ''}`)] : []),
         ...(d.crashes.length ? ['Crash reports:', ...d.crashes.slice(0, 5).map((c) => `- ${c.at} ${c.kind}: ${c.file}`)] : ['No crash reports.']),
+        ...(d.audioDrift?.length
+          ? [
+              'Audio against the picture, as measured at each project\'s extract-audio step (re-timed to the picture whatever it was; a warning from +0.5 s):',
+              ...d.audioDrift
+                .slice(0, 10)
+                .map((a) => `- ${a.id} "${a.name}": ${a.driftMs >= 0 ? '+' : '-'}${(Math.abs(a.driftMs) / 1000).toFixed(2)} s`),
+            ]
+          : []),
       ];
       if (bundle) {
         const b = await api.post<{ path: string; sizeBytes: number }>('/diagnostics/bundle', {}, { signal: ctx.mcpReq.signal, timeoutMs: 300_000 });
@@ -616,6 +658,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         engineInstalled: boolean;
         engineAvailable: boolean;
         recommended?: boolean;
+        mainOnly?: boolean;
       };
       const res = await api.get<{ voices: Item[]; total: number; engines: { id: string; providerId: string }[] }>(
         `/voices?${q}`,
@@ -634,7 +677,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
                 : 'install_voice also installs its engine (see list_engines for the size)';
         const who = [v.gender, v.accent, ...(v.tags ?? [])].filter(Boolean).join(', ');
         const speakers = v.speakers?.length ? ` ${v.speakers.length} speakers (append #index)` : '';
-        return `- ${v.id}: ${v.name}${v.kind === 'profile' ? ' (cloned voice)' : ''}${v.recommended ? ' [recommended]' : ''} — ${provider.get(v.engine as never) ?? v.engine}; ${v.languages.slice(0, 4).join(', ')}${v.languages.length > 4 ? ` +${v.languages.length - 4}` : ''}${who ? `; ${who}` : ''}${speakers}; licence ${v.license.label} (${v.license.category}); ${state}`;
+        return `- ${v.id}: ${v.name}${v.kind === 'profile' ? ' (cloned voice)' : ''}${v.mainOnly ? ' [one main character only: never shared, never a default]' : ''}${v.recommended ? ' [recommended]' : ''} — ${provider.get(v.engine as never) ?? v.engine}; ${v.languages.slice(0, 4).join(', ')}${v.languages.length > 4 ? ` +${v.languages.length - 4}` : ''}${who ? `; ${who}` : ''}${speakers}; licence ${v.license.label} (${v.license.category}); ${state}`;
       });
       return text(`${res.total} voice(s)${res.total > res.voices.length ? `, first ${res.voices.length}` : ''}:\n${rows.join('\n')}`);
     }),
@@ -1038,20 +1081,59 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
   );
 
   server.registerTool(
+    'dismiss_warnings',
+    {
+      title: 'Dismiss project warnings',
+      description:
+        "Set a project's warnings aside once you have checked them (get_project lists them): those with the codes given, or all. They are kept as dismissed; a step that runs again and finds the same raises them again. Warnings about a stretch of the transcript (lines over silence, a failed spot check) also clear by themselves when that stretch is re-transcribed or its lines replaced.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        codes: z.array(z.string()).optional().describe('e.g. ["stt-no-speech", "transcript-mismatch"]; omit for every warning.'),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId, codes }, ctx) => {
+      const res = await api.post<{ dismissed: number; codes: string[]; warnings: { code: string }[] }>(
+        `/projects/${encodeURIComponent(projectId)}/warnings/dismiss`,
+        codes ? { codes } : {},
+        { signal: ctx.mcpReq.signal },
+      );
+      return text(
+        res.dismissed === 0
+          ? 'No warning to dismiss.'
+          : `Dismissed ${res.dismissed} warning(s) (${res.codes.join(', ')}).${res.warnings.length > 0 ? ` ${res.warnings.length} remain.` : ''}`,
+      );
+    }),
+  );
+
+  server.registerTool(
     'list_presets',
     {
       title: 'Dub presets',
-      description: 'The user\'s saved dub presets (languages, engines, voice, subtitles, save folder), for dub_downloads. The user makes them in New project.',
+      description:
+        'The user\'s saved dub presets (languages, engines, voice, subtitles, save folder, series of parts for long videos), and the built-in ones every computer has (builtin:quality, builtin:balanced, builtin:economy: engines on this computer only, never a cloud AI; they need targetLanguage and sourceLanguage), for create_project, join_videos and dub_downloads (presetId). The user makes their own in New project.',
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     guarded(async (_args, ctx) => {
-      type P = { id: string; name: string; targetLanguage: string; sourceLanguage?: string; outputDir?: string; start?: boolean; settings: Partial<ProjectSettings> };
-      const list = await api.get<P[]>('/presets', { signal: ctx.mcpReq.signal });
-      if (list.length === 0) return text('No presets yet. dub_downloads also takes targetLanguage and settings directly.');
+      const [list, builtins] = await Promise.all([
+        api.get<DubPreset[]>('/presets', { signal: ctx.mcpReq.signal }),
+        api.get<DubPreset[]>('/presets/builtin', { signal: ctx.mcpReq.signal }).catch(() => [] as DubPreset[]),
+      ]);
+      const builtIn =
+        builtins.length > 0
+          ? [
+              '',
+              'Built in, worked out for this computer (its own engines only, never a cloud AI; give targetLanguage and sourceLanguage with them):',
+              ...builtins.map(describeBuiltinPreset),
+            ]
+          : [];
+      if (list.length === 0) {
+        return text(['No presets of the user\'s yet. create_project, join_videos and dub_downloads also take targetLanguage and settings directly.', ...builtIn].join('\n'));
+      }
       return text(
-        list
-          .map((p) => `- ${p.id} "${p.name}": ${p.sourceLanguage || 'auto'} -> ${p.targetLanguage}${p.settings.ttsVoiceId ? `, voice ${p.settings.ttsVoiceId}` : ''}${p.settings.subtitleExportMode ? `, subtitles ${p.settings.subtitleExportMode}` : ''}${p.outputDir ? `, saves to ${p.outputDir}` : ''}${p.start ? ', starts at once' : ''}`)
+        [...list
+          .map((p) => `- ${p.id} "${p.name}": ${p.sourceLanguage || 'auto'} -> ${p.targetLanguage}${p.settings.ttsVoiceId ? `, voice ${p.settings.ttsVoiceId}` : ''}${p.settings.subtitleExportMode ? `, subtitles ${p.settings.subtitleExportMode}` : ''}${p.outputDir ? `, saves to ${p.outputDir}` : ''}${p.series ? `, ${describePresetSeries(p.series)}` : ''}${p.start ? ', starts at once' : ''}`), ...builtIn]
           .join('\n'),
       );
     }),
@@ -1065,7 +1147,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         'Make a project per finished download (the video is linked, not copied), from a preset and/or settings, and start them when start=true: they dub one after another in the queue, and one whose models are still downloading starts when they arrive. Returns the project ids; follow them with follow_jobs_command or wait_jobs.',
       inputSchema: z.object({
         downloadIds: z.array(z.string()).min(1).max(200),
-        presetId: z.string().optional(),
+        presetId: z.string().optional().describe('A preset from list_presets (a built-in one needs targetLanguage and sourceLanguage).'),
         targetLanguage: z.string().optional().describe('Dub language, e.g. "vi-VN" (required without a preset).'),
         sourceLanguage: z.string().optional().describe('Spoken language, e.g. "zh" (required without a preset that has one).'),
         saveTo: z.string().optional().describe('Absolute folder for the finished videos and subtitles.'),
@@ -1075,7 +1157,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           .object({
             minMinutes: z.number().min(5).max(120).optional(),
             maxMinutes: z.number().min(5).max(180).optional(),
-            ai: z.string().optional().describe('anthropic | openai | gemini | llama-cpp-chat; default Claude through Mother Claude when set up.'),
+            ai: z.string().optional().describe("anthropic | openai | gemini | llama-cpp-chat; default the preset's, else the built-in Gemma chat model on this computer. A cloud AI is used only when named."),
             recapSec: z.number().min(0).max(8).optional(),
             autoStart: z.boolean().optional(),
             longerThanMinutes: z.number().min(5).optional().describe('Only videos longer than this are split (default 1.5 x maxMinutes).'),
@@ -1553,10 +1635,16 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Create a dubbing project',
       description:
-        'Create a project from a local video file (use download_video first for a link). Engines default to the best ones installed for this hardware and the user\'s saved preferences; override any of them in settings. Also starts downloading any language model the project needs. Set start=true to begin dubbing right away. For the best translation set settings.reviewBeforeSynthesis=true and rewrite the draft translation before voicing.',
+        'Create a project from a local video file (use download_video first for a link). Engines default to the best ones installed for this hardware and the user\'s saved preferences; override any of them in settings. With presetId the user\'s preset is the starting point instead (its languages, engines, voices, subtitles, save folder, and for a long enough video its series of parts); anything given here is laid over it. Also starts downloading any language model the project needs. Set start=true to begin dubbing right away. For the best translation set settings.reviewBeforeSynthesis=true and rewrite the draft translation before voicing.',
       inputSchema: z.object({
         videoPath: z.string().describe('Absolute path of the video file on this computer.'),
-        targetLanguage: z.string().describe('Dub language, e.g. "vi-VN".'),
+        presetId: z
+          .string()
+          .optional()
+          .describe(
+            'A preset from list_presets: one of the user\'s, or a built-in one (builtin:quality, builtin:balanced, builtin:economy; engines on this computer only, and they need targetLanguage and sourceLanguage). A video longer than a preset\'s series block allows becomes a series of parts with the preset\'s choices, unless series is given (then series is laid over them).',
+          ),
+        targetLanguage: z.string().optional().describe('Dub language, e.g. "vi-VN" (required without a preset).'),
         sourceLanguage: z
           .string()
           .optional()
@@ -1566,19 +1654,19 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           .string()
           .optional()
           .describe(
-            'Absolute folder for the finished video and subtitles, e.g. "D:\\Dubs". They are named after the project ("<name>.<lang>.mp4"), so projects can share a folder. Omit to keep them in the project\'s own folder in the app\'s data.',
+            'Absolute folder for the finished video and subtitles, e.g. "D:\\Dubs", or "D:\\Dubs\\{series}" for a folder named after the project. They are named after the project ("<name>.<lang>.mp4"), so projects can share a folder. Omit to keep them in the project\'s own folder in the app\'s data (or the preset\'s folder).',
           ),
         settings: editableSettings.optional(),
         series: z
           .object({
-            minMinutes: z.number().min(5).max(120).default(15),
-            maxMinutes: z.number().min(5).max(180).default(20),
+            minMinutes: z.number().min(5).max(120).optional().describe('Default 15 (or the preset\'s).'),
+            maxMinutes: z.number().min(5).max(180).optional().describe('Default 20 (or the preset\'s).'),
             ai: z
               .string()
               .optional()
-              .describe('anthropic | openai | gemini | llama-cpp-chat (or the full ids anthropic-translate, openai-translate, gemini-translate); default Claude through Mother Claude when set up, else the first AI set up.'),
-            recapSec: z.number().min(0).max(8).default(4),
-            autoStart: z.boolean().default(true).describe('Make and dub the parts without stopping for a review of the cuts.'),
+              .describe('anthropic | openai | gemini | llama-cpp-chat (or the full ids anthropic-translate, openai-translate, gemini-translate); default the preset\'s, else the built-in Gemma chat model on this computer. A cloud AI is used only when named here (or in the preset).'),
+            recapSec: z.number().min(0).max(8).optional().describe('Default 4 (or the preset\'s).'),
+            autoStart: z.boolean().optional().describe('Make and dub the parts without stopping for a review of the cuts. Default true (or the preset\'s).'),
             nameTemplate: z
               .string()
               .max(200)
@@ -1601,35 +1689,44 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    guarded(async ({ videoPath, targetLanguage, sourceLanguage, name, saveTo, settings, series, start }, ctx) => {
+    guarded(async ({ videoPath, presetId, targetLanguage, sourceLanguage, name, saveTo, settings, series, start }, ctx) => {
       const signal = ctx.mcpReq.signal;
+      const noLanguage = missingLanguage(targetLanguage ?? settings?.targetLanguage, presetId);
+      if (noLanguage) return { content: [{ type: 'text', text: noLanguage }], isError: true };
+      // A wrong preset id fails here, before anything is made.
+      const preset = presetId
+        ? await findPreset(api, presetId, signal, {
+            sourceLanguage: settings?.sourceLanguage ?? sourceLanguage ?? '',
+            targetLanguage: settings?.targetLanguage ?? targetLanguage ?? '',
+          })
+        : undefined;
       // A later season starts from the series it continues: its engines, voices, subtitles and look.
       const continued = series?.continues ? (await getProject(series.continues, signal)).project : undefined;
       const fromContinued = continued ? continuedSeriesSettings(continued.settings) : {};
       const spoken = settings?.sourceLanguage ?? sourceLanguage ?? fromContinued.sourceLanguage ?? '';
-      const q = new URLSearchParams({ targetLanguage, sourceLanguage: spoken });
-      const defaults = await api.get<{ settings: ProjectSettings; notes?: string[] }>(`/project-defaults?${q}`, { signal });
-      const merged: ProjectSettings = {
-        ...defaults.settings,
+      const dubInto = settings?.targetLanguage ?? targetLanguage;
+      // From a preset, the app lays these over it (POST /projects); else they go over its defaults here.
+      const own: Partial<ProjectSettings> = {
         ...fromContinued,
         // The app fills what a partial logo or greeting leaves out (branding/sanitize.ts).
         ...((settings ?? {}) as Partial<ProjectSettings>),
-        sourceLanguage: spoken,
-        targetLanguage: settings?.targetLanguage ?? targetLanguage,
+        ...(spoken ? { sourceLanguage: spoken } : {}),
+        ...(dubInto ? { targetLanguage: dubInto } : {}),
       };
-      // A series: when Mother Claude drives, Claude through Mother Claude chooses the cuts by default.
+      const defaults = preset
+        ? undefined
+        : await api.get<{ settings: ProjectSettings; notes?: string[] }>(
+            `/project-defaults?${new URLSearchParams({ targetLanguage: dubInto ?? '', sourceLanguage: spoken })}`,
+            { signal },
+          );
+      const merged = defaults ? ({ ...defaults.settings, ...own, sourceLanguage: spoken } as ProjectSettings) : undefined;
+      // A series: the AI named here or in the preset, else the built-in Gemma chat model (the app decides).
       let seriesBody: Record<string, unknown> | undefined;
       if (series) {
-        const options = await api.get<{ id: string; ready: boolean; viaMotherClaude?: boolean }[]>('/series/ai-options', { signal });
-        const ready = options.filter((o) => o.ready);
-        const ai = series.ai ?? (ready.find((o) => o.viaMotherClaude) ?? ready[0])?.id;
+        // No AI named: the app plans with the built-in Gemma chat model, or
+        // says to choose one (a cloud AI only when named).
         seriesBody = {
-          minMinutes: series.minMinutes,
-          maxMinutes: Math.max(series.minMinutes, series.maxMinutes),
-          ...(ai ? { aiProviderId: ai } : {}),
-          recapSec: series.recapSec,
-          autoStart: series.autoStart,
-          ...(series.nameTemplate?.trim() ? { nameTemplate: series.nameTemplate.trim() } : {}),
+          ...seriesRequest(series, { preset: Boolean(preset) }),
           ...(continued ? { continues: continued.id } : {}),
           ...(series.partNumberOffset ? { partNumberOffset: series.partNumberOffset } : {}),
           ...(series.totalParts ? { totalParts: series.totalParts } : {}),
@@ -1649,7 +1746,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
             {
               name: projectName,
               inputVideoPath: videoPath,
-              settings: merged,
+              ...(preset ? { presetId: preset.id, settings: own } : { settings: merged }),
               ...(saveTo?.trim() ? { outputDir: saveTo.trim() } : {}),
               linkInputVideo: true,
               ...(seriesBody ? { series: seriesBody } : {}),
@@ -1665,20 +1762,38 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       await api.post(`/projects/${id}/probe`, {}, { signal, timeoutMs: 120_000 });
       const ensured = await api.post<{ installing: boolean; enginePacks?: string[] }>(`/projects/${id}/ensure-resources`, {}, { signal });
       const lines = [
-        `Created "${project.name}" (${project.id}).`,
+        `Created "${project.name}" (${project.id})${preset ? ` from the preset "${preset.name}"` : ''}.`,
         `Saves to: ${projectOutputVideoPath(project)}`,
-        `Settings: ${settingsSummary(merged)}`,
-        ...(defaults.notes ?? []).map((n) => `Note: ${n}`),
+        `Settings: ${settingsSummary(project.settings)}`,
+        ...(defaults?.notes ?? []).map((n) => `Note: ${n}`),
       ];
       const downloading = [...(ensured.installing ? ['language models'] : []), ...(ensured.enginePacks ?? [])];
       if (downloading.length > 0) lines.push(`Downloading in the background: ${downloading.join(', ')}. start_dubbing waits for them.`);
       if (continued) lines.push(continuationNote(project, continued));
-      if (series) lines.push(seriesGateNote(series.autoStart));
+      lines.push(...seriesMadeNotes(project, series, preset));
       if (start) lines.push(await startRun(project.id, undefined, signal));
       else lines.push('Next: start_dubbing.');
       return text(lines.join('\n'));
     }),
   );
+
+  /**
+   * The series a create_project or join_videos made, if any: the one it asked
+   * for, or the preset's for a long video (said, so the agent knows a preset
+   * turned its single video into parts), or why a preset's series was not used.
+   */
+  function seriesMadeNotes(project: Project, asked: { autoStart?: boolean } | undefined, preset: DubPreset | undefined): string[] {
+    if (project.series?.role === 'parent') {
+      const s = project.series.settings;
+      return [
+        ...(asked ? [] : [`Made as a series of ${s.minMinutes}-${s.maxMinutes} min parts, as the preset asks for a video this long.`]),
+        seriesGateNote(s.autoStart),
+      ];
+    }
+    // Asked for, though the answer does not say how it starts: as asked, else the preset's, else the default.
+    if (asked) return [seriesGateNote(asked.autoStart ?? preset?.series?.autoStart ?? SERIES_ARG_DEFAULTS.autoStart)];
+    return preset?.series ? ["Dubbed whole: the video is not long enough for the preset's series of parts."] : [];
+  }
 
   /**
    * What a series will do after its analysis (the review gate, Phase 4.1):
@@ -1695,12 +1810,18 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     const res = fromStep
       ? await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/retry`, { stepId: fromStep }, { signal })
       : await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/run`, {}, { signal });
-    const parts = (res as { parts?: { projectId: string; index?: number; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; error?: string }[] }).parts;
+    const parts = (
+      res as { parts?: { projectId: string; index?: number; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; left?: string; error?: string }[] }
+    ).parts;
     if (parts) {
-      // A series parent continues as a whole: its parts, in order.
+      // A series parent continues as a whole: its parts, in order; a redo of
+      // the mix or render runs in every part that made it.
       return [
-        'The series continues: its parts, in order.',
-        ...parts.map((p, i) => `- part ${p.index ?? i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`),
+        fromStep ? `Redoing "${fromStep}" in the parts that made it, in order:` : 'The series continues: its parts, in order.',
+        ...parts.map(
+          (p, i) =>
+            `- part ${p.index ?? i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.left ? `left as it is: ${p.left}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`,
+        ),
         'Follow them with get_series or get_queue.',
       ].join('\n');
     }
@@ -1715,7 +1836,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Start, continue or redo a dub',
       description:
-        'Start the dub, continue it after a pause (pause_dubbing, a review pause, or the app having been closed), or redo it from a step (fromStep) after changing settings or the translation. Finished steps are reused. On a series, start_dubbing without fromStep continues its parts in order; a redo from a step is done on each part (fromStep on the series itself is refused). If an engine or model is missing the app says what to install; whisper.cpp speech models start downloading by themselves.',
+        'Start the dub, continue it after a pause (pause_dubbing, a review pause, or the app having been closed), or redo it from a step (fromStep) after changing settings or the translation. Finished steps are reused. On a series, start_dubbing without fromStep continues its parts in order; with fromStep "alignment", "audio-mix" or "render" it redoes that step in every part that made it (after update_settings with applyToParts); an earlier step is redone part by part (refused on the series). If an engine or model is missing the app says what to install; whisper.cpp speech models start downloading by themselves.',
       inputSchema: z.object({
         projectId: z.string(),
         fromStep: z.enum(STEP_IDS).optional().describe('Redo from this step on; omit to start or continue.'),
@@ -1723,6 +1844,21 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     guarded(async ({ projectId, fromStep }, ctx) => text(await startRun(projectId, fromStep, ctx.mcpReq.signal))),
+  );
+
+  server.registerTool(
+    'run_next',
+    {
+      title: 'Dub a waiting project next',
+      description:
+        'Move a project (or one part of a series) that waits in the queue to the front, so it starts as soon as a slot frees. It must be waiting: start_dubbing queues it. A part retried after a failure already takes its place in its series\' order.',
+      inputSchema: z.object({ projectId: z.string() }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    guarded(async ({ projectId }, ctx) => {
+      const r = await api.post<{ position?: number }>(`/projects/${encodeURIComponent(projectId)}/run-next`, {}, { signal: ctx.mcpReq.signal });
+      return text(`First in the queue now${r.position ? ` (position ${r.position})` : ''}: it starts as soon as a slot frees. get_queue says what it waits for.`);
+    }),
   );
 
   server.registerTool(
@@ -1770,14 +1906,14 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Change project settings',
       description:
-        'Change engines, voice, language, subtitles or mix settings of a project that is not running. Returns the step to redo from so the change takes effect (pass it to start_dubbing as fromStep). On a series, applyToParts=true makes the same change on every part (speaker voices included) and reports each part; a part being dubbed is skipped with the reason.',
+        'Change engines, voice, language, subtitles or mix settings of a project that is not running. While a dub runs, only what changes its mix and render (blurRegions, watermarkAuto, burnSubtitleStyle, branding, subtitles, levels, render quality) can change, and only until it starts mixing (songSubtitles and syncSubtitlesToVoice only until it times the dub, when the subtitle files are written; a series still being analysed always takes them, for its parts). Returns the step to redo from so the change takes effect (pass it to start_dubbing as fromStep). On a series, applyToParts=true makes the same change on every part (speaker voices included) and reports each part: a part waiting in the queue takes a change to its mix or render (blurRegions, burnSubtitleStyle, branding, songSubtitles, subtitles, render quality, levels) where it waits; any other change skips it, and a part being dubbed is skipped, with the reason. Finished parts then need a redo: start_dubbing on the series with fromStep "audio-mix" or "render" redoes it in every part that made it.',
       inputSchema: z.object({ projectId: z.string(), settings: editableSettings, applyToParts: z.boolean().default(false) }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId, settings, applyToParts }, ctx) => {
       const changed = Object.keys(settings) as (keyof EditableSettings)[];
       if (changed.length === 0) return text('Nothing to change.');
-      const res = await api.put<{ project: Project; parts?: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[] }>(
+      const res = await api.put<{ project: Project; parts?: { projectId: string; index: number; ok: boolean; queued?: boolean; unchanged?: boolean; skipped?: string; error?: string }[] }>(
         `/projects/${encodeURIComponent(projectId)}/settings${applyToParts ? '?applyToParts=true' : ''}`,
         settings,
         { signal: ctx.mcpReq.signal },
@@ -1785,7 +1921,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const steps = changed.map((k) => SETTING_STEP[k]).filter((s): s is PipelineStepId => s !== undefined);
       const earliest = STEP_IDS.find((s) => steps.includes(s));
       const partLines = (res.parts ?? []).map(
-        (p) => `- part ${p.index} (${p.projectId}): ${p.ok ? 'changed' : p.skipped ? `skipped, ${p.skipped}` : `failed: ${p.error ?? '?'}`}`,
+        (p) =>
+          `- part ${p.index} (${p.projectId}): ${p.ok ? (p.unchanged ? 'already so, nothing changed' : p.queued ? 'changed where it waits in the queue' : 'changed') : p.skipped ? `skipped, ${p.skipped}` : `failed: ${p.error ?? '?'}`}`,
       );
       return text(
         `Saved. Now: ${settingsSummary(res.project.settings)}\n` +
@@ -2134,16 +2271,52 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Replace the lines of a time range',
       description:
-        'Change the line structure of a range before translation: remove a transcription loop, split or merge lines, add lines speech-to-text missed. Every line of the project inside [fromMs, toMs) is replaced by `lines` (times in ms of the video, each inside the range, no overlaps; speakerId like "SPEAKER_03" optional). Lines are renumbered: the new ids are returned. Refused once the project is translated; in a series, fix the series (parent) and then rebuild_parts. Get the audio\'s own words for a range with retranscribe_range.',
+        'Change the line structure of a range before translation: remove a transcription loop, split or merge lines, add lines speech-to-text missed. Every line of the project inside [fromMs, toMs) is replaced by `lines` (times in ms of the video, each inside the range, no overlaps; speakerId like "SPEAKER_03" optional). Many ranges at once: `ranges` ([{fromMs, toMs, lines}]), or `file`, the absolute path of a JSON file holding them ({"ranges": [...]} or the list itself): one write and ONE history entry, undone as one. Lines are renumbered: the new ids are returned. Refused once the project is translated; in a series, fix the series (parent) and then rebuild_parts. Get the audio\'s own words for a range with retranscribe_range.',
       inputSchema: z.object({
         projectId: z.string(),
-        fromMs: z.number().min(0),
-        toMs: z.number().min(1),
-        lines: z.array(z.object({ startMs: z.number().min(0), endMs: z.number().min(1), text: z.string(), speakerId: z.string().optional() })).max(500),
+        fromMs: z.number().min(0).optional(),
+        toMs: z.number().min(1).optional(),
+        lines: z.array(z.object({ startMs: z.number().min(0), endMs: z.number().min(1), text: z.string(), speakerId: z.string().optional() })).max(500).optional(),
+        ranges: z
+          .array(
+            z.object({
+              fromMs: z.number().min(0),
+              toMs: z.number().min(1),
+              lines: z.array(z.object({ startMs: z.number().min(0), endMs: z.number().min(1), text: z.string(), speakerId: z.string().optional() })),
+            }),
+          )
+          .max(2000)
+          .optional()
+          .describe('Many ranges in one call (instead of fromMs, toMs and lines).'),
+        file: z.string().optional().describe('Absolute path of a JSON file with the ranges, for a large repair (instead of ranges).'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
-    guarded(async ({ projectId, fromMs, toMs, lines }, ctx) => {
+    guarded(async ({ projectId, fromMs, toMs, lines, ranges, file }, ctx) => {
+      if (ranges || file) {
+        let list = ranges;
+        if (file) {
+          const parsed = JSON.parse(await readFile(file, 'utf8')) as unknown;
+          list = (Array.isArray(parsed) ? parsed : (parsed as { ranges?: unknown }).ranges) as typeof ranges;
+          if (!Array.isArray(list)) return { content: [{ type: 'text', text: `${file} holds no ranges: write {"ranges": [{"fromMs", "toMs", "lines"}]} or the list itself.` }], isError: true };
+        }
+        const many = await api.post<{ replaced: number; made: number; ranges: { fromMs: number; toMs: number; replaced: number; lines: unknown[] }[] }>(
+          `/projects/${encodeURIComponent(projectId)}/lines/replace-many`,
+          { ranges: list },
+          { signal: ctx.mcpReq.signal, timeoutMs: 120_000 },
+        );
+        return text(
+          [
+            `Replaced ${many.replaced} line(s) with ${many.made} in ${many.ranges.length} range(s), as one history entry (undo_edit undoes them together).`,
+            ...many.ranges.slice(0, 20).map((r) => `- ${clock(r.fromMs)}-${clock(r.toMs)}: ${r.replaced} -> ${r.lines.length}`),
+            ...(many.ranges.length > 20 ? [`…and ${many.ranges.length - 20} more.`] : []),
+            'Line ids moved: read them again with get_transcript before using them.',
+          ].join('\n'),
+        );
+      }
+      if (fromMs === undefined || toMs === undefined || !lines) {
+        return { content: [{ type: 'text', text: 'Give fromMs, toMs and lines (one range), or ranges / file (many).' }], isError: true };
+      }
       const res = await api.post<{ replaced: number; lines: { id: string; startMs: number; endMs: number; text: string; speakerId?: string }[] }>(
         `/projects/${encodeURIComponent(projectId)}/lines/replace`,
         { fromMs, toMs, lines },
@@ -2336,7 +2509,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         const pending = doc.segments.filter((s) => (wanted ? wanted.has(s.id) : s.ttsStale));
         const next = pending[0];
         if (!next) return text(`Re-voiced ${done} line(s). Nothing left out of date: render_video next.${cpuNote()}`);
-        if (Date.now() > deadline || signal.aborted) {
+        // Every call voices one line at least: a slow read of the timeline
+        // must not use up the budget of a call that has done nothing yet.
+        if ((done > 0 && Date.now() > deadline) || signal.aborted) {
           return text(`Re-voiced ${done} line(s); ${pending.length} still to do. Call regenerate_voices again to continue.${cpuNote()}`);
         }
         const res = await api.post<{ engineFallback?: { packId: string; reason: 'busy' | 'failed'; busyWith?: string } }>(
@@ -2720,14 +2895,21 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       title: 'Plan a series again',
       description:
         "Before the parts are made (review, or a failed plan): choose the cuts and name the parts again with the series' AI (after it failed, another AI was set up, or the transcript was fixed). keepTitles=true keeps the titles and summaries written in review (set_split_plan, the series page) on the new parts that cover the same stretch of video. It waits up to ~45 s for the new plan, then answers; follow a longer one with get_series. A series set to start by itself makes and starts its parts after the new plan when its analysis is clean.",
-      inputSchema: z.object({ projectId: z.string().describe('The series, or any of its parts.'), keepTitles: z.boolean().default(false) }),
+      inputSchema: z.object({
+        projectId: z.string().describe('The series, or any of its parts.'),
+        keepTitles: z.boolean().default(false),
+        perFile: z
+          .boolean()
+          .optional()
+          .describe('A series joined from several files: true plans one part per file (cut where each file begins), false plans parts by length again.'),
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    guarded(async ({ projectId, keepTitles }, ctx) => {
+    guarded(async ({ projectId, keepTitles, perFile }, ctx) => {
       const signal = ctx.mcpReq.signal;
       const url = `/projects/${encodeURIComponent(projectId)}/series`;
       const before = await api.get<SeriesViewLite>(url, { signal });
-      await api.post(`${url}/replan`, { keepTitles }, { signal });
+      await api.post(`${url}/replan`, { keepTitles, ...(perFile !== undefined ? { perFile } : {}) }, { signal });
       const started = Date.now();
       let now = before;
       let seenPlanning = false;
@@ -2755,6 +2937,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
   registerJoinTools(server, {
     api,
     guarded,
+    findPreset: (id, signal, languages) => findPreset(api, id, signal, languages),
+    seriesMadeNotes,
     settingsSchema: editableSettings,
     progress,
     sleep,

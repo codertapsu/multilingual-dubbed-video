@@ -175,6 +175,12 @@ export interface RewriteItem {
   unit?: BudgetUnit;
   /** For repairs: what the checks found wrong. */
   problem?: string;
+  /** For a second repair: the words that failed, as written in the line (lineQuality.wordsAtFault). */
+  atFault?: string[];
+  /** For a second repair: the character sheet's names and terms this line's source holds. */
+  names?: { source: string; target: string }[];
+  /** For a second repair: versions already tried that still failed (never offer them again). */
+  tried?: string[];
   /**
    * Fewest units an accepted shortening may have — the cut floor of the
    * ORIGINAL line, so a second pass cannot compound two cuts past
@@ -195,7 +201,11 @@ export interface RewritePromptArgs {
   targetLanguage: string;
   items: readonly RewriteItem[];
   documentContext?: TranslationDocContext;
-  /** Second shortening pass: the first rewrite was still too long. */
+  /**
+   * The second try. Shortening: the first rewrite was still too long. Repair:
+   * the first fix still failed the checks, so the line may be translated
+   * again from the source.
+   */
   strict?: boolean;
 }
 
@@ -226,6 +236,9 @@ export function buildRewritePrompt(args: RewritePromptArgs): string {
         `  source: ${oneLine(item.sourceText)}`,
         `  current: ${oneLine(item.currentText)}`,
         ...(item.problem ? [`  problem: ${item.problem}`] : []),
+        ...(item.atFault?.length ? [`  words at fault: ${item.atFault.map((w) => `"${oneLine(w)}"`).join(', ')}`] : []),
+        ...(item.names?.length ? [`  names in this line: ${item.names.map((n) => `${oneLine(n.source)} = ${oneLine(n.target)}`).join('; ')}`] : []),
+        ...(item.tried ?? []).map((t) => `  already tried, still wrong (do not repeat): ${oneLine(t)}`),
         ...(item.next ?? []).map((n) => `  context after (do not copy): ${oneLine(n.sourceText)} => ${oneLine(n.text)}`),
       ];
       return rows.join('\n');
@@ -245,6 +258,11 @@ export function buildRewritePrompt(args: RewritePromptArgs): string {
           `Each line below is a ${vi ? 'Vietnamese' : targetLanguage} dubbing line that failed an automatic check (see "problem"). Rewrite the CURRENT line so the problem is gone:`,
           `- Fix only the problem; keep the meaning, the pronouns/terms of address and the tone.${vi ? ' Every name in Hán-Việt with Vietnamese letters (each syllable a separate word, full diacritics) — never Chinese characters, never pinyin.' : ''}`,
           '- When the current line is empty or untranslated, translate the source, consistent with the lines before and after.',
+          ...(args.strict
+            ? [
+                '- A first fix of these lines still failed the check. This time the problem MUST be gone: replace every "word at fault", write each name as "names in this line" gives it, and if editing cannot fix the line, translate the source again.',
+              ]
+            : []),
           '- Keep within the length when one is given.',
         ];
   return [
@@ -278,7 +296,8 @@ export async function requestRewrites(
   chat: Pick<FallbackContextChat, 'chatComplete'>,
   args: RewritePromptArgs,
   signal?: AbortSignal,
-  opts: { batchSize?: number } = {},
+  /** temperature: sample every request (a second repair must not get the first one's reply back). */
+  opts: { batchSize?: number; temperature?: number } = {},
 ): Promise<{ proposals: Map<string, string>; errors: string[] }> {
   const proposals = new Map<string, string>();
   const errors: string[] = [];
@@ -295,7 +314,7 @@ export async function requestRewrites(
           jsonSchema: segmentsReplySchema(ids),
           maxTokens: 2048,
           // The retry samples: the same prompt at 0 gets the same reply.
-          ...(attempt > 0 ? { temperature: 0.4 } : {}),
+          ...(opts.temperature !== undefined ? { temperature: opts.temperature } : attempt > 0 ? { temperature: 0.4 } : {}),
         });
         const parsed = parseTranslationReply(reply);
         const usable = ids.filter((id) => (parsed.get(id) ?? '').length > 0);

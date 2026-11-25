@@ -230,7 +230,10 @@ export function registerProfileRoutes(app: FastifyInstance, deps: ProfileRoutesD
 
   app.patch(
     '/voice-profiles/:id',
-    async (req: FastifyRequest<{ Params: { id: string }; Body: { name?: string; note?: string; gender?: 'female' | 'male' } }>, reply) => {
+    async (
+      req: FastifyRequest<{ Params: { id: string }; Body: { name?: string; note?: string; gender?: 'female' | 'male'; mainOnly?: boolean } }>,
+      reply,
+    ) => {
       try {
         return await service.rename(req.params.id, req.body ?? {});
       } catch (err) {

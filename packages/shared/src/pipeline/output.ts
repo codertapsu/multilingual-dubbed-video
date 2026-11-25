@@ -64,6 +64,15 @@ export function safeFileStem(name: string): string {
 }
 
 /**
+ * A save folder with `{series}` or `{name}` filled in with the job's name, as
+ * a folder name (safeFileStem): "D:\\Dubs\\{series}" → "D:\\Dubs\\Vùng Đất Đảo Ngược".
+ * A folder without them is returned as it is. Pure.
+ */
+export function resolveOutputDir(dir: string, name: string): string {
+  return dir.replace(/\{(series|name)\}/gi, () => safeFileStem(name));
+}
+
+/**
  * The base name for a project's files in a chosen folder: "<name>.<lang>",
  * or "<name> (2).<lang>"… when `taken` says the name is used there.
  */

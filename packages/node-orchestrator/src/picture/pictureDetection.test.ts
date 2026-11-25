@@ -165,6 +165,22 @@ describe('PictureDetectionService', () => {
     expect((await service.detectProject(p.id, { waitMs: 5000 })).state).toBe('done');
   });
 
+  it('detectNow waits for the whole detection, uses a saved result as it is, and throws what a failure said', async () => {
+    const p = await project();
+    detector.hold = true;
+    const waiting = service.detectNow(p.id);
+    while (detector.inputs.length === 0) await new Promise((r) => setTimeout(r, 5));
+    // Past the routes' 55 s cap it would still wait: it answers only once the frames are looked at.
+    detector.finish();
+    expect((await waiting).regions).toHaveLength(1);
+    // Saved beside the project: a later render (another run of the app) does not look again.
+    await new PictureDetectionService({ store, detector, activity }).detectNow(p.id);
+    expect(detector.inputs).toHaveLength(1);
+    const q = await project();
+    detector.fail = new Error('ffmpeg exited with code 1');
+    await expect(service.detectNow(q.id)).rejects.toThrow(/ffmpeg exited/);
+  });
+
   it('an AI check asked for without one set up says so in the notes', async () => {
     const p = await project();
     const job = await service.detectProject(p.id, { waitMs: 5000, ai: true });

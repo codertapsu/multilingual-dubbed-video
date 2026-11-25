@@ -61,4 +61,34 @@ describe('diagnostics', () => {
     expect(zip.includes(Buffer.from('logs/engines/diarization-sherpa.log'))).toBe(true);
     expect(zip.includes(Buffer.from('crash/backend-crash-2026-11-21T04-51-00Z.json'))).toBe(true);
   });
+
+  it('lists every measured audio drift, the largest first, under the warning too', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'vd-diag-'));
+    dirs.push(root);
+    const drift = (driftMs: number) => ({ mediaInfo: { audioDrift: { driftMs, audioMs: 0, pictureMs: 0, method: 'packets' as const, measuredAt: 't' } } });
+    const svc = new DiagnosticsService({
+      logsDir: path.join(root, 'logs'),
+      structured: new StructuredLog(path.join(root, 'logs')),
+      health: () => ({ version: '0.18.1', startedAt: 'x', uptimeSec: 1, heapLimitMb: 4096, peak: { rssMb: 1, heapUsedMb: 1, lagMaxMs: 1 }, samples: [] }),
+      queueState: () => Promise.reject(new Error('no queue in this test')),
+      laneOwner: () => undefined,
+      runningEngines: () => [],
+      unusableEngines: () => [],
+      projectsDir: () => path.join(root, 'projects'),
+      listProjects: async () => [
+        { id: 'p1', name: 'P1', workspaceDir: path.join(root, 'p1'), ...drift(560) },
+        { id: 'p3', name: 'P3', workspaceDir: path.join(root, 'p3'), ...drift(20) },
+        { id: 'p4', name: 'P4', workspaceDir: path.join(root, 'p4'), ...drift(4810) },
+        { id: 'new', name: 'Not measured', workspaceDir: path.join(root, 'new') },
+        { id: 'short', name: 'Ends early', workspaceDir: path.join(root, 'short'), ...drift(-900) },
+      ],
+      gpu: async () => null,
+    });
+    expect((await svc.summary()).audioDrift.map((a) => [a.id, a.driftMs])).toEqual([
+      ['p4', 4810],
+      ['short', -900],
+      ['p1', 560],
+      ['p3', 20],
+    ]);
+  });
 });

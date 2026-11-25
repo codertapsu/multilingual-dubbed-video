@@ -769,7 +769,7 @@ export class IpcService {
     return this.http('POST', `/voice-profiles/${encodeURIComponent(id)}/suggest-gender`, {});
   }
 
-  renameVoiceProfile(id: string, patch: { name?: string; note?: string; gender?: 'female' | 'male' }): Promise<VoiceProfile> {
+  renameVoiceProfile(id: string, patch: { name?: string; note?: string; gender?: 'female' | 'male'; mainOnly?: boolean }): Promise<VoiceProfile> {
     return this.http('PATCH', `/voice-profiles/${encodeURIComponent(id)}`, patch);
   }
 
@@ -1099,12 +1099,23 @@ export class IpcService {
   }
 
   /** Dub presets ("Mẫu lồng tiếng"). */
+  /** POST /projects/:id/warnings/dismiss: set warnings aside (these codes, or all). */
+  dismissWarnings(projectId: string, codes?: string[]): Promise<{ dismissed: number; codes: string[] }> {
+    return this.http('POST', `/projects/${encodeURIComponent(projectId)}/warnings/dismiss`, codes ? { codes } : {});
+  }
+
   listPresets(): Promise<DubPreset[]> {
     return this.http<DubPreset[]>('GET', '/presets');
   }
 
+  /** GET /presets/builtin: Highest quality, Balanced, Lowest cost, worked out for this computer and these languages. */
+  listBuiltinPresets(sourceLanguage: string, targetLanguage: string): Promise<DubPreset[]> {
+    const q = new URLSearchParams({ sourceLanguage, targetLanguage });
+    return this.http<DubPreset[]>('GET', `/presets/builtin?${q}`);
+  }
+
   savePreset(
-    preset: Pick<DubPreset, 'name' | 'targetLanguage' | 'settings'> & Partial<Pick<DubPreset, 'sourceLanguage' | 'outputDir' | 'start'>>,
+    preset: Pick<DubPreset, 'name' | 'targetLanguage' | 'settings'> & Partial<Pick<DubPreset, 'sourceLanguage' | 'outputDir' | 'start' | 'series'>>,
     id?: string,
   ): Promise<DubPreset> {
     return id

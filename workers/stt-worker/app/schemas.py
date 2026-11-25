@@ -37,6 +37,14 @@ class TranscribeRequest(BaseModel):
             "how the orchestrator decodes a range where the model looped again."
         ),
     )
+    vadFilter: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Override the worker's VAD filter for this request (None = STT_VAD_FILTER). "
+            "False listens to every second: the loop check's second opinion must not "
+            "depend on the same kind of speech detector that called a range silent."
+        ),
+    )
 
 
 class Word(BaseModel):

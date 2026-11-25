@@ -103,7 +103,7 @@ function syllableTts(): TtsProvider {
 /** The built-in chat engine: answers analysis, repair and review prompts. */
 function chatEngine(
   events: string[],
-  answer: { analysis?: string; repair?: (id: string) => string; review?: (id: string) => string },
+  answer: { analysis?: string; repair?: (id: string, prompt: string) => string; review?: (id: string) => string },
 ): TranslationProvider {
   return {
     id: 'llama-cpp-chat',
@@ -119,9 +119,10 @@ function chatEngine(
         return answer.analysis ?? 'Sorry, I cannot do that.';
       }
       const ids = [...user.matchAll(/^(seg_\d{4})/gm)].map((m) => m[1]!);
-      const reply = user.includes('failed an automatic check') ? answer.repair : answer.review;
-      events.push(user.includes('failed an automatic check') ? 'repair' : 'review');
-      return JSON.stringify({ segments: ids.map((id) => ({ id, text: reply ? reply(id) : '' })) });
+      const repairing = user.includes('failed an automatic check');
+      events.push(repairing ? (user.includes('A first fix of these lines still failed') ? 'repair-again' : 'repair') : 'review');
+      const reply = (id: string): string => (repairing ? answer.repair?.(id, user) : answer.review?.(id)) ?? '';
+      return JSON.stringify({ segments: ids.map((id) => ({ id, text: reply(id) })) });
     },
   } as TranslationProvider;
 }
@@ -233,6 +234,89 @@ describe('translation step — per-line checks', () => {
     expect(report.quality.repaired.map((r) => r.id)).toEqual(['seg_0001', 'seg_0005']);
     expect(report.quality.flagged.map((f) => f.id)).toEqual(['seg_0002']);
     expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toMatch(/WARN.*1 line\(s\) still fail the translation checks/);
+  });
+});
+
+describe('before voicing — lines that still fail the checks (claude-dubber H7)', () => {
+  it('tries them once more, naming the words at fault, and names what is left in a warning', async () => {
+    const events: string[] = [];
+    const prompts: string[] = [];
+    const { project, paths, runner } = await setup({}, (r) =>
+      r.registerTranslation(
+        chatEngine(events, {
+          repair: (id, prompt) => {
+            if (!prompt.includes('A first fix of these lines still failed')) return ''; // the translation step's try fixes nothing
+            prompts.push(prompt);
+            if (id === 'seg_0002') return 'Cảm ơn sư phụ';
+            if (id === 'seg_0001' && !prompt.includes('already tried')) return 'Kunlun Xu đến rồi'; // still pinyin
+            return '';
+          },
+        }) as never,
+      ),
+    );
+    await run(runner, project);
+
+    const byId = new Map((await segmentsOf(paths.translatedJson)).map((s) => [s.id, s]));
+    expect(byId.get('seg_0002')!.translatedText).toBe('Cảm ơn sư phụ');
+    expect(byId.get('seg_0002')!.qualityFlags).toBeUndefined();
+    expect(byId.get('seg_0001')!.qualityFlags).toEqual(['pinyin']);
+    expect(byId.get('seg_0005')!.qualityFlags).toEqual(['wrong-script']);
+    // A line fixed by the first request is not asked again; the second request knows what was tried.
+    expect(prompts.filter((p) => /^seg_0002/m.test(p))).toHaveLength(1);
+    const second = prompts.find((p) => p.includes('seg_0001') && p.includes('already tried'))!;
+    expect(second).toContain('words at fault: "Kunlun"');
+    expect(second).toContain('already tried, still wrong (do not repeat): Kunlun Xu đến rồi');
+    expect(prompts.find((p) => p.includes('seg_0005'))).toContain('words at fault: "Th娲"');
+
+    const report = await readJson<{ beforeVoicing: { checked: number; repaired: { id: string }[]; flagged: { id: string }[] } }>(
+      path.join(paths.subtitlesDir, 'translation_report.json'),
+    );
+    expect(report.beforeVoicing.checked).toBe(3);
+    expect(report.beforeVoicing.repaired.map((r) => r.id)).toEqual(['seg_0002']);
+    expect(report.beforeVoicing.flagged.map((f) => f.id)).toEqual(['seg_0001', 'seg_0005']);
+    const pipeline = await store.getPipeline(project.id);
+    expect(pipeline.status).toBe('completed'); // voiced as they are: the setting is off
+    expect(pipeline.warnings).toContainEqual(
+      expect.objectContaining({ code: 'lines-flagged', step: 'refine', key: 'warning.lines-flagged', params: { count: 2, ids: 'seg_0001, seg_0005' } }),
+    );
+  });
+
+  it('with holdFlaggedLines, stops before any voice is made; continuing voices the lines as they are', async () => {
+    const events: string[] = [];
+    const { project, paths, runner } = await setup({ holdFlaggedLines: true }, (r) =>
+      r.registerTranslation(chatEngine(events, { repair: () => '' }) as never),
+    );
+    await run(runner, project);
+
+    const held = await store.getPipeline(project.id);
+    expect(held.awaitingReview).toBe(true);
+    expect(held.heldLines).toEqual(['seg_0001', 'seg_0002', 'seg_0005']);
+    expect(held.steps.find((s) => s.id === 'tts')!.status).toBe('pending');
+    expect((await store.getProject(project.id)).status).toBe('paused');
+    expect(held.warnings).toContainEqual(expect.objectContaining({ code: 'lines-flagged', key: 'warning.lines-flagged-held' }));
+    expect(await fsp.readFile(paths.pipelineLog, 'utf8')).toMatch(/Stopped before voicing: 3 line\(s\) still fail/);
+
+    await run(runner, await store.getProject(project.id));
+    const after = await store.getPipeline(project.id);
+    expect(after.status).toBe('completed');
+    expect(after.awaitingReview).toBe(false);
+    expect(after.heldLines).toBeUndefined();
+  });
+
+  it('never touches or counts a locked line or a song', async () => {
+    const events: string[] = [];
+    const { project, paths, runner } = await setup({ holdFlaggedLines: true, reviewBeforeSynthesis: true }, (r) =>
+      r.registerTranslation(chatEngine(events, { repair: () => '' }) as never),
+    );
+    await run(runner, project); // paused for review (both settings)
+    const lines = await segmentsOf(paths.translatedJson);
+    const mine = lines.map((s) =>
+      s.id === 'seg_0001' ? { ...s, locked: true } : s.id === 'seg_0002' ? { ...s, song: true } : s.id === 'seg_0005' ? { ...s, translatedText: 'Nữ Oa nương nương', locked: true } : s,
+    );
+    await fsp.writeFile(paths.translatedJson, JSON.stringify({ segments: mine }), 'utf8');
+    events.length = 0;
+    await run(runner, await store.getProject(project.id), 'alignment');
+    expect(events).not.toContain('repair-again');
   });
 });
 

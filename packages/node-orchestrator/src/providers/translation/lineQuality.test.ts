@@ -7,6 +7,7 @@ import {
   pickBestCandidate,
   qualityScore,
   segmentPinyin,
+  wordsAtFault,
   wrongScripts,
 } from './lineQuality.js';
 
@@ -152,5 +153,20 @@ describe('scoring and picking candidates', () => {
   it('describes problems in words a repair prompt can act on', () => {
     expect(describeFlags(['pinyin'], 'vi')).toContain('Hán-Việt');
     expect(describeFlags(['alternatives'], 'vi')).toContain('exactly ONE');
+  });
+});
+
+describe('the words at fault (the second repair names them)', () => {
+  const ctx = { sourceText: '昆仑墟的鸿蒙', sourceLanguage: 'zh', targetLanguage: 'vi-VN' };
+  it('the word with Chinese letters, the pinyin name, the hedge, each as written', () => {
+    expect(wordsAtFault('Khu vực của鸿蒙, Kunlun Xu và thầy/cô.', ctx, ['wrong-script', 'pinyin', 'alternatives'])).toEqual([
+      'của鸿蒙',
+      'Kunlun',
+      'thầy/cô',
+    ]);
+  });
+  it('only for the checks that failed; a unit rate is no hedge', () => {
+    expect(wordsAtFault('Chạy 60 km/h với Kunlun', ctx, ['alternatives'])).toEqual([]);
+    expect(wordsAtFault('Toi khong biet', ctx, ['no-diacritics'])).toEqual([]);
   });
 });

@@ -33,5 +33,6 @@ export function sanitizeSeriesSettings(raw: Partial<SeriesSettings> | undefined,
     ...(partNumberOffset ? { partNumberOffset } : {}),
     ...(totalParts ? { totalParts } : {}),
     ...(continues ? { continues } : {}),
+    ...(raw?.perFile === true ? { perFile: true } : {}),
   };
 }

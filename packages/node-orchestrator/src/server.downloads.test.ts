@@ -14,6 +14,8 @@ describe('downloads, presets and batch dubs', () => {
   let tmp: string;
   let app: FastifyInstance;
   let video: string;
+  /** A two-hour video, for a preset's series block. */
+  let longVideo: string;
   const root = (): string => path.join(tmp, 'VideoDubber');
 
   beforeEach(async () => {
@@ -46,9 +48,11 @@ describe('downloads, presets and batch dubs', () => {
       updatedAt: new Date().toISOString(),
     };
     await fsp.writeFile(path.join(root(), 'download-queue.json'), JSON.stringify({ version: 1, items: [done] }));
+    longVideo = path.join(tmp, 'Long.mp4');
+    await fsp.writeFile(longVideo, Buffer.alloc(1024, 3));
     app = await createServer({
       config: loadConfig({ projectsDir: path.join(root(), 'projects'), configDir: root(), modelsDir: path.join(root(), 'models') }),
-      media: new FakeMediaService(),
+      media: new FakeMediaService({ segmentDurations: new Map([[longVideo, 7_200_000]]) }),
     });
   });
 
@@ -151,6 +155,145 @@ describe('downloads, presets and batch dubs', () => {
     expect(made).toMatchObject({ series: true });
     const { project } = (await app.inject({ method: 'GET', url: `/projects/${made!.projectId}` })).json() as { project: Project };
     expect(project.series).toMatchObject({ role: 'parent', settings: { aiProviderId: 'anthropic-translate', minMinutes: 15, maxMinutes: 20 } });
+  });
+
+  it('makes a project from a preset: its settings under the job\'s own, its folder named after the project', async () => {
+    const preset = (
+      await app.inject({
+        method: 'POST',
+        url: '/presets',
+        payload: {
+          name: 'Tiệm phim',
+          targetLanguage: 'vi-VN',
+          sourceLanguage: 'zh',
+          outputDir: path.join(tmp, 'out', '{series}'),
+          settings: { subtitleExportMode: 'burned-in', duckingLevelDb: -12 },
+          series: { minMinutes: 30, maxMinutes: 40, ai: 'anthropic', autoStart: false },
+        },
+      })
+    ).json() as { id: string };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/projects',
+      payload: { name: 'Tập: 1', inputVideoPath: video, presetId: preset.id, settings: { duckingLevelDb: -6 } },
+    });
+    expect(res.statusCode).toBe(201);
+    const project = res.json() as Project;
+    expect(project.settings).toMatchObject({ sourceLanguage: 'zh', targetLanguage: 'vi-VN', subtitleExportMode: 'burned-in', duckingLevelDb: -6 });
+    // The preset's engines sit on the machine's recommended ones: a whole set of settings.
+    expect(project.settings.sttProviderId).toBeTruthy();
+    expect(project.outputDir).toBe(path.join(tmp, 'out', 'Tập 1'));
+    // Ten seconds: far shorter than the preset's series asks for, so dubbed whole.
+    expect(project.series).toBeUndefined();
+    expect(res.json()).not.toHaveProperty('presetId');
+
+    const unknown = await app.inject({ method: 'POST', url: '/projects', payload: { name: 'x', inputVideoPath: video, presetId: 'preset_nope' } });
+    expect(unknown.statusCode).toBeGreaterThanOrEqual(400);
+  });
+
+  it('makes a long video from a preset with a series block a series, with the preset\'s choices', async () => {
+    await app.inject({ method: 'PUT', url: '/credentials', payload: { service: 'anthropic', apiKey: 'sk-ant-api03-test-key-0000000000000000' } });
+    const preset = (
+      await app.inject({
+        method: 'POST',
+        url: '/presets',
+        payload: {
+          name: 'Tiệm phim',
+          targetLanguage: 'vi-VN',
+          sourceLanguage: 'zh',
+          series: { minMinutes: 30, maxMinutes: 40, ai: 'anthropic', recapSec: 4, autoStart: false, nameTemplate: '{series} - Phần {n} - {title}' },
+        },
+      })
+    ).json() as { id: string; series?: Record<string, unknown> };
+    expect(preset.series).toMatchObject({ aiProviderId: 'anthropic-translate' });
+    const res = await app.inject({ method: 'POST', url: '/projects', payload: { name: 'Dài', inputVideoPath: longVideo, presetId: preset.id } });
+    expect(res.statusCode).toBe(201);
+    const project = res.json() as Project;
+    expect(project.series).toMatchObject({
+      role: 'parent',
+      settings: { minMinutes: 30, maxMinutes: 40, aiProviderId: 'anthropic-translate', recapSec: 4, autoStart: false, nameTemplate: '{series} - Phần {n} - {title}' },
+    });
+    // A job that asks for a series itself lays its choices over the preset's.
+    const own = await app.inject({
+      method: 'POST',
+      url: '/projects',
+      payload: { name: 'Ngắn', inputVideoPath: video, presetId: preset.id, series: { autoStart: true } },
+    });
+    expect((own.json() as Project).series).toMatchObject({ role: 'parent', settings: { minMinutes: 30, maxMinutes: 40, autoStart: true } });
+    // The batch takes the preset's series block too.
+    const dub = await app.inject({ method: 'POST', url: '/downloads/dub', payload: { downloadIds: ['dl_done000001'], presetId: preset.id } });
+    const [made] = (dub.json() as { results: { projectId?: string; series?: boolean }[] }).results;
+    // An hour is not over 1.5 x 40 minutes: dubbed whole.
+    expect(made?.projectId).toBeTruthy();
+    expect(made?.series).toBeFalsy();
+  });
+
+  it('offers built-in presets on this computer\'s engines only, even when Settings save a cloud AI', async () => {
+    // The user chose Claude for translation in Settings, with its key: New project uses it.
+    await app.inject({ method: 'PUT', url: '/credentials', payload: { service: 'anthropic', apiKey: 'sk-ant-api03-test-key-0000000000000000' } });
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { providerDefaults: { translationProviderId: 'anthropic-translate' } } });
+    const defaults = (await app.inject({ method: 'GET', url: '/project-defaults?sourceLanguage=zh&targetLanguage=vi-VN' })).json() as { settings: { translationProviderId: string } };
+    expect(defaults.settings.translationProviderId).toBe('anthropic-translate');
+
+    const builtins = (await app.inject({ method: 'GET', url: '/presets/builtin?sourceLanguage=zh&targetLanguage=vi-VN' })).json() as {
+      id: string;
+      settings: Record<string, unknown>;
+      builtin: { kind: string; tradeoffs: { key: string }[] };
+    }[];
+    expect(builtins.map((p) => p.id)).toEqual(['builtin:quality', 'builtin:balanced', 'builtin:economy']);
+    for (const p of builtins) {
+      expect(p.settings.translationProviderId).not.toBe('anthropic-translate');
+      expect(p.builtin.tradeoffs.map((t) => t.key)).toContain('wizard.builtin.kept-local');
+    }
+
+    // A project from one: its engines over the saved cloud choice, the call's languages.
+    const made = await app.inject({
+      method: 'POST',
+      url: '/projects',
+      payload: { name: 'Nhanh', inputVideoPath: video, presetId: 'builtin:economy', settings: { sourceLanguage: 'zh', targetLanguage: 'vi-VN' } },
+    });
+    expect(made.statusCode).toBe(201);
+    const project = made.json() as Project;
+    expect(project.settings).toMatchObject({ processingMode: 'local', refineProviderId: 'none', autoFitOverflow: false, diarize: false, renderQuality: 'fast' });
+    expect(project.settings.translationProviderId).not.toBe('anthropic-translate');
+    // A built-in preset works for any language, so the job names them.
+    const noLanguage = await app.inject({ method: 'POST', url: '/projects', payload: { name: 'x', inputVideoPath: video, presetId: 'builtin:quality' } });
+    expect(noLanguage.statusCode).toBe(400);
+    expect(noLanguage.json()).toMatchObject({ error: { code: 'INVALID_LANGUAGE' } });
+    const unknown = await app.inject({
+      method: 'POST',
+      url: '/projects',
+      payload: { name: 'x', inputVideoPath: video, presetId: 'builtin:fastest', settings: { sourceLanguage: 'zh', targetLanguage: 'vi-VN' } },
+    });
+    expect(unknown.json()).toMatchObject({ error: { code: 'INVALID_EDIT' } });
+  });
+
+  it('exports the transcript with every flag its lines carry', async () => {
+    const project = (
+      await app.inject({
+        method: 'POST',
+        url: '/projects',
+        payload: { name: 'Xuất', inputVideoPath: video, presetId: 'builtin:balanced', settings: { sourceLanguage: 'zh', targetLanguage: 'vi-VN' } },
+      })
+    ).json() as Project;
+    await fsp.mkdir(path.join(project.workspaceDir, 'subtitles'), { recursive: true });
+    await fsp.writeFile(
+      path.join(project.workspaceDir, 'subtitles', 'source.json'),
+      JSON.stringify({
+        segments: [
+          { id: 'seg_0001', index: 0, startMs: 0, endMs: 1000, sourceText: '月亮代表我的心', song: true },
+          { id: 'seg_0002', index: 1, startMs: 1000, endMs: 2000, sourceText: '快跑', speakerId: 'SPEAKER_01', speakerLowConfidence: true, loopSuspect: true },
+        ],
+      }),
+    );
+    const json = (await app.inject({ method: 'POST', url: `/projects/${project.id}/transcript/export`, payload: { format: 'json' } })).json() as { path: string };
+    const lines = (JSON.parse(await fsp.readFile(json.path, 'utf8')) as { lines: Record<string, unknown>[] }).lines;
+    expect(lines[0]).toMatchObject({ source: '月亮代表我的心', song: true });
+    expect(lines[1]).toMatchObject({ speakerId: 'SPEAKER_01', speakerLowConfidence: true, loopSuspect: true });
+    const tsv = (await app.inject({ method: 'POST', url: `/projects/${project.id}/transcript/export`, payload: { format: 'tsv' } })).json() as { path: string };
+    const rows = (await fsp.readFile(tsv.path, 'utf8')).split('\n');
+    expect(rows[1]!.split('\t').at(-1)).toBe('song');
+    expect(rows[2]!.split('\t').at(-1)).toBe('loop?,speaker?');
   });
 
   it('streams one NDJSON line per job and ends once every named job has stopped', async () => {

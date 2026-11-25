@@ -140,6 +140,13 @@ export interface SttInput {
    * model looped is decoded again (pipeline/loopRepair.ts).
    */
   noContext?: boolean;
+  /**
+   * Override the engine's voice-activity filter for this request (faster-
+   * whisper's VAD; whisper.cpp has none): `false` listens to every second.
+   * The loop check's second opinion on a range the speech map called silent
+   * must not drop what that same kind of detector missed.
+   */
+  vadFilter?: boolean;
 }
 
 /** Result of a transcription request. */

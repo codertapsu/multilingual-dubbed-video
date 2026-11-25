@@ -121,6 +121,12 @@ export interface DiarizationService {
   available(): Promise<boolean>;
   /** What the turns depend on besides the audio (the model and its threshold), for caching. */
   readonly modelKey: string;
+  /**
+   * What linking a long audio's parts depends on (its rules), for the saved
+   * detection only: a detection linked by older rules is linked again from
+   * its parts, which are kept (their checkpoints follow modelKey alone).
+   */
+  readonly linkKey?: string;
 }
 
 /** Bytes per second of the 16 kHz mono 16-bit WAV speaker detection reads. */
@@ -280,6 +286,12 @@ interface LinkResponse {
 
 export class SherpaDiarizationProvider implements DiarizationService {
   readonly modelKey = `sherpa-2.0.1:${DIARIZATION_EMBEDDING.sha256.slice(0, 12)}:${DIARIZATION_EMBEDDING.threshold}`;
+  /**
+   * 2: the parts' own separations hold in every step of the linking
+   * (vd_diarize/linking.py). With the first rules, the main voice of
+   * 《反相之地》 took in 72 of its parts' speakers (claude-dubber, 2026-11-25).
+   */
+  readonly linkKey = 'link-2';
   /** How many parts the machine has room for now (setParallelism); unset: one at a time. */
   private budget: (() => number) | undefined;
   /** The model pairs of each running engine (its GET /health `pool`), by base URL. */

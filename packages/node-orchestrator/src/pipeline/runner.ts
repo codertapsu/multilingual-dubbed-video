@@ -46,7 +46,9 @@ import {
   pipelineStepLabel,
   projectOutputVideoPath,
   projectOutputThumbnailPath,
+  subtitleCheckOn,
   type AlignedSegment,
+  type PictureDetection,
   type ProjectWarning,
   type StepDetail,
   type PipelineState,
@@ -56,6 +58,16 @@ import {
   type TranslationDocContext,
 } from '@videodubber/shared';
 import { alignSegments, summarizeAlignment, type AlignInputSegment } from '../alignment/align.js';
+import { flaggedLinesWarning, MAX_HELD_LINES, timingConflictWarning } from './beforeVoicing.js';
+import {
+  coverageWarnings,
+  readPresenceReport,
+  sameRead,
+  speechWithSubtitles,
+  subtitleBandFor,
+  subtitleCoverage,
+  type SubtitlePresenceReport,
+} from './subtitleCoverage.js';
 import { applyClipTiming, measureClip, type MeasuredClip } from '../alignment/clipSpeech.js';
 import type { DubbingTranslationInput, PromptSegment } from '../providers/translation/llmTranslationProvider.js';
 import { reviewBatchKey, reviewTranslations, type ReviewedBatch } from '../providers/translation/refinement.js';
@@ -63,7 +75,9 @@ import { contextEngineCandidates, FallbackContextChat } from '../providers/trans
 import {
   applyReviewOutcome,
   checkAndRepairLines,
+  linesFailingChecks,
   readTranslationReport,
+  retryFailingLines,
   shortenOverflowingLines,
   TRANSLATION_DRAFT_FILE,
   translationDraftPath,
@@ -72,6 +86,7 @@ import {
   type CharacterSheetStatus,
   type OverflowUnit,
   type RepairPassResult,
+  type RetryPassResult,
   type ShortenOutcome,
 } from '../providers/translation/dubPasses.js';
 import {
@@ -114,6 +129,7 @@ import {
   type SynthesisGroupsArtifact,
 } from './grouping.js';
 import { anchorSegmentsToSpeech, needsSpeechMap, type SpeechRegion } from './segmentTiming.js';
+import { tidyTranscript } from './transcriptTidy.js';
 import { cachedSpeechRegions, type SpeechMapService } from './speechMap.js';
 import { mixFingerprint, writeMixFingerprint } from './mixFingerprint.js';
 import { projectBrandFiles, type BrandKit } from '../branding/brandKit.js';
@@ -121,10 +137,12 @@ import { planGreetings } from '../branding/greetingPlanner.js';
 import { dubWindows, greetingSettingsKey, originalSpeech, readGreetingPlan, type SavedGreetingPlan } from '../branding/greetingMix.js';
 import { logoPeriods } from '@videodubber/shared';
 import { partEffects } from '../series/seriesPlanner.js';
+import { sourceNameHints } from '../series/sourceHints.js';
 import { rangedMediaInfo } from '../series/seriesRange.js';
 import { reuseRecapTranslations } from '../series/recap.js';
 import { siteTranscript } from '../providers/download/siteSubtitles.js';
 import { thumbnailMomentMs } from './thumbnailMoment.js';
+import { autoBlurRegions, describeMarks, faintMarks } from '../picture/watermarkAuto.js';
 import type { WarningInbox } from '../diagnostics/warningInbox.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
@@ -132,11 +150,15 @@ import { describeStretch } from '../media.js';
 import type { PipelineMediaService, SeparationService, TimelineSegmentInput } from '../media.js';
 import type { AlignmentService } from '../providers/alignment/whisperxProvider.js';
 import type { DiarizationService } from '../providers/diarization/sherpaDiarizationProvider.js';
+import type { SubtitleOcrService, SubtitleRead } from '../providers/ocr/rapidOcrProvider.js';
+import { enoughRead, linesFromSubtitles, MIN_SUBTITLES, readingTimeOf } from './burnedInTranscript.js';
 import { detectLineSpeakers, readSpeakerProfiles, speakerDetectionProgress } from './diarization.js';
 import { hasSpeakableText, writeSilentClip } from './speakable.js';
 import { findLoopRanges, repairLoops, type LoopRange, type RepairedRange } from './loopRepair.js';
 import { mergeLoopRanges } from './sttChecks.js';
-import { checkDigitalSilence, linesOverSilence, recordAudioDrift, speechMapForChecks, spotCheckTranscript } from './sourceChecksStep.js';
+import { onDecoderWindow } from './decodeMerge.js';
+import { recordLoopEdits, type LoopOutcome } from './loopEdits.js';
+import { checkDigitalSilence, linesOverSilence, recordAudioDrift, silenceCheckWarning, speechMapForChecks, spotCheckTranscript } from './sourceChecksStep.js';
 import { expectedSpeechMs } from '../alignment/clipSpeech.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
@@ -165,6 +187,12 @@ export interface RunnerDeps {
    */
   diarization?: DiarizationService;
   /**
+   * Optional reader of the video's burned-in subtitles (the ocr-rapid pack),
+   * for settings.useBurnedInSubtitles. Absent or not installed => the speech
+   * is transcribed, with a warning.
+   */
+  ocr?: SubtitleOcrService;
+  /**
    * Where speech is in the audio (the STT worker's VAD). Anchors transcript
    * lines to when they are spoken; absent => lines without word timings keep
    * the engine's timing.
@@ -192,6 +220,13 @@ export interface RunnerDeps {
   brandKit?: Pick<BrandKit, 'get'>;
   /** Warnings raised outside the run (engine fallbacks), picked up when a step ends. */
   warningInbox?: WarningInbox;
+  /**
+   * Find a project's watermark, the whole detection run to its end (a result
+   * saved earlier is used as it is): for `settings.watermarkAuto` when the
+   * project has no boxes yet (picture/watermarkAuto.ts). Absent: such a render
+   * hides only the boxes it was given, with a note in the log.
+   */
+  watermark?: { detect(projectId: string): Promise<PictureDetection> };
 }
 
 /** Options controlling a single run. */
@@ -220,6 +255,24 @@ async function transition(
   const step = next.steps.find((s) => s.id === stepId);
   if (step) deps.bus.emit({ type: 'step', step });
   return next;
+}
+
+/**
+ * `work`, or CANCELLED as soon as the run is aborted (the work itself goes on:
+ * a picture detection finishes in the background and keeps its result).
+ */
+async function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) throw new AppErrorException('CANCELLED', 'Pipeline run was cancelled.');
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new AppErrorException('CANCELLED', 'Pipeline run was cancelled.'));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([work, aborted]);
+  } finally {
+    if (onAbort) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 /** Throw CANCELLED if the run has been aborted. */
@@ -595,8 +648,9 @@ export class PipelineRunner {
     // Any (re)start leaves the transcript-review checkpoint: a plain "Run" on
     // a paused-for-review project means "I'm done reviewing — continue" (the
     // completed early steps skip straight through to TTS).
-    if (state.awaitingReview) {
-      state = { ...state, awaitingReview: false };
+    if (state.awaitingReview || state.heldLines) {
+      const { heldLines: _held, ...rest } = state;
+      state = { ...rest, awaitingReview: false };
       await store.savePipeline(state);
       bus.emit({ type: 'state', pipeline: state });
     }
@@ -731,13 +785,19 @@ export class PipelineRunner {
         // earlier steps are 'skipped', so the pipeline flows straight to TTS;
         // a retry from translation re-runs refine and pauses again (the text
         // changed, so it deserves another look).
-        if (stepId === 'refine' && project.settings.reviewBeforeSynthesis === true) {
-          state = { ...state, awaitingReview: true };
+        // Lines still failing the translation checks hold the run here too
+        // with settings.holdFlaggedLines (H7): fixed before any voice says them.
+        const held = stepId === 'refine' && project.settings.holdFlaggedLines === true ? await this.heldLineIds(paths) : [];
+        if (stepId === 'refine' && (project.settings.reviewBeforeSynthesis === true || held.length > 0)) {
+          state = { ...state, awaitingReview: true, ...(held.length > 0 ? { heldLines: held.slice(0, MAX_HELD_LINES) } : {}) };
           await store.savePipeline(state);
           bus.emit({ type: 'state', pipeline: state });
           await this.markProjectStatus(project, 'paused');
           logger.info(
-            'Paused for transcript review: check the segments in the editor, then continue dubbing (resumes at speech synthesis).',
+            held.length > 0
+              ? `Stopped before voicing: ${held.length} line(s) still fail the translation checks (${held.slice(0, 5).join(', ')}${held.length > 5 ? ', …' : ''}). ` +
+                  'Fix them in the editor (Problems), then continue dubbing (resumes at speech synthesis and voices the lines as they are then).'
+              : 'Paused for transcript review: check the segments in the editor, then continue dubbing (resumes at speech synthesis).',
           );
           return;
         }
@@ -897,13 +957,63 @@ export class PipelineRunner {
         return;
       case 'alignment':
         return this.stepAlignment(project, paths, signal, onProgress);
+      // The mix and the render read the project as it is NOW: what changes
+      // only them may change while the dub runs, until it starts mixing
+      // (Orchestrator.updateProjectSettings), and a rename moves the output.
       case 'audio-mix':
-        return this.stepAudioMix(project, paths, signal);
+        return this.stepAudioMix(await this.current(project), paths, signal);
       case 'render':
-        return this.stepRender(project, paths, signal);
+        return this.stepRender(await this.autoWatermark(await this.current(project), signal), paths, signal);
       default:
         throw new AppErrorException('UNKNOWN', `Unknown pipeline step: ${stepId}`);
     }
+  }
+
+  /** The project as saved now (the run's copy when it cannot be read). */
+  private async current(project: Project): Promise<Project> {
+    return this.deps.store.getProject(project.id).catch(() => project);
+  }
+
+  /**
+   * "Find the watermark and blur it" for a render whose project has no boxes
+   * yet (a single video, or a part whose series found none): look now, save
+   * the clear marks as the project's boxes, render with them. A series finds
+   * its mark once during its analysis instead (series/seriesService.ts), so
+   * its parts arrive here with boxes and skip this. Never fails the render: a
+   * detection that fails or finds nothing is said in the log.
+   */
+  private async autoWatermark(project: Project, signal: AbortSignal): Promise<Project> {
+    const auto = project.settings.watermarkAuto;
+    if (!auto || (project.settings.blurRegions?.length ?? 0) > 0) return project;
+    const { logger } = this.deps;
+    if (!this.deps.watermark) {
+      logger.warn('The settings ask for the watermark to be found and blurred, but the picture cannot be looked at here: rendering without.');
+      return project;
+    }
+    logger.info('Looking for a watermark to blur (settings: find the watermark and blur it)...');
+    let detection: PictureDetection;
+    try {
+      detection = await untilAborted(this.deps.watermark.detect(project.id), signal);
+    } catch (err) {
+      throwIfCancelled(signal);
+      logger.warn(`Could not look for the watermark (${toAppError(err).message}): rendering without blurring it.`);
+      return project;
+    }
+    throwIfCancelled(signal);
+    const regions = autoBlurRegions(detection, auto);
+    const faint = faintMarks(detection);
+    if (regions.length === 0) {
+      logger.info(
+        `No watermark stood out clearly enough to blur by itself${faint > 0 ? ` (${faint} faint mark(s): check them with detect_watermark or the editor's Picture tab)` : ''}.`,
+      );
+      return project;
+    }
+    const fresh = await this.current(project);
+    const saved = await this.deps.store.saveProject({ ...fresh, settings: { ...fresh.settings, blurRegions: regions } });
+    logger.info(
+      `Blurring ${describeMarks(detection)}. The box(es) are saved in the project (Picture in the editor; blurRegions) and used as they are from now on.`,
+    );
+    return saved;
   }
 
   // ----- Step implementations ----------------------------------------------
@@ -985,11 +1095,18 @@ export class PipelineRunner {
         'The site published no subtitles for this video in its spoken language (Bilibili gives them only to a signed-in account): transcribing it.',
       );
     }
+    // The video's own burned-in subtitles read as text, when the project asks
+    // for them (pipeline/burnedInTranscript.ts); undefined: they could not be,
+    // and a warning says why.
+    const fromPicture = !fromSite && project.settings.useBurnedInSubtitles ? await this.burnedInTranscript(project, paths, signal, onProgress) : undefined;
     if (fromSite) {
       this.deps.logger.info(
         `Using the "${fromSite.label}" subtitles the site published (${fromSite.segments.length} lines) instead of speech-to-text.`,
       );
       transcript = { segments: fromSite.segments, detectedLanguage: fromSite.language };
+    } else if (fromPicture) {
+      this.deps.logger.info(`Using the video's own subtitles (${fromPicture.length} lines read from the picture) instead of speech-to-text.`);
+      transcript = { segments: fromPicture, detectedLanguage: explicitLanguage };
     } else try {
       transcript = await transcribeWith(provider);
     } catch (err) {
@@ -1034,13 +1151,22 @@ export class PipelineRunner {
     // written over silence go through the same pass, a minute of every half
     // hour is decoded again, and the audio is searched for digital silence.
     let speech: { regions?: SpeechRegion[] } | undefined;
-    if (!fromSite) {
+    let loopOutcome: LoopOutcome | undefined;
+    let subtitles: SubtitlePresenceReport | undefined;
+    if (!fromSite && !fromPicture) {
       speech = await speechMapForChecks(this.deps, paths, segments, totalDurationMs, signal);
+      // The video's own subtitles, where it burns them in: a line under one
+      // is never taken for silence (pipeline/subtitleCoverage.ts).
+      subtitles = await this.subtitlePresence(project, paths, signal, onProgress);
+      const checkRegions = speech?.regions && subtitles ? speechWithSubtitles(speech.regions, subtitles.events) : speech?.regions;
       const lastEnd = segments.reduce((m, s) => Math.max(m, s.endMs), totalDurationMs);
-      const silent = speech?.regions
-        ? linesOverSilence(segments, speech.regions, canChunk ? plan : [{ startMs: 0, endMs: lastEnd }], onProgress)
-        : undefined;
-      segments = await this.repairTranscriptLoops(paths, provider, model, detectedLanguage || explicitLanguage, segments, signal, onProgress, silent);
+      const chunks = canChunk ? plan : [{ startMs: 0, endMs: lastEnd }];
+      const silent = checkRegions ? linesOverSilence(segments, checkRegions, chunks) : undefined;
+      loopOutcome = await this.repairTranscriptLoops(paths, provider, model, detectedLanguage || explicitLanguage, segments, signal, onProgress, silent, chunks);
+      segments = loopOutcome.lines;
+      // Said once the loop pass has decided them: how many, and what became of them.
+      const silenceWarning = silent ? silenceCheckWarning(silent.findings, loopOutcome.ranges) : undefined;
+      if (silenceWarning) onProgress.warn?.(silenceWarning);
       const language = detectedLanguage || explicitLanguage;
       const check = { project, paths, provider, model, language, segments, totalMs: totalDurationMs, regions: speech?.regions };
       await spotCheckTranscript(this.deps, check, signal, onProgress);
@@ -1061,10 +1187,32 @@ export class PipelineRunner {
       signal,
       speech,
     );
+    // The last word on timing: no empty fragment, duplicate or overlap reaches
+    // the editor, whose timeline refuses overlaps (pipeline/transcriptTidy.ts).
+    const tidy = tidyTranscript(segments);
+    segments = tidy.lines;
+    if (tidy.report.dropped + tidy.report.merged + tidy.report.separated > 0) {
+      this.deps.logger.info(
+        `Tidied the transcript: ${tidy.report.dropped} empty fragment(s) dropped, ${tidy.report.merged} duplicate(s) made one, ${tidy.report.separated} overlap(s) separated.`,
+      );
+    }
+    // The lines as they are now against the video's own subtitles: speech the
+    // subtitles show with no line, lines no subtitle shows.
+    if (subtitles) {
+      const coverage = subtitleCoverage(subtitles.events, segments);
+      this.deps.logger.info(
+        `The video's own subtitles against the lines: ${coverage.missing.length} subtitle(s) without a line (${Math.round(coverage.missingMs / 1000)} s), ` +
+          `${Math.round(coverage.linesCovered * 100)} % of the lines' time under a subtitle${coverage.unseen.length > 0 ? `, ${coverage.unseen.length} line(s) under none` : ''}.`,
+      );
+      for (const w of coverageWarnings(coverage)) onProgress.warn?.(w);
+    }
 
     await writeSegments(paths.sourceJson, segments);
     await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(segments, { songSubtitles: await songSubtitlesOn(paths.projectJson) })));
     this.deps.logger.info(`Transcribed ${segments.length} segments (detected language: ${detectedLanguage}).`);
+    // Every range the loop pass changed is an entry of the edit history, so a
+    // wrong decision can be undone range by range (claude-dubber, 2026-11-25).
+    if (loopOutcome) await recordLoopEdits(project.id, loopOutcome, segments);
 
     // The STT chunk clips/checkpoints were scratch space; reclaim the disk now
     // that source.json is the durable artifact (a retry re-chunks from scratch).
@@ -1149,11 +1297,13 @@ export class PipelineRunner {
     onProgress: StepProgress,
     /** The speech map's verdict (linesOverSilence): its `inSilence`, and the lines written over silence. */
     silence?: { inSilence: (fromMs: number, toMs: number) => boolean; ranges: readonly LoopRange[] },
-  ): Promise<TranscriptSegment[]> {
+    /** The windows speech-to-text decoded (its STT chunks): where its 30-s decoder windows started. */
+    chunks: readonly { startMs: number }[] = [{ startMs: 0 }],
+  ): Promise<LoopOutcome> {
     const ranges = mergeLoopRanges(findLoopRanges(segments, silence?.inSilence), silence?.ranges ?? []);
     if (ranges.length === 0) {
       await fsp.rm(paths.loopRangesJson, { force: true }).catch(() => undefined);
-      return segments;
+      return { lines: segments, ranges: [], originals: [] };
     }
     this.deps.logger.info(`Found ${ranges.length} range(s) that look like transcription loops or credit lines; checking them...`);
     const clip = this.deps.media.clip16kMono?.bind(this.deps.media);
@@ -1164,7 +1314,9 @@ export class PipelineRunner {
       const clipPath = path.join(paths.sttChunksDir, `loop_${fromMs}_${toMs}.wav`);
       try {
         await clip(paths.original16kMonoWav, clipPath, fromMs, toMs, s);
-        const res = await provider.transcribe({ audioPath: clipPath, language, model, wordTimestamps: true, noContext: true }, s);
+        // Listening to every second: the speech map's detector is what
+        // called these ranges silent, so it must not filter the second opinion.
+        const res = await provider.transcribe({ audioPath: clipPath, language, model, wordTimestamps: true, noContext: true, vadFilter: false }, s);
         return res.segments.map((x) => offsetSegment(x, fromMs));
       } finally {
         await fsp.rm(clipPath, { force: true }).catch(() => undefined);
@@ -1172,7 +1324,19 @@ export class PipelineRunner {
         await onProgress(0.97, { key: 'step-detail.loops', params: { done, total: ranges.length }, text: `Checking transcription loops ${done}/${ranges.length}` });
       }
     };
-    const outcome = await repairLoops(segments, ranges, { redecode, expectedSpeechMs, ...(silence ? { inSilence: silence.inSilence } : {}) }, signal);
+    // Where speech-to-text's own 30-s windows started: a line that starts on
+    // one, far longer than its words, has its timing from the decoder.
+    const starts = chunks.map((c) => c.startMs).sort((a, b) => a - b);
+    const originalOnWindow = (ms: number): boolean => {
+      const chunkStart = starts.filter((s) => s <= ms).pop() ?? 0;
+      return onDecoderWindow(ms, chunkStart);
+    };
+    const outcome = await repairLoops(
+      segments,
+      ranges,
+      { redecode, expectedSpeechMs, originalOnWindow, ...(silence ? { inSilence: silence.inSilence } : {}) },
+      signal,
+    );
     // Lines still inside a range left as it was: a person must look at them.
     const left = outcome.ranges.filter((r) => r.status === 'left');
     const lines = outcome.lines.map((l) =>
@@ -1180,7 +1344,7 @@ export class PipelineRunner {
     );
     await writeJsonAtomic(paths.loopRangesJson, { checkedAt: new Date().toISOString(), ranges: outcome.ranges });
     this.reportLoops(outcome.ranges, onProgress);
-    return lines;
+    return { lines, ranges: outcome.ranges, originals: outcome.originals };
   }
 
   /** The loop check's outcome in the log and the project's warnings. */
@@ -1429,6 +1593,187 @@ export class PipelineRunner {
     );
   }
 
+  /**
+   * When the video's own burned-in subtitles are on screen
+   * (settings.subtitleCoverageCheck; pipeline/subtitleCoverage.ts): read once
+   * over the project's window and kept in audio/subtitle_presence.json, in the
+   * transcript's time. Undefined when the check is off, no subtitle band is
+   * known, or the picture cannot be read: said in the log, and speech-to-text
+   * goes on without it.
+   */
+  private async subtitlePresence(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress: StepProgress,
+    /** The transcript itself needs it (useBurnedInSubtitles): read whatever the check's setting says. */
+    opts: { required?: boolean } = {},
+  ): Promise<SubtitlePresenceReport | undefined> {
+    if (!opts.required && !subtitleCheckOn(project.settings.subtitleCoverageCheck, project.settings.sourceLanguage)) return undefined;
+    const { logger } = this.deps;
+    const scan = this.deps.media.scanSubtitlePresence?.bind(this.deps.media);
+    if (!scan) {
+      logger.info('This build cannot read the picture for subtitles: speech-to-text is not checked against the video\'s own subtitles.');
+      return undefined;
+    }
+    let detection: PictureDetection | undefined;
+    if (!project.settings.burnSubtitleStyle?.coverBand && this.deps.watermark) {
+      try {
+        detection = await untilAborted(this.deps.watermark.detect(project.id), signal);
+      } catch (err) {
+        throwIfCancelled(signal);
+        logger.info(`Could not look for the video's own subtitles (${toAppError(err).message}): speech-to-text is not checked against them.`);
+        return undefined;
+      }
+    }
+    const found = subtitleBandFor(project, detection);
+    if (!found) {
+      logger.info('No band of burned-in subtitles was found in this video: speech-to-text is not checked against its own subtitles.');
+      return undefined;
+    }
+    const window = {
+      startMs: project.sourceRange?.startMs ?? 0,
+      ...(project.sourceRange?.endMs !== undefined ? { endMs: project.sourceRange.endMs } : {}),
+    };
+    const saved = await readPresenceReport(paths.subtitlePresenceJson);
+    if (saved && sameRead(saved, found.band, window)) return saved;
+    const pct = (v: number): number => Math.round(v * 1000) / 10;
+    logger.info(
+      `Reading the video's own subtitles (the band at ${pct(found.band.y)}–${pct(found.band.y + found.band.h)} % of the height, ` +
+        `${found.from === 'settings' ? 'as set in the project' : 'as picture detection found it'}), five frames a second...`,
+    );
+    let read: Awaited<ReturnType<typeof scan>>;
+    try {
+      read = await scan(
+        project.inputVideoPath,
+        { band: found.band, ...window },
+        (fraction) => {
+          const percent = Math.round(fraction * 100);
+          void onProgress(0.95, { key: 'step-detail.subtitle-check', params: { percent }, text: `Reading the video's own subtitles ${percent}%` });
+        },
+        signal,
+      );
+    } catch (err) {
+      throwIfCancelled(signal);
+      logger.warn(`Could not read the video's own subtitles (${toAppError(err).message}): speech-to-text is not checked against them.`);
+      return undefined;
+    }
+    const report: SubtitlePresenceReport = {
+      at: new Date().toISOString(),
+      band: found.band,
+      bandFrom: found.from,
+      window,
+      frames: read.frames,
+      framesWithText: read.framesWithText,
+      events: read.events.map((e) => ({ startMs: e.startMs - window.startMs, endMs: e.endMs - window.startMs })),
+    };
+    await writeJsonAtomic(paths.subtitlePresenceJson, report);
+    const onScreen = report.events.reduce((ms, e) => ms + (e.endMs - e.startMs), 0);
+    logger.info(`The video's own subtitles: ${report.events.length} on screen, for ${Math.round(onScreen / 1000)} s in all.`);
+    return report;
+  }
+
+  /**
+   * The transcript from the video's own burned-in subtitles
+   * (settings.useBurnedInSubtitles; pipeline/burnedInTranscript.ts): when each
+   * is on screen (the subtitle check's scan), one frame inside each cut from
+   * the band, and read by the subtitle reader. What was read is kept in
+   * audio/subtitle_ocr.json, so a retry reads nothing again. Undefined, with a
+   * warning, when it cannot be the transcript: speech-to-text runs instead.
+   */
+  private async burnedInTranscript(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress: StepProgress,
+  ): Promise<TranscriptSegment[] | undefined> {
+    const { logger } = this.deps;
+    const fallback = (key: string, message: string, params: Record<string, string | number> = {}): undefined => {
+      onProgress.warn?.({
+        code: 'burned-in-fallback',
+        key,
+        params,
+        message: `The video's own subtitles could not be its transcript: ${message} Speech-to-text transcribed it instead.`,
+      });
+      return undefined;
+    };
+    const ocr = this.deps.ocr;
+    const cut = this.deps.media.readBandFrames?.bind(this.deps.media);
+    if (!ocr || !cut || !(await ocr.available())) {
+      return fallback(
+        'warning.burned-in-not-installed',
+        'the subtitle reader is not installed (Settings → Engines & models → Reading burned-in subtitles; MCP install_engine ocr-rapid).',
+      );
+    }
+    const presence = await this.subtitlePresence(project, paths, signal, onProgress, { required: true });
+    if (!presence) return fallback('warning.burned-in-no-band', 'no band of subtitles was found in the picture.');
+    if (presence.events.length < MIN_SUBTITLES) {
+      return fallback('warning.burned-in-few', `only ${presence.events.length} subtitle(s) showed in the picture.`, { count: presence.events.length });
+    }
+    const key = { band: presence.band, window: presence.window, events: presence.events.length, first: presence.events[0], last: presence.events[presence.events.length - 1] };
+    const saved = await fsp
+      .readFile(paths.subtitleOcrJson, 'utf8')
+      .then((raw) => JSON.parse(raw) as { key?: unknown; reads?: (SubtitleRead | null)[] })
+      .catch(() => undefined);
+    let reads: (SubtitleRead | undefined)[];
+    if (saved && JSON.stringify(saved.key) === JSON.stringify(key) && Array.isArray(saved.reads) && saved.reads.length === presence.events.length) {
+      reads = saved.reads.map((r) => r ?? undefined);
+      logger.info(`Using the ${reads.length} subtitle(s) read from the picture before.`);
+    } else {
+      const framesPath = path.join(paths.audioDir, 'subtitle_frames.u8');
+      try {
+        logger.info(`Reading the text of ${presence.events.length} subtitle(s) in the picture...`);
+        const times = presence.events.map((e) => readingTimeOf(e) + presence.window.startMs);
+        const frames = await cut(
+          project.inputVideoPath,
+          { band: presence.band, timesMs: times, outputPath: framesPath },
+          (fraction) => {
+            const percent = Math.round(fraction * 100);
+            void onProgress(0.3 * fraction, { key: 'step-detail.subtitle-frames', params: { percent }, text: `Cutting the subtitles from the picture ${percent}%` });
+          },
+          signal,
+        );
+        const found = await ocr.read(
+          { path: framesPath, width: frames.width, height: frames.height, count: frames.count },
+          {
+            onProgress: (done, total) =>
+              void onProgress(0.3 + (0.6 * done) / Math.max(1, total), {
+                key: 'step-detail.subtitle-reading',
+                params: { done, total },
+                text: `Reading the subtitles ${done}/${total}`,
+              }),
+          },
+          signal,
+        );
+        if (!found) {
+          return fallback('warning.burned-in-not-installed', 'the subtitle reader is not installed (Settings → Engines & models → Reading burned-in subtitles).');
+        }
+        const byIndex = new Map(found.map((r) => [r.index, r]));
+        reads = frames.indexOf.map((k) => byIndex.get(k));
+        await writeJsonAtomic(paths.subtitleOcrJson, { at: new Date().toISOString(), key, reads: reads.map((r) => r ?? null) });
+      } catch (err) {
+        throwIfCancelled(signal);
+        const reason = toAppError(err).message;
+        return fallback('warning.burned-in-failed', `reading them failed (${reason}).`, { reason });
+      } finally {
+        await fsp.rm(framesPath, { force: true }).catch(() => undefined);
+      }
+    }
+    const built = linesFromSubtitles(presence.events, reads);
+    if (!enoughRead(built, presence.events.length)) {
+      return fallback(
+        'warning.burned-in-unreadable',
+        `only ${built.lines.length} of the ${presence.events.length} subtitles could be read.`,
+        { count: built.lines.length, total: presence.events.length },
+      );
+    }
+    logger.info(
+      `Read ${built.lines.length} line(s) from the video's own subtitles (${presence.events.length} on screen` +
+        `${built.unreadable > 0 ? `, ${built.unreadable} unreadable` : ''}${built.merged > 0 ? `, ${built.merged} repeat(s) joined` : ''}).`,
+    );
+    return built.lines;
+  }
+
   /** The project's context engine (contextEngine.ts), logging every candidate it has to skip. */
   private contextEngineFor(project: Project): FallbackContextChat {
     return new FallbackContextChat(contextEngineCandidates(this.deps.registry, project.settings), (provider, err) =>
@@ -1453,7 +1798,8 @@ export class PipelineRunner {
     const at = (): string => new Date().toISOString();
     const outcome = await generateCharacterSheet(
       chat,
-      { sourceLanguage: project.settings.sourceLanguage, targetLanguage: project.settings.targetLanguage, segments },
+      // How the source spells its names (title, file names), over what was heard (F1).
+      { sourceLanguage: project.settings.sourceLanguage, targetLanguage: project.settings.targetLanguage, segments, hints: sourceNameHints(project) },
       signal,
     );
     const engine = engineLabel();
@@ -1751,6 +2097,89 @@ export class PipelineRunner {
     paths: WorkspacePaths,
     signal: AbortSignal,
     onProgress: StepProgress = async () => {},
+  ): Promise<void> {
+    await this.reviewPass(project, paths, signal, onProgress);
+    throwIfCancelled(signal);
+    await this.retryBeforeVoicing(project, paths, signal, onProgress);
+  }
+
+  /** The ids of the lines a voice would say with a failed check (for the hold). */
+  private async heldLineIds(paths: WorkspacePaths): Promise<string[]> {
+    const lines = await readSegments(paths.translatedJson).catch(() => [] as TranscriptSegment[]);
+    return lines.filter((s) => s.locked !== true && !isSong(s) && (s.qualityFlags?.length ?? 0) > 0).map((s) => s.id);
+  }
+
+  /**
+   * Before any voice is made: the lines that still fail the translation checks
+   * get a second, pointed repair (dubPasses.retryFailingLines), and those still
+   * failing are named in a warning; with settings.holdFlaggedLines the run then
+   * stops here (the run loop, once this step completes). claude-dubber's parts
+   * of 《反相之地》 were voiced with pinyin names and a line without diacritics
+   * (2026-11-25, H7).
+   */
+  private async retryBeforeVoicing(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress: StepProgress,
+  ): Promise<void> {
+    const languages = { sourceLanguage: project.settings.sourceLanguage, targetLanguage: project.settings.targetLanguage };
+    const segments = await readSegments(paths.translatedJson);
+    if (linesFailingChecks(segments, languages).length === 0) return;
+    const documentContext = await readDocContext(paths.translationContextJson);
+    const rate = await this.speechRateFor(project);
+    const chat = this.contextEngineFor(project);
+    const input = {
+      ...languages,
+      segments,
+      ...(documentContext ? { documentContext } : {}),
+      ...(rate.perSecond !== undefined ? { perSecond: rate.perSecond } : {}),
+    };
+    let pass: RetryPassResult;
+    try {
+      pass = await retryFailingLines(input, chat.available ? chat : undefined, signal);
+    } catch (err) {
+      // Only the run's signal is a cancel; a model that failed just fixes nothing.
+      if (signal.aborted) throw err;
+      this.deps.logger.warn(`Could not try the failing lines again (${toAppError(err).message}).`);
+      pass = await retryFailingLines(input, undefined, signal);
+    }
+    const engine = chat.available ? chat.engine?.displayName : undefined;
+    if (pass.segments.some((s, i) => s !== segments[i])) await writeTranscriptAtomic(paths, pass.segments);
+    if (pass.repaired.length > 0) {
+      this.deps.logger.info(
+        `Fixed ${pass.repaired.length} of ${pass.checked} line(s) that still failed the checks before voicing, with "${engine ?? 'the context model'}" ` +
+          `(e.g. ${pass.repaired
+            .slice(0, 2)
+            .map((r) => `${r.id}: "${r.before}" -> "${r.after}"`)
+            .join('; ')}).`,
+      );
+    }
+    if (pass.errors.length > 0) {
+      this.deps.logger.warn(`The model failed on ${pass.errors.length} request(s) of the second try (${pass.errors[0]}).`);
+    }
+    await updateTranslationReport(translationReportPath(paths.subtitlesDir), {
+      beforeVoicing: {
+        checked: pass.checked,
+        repaired: pass.repaired,
+        flagged: pass.flagged,
+        ...(pass.errors.length > 0 ? { errors: pass.errors } : {}),
+        ...(engine ? { engine } : {}),
+        at: new Date().toISOString(),
+      },
+    });
+    if (pass.flagged.length > 0) onProgress.warn?.(flaggedLinesWarning(pass.flagged, project.settings.holdFlaggedLines === true));
+  }
+
+  /**
+   * The review-and-refine pass itself (see {@link stepRefine}): a no-op that
+   * writes a "skipped" report when no review model is set.
+   */
+  private async reviewPass(
+    project: Project,
+    paths: WorkspacePaths,
+    signal: AbortSignal,
+    onProgress: StepProgress,
   ): Promise<void> {
     throwIfCancelled(signal);
     const providerId = project.settings.refineProviderId;
@@ -2315,7 +2744,9 @@ export class PipelineRunner {
     // re-synthesis. The overrides are PERSISTED (cue_timing.json) so an editor
     // edit / refit reapplies them instead of reverting the whole track to
     // source-speech timing.
-    const sync = project.settings.syncSubtitlesToVoice !== false;
+    // As saved now: a change to the subtitles may come while the dub runs, until this step (series/partWork.ts).
+    const subtitleSettings = (await this.current(project)).settings;
+    const sync = subtitleSettings.syncSubtitlesToVoice !== false;
     const finalGroups = (await readGroups(paths.synthesisGroupsJson)) ?? [];
     let retimed = new Map<string, { startMs: number; endMs: number }>();
     if (sync) {
@@ -2343,7 +2774,7 @@ export class PipelineRunner {
     // The subtitle files, now that the dub is placed: planned for reading, and
     // (with voice sync) each line held until its voice has finished. Song
     // lines only with the project's songSubtitles.
-    const songSubtitles = project.settings.songSubtitles === true;
+    const songSubtitles = subtitleSettings.songSubtitles === true;
     const cues = displayCuesFor(segments, sync ? { overrides: retimed, groups: finalGroups, units: aligned, songSubtitles } : { songSubtitles });
     await writeTextAtomic(paths.translatedSrt, segmentsToSrt(cues));
     await writeTextAtomic(paths.translatedVtt, segmentsToVtt(cues));
@@ -2353,9 +2784,9 @@ export class PipelineRunner {
       `Alignment: ${summary.ok} ok, ${summary.needsReview} needs-review, ${summary.timingConflicts} timing-conflict, ${summary.needsAtempo} need speed-up.`,
     );
     if (summary.timingConflicts > 0) {
-      this.deps.logger.warn(
-        `${summary.timingConflicts} segment(s) cannot fit even at max speed — consider editing the translation.`,
-      );
+      // A warning, not only a log line: claude-dubber found 1-6 of these per
+      // part only by reading the alignment (2026-11-25, H7).
+      onProgress.warn?.(timingConflictWarning(aligned, project.settings.maxSpeedRatio));
     }
   }
 

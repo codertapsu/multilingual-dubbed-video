@@ -125,6 +125,27 @@ function diarizeEnv(packDir: string, threads?: number): Record<string, string> {
   };
 }
 
+/**
+ * Source dir for the bundled `vd_ocr` worker (reading burned-in subtitles): a
+ * source build falls back to `<repo>/workers/ocr-engine`, a packaged build uses
+ * the engine-src dir stage-engine-src.mjs fills.
+ */
+function ocrSrcDir(): string {
+  const fromEnv = process.env.VIDEODUBBER_ENGINE_SRC_DIR;
+  if (fromEnv) return fromEnv;
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  return path.resolve(here, '../../../../workers/ocr-engine');
+}
+
+/** Env for the `vd_ocr` sidecar: its module on PYTHONPATH, and the performance cores as ONNX Runtime's threads (see diarizeEnv). */
+function ocrEnv(packDir: string, threads?: number): Record<string, string> {
+  return {
+    PYTHONPATH: prependPath(ocrSrcDir(), process.env.PYTHONPATH),
+    VD_PACK_DIR: packDir,
+    ...(threads ? { VD_OCR_THREADS: String(threads) } : {}),
+  };
+}
+
 /** Env for the OmniVoice `vd_omnivoice` sidecar: bundled module on PYTHONPATH,
  * the model cache pinned to the pack dir. */
 function omnivoiceEnv(packDir: string): Record<string, string> {
@@ -389,6 +410,14 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     pythonModule: 'vd_diarize',
     args: ({ port }) => ['--port', String(port)],
     env: ({ packDir, threads }) => diarizeEnv(packDir, threads),
+    healthPath: '/health',
+    heavy: false,
+  },
+  // Reading burned-in subtitles (ocr-rapid): CPU only, a few hundred MB, light.
+  'subtitle-ocr': {
+    pythonModule: 'vd_ocr',
+    args: ({ port }) => ['--port', String(port)],
+    env: ({ packDir, threads }) => ocrEnv(packDir, threads),
     healthPath: '/health',
     heavy: false,
   },

@@ -59,6 +59,12 @@ export interface PipelineState {
    */
   awaitingReview?: boolean;
   /**
+   * Why the run is awaiting review when it is these lines: they still fail the
+   * translation checks and settings.holdFlaggedLines stopped the run before
+   * voicing (ids, at most 200). Cleared when the next run starts.
+   */
+  heldLines?: string[];
+  /**
    * The run was paused, by the user or because the app closed (or the
    * computer went off) in the middle of it: when, and the step it stopped in.
    * Every finished step is kept, and the paused step keeps what it can of its
@@ -74,6 +80,12 @@ export interface PipelineState {
    * step runs again.
    */
   warnings?: ProjectWarning[];
+  /**
+   * Warnings the user or an agent dismissed (POST /projects/:id/warnings/
+   * dismiss), with when: kept so get_project can say what was set aside. A
+   * step that runs again and finds the same raises it again.
+   */
+  dismissedWarnings?: (ProjectWarning & { dismissedAt: string })[];
   /** ISO-8601 last-updated timestamp. */
   updatedAt: string;
 }

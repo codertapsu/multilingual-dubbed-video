@@ -253,7 +253,7 @@ export async function detectPicture(input: DetectPictureInput, opts: DetectPictu
       if (finding.method === 'appearance') {
         notes.push(
           input.lines?.length
-            ? 'Too few frames fell in speech and in silence to compare them: the band was found from the picture alone. Check it.'
+            ? "Speech against silence (the transcript's lines) showed no band, so it was found from the picture alone: check it. Lines missing from the transcript where subtitles show are a sign that speech was lost."
             : 'No transcript yet: the band was found from the picture alone. Check it (after speech-to-text, detecting again compares speech with silence).',
         );
       }

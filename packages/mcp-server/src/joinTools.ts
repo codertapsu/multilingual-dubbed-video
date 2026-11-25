@@ -11,10 +11,11 @@
  */
 import type { CallToolResult, McpServer, ServerContext } from '@modelcontextprotocol/server';
 import * as z from 'zod';
-import { projectOutputVideoPath, type JoinCheck, type JoinProjectResult, type JoinStatus, type ProjectSettings } from '@videodubber/shared';
+import { projectOutputVideoPath, type DubPreset, type JoinCheck, type JoinProjectResult, type JoinStatus, type Project, type ProjectSettings } from '@videodubber/shared';
 
 import type { VideoDubberApi } from './api.js';
 import { clock } from './format.js';
+import { missingLanguage, seriesRequest } from './presetJobs.js';
 
 type Handler<A> = (args: A, ctx: ServerContext) => Promise<CallToolResult>;
 
@@ -28,6 +29,10 @@ export interface JoinToolsDeps {
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   settingsSummary: (s: ProjectSettings) => string;
   seriesGateNote: (autoStart: boolean) => string;
+  /** The preset with this id (the user's, or a built-in one for these languages); throws a readable error when there is none. */
+  findPreset: (presetId: string, signal: AbortSignal, languages?: { sourceLanguage?: string; targetLanguage?: string }) => Promise<DubPreset>;
+  /** What series the call made (its own, or the preset's for a long video). */
+  seriesMadeNotes: (project: Project, asked: { autoStart?: boolean } | undefined, preset: DubPreset | undefined) => string[];
   pollMs: number;
   workBudgetMs: number;
 }
@@ -132,24 +137,31 @@ export function registerJoinTools(server: McpServer, deps: JoinToolsDeps): void 
     {
       title: 'Make one project from several videos',
       description:
-        'Make ONE dubbing project from several local video files joined in the order given (P1, P2, …), e.g. the parts of a series split into several uploads, so they are transcribed, cast and split into parts as one (part numbers run across all of them). The app checks that they fit together: when they were encoded alike the picture is copied as it is (fast, about the files\' total size on disk); otherwise it must be encoded again, and this tool only reports the cost: call it again with reencode=true to accept. Each file\'s sound is re-timed to its own picture and cut to exactly its length, so nothing drifts at the joins (mixed 44.1/48 kHz is fine). The join runs in the app as a job the user sees; this call follows it for up to ~45 s, then get_join follows it further. Same options as create_project; start=true starts dubbing as soon as the join is done.',
+        'Make ONE dubbing project from several local video files joined in the order given (P1, P2, …), e.g. the parts of a series split into several uploads, so they are transcribed, cast and split into parts as one (part numbers run across all of them). The app checks that they fit together: when they were encoded alike the picture is copied as it is (fast, about the files\' total size on disk); otherwise it must be encoded again, and this tool only reports the cost: call it again with reencode=true to accept. Each file\'s sound is re-timed to its own picture and cut to exactly its length, so nothing drifts at the joins (mixed 44.1/48 kHz is fine). The join runs in the app as a job the user sees; this call follows it for up to ~45 s, then get_join follows it further. Same options as create_project (presetId too: the joined video takes the preset\'s series of parts when long enough); start=true starts dubbing as soon as the join is done.',
       inputSchema: z.object({
         videoPaths: z.array(z.string()).min(2).max(100).describe('Absolute paths of the video files, in the order they play.'),
-        targetLanguage: z.string().describe('Dub language, e.g. "vi-VN".'),
+        presetId: z.string().optional().describe('A preset from list_presets, as in create_project.'),
+        targetLanguage: z.string().optional().describe('Dub language, e.g. "vi-VN" (required without a preset).'),
         sourceLanguage: z
           .string()
           .optional()
           .describe('Spoken language, e.g. "zh" (Bilibili and Douyin videos are usually "zh"). Needed: the app does not detect it.'),
         name: z.string().optional().describe('Project name; default what the file names share ("持械入大宋" from "持械入大宋 P1" … "P5").'),
-        saveTo: z.string().optional().describe('Absolute folder for the finished video and subtitles; omit to keep them in the project\'s own folder.'),
+        saveTo: z
+          .string()
+          .optional()
+          .describe('Absolute folder for the finished video and subtitles ("D:\\Dubs\\{series}": a folder named after the project); omit to keep them in the project\'s own folder (or the preset\'s).'),
         settings: deps.settingsSchema.optional(),
         series: z
           .object({
-            minMinutes: z.number().min(5).max(120).default(15),
-            maxMinutes: z.number().min(5).max(180).default(20),
-            ai: z.string().optional().describe('anthropic | openai | gemini | llama-cpp-chat; default Claude through Mother Claude when set up, else the first AI set up.'),
-            recapSec: z.number().min(0).max(8).default(4),
-            autoStart: z.boolean().default(true).describe('Make and dub the parts without stopping for a review of the cuts.'),
+            minMinutes: z.number().min(5).max(120).optional().describe('Default 15 (or the preset\'s).'),
+            maxMinutes: z.number().min(5).max(180).optional().describe('Default 20 (or the preset\'s).'),
+            ai: z
+              .string()
+              .optional()
+              .describe('anthropic | openai | gemini | llama-cpp-chat; default the preset\'s, else the built-in Gemma chat model on this computer. A cloud AI is used only when named.'),
+            recapSec: z.number().min(0).max(8).optional().describe('Default 4 (or the preset\'s).'),
+            autoStart: z.boolean().optional().describe('Make and dub the parts without stopping for a review of the cuts. Default true (or the preset\'s).'),
             nameTemplate: z
               .string()
               .max(200)
@@ -157,48 +169,48 @@ export function registerJoinTools(server: McpServer, deps: JoinToolsDeps): void 
               .describe(
                 'How the parts (and their files in saveTo) are named, as in create_project: {series}, {n}, {nn} (two digits), {total}, {title}. Needs {n} or {nn}.',
               ),
+            perFile: z.boolean().optional().describe('One part per joined file, cut exactly where each file begins (their own lengths, whatever the minutes say).'),
           })
           .optional()
-          .describe('Dub the joined video as a series of parts, as create_project does; the files\' boundaries are recorded with the project.'),
+          .describe('Dub the joined video as a series of parts, as create_project does; the files\' boundaries are recorded with the project (perFile: one part per file).'),
         reencode: z.boolean().default(false).describe('Accept encoding the picture again when the files differ (call without it first to see the cost).'),
         start: z.boolean().default(false).describe('Start dubbing as soon as the join is done.'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    guarded(async ({ videoPaths, targetLanguage, sourceLanguage, name, saveTo, settings, series, reencode, start }, ctx) => {
+    guarded(async ({ videoPaths, presetId, targetLanguage, sourceLanguage, name, saveTo, settings, series, reencode, start }, ctx) => {
       const signal = ctx.mcpReq.signal;
-      // The same starting point as create_project: the app's defaults, then Claude's choices.
-      const q = new URLSearchParams({ targetLanguage, sourceLanguage: sourceLanguage ?? '' });
-      const defaults = await api.get<{ settings: ProjectSettings; notes?: string[] }>(`/project-defaults?${q}`, { signal });
       const chosen = (settings ?? {}) as Partial<ProjectSettings>;
-      const merged: ProjectSettings = {
-        ...defaults.settings,
+      const noLanguage = missingLanguage(targetLanguage ?? chosen.targetLanguage, presetId);
+      if (noLanguage) return refusal(noLanguage);
+      // A wrong preset id fails here, before anything is checked or made.
+      const spoken = chosen.sourceLanguage ?? sourceLanguage;
+      const dubInto = chosen.targetLanguage ?? targetLanguage;
+      const preset = presetId ? await deps.findPreset(presetId, signal, { sourceLanguage: spoken ?? '', targetLanguage: dubInto ?? '' }) : undefined;
+      // From a preset, the app lays these over it (POST /projects/join); else
+      // the same starting point as create_project: the app's defaults, then Claude's choices.
+      const own: Partial<ProjectSettings> = {
         ...chosen,
-        sourceLanguage: chosen.sourceLanguage ?? sourceLanguage ?? '',
-        targetLanguage: chosen.targetLanguage ?? targetLanguage,
+        ...(spoken ? { sourceLanguage: spoken } : {}),
+        ...(dubInto ? { targetLanguage: dubInto } : {}),
       };
+      const defaults = preset
+        ? undefined
+        : await api.get<{ settings: ProjectSettings; notes?: string[] }>(
+            `/project-defaults?${new URLSearchParams({ targetLanguage: dubInto ?? '', sourceLanguage: spoken ?? '' })}`,
+            { signal },
+          );
+      const merged = defaults ? ({ ...defaults.settings, ...own, sourceLanguage: spoken ?? '' } as ProjectSettings) : undefined;
       let seriesBody: Record<string, unknown> | undefined;
       if (series) {
-        const options = await api.get<{ id: string; ready: boolean; viaMotherClaude?: boolean }[]>('/series/ai-options', { signal });
-        const ready = options.filter((o) => o.ready);
-        const ai = series.ai ?? (ready.find((o) => o.viaMotherClaude) ?? ready[0])?.id;
-        seriesBody = {
-          minMinutes: series.minMinutes,
-          maxMinutes: Math.max(series.minMinutes, series.maxMinutes),
-          ...(ai ? { aiProviderId: ai } : {}),
-          recapSec: series.recapSec,
-          autoStart: series.autoStart,
-          ...(series.nameTemplate?.trim() ? { nameTemplate: series.nameTemplate.trim() } : {}),
-        };
+        // No AI named: the app plans with the built-in Gemma chat model, or says to choose one.
+        seriesBody = seriesRequest(series, { preset: Boolean(preset) });
       }
 
       // What the join takes, before anything is made.
       void progress(ctx, 0, undefined, 'Checking the videos');
-      const check = await api.post<JoinCheck>(
-        '/join/check',
-        { videoPaths, ...(merged.renderQuality ? { renderQuality: merged.renderQuality } : {}) },
-        { signal, timeoutMs: 300_000 },
-      );
+      const renderQuality = own.renderQuality ?? preset?.settings.renderQuality ?? merged?.renderQuality;
+      const check = await api.post<JoinCheck>('/join/check', { videoPaths, ...(renderQuality ? { renderQuality } : {}) }, { signal, timeoutMs: 300_000 });
       if (!check.ok) return refusal(['Nothing was made: these videos cannot be joined.', ...describeCheck(check)].join('\n'));
       if (!check.disk.enough) {
         return refusal(
@@ -229,7 +241,7 @@ export function registerJoinTools(server: McpServer, deps: JoinToolsDeps): void 
         {
           name: name?.trim() ?? '',
           videoPaths,
-          settings: merged,
+          ...(preset ? { presetId: preset.id, settings: own } : { settings: merged }),
           ...(saveTo?.trim() ? { outputDir: saveTo.trim() } : {}),
           ...(seriesBody ? { series: seriesBody } : {}),
           reencode,
@@ -246,15 +258,15 @@ export function registerJoinTools(server: McpServer, deps: JoinToolsDeps): void 
       const status = await followJoin(project.id, ctx, deps.workBudgetMs);
 
       const lines = [
-        `Created "${project.name}" (${project.id}) from ${videoPaths.length} videos.`,
+        `Created "${project.name}" (${project.id}) from ${videoPaths.length} videos${preset ? `, with the preset "${preset.name}"` : ''}.`,
         `Saves to: ${projectOutputVideoPath(project)}`,
-        `Settings: ${deps.settingsSummary(merged)}`,
-        ...(defaults.notes ?? []).map((n) => `Note: ${n}`),
+        `Settings: ${deps.settingsSummary(project.settings)}`,
+        ...(defaults?.notes ?? []).map((n) => `Note: ${n}`),
         ...describeJoin(status),
       ];
       const downloading = [...(ensured?.installing ? ['language models'] : []), ...(ensured?.enginePacks ?? [])];
       if (downloading.length > 0) lines.push(`Downloading in the background: ${downloading.join(', ')}. start_dubbing waits for them.`);
-      if (series) lines.push(deps.seriesGateNote(series.autoStart));
+      lines.push(...deps.seriesMadeNotes(project, series, preset));
       lines.push(nextStep(status, project.id));
       return status.state === 'failed' ? refusal(lines.join('\n')) : text(lines.join('\n'));
     }),

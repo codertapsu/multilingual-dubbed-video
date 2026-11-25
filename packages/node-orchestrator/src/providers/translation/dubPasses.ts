@@ -5,6 +5,8 @@
  *
  *   - {@link checkAndRepairLines}: the translation step's per-line checks and
  *     repairs (wrong script, pinyin, "/" hedges, untranslated lines);
+ *   - {@link retryFailingLines}: before any voice is made, a second, pointed
+ *     repair of the lines that still fail the checks;
  *   - {@link applyReviewOutcome}: merges a review pass into the transcript,
  *     keeping locked lines and refreshing each line's quality flags;
  *   - {@link planUnitShortening} / {@link shortenOverflowingLines}: auto-fit,
@@ -17,7 +19,7 @@ import path from 'node:path';
 import { languageSpeechRate, type TranscriptSegment, type TranslationDocContext } from '@videodubber/shared';
 import { writeJsonAtomic } from '../../workspace/projectStore.js';
 import type { PromptSegment } from './llmTranslationProvider.js';
-import type { AnalysisAttempt } from './translationContext.js';
+import { applySourceCorrections, type AnalysisAttempt } from './translationContext.js';
 import {
   judgeRepair,
   MAX_CUT_SHARE,
@@ -27,7 +29,7 @@ import {
   type NeighbourLine,
   type RewriteItem,
 } from './contextEngine.js';
-import { checkDubLine, describeFlags, pickBestCandidate, type QualityFlag } from './lineQuality.js';
+import { checkDubLine, describeFlags, pickBestCandidate, wordsAtFault, type QualityFlag } from './lineQuality.js';
 import type { ReviewOutcome } from './refinement.js';
 import {
   budgetUnitFor,
@@ -74,6 +76,18 @@ export interface TranslationReport {
   speechRate?: { perSecond?: number; source: string };
   /** The translation step's per-line checks. */
   quality?: {
+    checked: number;
+    repaired: LineRepair[];
+    flagged: FlaggedLine[];
+    errors?: string[];
+    engine?: string;
+    at: string;
+  };
+  /**
+   * The second try before voicing (refine step): the lines that still failed
+   * the checks, what it fixed, and what a voice will say with a failed check.
+   */
+  beforeVoicing?: {
     checked: number;
     repaired: LineRepair[];
     flagged: FlaggedLine[];
@@ -249,6 +263,167 @@ export async function checkAndRepairLines(
     return withFlags({ ...seg, translatedText: finalText }, flags);
   });
   return { segments, repaired, flagged, errors };
+}
+
+// ---- Before voicing: a second, pointed try at what still fails -----------------
+
+/** A line no pass may rewrite or count: the user's own (locked), or a song kept as the original (no voice). */
+const untouchable = (s: TranscriptSegment): boolean => s.locked === true || s.song === true;
+
+/**
+ * The lines a voice would say with a failed check, checked from their text as
+ * it is now (a stored flag can be stale). Locked lines and songs are left out
+ * (see {@link untouchable}). Pure.
+ */
+export function linesFailingChecks(segments: readonly TranscriptSegment[], languages: DubLanguages): TranscriptSegment[] {
+  return segments.filter(
+    (s) => !untouchable(s) && checkDubLine((s.translatedText ?? '').trim(), { sourceText: s.sourceText, ...languages }).length > 0,
+  );
+}
+
+/** Names per line the second try is given, at most. */
+const MAX_NAMES = 6;
+
+/** A cast name written with its source in brackets: "Phan Bác Nhã (潘博雅)". */
+const CAST_WITH_SOURCE = /^(.+?)\s*[(（]([^()（）]+)[)）]\s*$/u;
+
+/**
+ * The character sheet's names and terms that this line's source holds (after
+ * its corrections: the sheet names what was SAID): its glossary entries, and
+ * cast names written "Phan Bác Nhã (潘博雅)". Pure.
+ */
+export function sheetNamesIn(sourceText: string, sheet: TranslationDocContext | undefined): { source: string; target: string }[] {
+  if (!sheet) return [];
+  const said = applySourceCorrections(sourceText, sheet.corrections);
+  const out = new Map<string, string>();
+  for (const g of sheet.glossary ?? []) {
+    const source = g.source?.trim();
+    const target = g.target?.trim();
+    if (source && target && said.includes(source) && !out.has(source)) out.set(source, target);
+  }
+  for (const c of sheet.cast ?? []) {
+    const m = CAST_WITH_SOURCE.exec(c.name ?? '');
+    const target = m?.[1]?.trim();
+    const source = m?.[2]?.trim();
+    if (target && source && said.includes(source) && !out.has(source)) out.set(source, target);
+  }
+  return [...out].slice(0, MAX_NAMES).map(([source, target]) => ({ source, target }));
+}
+
+/** Result of {@link retryFailingLines}. */
+export interface RetryPassResult {
+  segments: TranscriptSegment[];
+  /** How many lines failed the checks when it started. */
+  checked: number;
+  /** Lines the second try fixed or made better. */
+  repaired: LineRepair[];
+  /** Lines a voice will still say with a failed check. */
+  flagged: FlaggedLine[];
+  errors: string[];
+}
+
+/**
+ * The second try's requests per line: the pointed prompt as it is, then
+ * sampled. At temperature 0 the same prompt returns the same reply, and a
+ * failed version is listed as tried, so the second request is a new one.
+ */
+const RETRY_TEMPERATURES: readonly (number | undefined)[] = [undefined, 0.7];
+
+/**
+ * Before any voice is made (the end of the refine step), the lines that still
+ * fail the checks get a second repair — told the words at fault, the sheet's
+ * names for this line and the versions already tried, and allowed to translate
+ * the source again — in up to two requests, keeping the best version
+ * (judgeRepair: strictly better on the checks). Locked lines and songs are
+ * never touched. After the translation step's one repair, 《反相之地》's parts
+ * were still voiced with pinyin names and a line without diacritics
+ * (claude-dubber, 2026-11-25, H7). Without a model, the lines are only
+ * checked and flagged.
+ */
+export async function retryFailingLines(
+  input: DubLanguages & {
+    segments: readonly TranscriptSegment[];
+    documentContext?: TranslationDocContext;
+    perSecond?: number;
+  },
+  chat: PassChat | undefined,
+  signal?: AbortSignal,
+): Promise<RetryPassResult> {
+  const languages = { sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage };
+  const textOf = (s: TranscriptSegment): string => (s.translatedText ?? '').trim();
+  const check = (s: TranscriptSegment, text: string): QualityFlag[] =>
+    checkDubLine(text, { sourceText: s.sourceText, ...languages });
+  const timed = withFitWindows(input.segments.map((s) => ({ ...s }) as TranscriptSegment & PromptSegment));
+  const best = new Map<string, string>();
+  const tried = new Map<string, string[]>();
+  const errors: string[] = [];
+  const textNow = (s: TranscriptSegment): string => best.get(s.id) ?? textOf(s);
+  const failingIndexes = (): number[] =>
+    timed.flatMap((s, i) => (!untouchable(s) && check(s, textNow(s)).length > 0 ? [i] : []));
+  const checked = failingIndexes().length;
+
+  if (chat) {
+    for (const temperature of RETRY_TEMPERATURES) {
+      const failing = failingIndexes();
+      if (failing.length === 0) break;
+      const items: RewriteItem[] = failing.map((i) => {
+        const s = timed[i]!;
+        const text = textNow(s);
+        const flags = check(s, text);
+        const budget = segmentFitBudget(s, input.targetLanguage, input.perSecond);
+        const atFault = wordsAtFault(text, { sourceText: s.sourceText, ...languages }, flags);
+        const names = sheetNamesIn(s.sourceText, input.documentContext);
+        const earlier = (tried.get(s.id) ?? []).filter((t) => t !== text);
+        return {
+          id: s.id,
+          sourceText: s.sourceText,
+          currentText: text,
+          problem: describeFlags(flags, input.targetLanguage),
+          ...(atFault.length > 0 ? { atFault } : {}),
+          ...(names.length > 0 ? { names } : {}),
+          ...(earlier.length > 0 ? { tried: earlier } : {}),
+          ...(s.speakerId ? { speakerId: s.speakerId } : {}),
+          ...(budget ? { target: budget.target, max: budget.max, unit: budget.unit } : {}),
+          ...neighboursOf(timed, i, textNow),
+        };
+      });
+      const result = await requestRewrites(
+        chat,
+        {
+          kind: 'repair',
+          strict: true,
+          ...languages,
+          items,
+          ...(input.documentContext ? { documentContext: input.documentContext } : {}),
+        },
+        signal,
+        temperature !== undefined ? { temperature } : {},
+      );
+      errors.push(...result.errors);
+      for (const item of items) {
+        const proposal = result.proposals.get(item.id)?.trim();
+        if (!proposal) continue;
+        if (judgeRepair(item, proposal, languages).accepted) best.set(item.id, proposal);
+        else tried.set(item.id, [...(tried.get(item.id) ?? []), proposal]);
+      }
+    }
+  }
+
+  const repaired: LineRepair[] = [];
+  const flagged: FlaggedLine[] = [];
+  const segments = input.segments.map((seg) => {
+    if (untouchable(seg)) return seg;
+    const before = textOf(seg);
+    const text = best.get(seg.id) ?? before;
+    // An empty line is never handed to a voice: the source instead, flagged (as checkAndRepairLines does).
+    const finalText = text.length > 0 ? text : seg.sourceText;
+    const flags = check(seg, finalText);
+    if (finalText !== before) repaired.push({ id: seg.id, before, after: finalText });
+    if (flags.length > 0) flagged.push({ id: seg.id, flags, text: finalText });
+    if (finalText === (seg.translatedText ?? '') && JSON.stringify(flags) === JSON.stringify(seg.qualityFlags ?? [])) return seg;
+    return withFlags({ ...seg, translatedText: finalText }, flags);
+  });
+  return { segments, checked, repaired, flagged, errors };
 }
 
 // ---- Refine step: merge the review -------------------------------------------

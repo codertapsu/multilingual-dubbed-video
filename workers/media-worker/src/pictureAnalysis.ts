@@ -443,13 +443,24 @@ function quantileRows(profiles: readonly RowProfile[], height: number, q: number
 
 /**
  * The band of the source's own subtitles over `profiles` (rows of a
- * `height`-row frame), or undefined when no text comes and goes. Pure.
+ * `height`-row frame), or undefined when no text comes and goes. Speech
+ * against silence first (the transcript's lines); when that finds nothing,
+ * the picture alone: a transcript that misses lines labels frames with
+ * subtitles "silence" and cancels the difference (《反相之地》 after its
+ * loop check removed ~780 real lines: white subtitles at 92–96 % of the
+ * height, "no band found"; claude-dubber, 2026-11-25). Pure.
  */
 export function findSubtitleBand(profiles: readonly RowProfile[], height: number, opts: BandOptions = {}): BandFinding | undefined {
+  const bySpeech = profiles.filter((p) => p.label === 'speech').length >= 6 && profiles.filter((p) => p.label === 'silence').length >= 4;
+  const found = bandOf(profiles, height, opts, bySpeech);
+  if (found || !bySpeech) return found;
+  return bandOf(profiles, height, opts, false);
+}
+
+function bandOf(profiles: readonly RowProfile[], height: number, opts: BandOptions, bySpeech: boolean): BandFinding | undefined {
   const H = height;
   const speech = profiles.filter((p) => p.label === 'speech');
   const silence = profiles.filter((p) => p.label === 'silence');
-  const bySpeech = speech.length >= 6 && silence.length >= 4;
   let base: Float32Array;
   let lift: Float32Array;
   let frames: readonly RowProfile[];

@@ -76,6 +76,30 @@ export function candidateCuts(
   return out.sort((a, b) => a.ms - b.ms);
 }
 
+/** A cut this close to where two joined files meet moves onto it. */
+export const SNAP_TO_FILE_MS = 30_000;
+
+/**
+ * A cut onto the file boundary within {@link SNAP_TO_FILE_MS} of it, when the
+ * parts on both sides keep at least `minPartMs` (one part per source video
+ * reads better than one that opens with the last seconds of the previous
+ * episode: cut 4 of 《反相之地》 fell 9.6 s before episode 7 began,
+ * claude-dubber 2026-11-25). Undefined when there is none. Pure.
+ */
+export function snapToFileBoundary(
+  ms: number,
+  boundaries: readonly number[],
+  limits: { previousMs: number; durationMs: number; minPartMs: number },
+): number | undefined {
+  let best: number | undefined;
+  for (const b of boundaries) {
+    if (b === ms || Math.abs(b - ms) > SNAP_TO_FILE_MS) continue;
+    if (b - limits.previousMs < limits.minPartMs || limits.durationMs - b < limits.minPartMs) continue;
+    if (best === undefined || Math.abs(b - ms) < Math.abs(best - ms)) best = b;
+  }
+  return best;
+}
+
 /** Where the files of a joined project meet, inside the video (Project.inputFiles). Pure. */
 export function fileBoundaries(inputFiles: readonly { startMs: number }[] | undefined, durationMs: number): number[] {
   return (inputFiles ?? [])

@@ -16,6 +16,7 @@ import {
   downloadLabel,
   downloadListing,
   downloadNews,
+  entryText,
   initiatorView,
   isRenderRun,
   kindLabelKey,
@@ -26,6 +27,7 @@ import {
   runNotice,
   runOutcome,
   runsThatEnded,
+  type ActivityTranslate,
   type QueueView,
   type RunOutcome,
 } from './activity-logic';
@@ -122,6 +124,8 @@ export class ActivityService {
   private readonly ipc = inject(IpcService);
   private readonly i18n = inject(TranslateService);
   private readonly downloads = inject(DownloadEventsService);
+  /** The registry's phrases in the reader's language (activity-logic `entryText`). */
+  private readonly say: ActivityTranslate = (key, params) => this.i18n.instant(key, params);
 
   private readonly _tasks = signal<ReadonlyMap<string, ActivityTask>>(new Map());
   private readonly _toasts = signal<Toast[]>([]);
@@ -811,7 +815,7 @@ export class ActivityService {
       kind: 'job',
       label,
       percent: row.percent,
-      message: entry.message ?? (entry.endedAt ? '' : entry.title),
+      message: entryText(entry, 'message', this.say) ?? (entry.endedAt ? '' : (entryText(entry, 'title', this.say) ?? '')),
       state: row.state,
       link: row.link,
       by: this.entryBy(entry),

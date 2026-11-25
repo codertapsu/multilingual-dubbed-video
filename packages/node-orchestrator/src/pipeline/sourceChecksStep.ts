@@ -17,7 +17,7 @@ import { formatClock } from '../activity/history.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { WorkspacePaths } from '../workspace/paths.js';
 import { audioDriftWarning, describeAudioDrift } from './audioDrift.js';
-import type { LoopRange } from './loopRepair.js';
+import type { LoopRange, RepairedRange } from './loopRepair.js';
 import type { RunnerDeps, StepProgress } from './runner.js';
 import { needsSpeechMap, type SpeechRegion } from './segmentTiming.js';
 import { cachedSpeechRegions } from './speechMap.js';
@@ -31,6 +31,7 @@ import {
   linesCoverMs,
   normalizeRegions,
   speechMsIn,
+  type SilentLinesFinding,
   type SttChunkSpan,
 } from './sttChecks.js';
 
@@ -121,42 +122,51 @@ export async function speechMapForChecks(
 }
 
 /**
- * STT chunks that wrote many lines where the speech map heard no speech
- * (sttChecks.ts): a warning per stretch, and what the loop pass needs for
- * them: the lines as `silence` ranges, and `inSilence` from the same map.
+ * Lines speech-to-text wrote where the speech map heard no speech
+ * (sttChecks.ts): what the loop pass needs for them (the lines as `silence`
+ * ranges, `inSilence` from the same map), and the stretches, which
+ * {@link silenceCheckWarning} reports once the loop pass has decided them.
  */
 export function linesOverSilence(
   segments: readonly TranscriptSegment[],
   regions: readonly SpeechRegion[],
   chunks: readonly SttChunkSpan[],
-  onProgress: StepProgress,
-): { inSilence: (fromMs: number, toMs: number) => boolean; ranges: LoopRange[] } {
+): { inSilence: (fromMs: number, toMs: number) => boolean; ranges: LoopRange[]; findings: SilentLinesFinding[] } {
   const { ranges, findings } = findLinesOverSilence(segments, regions, chunks);
-  const warnings = findings.map((f): StepWarning => {
-    const from = formatClock(f.fromMs);
-    const to = formatClock(f.toMs);
-    const where = { from, to, fromMs: f.fromMs, toMs: f.toMs, count: f.lines };
-    if (f.chunks <= 1) {
-      return {
-        code: 'stt-no-speech',
-        key: 'warning.stt-no-speech-whole',
-        params: where,
-        message: `Speech-to-text wrote ${f.lines} line(s) at ${from}-${to} where the speech map heard no speech: they went through the loop check.`,
-      };
-    }
-    const chunk = f.firstChunk === f.lastChunk ? String(f.firstChunk) : `${f.firstChunk}-${f.lastChunk}`;
-    const speech = Math.round(f.speechMs / 1000);
-    return {
-      code: 'stt-no-speech',
-      key: 'warning.stt-no-speech',
-      params: { ...where, chunk, chunks: f.chunks, speech },
-      message:
-        `STT chunk ${chunk} of ${f.chunks} heard no speech at ${from}-${to}: ${f.lines} line(s) over silence ` +
-        `(the speech map heard ${speech} s of speech there). They went through the loop check.`,
-    };
-  });
-  warnRanges(warnings, onProgress);
-  return { inSilence: inSilenceOf(regions), ranges };
+  return { inSilence: inSilenceOf(regions), ranges, findings };
+}
+
+/**
+ * One warning for the lines written where the speech map heard no speech,
+ * once the loop pass has decided them: how many, for how long, what a decode
+ * without context made of them, and the biggest stretches. It used to say,
+ * before anything was decided, "STT chunk 1-25 of 25 heard no speech at
+ * 3:47-4:03:30: 1766 line(s) over silence (the speech map heard 3579 s of
+ * speech there)", which no one could act on (claude-dubber, 2026-11-25).
+ * Undefined when there were none. Pure.
+ */
+export function silenceCheckWarning(findings: readonly SilentLinesFinding[], repaired: readonly RepairedRange[]): StepWarning | undefined {
+  if (findings.length === 0) return undefined;
+  const count = findings.reduce((n, f) => n + f.lines, 0);
+  const silence = repaired.filter((r) => r.kind === 'silence');
+  const sum = (key: 'kept' | 'added' | 'dropped'): number => silence.reduce((n, r) => n + (r.counts?.[key] ?? 0), 0);
+  const kept = sum('kept') + silence.filter((r) => !r.counts && r.status === 'kept').reduce((n, r) => n + r.before, 0);
+  const added = sum('added');
+  const removed = sum('dropped') + silence.filter((r) => !r.counts && r.status === 'removed').reduce((n, r) => n + r.before, 0);
+  const spokenMs = silence.reduce((ms, r) => ms + (r.originalLines ?? []).reduce((m, l) => m + Math.max(0, l.endMs - l.startMs), 0), 0);
+  const minutes = Math.round(spokenMs / 6000) / 10;
+  const biggest = [...silence].sort((a, b) => b.before - a.before).slice(0, 3);
+  const where = biggest.map((r) => `${formatClock(r.fromMs)}–${formatClock(r.toMs)} (${r.before} → ${r.after})`).join(', ');
+  const first = biggest[0] ?? { fromMs: findings[0]!.fromMs, toMs: findings[0]!.toMs };
+  return {
+    code: 'stt-no-speech',
+    key: 'warning.stt-no-speech-checked',
+    params: { count, minutes, kept, added, removed, biggest: where || '—', fromMs: first.fromMs, toMs: first.toMs },
+    message:
+      `${count} line(s) (${minutes} min) were written where the speech map heard no speech. A second decode without context checked them: ` +
+      `${kept} heard again and kept, ${added} heard only by it and added, ${removed} removed.` +
+      `${where ? ` Biggest stretches: ${where}.` : ''} Each change is in the History and can be undone.`,
+  };
 }
 
 /** What {@link spotCheckTranscript} decodes with and compares. */

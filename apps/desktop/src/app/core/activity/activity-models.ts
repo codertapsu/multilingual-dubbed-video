@@ -7,6 +7,7 @@ export type {
   ActivityAgentSession,
   ActivityEntry,
   ActivityInitiator,
+  ActivityPhrase,
   ActivityState,
   ActivityStreamEvent,
   EditHistoryEntry,

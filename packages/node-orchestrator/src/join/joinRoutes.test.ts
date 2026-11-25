@@ -113,6 +113,40 @@ describe('join routes', () => {
     expect(joins.calls).toHaveLength(1);
   });
 
+  it('makes a joined project from a preset, its length read only when the preset needs it', async () => {
+    await app.close();
+    const seen: { body: Record<string, unknown>; length?: number; fallbackName?: string }[] = [];
+    const lengths: unknown[] = [];
+    const withLength = Object.assign(joins, {
+      totalDurationMs: async (paths: unknown) => (lengths.push(paths), 7_200_000),
+    });
+    app = Fastify();
+    registerJoinRoutes(app, {
+      joins: withLength as unknown as JoinService,
+      sendError,
+      resolveSeries: async (s: SeriesSettings) => ({ ...s, aiProviderId: 'anthropic-translate' }),
+      presetJob: async (body, durationMs, fallbackName) => {
+        const length = await durationMs();
+        seen.push({ body: body as unknown as Record<string, unknown>, length, ...(fallbackName ? { fallbackName } : {}) });
+        const { presetId: _p, ...rest } = body;
+        return { ...rest, settings: { ...body.settings, targetLanguage: 'vi-VN' }, series: { minMinutes: 30, maxMinutes: 40, aiProviderId: 'anthropic', recapSec: 4, autoStart: false } };
+      },
+    });
+    await app.ready();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/projects/join',
+      payload: { videoPaths: ['/v/Show P1.mp4', '/v/Show P2.mp4'], name: '', presetId: 'preset_1', settings: {} },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(lengths).toEqual([['/v/Show P1.mp4', '/v/Show P2.mp4']]);
+    // Unnamed: the name the join will give it, for the preset's {series} folder.
+    expect(seen).toEqual([{ body: expect.objectContaining({ presetId: 'preset_1' }), length: 7_200_000, fallbackName: 'Show' }]);
+    const created = JSON.parse(joins.calls.find((c) => c.startsWith('create '))!.slice('create '.length)) as Record<string, unknown>;
+    expect(created).not.toHaveProperty('presetId');
+    expect(created).toMatchObject({ settings: { targetLanguage: 'vi-VN' }, series: { aiProviderId: 'anthropic-translate', minMinutes: 30 } });
+  });
+
   it('reports, cancels and restarts a join', async () => {
     expect((await app.inject({ method: 'GET', url: '/projects/proj_1/join' })).json()).toEqual({ projectId: 'proj_1', state: 'running' });
     const missing = await app.inject({ method: 'GET', url: '/projects/proj_x/join' });

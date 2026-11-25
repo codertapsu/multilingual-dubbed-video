@@ -17,7 +17,7 @@ import type { AppError } from '../errors.js';
 import type { LocalizedText } from './setup.js';
 
 /** The pipeline capability an engine pack provides. */
-export type EngineKind = 'stt' | 'translation' | 'tts' | 'separation' | 'alignment' | 'diarization';
+export type EngineKind = 'stt' | 'translation' | 'tts' | 'separation' | 'alignment' | 'diarization' | 'ocr';
 
 /**
  * How a pack is delivered/run:
@@ -57,6 +57,7 @@ export type EngineFamilyId =
   | 'supertonic'
   | 'omnivoice'
   | 'speaker-detection'
+  | 'subtitle-reading'
   | 'separation'
   | 'alignment';
 
@@ -66,6 +67,14 @@ export interface EnginePackArtifact {
   url: string;
   /** SHA-256 checksum (hex) for integrity verification. Empty = unverified. */
   sha256?: string;
+  /**
+   * Other checksums of the SAME content, measured to be so: an upstream that
+   * re-uploads a file must not fail every new install. sherpa-onnx re-exported
+   * the ERes2Net embedding model on 2026-11-19 (ONNX producer pytorch 2.4.1 ->
+   * 2.14.1, one byte longer, identical embeddings), and every fresh install of
+   * speaker detection after it was discarded as corrupt.
+   */
+  alsoSha256?: readonly string[];
   /** Approximate download size in MB (for the UI). */
   approxSizeMb: number;
   /** Path within the pack dir to extract/write to (relative). */

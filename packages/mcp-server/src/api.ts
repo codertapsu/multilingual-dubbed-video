@@ -100,14 +100,23 @@ export class VideoDubberApi {
     this.fetchImpl = opts.fetchImpl ?? fetch;
   }
 
-  /** Is the orchestrator answering? Never throws. */
-  async isUp(timeoutMs = 1500): Promise<boolean> {
+  /**
+   * Is the orchestrator answering? `slow`: no answer in time, which is a busy
+   * app, not a missing one (`down`: nothing took the connection). Never throws.
+   */
+  async probe(timeoutMs = 1500): Promise<'up' | 'down' | 'slow'> {
     try {
       const res = await this.fetchImpl(`${this.baseUrl}/health`, { signal: AbortSignal.timeout(timeoutMs) });
-      return res.ok;
-    } catch {
-      return false;
+      return res.ok ? 'up' : 'down';
+    } catch (err) {
+      const name = err instanceof Error ? err.name : '';
+      return name === 'TimeoutError' || name === 'AbortError' ? 'slow' : 'down';
     }
+  }
+
+  /** Is the orchestrator answering? Never throws. */
+  async isUp(timeoutMs = 1500): Promise<boolean> {
+    return (await this.probe(timeoutMs)) === 'up';
   }
 
   get<T>(path: string, opts: RequestOptions = {}): Promise<T> {

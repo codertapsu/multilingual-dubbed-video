@@ -251,6 +251,13 @@ export interface VoiceProfile {
    * before this have none: unconfirmed, and casting asks about them.
    */
   gender?: VoiceProfileGender;
+  /**
+   * Kept for one main character: casting gives it to one main speaker at
+   * most, never to the minor speakers' shared voices and never as the voice
+   * of every speaker of a gender who has none (voices/mainOnly.ts). The user's
+   * own clone is the case (claude-dubber, 2026-11-25).
+   */
+  mainOnly?: boolean;
   /** Its voice print and pitch, measured on its preview (speaker detection's embedding model). */
   voicePrint?: { print: number[]; f0Hz?: number; model?: string };
 }
@@ -294,6 +301,8 @@ export interface VoiceLibraryItem {
   scope?: VoiceProfile['scope'];
   /** Profiles: the gender is the user's word (false: a suggestion, or not set). */
   genderConfirmed?: boolean;
+  /** Profiles: kept for one main character (VoiceProfile.mainOnly). */
+  mainOnly?: boolean;
 }
 
 /** GET /voices. */

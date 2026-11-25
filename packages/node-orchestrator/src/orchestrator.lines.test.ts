@@ -19,6 +19,8 @@ import {
   writeDummyVideo,
 } from './test/fixtures.js';
 import { ProjectStore } from './workspace/projectStore.js';
+import { listEdits } from './activity/history.js';
+import { planUndo } from './activity/undo.js';
 
 let tmp: string;
 let store: ProjectStore;
@@ -69,6 +71,55 @@ describe('replacing the lines of a range (replace_lines)', () => {
     expect(doc.segments[1]!.speakerId).toBe('SPEAKER_01');
     // The replaced lines carry no loop mark any more.
     expect(doc.segments.some((s) => s.loopSuspect)).toBe(false);
+  });
+
+  it('settles the warnings about the stretch it rewrote, and lets the others be dismissed', async () => {
+    const { orchestrator, id } = await setup();
+    const at = new Date().toISOString();
+    const stretch = (fromMs: number, toMs: number) => ({ code: 'stt-no-speech' as const, step: 'stt' as const, at, key: 'warning.stt-no-speech-whole', message: 'm', params: { fromMs, toMs } });
+    const pipeline = await store.getPipeline(id);
+    await store.savePipeline({
+      ...pipeline,
+      warnings: [
+        stretch(2600, 6800),
+        stretch(20_000, 40_000),
+        { code: 'transcript-mismatch', step: 'stt', at, key: 'warning.transcript-mismatch', message: 'm', params: { fromMs: 3000, toMs: 6000, percent: 0 } },
+      ],
+    });
+    await orchestrator.replaceSourceLines(id, 2500, 7000, [{ startMs: 3000, endMs: 4500, text: 'You know me' }]);
+    // Rewritten there: those two are settled; the one elsewhere stays.
+    expect((await store.getPipeline(id)).warnings?.map((w) => [w.code, w.params?.['fromMs']])).toEqual([['stt-no-speech', 20_000]]);
+    const { dismissed, pipeline: after } = await orchestrator.dismissWarnings(id, ['stt-no-speech']);
+    expect(dismissed).toHaveLength(1);
+    expect(after.warnings).toBeUndefined();
+    expect(after.dismissedWarnings).toEqual([expect.objectContaining({ code: 'stt-no-speech', dismissedAt: expect.any(String) })]);
+  });
+
+  it('replaces many ranges in one write and one history entry, undone as one', async () => {
+    const { orchestrator, id } = await setup();
+    const res = await orchestrator.replaceSourceRanges(id, [
+      { fromMs: 7500, toMs: 9500, lines: [{ startMs: 8000, endMs: 8800, text: 'After, fixed' }] },
+      { fromMs: 2500, toMs: 7000, lines: [{ startMs: 3000, endMs: 4500, text: 'You know me', speakerId: 'SPEAKER_01' }] },
+    ]);
+    expect(res).toMatchObject({ replaced: 4, made: 2 });
+    expect(res.ranges.map((r) => [r.fromMs, r.replaced, r.lines.map((l) => [l.id, l.text])])).toEqual([
+      [2500, 3, [['seg_0002', 'You know me']]],
+      [7500, 1, [['seg_0003', 'After, fixed']]],
+    ]);
+    const doc = JSON.parse(await fsp.readFile(store.paths(id).sourceJson, 'utf8')) as { segments: TranscriptSegment[] };
+    expect(doc.segments.map((s) => s.sourceText)).toEqual(['Before', 'You know me', 'After, fixed']);
+    const edits = await listEdits(id);
+    expect(edits).toHaveLength(1);
+    expect(edits[0]).toMatchObject({ summaryKey: 'history.summary.replaced-many', range: { fromMs: 2500, toMs: 9500 }, summaryParams: { ranges: 2 } });
+    const plan = planUndo(edits[0]!, doc.segments, false);
+    expect(plan.kind === 'range' ? plan.lines.map((l) => l.text) : plan).toEqual(['again', 'again', 'again', 'After']);
+    // Ranges may not overlap: each stretch is given once.
+    await expect(
+      orchestrator.replaceSourceRanges(id, [
+        { fromMs: 0, toMs: 5000, lines: [] },
+        { fromMs: 4000, toMs: 6000, lines: [] },
+      ]),
+    ).rejects.toMatchObject({ appError: { code: 'INVALID_EDIT' } });
   });
 
   it('refuses a project that does not exist, and writes nothing for it', async () => {

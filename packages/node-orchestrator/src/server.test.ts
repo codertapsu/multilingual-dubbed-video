@@ -170,8 +170,11 @@ describe('DELETE /projects/:id and /storage/projects-folder', () => {
     const res = await app.inject({ method: 'PUT', url: '/storage/projects-folder', payload: { root } });
     expect(res.statusCode).toBe(202);
     let info = res.json() as { moving?: unknown; projectsDir: string; lastError?: unknown };
-    for (let i = 0; i < 200 && info.moving; i++) {
-      await new Promise((r) => setTimeout(r, 10));
+    // Up to 10 s: 2 s was too short on a loaded Windows machine (the full suite
+    // beside a running production dub), where the move was still going.
+    const deadline = Date.now() + 10_000;
+    while (info.moving && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
       info = (await app.inject({ method: 'GET', url: '/storage/projects-folder' })).json() as typeof info;
     }
     expect(info).toMatchObject({ projectsDir: path.join(root, 'projects') });
@@ -221,14 +224,24 @@ describe('a series asked as a whole', () => {
     return { parent: parent.id, part: part.id, partJson: path.join(part.workspaceDir, 'project.json') };
   }
 
-  it('refuses a redo of a part-only step on the series itself, saying how', async () => {
+  it('refuses a costly redo on the series itself, saying how', async () => {
     const { parent } = await seriesWithOnePart();
-    const res = await app.inject({ method: 'POST', url: `/projects/${parent}/retry`, payload: { stepId: 'audio-mix' } });
+    const res = await app.inject({ method: 'POST', url: `/projects/${parent}/retry`, payload: { stepId: 'translation' } });
     expect(res.statusCode).toBe(400);
     const { error } = res.json() as { error: { code: string; message: string; remediation?: string } };
     expect(error.code).toBe('INVALID_EDIT');
     expect(error.message).toContain('series of 1 part(s)');
-    expect(error.remediation).toContain('start_dubbing on the part');
+    expect(error.remediation).toContain('start_dubbing on each part');
+  });
+
+  it('redoes the mix in every part that made one, and says why it leaves the others', async () => {
+    const { parent, part } = await seriesWithOnePart();
+    const res = await app.inject({ method: 'POST', url: `/projects/${parent}/retry`, payload: { stepId: 'audio-mix' } });
+    expect(res.statusCode).toBe(202);
+    // The part was never dubbed: nothing to redo, and nothing started.
+    expect((res.json() as { parts: unknown[] }).parts).toEqual([
+      { projectId: part, index: 1, left: 'has not made "audio-mix" yet: it uses the change when it gets there' },
+    ]);
   });
 
   it('applies settings to every idle part and says what it did with each', async () => {
@@ -239,6 +252,9 @@ describe('a series asked as a whole', () => {
     expect((res.json() as { parts: unknown[] }).parts).toEqual([{ projectId: part, index: 1, ok: true }]);
     const saved = JSON.parse(await fsp.readFile(partJson, 'utf8')) as { settings: { blurRegions?: unknown[] } };
     expect(saved.settings.blurRegions).toMatchObject(blur);
+    // The same change again: the part already had it, and says so.
+    const again = await app.inject({ method: 'PUT', url: `/projects/${parent}/settings?applyToParts=true`, payload: { blurRegions: blur } });
+    expect((again.json() as { parts: unknown[] }).parts).toEqual([{ projectId: part, index: 1, ok: true, unchanged: true }]);
   });
 });
 

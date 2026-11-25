@@ -497,6 +497,17 @@ export class VoicesComponent implements OnInit, OnDestroy {
     }
   }
 
+  /** Kept for one main character: casting never shares it or makes it a default (voices/mainOnly.ts). */
+  protected async setMainOnly(p: VoiceProfile, on: boolean): Promise<void> {
+    this.error.set(null);
+    try {
+      await this.ipc.renameVoiceProfile(p.id, { mainOnly: on });
+      await this.reload();
+    } catch (err) {
+      this.error.set(toAppError(err));
+    }
+  }
+
   protected async deleteProfile(p: VoiceProfile): Promise<void> {
     const ok = await this.confirm.confirm({
       title: this.i18n.instant('voices.my-delete-title', { name: p.name }),

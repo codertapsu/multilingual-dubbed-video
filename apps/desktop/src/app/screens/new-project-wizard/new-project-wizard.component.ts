@@ -16,6 +16,7 @@ import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 
 import { ActivityService, type ActivityTask } from '../../core/activity/activity.service';
+import { phraseText } from '../../core/activity/activity-logic';
 import type { LeaveWhileBusy } from '../../core/guards/leave-while-busy.guard';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { defaultSeriesAi, rememberSeriesAi } from '../../shared/series-ai';
@@ -59,10 +60,11 @@ import type {
 import type { PiperVoiceInfo, ProviderInfo, ProvidersResponse, RunPreflightProvider } from '../../core/models/setup';
 import type { DubPreset } from '../../core/models/download';
 import type { BrandAsset, SeriesAiOption } from '@videodubber/shared';
-import { continuedSeriesSettings, type SeriesListItem } from '@videodubber/shared';
+import { continuedSeriesSettings, isBuiltinPresetId, subtitleCheckOn, type SeriesListItem } from '@videodubber/shared';
 import { PartNameFieldComponent } from '../../shared/series/part-name-field.component';
 import { BrandingFormComponent } from '../../shared/branding/branding-form.component';
 import { PictureSetupComponent } from '../../shared/picture/picture-setup.component';
+import { WatermarkAutoComponent } from '../../shared/picture/watermark-auto.component';
 import { ConfirmService } from '../../shared/confirm-dialog/confirm.service';
 import { LanguageNamePipe, TranslatePipe, TranslateService, languageName } from '../../core/i18n';
 import { baseLanguage, describeVoice } from '../../shared/voice-library/voice-filter';
@@ -79,7 +81,11 @@ import {
   draftOf,
   draftOnLeave,
   draftSnapshot,
+  isNamedFolder,
   leaveWarningFor,
+  presetSeriesOf,
+  presetSplitsOver,
+  seriesDraftFromPreset,
   seriesRequestOf,
   type LeaveWarning,
 } from './wizard-form';
@@ -88,6 +94,8 @@ import {
 const SPEAKER_PACK = 'diarization-sherpa';
 /** Music & voice separation: the HTDemucs model pack, which brings its audio.cpp runtime. */
 const SEPARATION_PACK = 'separation-htdemucs';
+/** Reading burned-in subtitles (settings.useBurnedInSubtitles). */
+const OCR_PACK = 'ocr-rapid';
 
 /** Wizard step index. */
 type WizardStep = 1 | 2;
@@ -165,6 +173,7 @@ function defaultSettings(): ProjectSettings {
     BrandingFormComponent,
     PartNameFieldComponent,
     PictureSetupComponent,
+    WatermarkAutoComponent,
   ],
   templateUrl: './new-project-wizard.component.html',
   styleUrl: './new-project-wizard.component.scss',
@@ -282,6 +291,20 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   protected readonly separationInstalling = this.separationInstall.installing;
   protected readonly separationProgress = this.separationInstall.progress;
   protected readonly separationError = this.separationInstall.error;
+  /** The subtitle reader (the ocr-rapid pack): offered here / installed, installed from the form like speaker detection. */
+  protected readonly ocrOffered = computed(() => this.offeredPacks().has(OCR_PACK));
+  protected readonly ocrReady = computed(() => this.installedPacks().has(OCR_PACK));
+  private readonly ocrInstall = this.installState(OCR_PACK);
+  protected readonly ocrInstalling = this.ocrInstall.installing;
+  protected readonly ocrProgress = this.ocrInstall.progress;
+  protected readonly ocrError = this.ocrInstall.error;
+
+  /** Install the subtitle reader from the wizard, then choose the subtitles as the transcript. */
+  protected installOcr(): void {
+    void this.installPack(OCR_PACK, () => {
+      if (this.ocrReady()) this.patchSettings('useBurnedInSubtitles', true);
+    });
+  }
 
   /** Install speaker detection from the wizard (a small download), then tick it. */
   protected installSpeakers(): void {
@@ -518,6 +541,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   /** The transcript spot check (core/util/source-checks.ts): CJK speech only; on by default above 2 hours. */
   protected readonly spotCheckOffered = computed(() => spotCheckApplies(this.settings().sourceLanguage));
   protected readonly spotCheck = computed(() => spotCheckOn(this.settings().transcriptSpotCheck, this.mediaInfo()?.durationMs));
+  /** Speech-to-text against the video's own burned-in subtitles (on by default for Chinese, Japanese and Korean). */
+  protected readonly subtitleCheck = computed(() => subtitleCheckOn(this.settings().subtitleCoverageCheck, this.settings().sourceLanguage));
 
   /** Step 1 is valid once we have a video path (or videos to join) and distinct languages. */
   protected readonly step1Valid = computed(() => {
@@ -537,6 +562,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
       sourceLanguage: this.settings().sourceLanguage,
       targetLanguage: this.settings().targetLanguage,
       voiceDownloading: this.voiceDownloading(),
+      seriesWithoutAi: this.splitSeries() && this.seriesAiReady().length > 0 && !this.seriesAi(),
     }),
   );
 
@@ -623,6 +649,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   /** A later season: the series it continues ('' = a new series), and the total its cards say (0 = as many as there are). */
   protected readonly seriesContinues = signal(DEFAULT_SERIES.continues ?? '');
   protected readonly seriesTotal = signal(DEFAULT_SERIES.total ?? 0);
+  /** Joining files: one part per file, cut where each one begins. */
+  protected readonly seriesPerFile = signal(DEFAULT_SERIES.perFile ?? false);
   /** The series a new one can continue (GET /series). */
   protected readonly continuable = signal<SeriesListItem[]>([]);
   protected readonly continuedSeries = computed(() => this.continuable().find((s) => s.parentId === this.seriesContinues()) ?? null);
@@ -696,6 +724,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
       nameTemplate: this.seriesTemplate(),
       continues: this.seriesContinues(),
       total: this.seriesTotal(),
+      // Only joining files has files to cut at.
+      perFile: this.joinOn() && this.seriesPerFile(),
     };
   }
 
@@ -711,6 +741,7 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
     this.seriesTemplate.set(s.nameTemplate ?? '');
     this.seriesContinues.set(s.continues ?? '');
     this.seriesTotal.set(s.total ?? 0);
+    this.seriesPerFile.set(s.perFile ?? false);
   }
 
   /** The series settings the form asks for, or undefined when not splitting. */
@@ -720,6 +751,19 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
 
   // ---- presets ("Mẫu lồng tiếng", workspace/presetStore.ts) ----------------
   protected readonly presets = signal<DubPreset[]>([]);
+  /**
+   * The built-in presets (workspace/builtinPresets.ts): Highest quality,
+   * Balanced, Lowest cost, on this computer's engines only (a cloud AI runs
+   * only where the user chooses it). Picked like a preset; never deleted.
+   */
+  protected readonly builtinPresets = signal<DubPreset[]>([]);
+  protected readonly builtinChosen = computed(() => isBuiltinPresetId(this.presetId()));
+  /** The chosen built-in preset's trade-offs, in the reader's language. */
+  protected readonly builtinTradeoffs = computed(() => {
+    const chosen = this.builtinPresets().find((b) => b.id === this.presetId());
+    const t = (key: string, params?: Record<string, string | number>): string => this.translate.instant(key, params);
+    return (chosen?.builtin?.tradeoffs ?? []).map((n) => phraseText(n, t) ?? n.text);
+  });
   protected readonly presetId = signal('');
   protected readonly presetName = signal('');
   protected readonly savingPreset = signal(false);
@@ -728,6 +772,16 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   private readonly presetOutputDir = signal<string | undefined>(undefined);
   /** The folder a preset saved from this form would keep. */
   protected readonly presetFolder = computed(() => this.presetOutputDir() ?? readLastOutputDir() ?? null);
+  /** The folder is named after each project ("D:\\Dubs\\{series}"): said under it. */
+  protected readonly presetFolderNamed = computed(() => isNamedFolder(this.presetFolder()));
+  /** The placeholder the hint names (the i18n files keep no single braces). */
+  protected readonly namedFolderToken = '{series}';
+  protected readonly chosenPreset = computed(() => this.presets().find((p) => p.id === this.presetId()) ?? null);
+  /** The chosen preset's series of parts for long videos, in numbers for its hint. */
+  protected readonly presetSeriesHint = computed(() => {
+    const block = this.chosenPreset()?.series;
+    return block ? { over: presetSplitsOver(block), min: block.minMinutes ?? DEFAULT_SERIES.min, max: block.maxMinutes ?? DEFAULT_SERIES.max } : null;
+  });
 
   /**
    * Presets are among the first questions when the form opens with some to
@@ -738,7 +792,26 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
   protected readonly presetsUpFront = signal(false);
   private presetsLoaded = false;
 
+  /** A built-in preset's name in the reader's language. */
+  protected builtinName(p: DubPreset): string {
+    const key = `wizard.builtin.name-${p.builtin?.kind ?? ''}`;
+    const name = this.translate.instant(key);
+    return name === key ? p.name : name;
+  }
+
+  private async loadBuiltinPresets(): Promise<DubPreset[]> {
+    const s = this.settings();
+    try {
+      const list = await this.ipc.listBuiltinPresets(s.sourceLanguage ?? '', s.targetLanguage || 'vi-VN');
+      this.builtinPresets.set(list);
+      return list;
+    } catch {
+      return this.builtinPresets(); /* none here: the picker offers the user's presets only */
+    }
+  }
+
   private async loadPresets(): Promise<void> {
+    void this.loadBuiltinPresets();
     try {
       this.presets.set(await this.ipc.listPresets());
       if (!this.presetsLoaded) this.presetsUpFront.set(this.presets().length > 0);
@@ -748,10 +821,30 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
     }
   }
 
+  /**
+   * A built-in preset over the form as it is: its engines and how much work
+   * each step does, worked out for the form's languages (they stay); never
+   * the subtitles, voice or look the user chose. Nothing to name or delete.
+   */
+  private async applyBuiltinPreset(id: string): Promise<void> {
+    const fresh = (await this.loadBuiltinPresets()).find((b) => b.id === id);
+    if (!fresh || this.presetId() !== id) return;
+    this.presetOutputDir.set(undefined);
+    this.presetName.set('');
+    this.settings.update((s) => ({ ...s, ...fresh.settings, sourceLanguage: s.sourceLanguage, targetLanguage: s.targetLanguage }));
+    this.syncProcessingMode();
+    this.stopPreview();
+    void this.loadVoicesForTarget();
+  }
+
   /** Fill the form from a preset: its languages and choices over the form as it is. */
   protected applyPreset(id: string): void {
     this.presetId.set(id);
     this.presetNotice.set(null);
+    if (isBuiltinPresetId(id)) {
+      void this.applyBuiltinPreset(id);
+      return;
+    }
     const preset = this.presets().find((p) => p.id === id);
     if (!preset) {
       this.presetOutputDir.set(undefined);
@@ -765,6 +858,8 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
     }));
     this.presetOutputDir.set(preset.outputDir);
     this.presetName.set(preset.name);
+    // Its series of parts for long videos: the choices filled in, this video's split left as it was.
+    if (preset.series) this.setSeries(seriesDraftFromPreset(this.seriesState(), preset.series, this.seriesAiReady().map((o) => o.id)));
     this.syncProcessingMode();
     this.stopPreview();
     void this.loadVoicesForTarget();
@@ -780,8 +875,10 @@ export class NewProjectWizardComponent implements OnInit, OnDestroy, LeaveWhileB
       const { sourceLanguage, targetLanguage, ...choices } = this.settings();
       const same = this.presets().find((p) => p.name.trim().toLowerCase() === name.toLowerCase());
       const folder = this.presetFolder();
+      // The form's series of parts when it splits; else the preset's own, kept.
+      const series = presetSeriesOf(this.seriesState(), same?.series ?? this.chosenPreset()?.series);
       const saved = await this.ipc.savePreset(
-        { name, targetLanguage, sourceLanguage, settings: choices, ...(folder ? { outputDir: folder } : {}) },
+        { name, targetLanguage, sourceLanguage, settings: choices, ...(folder ? { outputDir: folder } : {}), ...(series ? { series } : {}) },
         same?.id,
       );
       await this.loadPresets();

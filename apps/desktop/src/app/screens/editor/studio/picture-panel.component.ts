@@ -1,15 +1,21 @@
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import type { PictureDetection, PictureFrame, ProjectSettings, SubtitleStyle } from '@videodubber/shared';
+import type { PictureDetection, PictureFrame, ProjectSettings, SubtitleStyle, WatermarkAutoSettings } from '@videodubber/shared';
 
 import { IpcService } from '../../../core/ipc/ipc.service';
 import { TranslatePipe, TranslateService } from '../../../core/i18n';
 import { toAppError } from '../../../core/state/project.store';
 import { ConfirmService } from '../../../shared/confirm-dialog/confirm.service';
 import { PictureEditorComponent } from '../../../shared/picture/picture-editor.component';
+import { WatermarkAutoComponent } from '../../../shared/picture/watermark-auto.component';
 import { applyDetection, coverPatch, percent, pictureChanged, toSettingsRegions, type EditorRegion } from '../../../shared/picture/picture-geometry';
 import { StudioStore } from './studio.store';
+
+/** The automatic blur as one comparable value ('' = off). */
+function autoKey(a: WatermarkAutoSettings | undefined): string {
+  return a ? `${a.mode}:${a.strength ?? ''}` : '';
+}
 
 /**
  * The editor's picture options: watermarks hidden in the render and the band
@@ -22,7 +28,7 @@ import { StudioStore } from './studio.store';
 @Component({
   selector: 'vd-picture-panel',
   standalone: true,
-  imports: [FormsModule, TranslatePipe, PictureEditorComponent],
+  imports: [FormsModule, TranslatePipe, PictureEditorComponent, WatermarkAutoComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="panel-block stack">
@@ -36,6 +42,7 @@ import { StudioStore } from './studio.store';
       @if (locked()) {
         <p class="hint warn-text">{{ 'picture.running-lock' | translate }}</p>
       }
+      <vd-watermark-auto [value]="auto()" [series]="isSeries()" [disabled]="saving() || locked()" (changed)="onAuto($event)" />
 
       <div class="row">
         <button type="button" class="btn btn-sm" (click)="detect()" [disabled]="detecting()">
@@ -147,17 +154,28 @@ export class PicturePanelComponent implements OnInit, OnDestroy {
   /** The draft: what the frame shows and Save writes. */
   protected readonly regions = signal<EditorRegion[]>([]);
   protected readonly style = signal<SubtitleStyle | undefined>(undefined);
+  /** "Find the watermark and blur it by itself", as the draft holds it. */
+  protected readonly auto = signal<WatermarkAutoSettings | undefined>(undefined);
 
   private readonly saved = computed(() => {
     const s = this.store.settings();
-    return { regions: (s?.blurRegions ?? []) as EditorRegion[], style: s?.burnSubtitleStyle };
+    return { regions: (s?.blurRegions ?? []) as EditorRegion[], style: s?.burnSubtitleStyle, auto: s?.watermarkAuto };
   });
   /** Changes not saved yet (the leave-page prompt names them). */
-  readonly dirty = computed(() => pictureChanged({ regions: this.regions(), style: this.style() }, this.saved()));
+  readonly dirty = computed(() => this.dirtyAgainst(this.saved()));
   protected readonly burnedIn = computed(() => this.store.settings()?.subtitleExportMode === 'burned-in');
-  /** Settings cannot change under a dub that runs or waits in the queue. */
-  protected readonly locked = computed(() => this.store.dubRunning() || this.store.project()?.status === 'queued');
   protected readonly isSeries = computed(() => this.store.project()?.series?.role === 'parent');
+  /**
+   * The picture is part of the render: it may change while a dub runs until
+   * the dub starts mixing, and always on a series being analysed (its parts are
+   * made from it). Never while the dub waits in the queue (the server refuses).
+   */
+  protected readonly locked = computed(() => {
+    if (this.store.project()?.status === 'queued') return true;
+    if (!this.store.dubRunning() || this.isSeries()) return false;
+    const status = (id: string) => this.store.pipeline()?.steps.find((s) => s.id === id)?.status;
+    return !(status('audio-mix') === 'pending' && status('render') === 'pending');
+  });
   protected readonly canRenderAgain = computed(
     () => !this.isSeries() && this.store.pipeline()?.steps.some((s) => s.id === 'render' && s.status === 'completed') === true,
   );
@@ -176,6 +194,7 @@ export class PicturePanelComponent implements OnInit, OnDestroy {
         if (this.edited) return;
         this.regions.set(saved.regions.map((r) => ({ ...r })));
         this.style.set(saved.style);
+        this.auto.set(saved.auto);
       });
     });
   }
@@ -193,8 +212,8 @@ export class PicturePanelComponent implements OnInit, OnDestroy {
     this.destroyed = true;
   }
 
-  private dirtyAgainst(saved: { regions: EditorRegion[]; style: SubtitleStyle | undefined }): boolean {
-    return pictureChanged({ regions: this.regions(), style: this.style() }, saved);
+  private dirtyAgainst(saved: { regions: EditorRegion[]; style: SubtitleStyle | undefined; auto: WatermarkAutoSettings | undefined }): boolean {
+    return pictureChanged({ regions: this.regions(), style: this.style() }, saved) || autoKey(this.auto()) !== autoKey(saved.auto);
   }
 
   protected onRegions(regions: EditorRegion[]): void {
@@ -205,6 +224,11 @@ export class PicturePanelComponent implements OnInit, OnDestroy {
   protected onStyle(style: SubtitleStyle): void {
     this.edited = true;
     this.style.set(style);
+  }
+
+  protected onAuto(auto: WatermarkAutoSettings | undefined): void {
+    this.edited = true;
+    this.auto.set(auto);
   }
 
   protected async loadFrame(atMs?: number): Promise<void> {
@@ -287,6 +311,8 @@ export class PicturePanelComponent implements OnInit, OnDestroy {
       blurRegions: toSettingsRegions(this.regions()),
       // Unset band fields go as null, so the saved style loses them too.
       burnSubtitleStyle: coverPatch(this.style()) as unknown as SubtitleStyle,
+      // Off goes as null, so the saved setting is removed.
+      watermarkAuto: (this.auto() ?? null) as unknown as WatermarkAutoSettings,
     } satisfies Partial<ProjectSettings>;
     try {
       if (this.isSeries() && this.applyToParts()) {
@@ -308,6 +334,7 @@ export class PicturePanelComponent implements OnInit, OnDestroy {
       const saved = this.saved();
       this.regions.set(saved.regions.map((r) => ({ ...r, ...this.proposalInfo(r) })));
       this.style.set(saved.style);
+      this.auto.set(saved.auto);
     } catch (err) {
       this.store.error.set(toAppError(err));
     } finally {

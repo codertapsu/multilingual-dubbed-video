@@ -15,12 +15,14 @@
  *   - `raw-segment`     — translation-specialized models (TranslateGemma,
  *     Seed-X): one source line per request, plain-text reply.
  */
+import os from 'node:os';
 import {
   AppErrorException,
   normalizeLanguageCode,
   type TranslationResult,
   type TranslationResultSegment,
 } from '@videodubber/shared';
+import { sendJson, type RawWorkerResponse } from '../workerHttp.js';
 import type { CancellableTranslationProvider } from '../types.js';
 import {
   buildRawTranslationPrompt,
@@ -86,36 +88,77 @@ async function mapWithConcurrency<I, O>(
 /** Minimal POST-JSON seam (overridable in tests). */
 export type LocalPostJson = <T>(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal) => Promise<T>;
 
+/**
+ * Over node:http, like the workers (providers/workerHttp.ts), never the global
+ * fetch: undici's hidden ~5-minute headers timeout cut off a model that was
+ * alive but slow, and "fetch failed" was then reported as an engine that is
+ * not there, with advice to switch to Argos. TranslateGemma 27B at 0.4-0.8
+ * tokens/s, on a computer with 8 % free memory while other parts were
+ * rendered, answers a batch in more than five minutes (claude-dubber,
+ * Xuyên Không part 16, 2026-11-24). Our own per-request timeout (complete())
+ * is the only deadline.
+ */
 async function defaultPostJson<T>(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal): Promise<T> {
-  let res: Response;
+  let raw: RawWorkerResponse;
   try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify(body),
-      signal,
-    });
+    raw = await sendJson('POST', url, JSON.stringify(body), signal ?? new AbortController().signal, headers);
   } catch (err) {
-    // A THROWN fetch (connection refused / DNS / reset / abort) means the daemon
-    // isn't reachable — surface that clearly instead of a raw "fetch failed"
-    // (which the runner would otherwise map to UNKNOWN).
     if (signal?.aborted) {
       throw new AppErrorException('CANCELLED', 'Local LLM request was cancelled.');
     }
-    throw new AppErrorException('ENGINE_UNAVAILABLE', `Local LLM is not reachable at ${url}.`, {
-      cause: err instanceof Error ? err.message : String(err),
-      remediation:
-        "Switch this project's Translation provider to Argos (offline, nothing to install), or install " +
-        'TranslateGemma (built-in) from Settings → Engines. (Advanced: run your own Ollama with `ollama serve` + `ollama pull <model>`.)',
-    });
+    throw localModelUnreachable(url, err);
   }
-  if (!res.ok) {
-    throw new AppErrorException('ENGINE_UNAVAILABLE', `Local LLM returned HTTP ${res.status}.`, {
-      cause: (await res.text().catch(() => '')).slice(0, 300),
+  if (!raw.ok) {
+    throw new AppErrorException('ENGINE_UNAVAILABLE', `Local LLM returned HTTP ${raw.status}.`, {
+      cause: raw.text.slice(0, 300),
       remediation: 'Ensure the local LLM (Ollama or the llama.cpp engine pack) is running and the model is pulled.',
     });
   }
-  return (await res.json()) as T;
+  try {
+    return JSON.parse(raw.text) as T;
+  } catch {
+    throw new AppErrorException('ENGINE_UNAVAILABLE', 'The local translation model answered with something that is not JSON.', { cause: raw.text.slice(0, 300) });
+  }
+}
+
+/** The share of memory free now (os), for {@link overloadNote}. */
+function freeMemoryShare(): number {
+  return os.freemem() / Math.max(1, os.totalmem());
+}
+
+/**
+ * What to add to a local model's failure when the computer was short of
+ * memory at the time (under 15 % free, as diagnostics/health.ts counts
+ * pressure): the model was there, the machine was not. Pure.
+ */
+export function overloadNote(freeShare: number): string {
+  return freeShare < 0.15
+    ? ` The computer was short of memory (${Math.round(freeShare * 100)} % free): a large model slows to a crawl, or stops answering, when other work competes for memory (other dubs, renders).`
+    : '';
+}
+
+/**
+ * A local model that could not be reached, worded by what the connection
+ * said: refused = not running; anything else = it stopped answering (with the
+ * memory there was). Pure apart from the memory share it is given.
+ */
+export function localModelUnreachable(url: string, err: unknown, freeShare = freeMemoryShare()): AppErrorException {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code ?? '';
+  const why = err instanceof Error ? err.message : String(err);
+  if (code === 'ECONNREFUSED') {
+    return new AppErrorException('ENGINE_UNAVAILABLE', `The local translation model is not running at ${url}.`, {
+      cause: why,
+      remediation:
+        "VideoDubber starts it for each translation step: run the step again. If it keeps failing, Help shows the engine's last output. (With your own Ollama: `ollama serve`.)",
+    });
+  }
+  const note = overloadNote(freeShare);
+  return new AppErrorException('ENGINE_UNAVAILABLE', `The local translation model stopped answering at ${url} (${code || why}).${note}`, {
+    cause: why,
+    remediation: note
+      ? 'Let the other work finish (or pause it), then run the step again; or choose a smaller translation model in Settings → Engines.'
+      : "Run the step again: VideoDubber restarts the model. If it keeps failing, Help shows the engine's last output.",
+  });
 }
 
 /**
@@ -513,10 +556,15 @@ export class LocalLlmTranslationProvider implements CancellableTranslationProvid
       // cancel, it failed a translation step whose lines were all done, with
       // "cancelled" as the reason.
       if (timeout.aborted && !signal?.aborted) {
+        const note = overloadNote(freeMemoryShare());
         throw new AppErrorException(
           'WORKER_TIMEOUT',
-          `The local model did not answer within ${Math.round(this.opts.timeoutMs / 60_000)} min.`,
-          { remediation: 'Restart the app to restart the model, or pick a smaller model in Settings -> Engines.' },
+          `The local model did not answer within ${Math.round(this.opts.timeoutMs / 60_000)} min.${note}`,
+          {
+            remediation: note
+              ? 'Let the other work finish (or pause it), then run the step again; or pick a smaller model in Settings -> Engines.'
+              : 'Restart the app to restart the model, or pick a smaller model in Settings -> Engines.',
+          },
         );
       }
       throw err;

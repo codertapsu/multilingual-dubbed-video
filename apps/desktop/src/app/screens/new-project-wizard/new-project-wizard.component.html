@@ -34,8 +34,16 @@
               @for (p of presets(); track p.id) {
                 <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage | languageName }})</option>
               }
+              <!-- On this computer's engines only: a cloud AI runs only where the user chooses it. -->
+              @if (builtinPresets().length > 0) {
+                <optgroup [label]="'wizard.builtin-group' | translate">
+                  @for (b of builtinPresets(); track b.id) {
+                    <option [value]="b.id">{{ builtinName(b) }}</option>
+                  }
+                </optgroup>
+              }
             </select>
-            @if (presetId()) {
+            @if (presetId() && !builtinChosen()) {
               <button type="button" class="btn btn-ghost btn-sm" (click)="deletePreset()">
                 {{ 'wizard.preset-delete' | translate }}
               </button>
@@ -63,6 +71,23 @@
           </div>
           @if (presetFolder(); as folder) {
             <p class="hint muted">{{ 'wizard.preset-folder' | translate: { folder: folder } }}</p>
+            @if (presetFolderNamed()) {
+              <p class="hint muted">{{ 'wizard.preset-folder-named' | translate: { token: namedFolderToken } }}</p>
+            }
+          }
+          @if (presetSeriesHint(); as s) {
+            <p class="hint muted">{{ 'wizard.preset-series' | translate: s }}</p>
+            @if (!splitSeries()) {
+              <p class="hint muted">{{ 'wizard.preset-series-kept' | translate }}</p>
+            }
+          }
+          <!-- A built-in preset says what it gains and what it costs on this computer. -->
+          @if (builtinTradeoffs().length > 0) {
+            <ul class="hint muted builtin-tradeoffs">
+              @for (line of builtinTradeoffs(); track $index) {
+                <li>{{ line }}</li>
+              }
+            </ul>
           }
           @if (presetNotice(); as n) {
             <p class="hint">{{ n }}</p>
@@ -212,6 +237,42 @@
             </label>
             <p class="hint muted">{{ 'wizard.use-site-subtitles-hint' | translate }}</p>
 
+            <!-- The video's own burned-in subtitles as its transcript (the
+                 ocr-rapid pack, installed right here when wanted). -->
+            @if (ocrOffered()) {
+              <label class="check-row">
+                <input
+                  type="checkbox"
+                  name="useBurnedInSubtitles"
+                  [ngModel]="settings().useBurnedInSubtitles === true"
+                  (ngModelChange)="patchSettings('useBurnedInSubtitles', $event)"
+                  [disabled]="!ocrReady()"
+                />
+                <span>{{ 'wizard.use-burned-in' | translate }}</span>
+              </label>
+              <p class="hint muted">{{ 'wizard.use-burned-in-hint' | translate }}</p>
+              @if (!ocrReady()) {
+                @if (ocrInstalling()) {
+                  <p class="hint" role="status">
+                    {{ 'wizard.ocr-installing' | translate }}
+                    @if (ocrProgress() !== null) {
+                      <span class="mono">{{ ocrProgress() }}%</span>
+                    }
+                  </p>
+                } @else {
+                  <p class="hint">
+                    <button type="button" class="btn btn-sm" (click)="installOcr()">{{ 'wizard.ocr-install' | translate }}</button>
+                  </p>
+                }
+              }
+              @if (ocrError(); as e) {
+                <p class="hint warn-text" role="alert">{{ 'wizard.pack-install-failed' | translate }}</p>
+                @if (e.message) {
+                  <p class="hint muted">{{ e.message }}</p>
+                }
+              }
+            }
+
             <fieldset>
               <legend>{{ 'wizard.subtitles' | translate }}</legend>
               <div class="radio-list" role="radiogroup" [attr.aria-label]="'wizard.subtitles-aria' | translate">
@@ -238,6 +299,11 @@
             <fieldset>
               <legend>{{ 'picture.heading' | translate }}</legend>
               <p class="hint muted">{{ 'picture.intro' | translate }}</p>
+              <vd-watermark-auto
+                [value]="settings().watermarkAuto"
+                [series]="splitSeries()"
+                (changed)="patchSettings('watermarkAuto', $event)"
+              />
               <vd-picture-setup
                 [videoPath]="inputVideoPath()"
                 [regions]="settings().blurRegions ?? []"
@@ -468,6 +534,20 @@
                   </span>
                 </label>
               }
+              <!-- The transcript against the video's own burned-in subtitles
+                   (on by default for Chinese, Japanese and Korean video). -->
+              <label class="radio-row">
+                <input
+                  type="checkbox"
+                  name="subtitleCoverageCheck"
+                  [ngModel]="subtitleCheck()"
+                  (ngModelChange)="patchSettings('subtitleCoverageCheck', $event)"
+                />
+                <span class="radio-body">
+                  <span class="radio-title">{{ 'source-checks.subtitle-check' | translate }}</span>
+                  <span class="hint">{{ 'source-checks.subtitle-check-hint' | translate }}</span>
+                </span>
+              </label>
               <label class="radio-row">
                 <input
                   type="checkbox"
@@ -527,6 +607,8 @@
                     <label class="stack-sm grow">
                       <span class="label">{{ 'series.ai' | translate }}</span>
                       <select name="seriesAi" [ngModel]="seriesAi()" (ngModelChange)="seriesAi.set($event)">
+                        <!-- No cloud AI is picked for the user: the built-in model, or their choice. -->
+                        <option value="" disabled>{{ 'series.ai-choose' | translate }}</option>
                         @for (o of seriesAiReady(); track o.id) {
                           <option [value]="o.id">{{ o.label }}{{ o.viaMotherClaude ? ' (Mother Claude)' : '' }}</option>
                         }
@@ -541,6 +623,14 @@
                     <input type="checkbox" name="seriesAuto" [ngModel]="seriesAuto()" (ngModelChange)="seriesAuto.set($event)" />
                     <span>{{ 'series.auto-start' | translate }}</span>
                   </label>
+                  <!-- Joining files: one part per file, where each one begins. -->
+                  @if (joinOn()) {
+                    <label class="check-row">
+                      <input type="checkbox" name="seriesPerFile" [ngModel]="seriesPerFile()" (ngModelChange)="seriesPerFile.set($event)" />
+                      <span>{{ 'series.per-file' | translate }}</span>
+                    </label>
+                    <p class="hint muted">{{ 'series.per-file-hint' | translate }}</p>
+                  }
                   <p class="hint muted">{{ 'series.wizard-how' | translate }}</p>
                   <!-- A later season of a series already dubbed: its name, numbers and voices carry on. -->
                   @if (continuable().length > 0) {
@@ -733,6 +823,21 @@
                       {{ 'wizard.review-pause-hint' | translate }}
                     </span>
                   </div>
+                  <!-- Lines still failing the translation checks stop the dub before voicing (H7). -->
+                  <div class="field">
+                    <label class="checkbox-row">
+                      <input
+                        type="checkbox"
+                        name="holdFlaggedLines"
+                        [ngModel]="settings().holdFlaggedLines ?? false"
+                        (ngModelChange)="patchSettings('holdFlaggedLines', $event)"
+                      />
+                      <span>{{ 'wizard.hold-flagged' | translate }}</span>
+                    </label>
+                    <span class="hint">
+                      {{ 'wizard.hold-flagged-hint' | translate }}
+                    </span>
+                  </div>
                   <div class="field">
                     <label for="provTts">{{ 'wizard.tts' | translate }}</label>
                     <select
@@ -909,6 +1014,9 @@
             }
             @case ('voice') {
               <span id="continueWhy" class="hint warn-text" role="status">{{ 'wizard.continue-why.voice' | translate }}</span>
+            }
+            @case ('series-ai') {
+              <span id="continueWhy" class="hint warn-text" role="status">{{ 'wizard.continue-why.series-ai' | translate }}</span>
             }
             @default {
               <span class="hint">{{ 'wizard.workspace-note' | translate }}</span>

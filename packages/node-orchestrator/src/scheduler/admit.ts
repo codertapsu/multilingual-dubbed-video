@@ -81,6 +81,14 @@ export interface AdmissionContext {
   externalHeavyOwner?: string;
   /** Light-lane slots (default {@link LIGHT_LANE_SLOTS}). */
   lightSlots?: number;
+  /**
+   * The computer is under pressure now (diagnostics/health.ts: under 15 %
+   * free memory, or the app stalling): a render then waits for the full dub
+   * running beside it. A render beside part 16's dub took the 8 % of memory
+   * TranslateGemma 27B needed, which slowed to 0.4-0.8 tokens/s and failed
+   * (claude-dubber, 2026-11-24).
+   */
+  pressure?: boolean;
 }
 
 /**
@@ -127,7 +135,12 @@ export function decideAdmissions(
   for (const c of candidates) {
     // Mix and render only: its own lane, never behind the budget's reservation.
     if (c.lightOnly && !c.needsHeavyEngine) {
-      if (lightRunning < (ctx.lightSlots ?? LIGHT_LANE_SLOTS)) {
+      if (ctx.pressure === true && running.some((r) => !r.lightOnly)) {
+        held.set(c.projectId, {
+          reason: 'pressure',
+          message: 'Waiting: the computer is short of memory while a dub runs. The render starts when that dub finishes.',
+        });
+      } else if (lightRunning < (ctx.lightSlots ?? LIGHT_LANE_SLOTS)) {
         start.push(c.projectId);
         lightRunning += 1;
       } else {

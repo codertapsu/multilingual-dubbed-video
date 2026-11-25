@@ -226,7 +226,7 @@ describe('join tools', () => {
     expect(r.text).toContain('get_join(projectId="proj_1", waitSeconds=50); the dub starts by itself once the videos are joined.');
   });
 
-  it('defaults a series to Claude through Mother Claude, as create_project does', async () => {
+  it('names no AI for a series unless asked: the app plans with the built-in model (a cloud AI only by name)', async () => {
     fake.routes.set('GET /series/ai-options', () => [
       { id: 'openai-translate', ready: true },
       { id: 'anthropic-translate', ready: true, viaMotherClaude: true },
@@ -238,10 +238,18 @@ describe('join tools', () => {
       sourceLanguage: 'zh',
       series: { minMinutes: 30, maxMinutes: 40 },
     });
-    expect(posted('/projects/join')).toMatchObject({
-      series: { minMinutes: 30, maxMinutes: 40, aiProviderId: 'anthropic-translate', recapSec: 4, autoStart: true },
-    });
+    const body = posted('/projects/join') as { series: Record<string, unknown> };
+    expect(body.series).toEqual({ minMinutes: 30, maxMinutes: 40, recapSec: 4, autoStart: true });
     expect(r.text).toContain('Series: autoStart=true.');
+    // Named, it is sent as named.
+    await call('join_videos', {
+      videoPaths: files.map((f) => f.path),
+      targetLanguage: 'vi-VN',
+      sourceLanguage: 'zh',
+      series: { minMinutes: 30, maxMinutes: 40, ai: 'anthropic' },
+    });
+    const last = fake.calls.filter((c) => c.method === 'POST' && c.path === '/projects/join').at(-1)!.body as { series: Record<string, unknown> };
+    expect(last.series).toMatchObject({ aiProviderId: 'anthropic' });
   });
 
   it('get_join waits for the end; a failed join says why and how to retry', async () => {

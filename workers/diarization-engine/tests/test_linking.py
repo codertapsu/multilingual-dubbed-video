@@ -108,9 +108,11 @@ def test_a_chunk_keeps_apart_what_it_heard_as_two_people() -> None:
     # Heard again in other chunks, alone: still two people.
     again = together + [item(1, 0, a, sec=30), item(2, 0, b, sec=30)]
     assert link_speakers(again, link_distance=0.35, cannot_link_sim=0.78).labels == [0, 1, 0, 1]
-    # One of them too brief for the chunk's verdict to count: they merge.
-    brief = [item(0, 0, a, sec=30), item(0, 1, b, sec=10)]
-    assert link_speakers(brief, link_distance=0.35, cannot_link_sim=0.78).labels == [0, 0]
+    # A minor voice (10 s) counts as much once its print can be trusted (3 s of
+    # clean speech): it stays apart. Only 15 s or more used to count, and in
+    # 《反相之地》 a main voice took in the small voices of chunk after chunk.
+    brief = [item(0, 0, a, sec=30), item(0, 1, b, sec=10, print_sec=4.0)]
+    assert link_speakers(brief, link_distance=0.35, cannot_link_sim=0.78).labels == [0, 1]
     # Near-identical prints in one chunk are the diarizer splitting one voice: merged.
     split = [item(0, 0, a, sec=30), item(0, 1, alike(a, 0.9, 1), sec=30)]
     assert link_speakers(split, link_distance=0.35, cannot_link_sim=0.78).labels == [0, 0]
@@ -128,6 +130,36 @@ def test_small_prints_join_the_nearest_group_only_when_close_enough() -> None:
     res = link_speakers(items, link_distance=0.35, cannot_link_sim=0.78)
     assert res.labels == [0, 1, 0, 2, 3]
     assert [s.sec for s in res.speakers] == [65, 40, 3, 2]
+
+
+def test_a_short_print_never_joins_a_group_holding_a_speaker_of_its_own_chunk() -> None:
+    a, b = basis(0), basis(1)
+    items = [
+        item(0, 0, a, sec=60),
+        item(1, 0, alike(a, 0.95, 2), sec=60),
+        item(2, 0, alike(a, 0.55, 3), sec=40),  # not alike enough to link to a
+        # Chunk 0's diarizer heard this apart from its main voice: never into that group,
+        # though it is nearest; the next group close enough takes it (chunk 2's).
+        item(0, 1, alike(a, 0.62, 4), sec=4, print_sec=1.0),
+        item(1, 1, b, sec=3, print_sec=1.0),  # far from everything: on its own
+    ]
+    res = link_speakers(items, link_distance=0.35, cannot_link_sim=0.78)
+    assert res.labels[:3] == [0, 0, 1]
+    assert res.labels[3] != res.labels[0]
+    assert res.labels[4] not in (res.labels[0], res.labels[2])
+
+
+def test_past_the_cap_a_speaker_merges_where_it_shares_no_chunk() -> None:
+    man = basis(0)
+    other = alike(man, 0.5, 1)
+    items = [
+        item(0, 0, man, sec=600, f0=110.0, low=0.9),
+        item(1, 0, other, sec=400, f0=115.0, low=0.9),
+        # A third man, nearest the first by print, but heard beside him in chunk 0.
+        item(0, 1, alike(man, 0.7, 2), sec=100, f0=120.0, low=0.9),
+    ]
+    capped = link_speakers(items, max_speakers=2, link_distance=0.2, cannot_link_sim=0.95)
+    assert capped.labels == [0, 1, 1]
 
 
 def test_a_confident_man_and_woman_never_link() -> None:

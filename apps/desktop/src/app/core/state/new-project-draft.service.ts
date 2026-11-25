@@ -22,6 +22,8 @@ export interface DraftSeries {
   continues?: string;
   /** The total the title cards say (0 = as many as there are). */
   total?: number;
+  /** Joining files: one part per file (absent in drafts kept before 0.19.0). */
+  perFile?: boolean;
 }
 
 /** What the New project form held when the user left it. */

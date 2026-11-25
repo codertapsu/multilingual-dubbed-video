@@ -79,6 +79,24 @@ describe('dub runs as activity', () => {
     expect(reg.get(entry!.id)?.state).toBe('done');
   });
 
+  it('gives the time left from the run\'s own pace, and every text as a phrase the app translates', () => {
+    const reg = new ActivityRegistry();
+    let now = 1_000_000;
+    const runs = new DubRunTracker(reg, () => now);
+    runs.scheduled({ id: 'p2', name: 'Part 2' }, { queued: false });
+    const [entry] = reg.list({ projectId: 'p2' });
+    expect(entry).toMatchObject({ titlePhrase: { key: 'activity.text.dub-run', params: { name: 'Part 2' } }, messagePhrase: { key: 'activity.text.starting' } });
+    // Resumed at 60 %: the estimate counts only what this run did.
+    runs.onEvent('p2', state({ status: 'running', currentStep: 'tts', progressPercent: 60 }));
+    expect(reg.get(entry!.id)?.etaSec).toBeUndefined();
+    now += 100_000;
+    runs.onEvent('p2', state({ status: 'running', currentStep: 'tts', progressPercent: 70 }));
+    // 10 points in 100 s: 30 points left take 300 s.
+    expect(reg.get(entry!.id)).toMatchObject({ etaSec: 300, messagePhrase: { key: 'opt.step.tts' } });
+    runs.onEvent('p2', state({ status: 'paused', currentStep: 'tts', pausedStep: 'tts', progressPercent: 70 }));
+    expect(reg.get(entry!.id)).toMatchObject({ state: 'cancelled', messagePhrase: { key: 'activity.text.paused-at', params: { stepKey: 'opt.step.tts' } } });
+  });
+
   it('says a render is a render, a pause a pause, and a review stop a stop for the user', () => {
     const reg = new ActivityRegistry();
     const runs = new DubRunTracker(reg);

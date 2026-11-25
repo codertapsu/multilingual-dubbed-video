@@ -49,6 +49,7 @@ export interface EngineFamilyView {
  */
 export const FAMILY_ORDER: readonly string[] = [
   'whisper',
+  'subtitle-reading',
   'translategemma',
   'gemma-chat',
   'llama-cpp',
@@ -96,7 +97,9 @@ const PROVIDER_FAMILY: Readonly<Record<string, string>> = {
 /** The page a pack's job belongs on. */
 export function pageForKind(kind: EngineKind): EnginePageId {
   switch (kind) {
+    // The video's own subtitles read as its transcript (ocr) go on speech-to-text's page.
     case 'stt':
+    case 'ocr':
       return 'stt';
     case 'translation':
       return 'translation';

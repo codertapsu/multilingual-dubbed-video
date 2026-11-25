@@ -1,0 +1,27 @@
+[project]
+name = "vd-ocr"
+version = "0.1.0"
+description = "VideoDubber subtitle reader (RapidOCR / PP-OCRv4) for the optional ocr-rapid engine pack"
+requires-python = ">=3.10"
+# Runtime deps come from the engine pack's uv venv (the orchestrator's
+# uvRequirements.ts 'ocr-rapid'); this package is loaded from bundled source via
+# PYTHONPATH, not pip-installed. Listed for standalone dev only.
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+engine = ["rapidocr-onnxruntime==1.4.4"]
+dev = [
+  "pytest>=8.0",
+  "httpx2>=2.16,<3",  # Starlette TestClient
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["vd_ocr"]

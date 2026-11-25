@@ -61,6 +61,16 @@ export interface EngineInstallerDeps {
   platform?: NodeJS.Platform;
 }
 
+/**
+ * Whether a download is the artifact pinned: its checksum, or one of the
+ * others measured to be the same content (`alsoSha256`: an upstream re-upload).
+ * Pure.
+ */
+export function checksumMatches(artifact: Pick<EnginePackArtifact, 'sha256' | 'alsoSha256'>, digest: string): boolean {
+  const got = digest.toLowerCase();
+  return [artifact.sha256, ...(artifact.alsoSha256 ?? [])].some((h) => typeof h === 'string' && h.length > 0 && h.toLowerCase() === got);
+}
+
 export class EngineInstaller {
   private running = new Set<string>();
 
@@ -257,7 +267,7 @@ export class EngineInstaller {
 
     if (artifact.sha256) {
       const digest = hash.digest('hex');
-      if (digest.toLowerCase() !== artifact.sha256.toLowerCase()) {
+      if (!checksumMatches(artifact, digest)) {
         await fsp.rm(tmp, { force: true }).catch(() => undefined);
         throw new AppErrorException('ENGINE_PACK_FAILED', `Checksum mismatch for ${pack.displayName} — download discarded.`);
       }

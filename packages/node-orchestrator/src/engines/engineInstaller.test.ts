@@ -4,7 +4,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EngineInstallEvent } from '@videodubber/shared';
 import { EngineEventBus } from './engineBus.js';
-import { EngineInstaller } from './engineInstaller.js';
+import { checksumMatches, EngineInstaller } from './engineInstaller.js';
+import { DIARIZATION_EMBEDDING, findPack } from './enginePackCatalog.js';
 import { EnginePackStore } from './enginePackStore.js';
 
 /**
@@ -50,6 +51,23 @@ function fileFetch(bytes: Uint8Array): typeof fetch {
 function errorOf(list: EngineInstallEvent[]): Extract<EngineInstallEvent, { type: 'error' }> | undefined {
   return list.find((e): e is Extract<EngineInstallEvent, { type: 'error' }> => e.type === 'error');
 }
+
+describe('a download is the pinned artifact', () => {
+  it('by its checksum, or one measured to be the same content (an upstream re-upload)', () => {
+    const artifact = { sha256: 'AA11', alsoSha256: ['bb22'] };
+    expect(checksumMatches(artifact, 'aa11')).toBe(true);
+    expect(checksumMatches(artifact, 'BB22')).toBe(true);
+    expect(checksumMatches(artifact, 'cc33')).toBe(false);
+    expect(checksumMatches({ sha256: 'aa11' }, 'bb22')).toBe(false);
+  });
+
+  it("speaker detection's model installs as GitHub serves it since 2026-11-19, and keeps its pin", () => {
+    const model = findPack('diarization-sherpa')!.artifacts.find((a) => a.destPath === 'models/embedding.onnx')!;
+    expect(model.sha256).toBe(DIARIZATION_EMBEDDING.sha256);
+    expect(checksumMatches(model, 'e2d2048292e055f7b61cdec3db010503f35369b245bf0b3bbad021c9a91e4053')).toBe(true);
+    expect(checksumMatches(model, '78d4730ad5a6dc1ed86914e2d76c796c6bfc6852f558dd1cbb9b16abd3c3f672')).toBe(true);
+  });
+});
 
 describe('EngineInstaller', () => {
   it('rejects a checksum mismatch and records nothing', async () => {

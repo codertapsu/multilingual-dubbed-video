@@ -17,7 +17,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { AppErrorException, type JoinProjectRequest, type RenderQuality, type SeriesSettings } from '@videodubber/shared';
 
-import type { JoinService } from './joinService.js';
+import { joinedName, type JoinService } from './joinService.js';
 
 export interface JoinRoutesDeps {
   joins: JoinService;
@@ -27,6 +27,13 @@ export interface JoinRoutesDeps {
    * one asked for, else the default); throws when none is set up.
    */
   resolveSeries?: (series: SeriesSettings) => Promise<SeriesSettings>;
+  /**
+   * A job made from a preset (`presetId`), as POST /projects makes it: the
+   * job's own choices over the preset's; its series block when the joined
+   * video is long enough (`durationMs`); `{series}` in the save folder filled
+   * in with the job's name (`fallbackName` when it has none).
+   */
+  presetJob?: (body: JoinProjectRequest, durationMs: () => Promise<number | undefined>, fallbackName?: string) => Promise<JoinProjectRequest>;
 }
 
 const RENDER_QUALITIES = new Set<RenderQuality>(['auto', 'quality', 'fast']);
@@ -50,8 +57,12 @@ export function registerJoinRoutes(app: FastifyInstance, deps: JoinRoutesDeps): 
 
   app.post('/projects/join', async (req: FastifyRequest<{ Body: JoinProjectRequest }>, reply) => {
     try {
-      const body = req.body;
-      if (!body || typeof body !== 'object') throw new AppErrorException('INVALID_EDIT', 'Expected { videoPaths, name, settings }.');
+      if (!req.body || typeof req.body !== 'object') throw new AppErrorException('INVALID_EDIT', 'Expected { videoPaths, name, settings }.');
+      // From a preset: the job's own choices over it; its series block when the joined video is long enough.
+      const paths = Array.isArray(req.body.videoPaths) ? req.body.videoPaths.filter((p): p is string => typeof p === 'string') : [];
+      const body = deps.presetJob
+        ? await deps.presetJob(req.body, () => joins.totalDurationMs(req.body.videoPaths), paths.length > 0 ? joinedName(paths) : undefined)
+        : req.body;
       const series = body.series && deps.resolveSeries ? await deps.resolveSeries(body.series) : undefined;
       const { series: _asked, ...rest } = body;
       const made = await joins.create({ ...rest, ...(series ? { series } : {}) });

@@ -9,6 +9,7 @@ import {
   partsFromCuts,
   partTranscript,
   recapStart,
+  snapToFileBoundary,
   validateCuts,
 } from './seriesPlanner.js';
 
@@ -116,5 +117,18 @@ describe('partEffects', () => {
     ]);
     const last = partEffects({ index: 7, count: 7, seriesName: 'X', recapEndMs: 3000, durationMs: 60_000, targetLanguage: 'en-US' });
     expect(last.cards!.at(-1)!.text).toBe('The end');
+  });
+});
+
+describe('snapToFileBoundary', () => {
+  const limits = { previousMs: 0, durationMs: 4 * 3600_000, minPartMs: 60_000 };
+  it('moves a cut onto where the next joined file begins, within 30 s (《反相之地》 cut 4: 9.6 s early)', () => {
+    expect(snapToFileBoundary(8_466_570, [8_476_150, 9_000_000], limits)).toBe(8_476_150);
+    expect(snapToFileBoundary(8_400_000, [8_476_150], limits)).toBeUndefined();
+  });
+
+  it('never makes a part shorter than the shortest a part may be', () => {
+    expect(snapToFileBoundary(100_000, [70_000], { ...limits, previousMs: 20_000 })).toBeUndefined();
+    expect(snapToFileBoundary(limits.durationMs - 80_000, [limits.durationMs - 50_000], limits)).toBeUndefined();
   });
 });

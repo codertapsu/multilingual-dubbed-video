@@ -103,7 +103,7 @@ Write-Ok ("Using python: {0}" -f (& $PythonBin --version 2>&1))
 # uvicorn + pytest, since the neural/torch stacks live in optional extras that only
 # the uv venvs install. Every suite test-workers runs belongs here: the diarization
 # engine was missing until the Mac's 0.13.0 preflight refused to build without it.
-$Workers = @('stt-worker', 'translation-worker', 'tts-worker', 'tts-engine-neural', 'tts-engine-omnivoice', 'diarization-engine')
+$Workers = @('stt-worker', 'translation-worker', 'tts-worker', 'tts-engine-neural', 'tts-engine-omnivoice', 'diarization-engine', 'ocr-engine')
 
 function Get-WorkerPython {
     param([string]$Dir)

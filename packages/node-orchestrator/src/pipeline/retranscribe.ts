@@ -21,12 +21,13 @@
  * a job stopped halfway leaves whole windows behind, never half of one.
  */
 import fsp from 'node:fs/promises';
-import type { TranscriptSegment } from '@videodubber/shared';
+import type { ActivityPhrase, TranscriptSegment } from '@videodubber/shared';
 import { formatClock } from '../activity/history.js';
 import { expectedSpeechMs } from '../alignment/clipSpeech.js';
 import { padSegmentIndex } from '../workspace/paths.js';
 import { writeJsonAtomic } from '../workspace/projectStore.js';
-import { findLoopRanges, normalizeLine, repairLoops, type RepairedRange } from './loopRepair.js';
+import { onDecoderWindow } from './decodeMerge.js';
+import { bigramSimilarity, findLoopRanges, repairLoops, type RepairedRange } from './loopRepair.js';
 import type { SpeechRegion } from './segmentTiming.js';
 
 /** A range longer than this is a job, in windows of at most this. */
@@ -185,31 +186,8 @@ export function planRetranscribeWindows(
   return windows;
 }
 
-/**
- * How alike two lines' texts are: the Dice coefficient of their character
- * bigrams (single characters for a one-character text), after
- * normalizeLine (no case, punctuation or spaces). 1 for the same text, 0 for
- * nothing shared. Pure.
- */
-export function bigramSimilarity(a: string, b: string): number {
-  const x = [...normalizeLine(a)];
-  const y = [...normalizeLine(b)];
-  if (x.length === 0 || y.length === 0) return 0;
-  const n = x.length < 2 || y.length < 2 ? 1 : 2;
-  const grams = (s: readonly string[]): Map<string, number> => {
-    const m = new Map<string, number>();
-    for (let i = 0; i + n <= s.length; i++) {
-      const g = s.slice(i, i + n).join('');
-      m.set(g, (m.get(g) ?? 0) + 1);
-    }
-    return m;
-  };
-  const gx = grams(x);
-  const gy = grams(y);
-  let shared = 0;
-  for (const [g, count] of gx) shared += Math.min(count, gy.get(g) ?? 0);
-  return (2 * shared) / (x.length - n + 1 + (y.length - n + 1));
-}
+/** How alike two lines' texts are (Dice of character bigrams): loopRepair.ts, re-exported for callers here. */
+export { bigramSimilarity };
 
 /**
  * Speakers for heard lines from the lines they replace: a line takes the
@@ -317,6 +295,21 @@ export function windowSummaryParams(window: TimeRange, lines: number, loops: Loo
   };
 }
 
+/** {@link windowSummary} as a phrase (the edit history's keys), for the activity list. Pure. */
+export function windowPhrase(window: TimeRange, lines: number, loops: LoopCounts, unassigned: number): ActivityPhrase {
+  const part = (name: string, n: number): ActivityPhrase[] => (n > 0 ? [{ key: `history.summary.${name}`, params: { n } }] : []);
+  return {
+    key: 'history.summary.retranscribed',
+    params: { from: formatClock(window.fromMs), to: formatClock(window.toMs), lines },
+    parts: [
+      ...part('part-loops-removed', loops.removed),
+      ...part('part-loops-kept', loops.kept),
+      ...part('part-loops-left', loops.left),
+      ...part('part-unassigned', unassigned),
+    ],
+  };
+}
+
 /** "Re-transcribed 24:12:04–24:27:04: 14 lines, 2 loops removed" (the edit history's words). Pure. */
 export function windowSummary(window: TimeRange, lines: number, loops: LoopCounts, unassigned: number): string {
   return (
@@ -366,8 +359,12 @@ export async function readSavedSpeechRegions(audioPath: string, cachePath: strin
 }
 
 export interface HearDeps {
-  /** Decode [fromMs, toMs) of the project's audio (`noContext`: without the previous text); lines in video time. */
-  decode(fromMs: number, toMs: number, noContext: boolean, signal: AbortSignal): Promise<TranscriptSegment[]>;
+  /**
+   * Decode [fromMs, toMs) of the project's audio (`noContext`: without the
+   * previous text; `listenToAll`: without the engine's voice filter, for the
+   * loop check's second opinion); lines in video time.
+   */
+  decode(fromMs: number, toMs: number, noContext: boolean, signal: AbortSignal, opts?: { listenToAll?: boolean }): Promise<TranscriptSegment[]>;
   /** No speech under a stretch (the speech map), when known. */
   inSilence?: (fromMs: number, toMs: number) => boolean;
 }
@@ -392,8 +389,10 @@ export async function hearWindow(
     raw,
     ranges,
     {
-      redecode: (fromMs, toMs, s) => deps.decode(fromMs, toMs, true, s),
+      redecode: (fromMs, toMs, s) => deps.decode(fromMs, toMs, true, s, { listenToAll: true }),
       expectedSpeechMs,
+      // The window was decoded from its start: its 30-s decoder windows (item D).
+      originalOnWindow: (ms) => onDecoderWindow(ms, window.fromMs),
       ...(deps.inSilence ? { inSilence: deps.inSilence } : {}),
     },
     signal,

@@ -4,6 +4,9 @@
  * over the in-memory transport, against a fake app on a local port.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
@@ -190,6 +193,135 @@ describe('series and create tools (0.18.0)', () => {
     expect(body.settings).toMatchObject({ ttsProviderId: 'neural-tts', sourceLanguage: 'zh', burnSubtitleStyle: { position: 'raised' } });
     expect(body.settings.speakerVoices).toBeUndefined();
     expect(r.text).toContain('Continues "Xuyên Không": its parts are numbered from 49');
+  });
+
+  it('create_project from a preset sends its id and only the call\'s own choices, and says the preset made a series', async () => {
+    createRoutes();
+    fake.routes.set('GET /presets', () => [
+      {
+        id: 'preset_1',
+        name: 'Tiệm phim',
+        targetLanguage: 'vi-VN',
+        sourceLanguage: 'zh',
+        settings: { ttsProviderId: 'neural-tts' },
+        outputDir: 'D:\\Dubs\\{series}',
+        series: { minMinutes: 30, maxMinutes: 40, aiProviderId: 'anthropic', autoStart: false },
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]);
+    fake.routes.set('POST /projects', () =>
+      project({
+        series: { role: 'parent', state: 'analysing', settings: { minMinutes: 30, maxMinutes: 40, aiProviderId: 'anthropic-translate', recapSec: 4, autoStart: false } },
+      }),
+    );
+    await connect();
+    const r = await call('create_project', { videoPath: 'E:/raw/long.mp4', presetId: 'preset_1', settings: { duckingLevelDb: -6 } });
+    expect(r.isError).toBe(false);
+    // The app lays the call over the preset: no defaults are read or sent from here.
+    expect(fake.calls.some((c) => c.path.startsWith('/project-defaults'))).toBe(false);
+    const body = fake.calls.find((c) => c.method === 'POST' && c.path === '/projects')!.body as Record<string, unknown>;
+    expect(body).toMatchObject({ presetId: 'preset_1', settings: { duckingLevelDb: -6 }, linkInputVideo: true });
+    expect(body.settings).not.toHaveProperty('targetLanguage');
+    expect(body.series).toBeUndefined();
+    expect(r.text).toContain('from the preset "Tiệm phim"');
+    expect(r.text).toContain('Made as a series of 30-40 min parts');
+    expect(r.text).toContain('autoStart=false');
+
+    // A preset id that does not exist, or neither a language nor a preset: refused before anything is made.
+    const made = fake.calls.filter((c) => c.method === 'POST' && c.path === '/projects').length;
+    const unknown = await call('create_project', { videoPath: 'E:/raw/x.mp4', presetId: 'preset_nope' });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.text).toContain('there is no preset "preset_nope"');
+    expect(unknown.text).not.toContain('Unexpected error');
+    const noLanguage = await call('create_project', { videoPath: 'E:/raw/x.mp4' });
+    expect(noLanguage.isError).toBe(true);
+    expect(noLanguage.text).toContain('say which language to dub into');
+    expect(fake.calls.filter((c) => c.method === 'POST' && c.path === '/projects')).toHaveLength(made);
+  });
+
+  it('list_presets shows the built-in presets, and create_project takes one with the call\'s languages', async () => {
+    createRoutes();
+    fake.routes.set('GET /presets', () => []);
+    const builtin = (id: string, name: string, text: string) => ({
+      id,
+      name,
+      targetLanguage: 'vi-VN',
+      settings: { processingMode: 'local', renderQuality: 'fast' },
+      builtin: { kind: id.slice('builtin:'.length), tradeoffs: [{ key: 'k', text }] },
+      createdAt: '',
+      updatedAt: '',
+    });
+    fake.routes.set('GET /presets/builtin', () => [
+      builtin('builtin:quality', 'Highest quality', 'The largest speech model.'),
+      builtin('builtin:economy', 'Lowest cost', 'A fast render.'),
+    ]);
+    fake.routes.set('POST /projects', () => project());
+    await connect();
+    const listed = await call('list_presets');
+    expect(listed.text).toContain("No presets of the user's yet.");
+    expect(listed.text).toContain('Built in, worked out for this computer (its own engines only, never a cloud AI');
+    expect(listed.text).toContain('- builtin:economy "Lowest cost": A fast render.');
+
+    const refused = await call('create_project', { videoPath: 'E:/raw/x.mp4', presetId: 'builtin:economy' });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('works for any language');
+    const r = await call('create_project', { videoPath: 'E:/raw/x.mp4', presetId: 'builtin:economy', targetLanguage: 'vi-VN', sourceLanguage: 'zh' });
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain('from the preset "Lowest cost"');
+    expect(fake.calls.find((c) => c.path.startsWith('/presets/builtin?'))!.path).toBe('/presets/builtin?sourceLanguage=zh&targetLanguage=vi-VN');
+    const body = fake.calls.find((c) => c.method === 'POST' && c.path === '/projects')!.body as Record<string, unknown>;
+    expect(body).toMatchObject({ presetId: 'builtin:economy', settings: { sourceLanguage: 'zh', targetLanguage: 'vi-VN' } });
+  });
+
+  it('create_project says a preset\'s video was dubbed whole when it is too short for the preset\'s series', async () => {
+    createRoutes();
+    fake.routes.set('GET /presets', () => [
+      { id: 'preset_1', name: 'Tiệm phim', targetLanguage: 'vi-VN', sourceLanguage: 'zh', settings: {}, series: { maxMinutes: 40 }, createdAt: '', updatedAt: '' },
+    ]);
+    fake.routes.set('POST /projects', () => project());
+    await connect();
+    const r = await call('create_project', { videoPath: 'E:/raw/short.mp4', presetId: 'preset_1' });
+    expect(r.text).toContain('Dubbed whole: the video is not long enough');
+  });
+
+  it('replace_lines takes many ranges, inline or from a JSON file, as one history entry', async () => {
+    fake.routes.set('POST /projects/proj_1/lines/replace-many', (_q, body) => {
+      const ranges = (body as { ranges: { fromMs: number; toMs: number; lines: unknown[] }[] }).ranges;
+      return { replaced: 7, made: 3, ranges: ranges.map((r) => ({ fromMs: r.fromMs, toMs: r.toMs, replaced: 3, lines: r.lines })) };
+    });
+    await connect();
+    const ranges = [
+      { fromMs: 1000, toMs: 5000, lines: [{ startMs: 1500, endMs: 3000, text: '大家小点声' }] },
+      { fromMs: 9000, toMs: 12_000, lines: [{ startMs: 9500, endMs: 11_000, text: '快跑' }, { startMs: 11_100, endMs: 11_900, text: '走' }] },
+    ];
+    const inline = await call('replace_lines', { projectId: 'proj_1', ranges });
+    expect(inline.text).toContain('Replaced 7 line(s) with 3 in 2 range(s), as one history entry');
+    expect((fake.calls.find((c) => c.path.endsWith('/replace-many'))!.body as { ranges: unknown[] }).ranges).toEqual(ranges);
+    const dir = await mkdtemp(join(tmpdir(), 'vd-mcp-ranges-'));
+    try {
+      const file = join(dir, 'fix.json');
+      await writeFile(file, JSON.stringify({ ranges }), 'utf8');
+      const fromFile = await call('replace_lines', { projectId: 'proj_1', file });
+      expect(fromFile.isError).toBe(false);
+      expect(fake.calls.filter((c) => c.path.endsWith('/replace-many'))).toHaveLength(2);
+      const nothing = await call('replace_lines', { projectId: 'proj_1' });
+      expect(nothing).toMatchObject({ isError: true });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('dismiss_warnings sets the named warnings aside and says what remains', async () => {
+    fake.routes.set('POST /projects/proj_1/warnings/dismiss', (_q, body) => ({
+      dismissed: (body as { codes?: string[] }).codes ? 2 : 3,
+      codes: ['stt-no-speech'],
+      warnings: [{ code: 'speakers-failed' }],
+    }));
+    await connect();
+    const r = await call('dismiss_warnings', { projectId: 'proj_1', codes: ['stt-no-speech'] });
+    expect(fake.calls.find((c) => c.path.endsWith('/warnings/dismiss'))!.body).toEqual({ codes: ['stt-no-speech'] });
+    expect(r.text).toBe('Dismissed 2 warning(s) (stt-no-speech). 1 remain.');
   });
 
   it('edit_part finds a part by its number and says when it renders again', async () => {

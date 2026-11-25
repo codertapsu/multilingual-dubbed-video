@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal, type OnDestroy, type OnInit } from '@angular/core';
 import { RouterLink } from '@angular/router';
 
-import { entryLink, initiatorView, kindLabelKey, mergeEntries } from '../../core/activity/activity-logic';
+import { entryLink, entryText, initiatorView, kindLabelKey, mergeEntries, type ActivityTranslate } from '../../core/activity/activity-logic';
 import type { ActivityEntry } from '../../core/activity/activity-models';
 import { ActivityService } from '../../core/activity/activity.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
@@ -70,8 +70,8 @@ const POLL_MS = 4000;
                   <a class="project" [routerLink]="link(e)">{{ e.projectName ?? e.projectId }}</a>
                 }
               </div>
-              @if (label(e) !== e.title) {
-                <div class="title muted">{{ e.title }}</div>
+              @if (title(e); as t) {
+                <div class="title muted">{{ t }}</div>
               }
               @if (e.state === 'running' || e.state === 'waiting') {
                 <div class="progress" role="progressbar" [attr.aria-valuenow]="e.percent ?? undefined" aria-valuemin="0" aria-valuemax="100" [attr.aria-label]="label(e)">
@@ -280,6 +280,18 @@ export class ActivityLogComponent implements OnInit, OnDestroy {
     return key ? this.i18n.instant(key) : e.title;
   }
 
+  /** The entry's own title under its kind, in the reader's language; none when it says the same. */
+  protected title(e: ActivityEntry): string | null {
+    const title = e.external ? e.title : (entryText(e, 'title', this.say) ?? e.title);
+    return title === this.label(e) ? null : title;
+  }
+
+  /** The registry's phrases in the reader's language; reading the locale re-renders on a switch. */
+  private readonly say: ActivityTranslate = (key, params) => {
+    this.i18n.locale();
+    return this.i18n.instant(key, params);
+  };
+
   protected link(e: ActivityEntry): string {
     return entryLink(e);
   }
@@ -313,7 +325,7 @@ export class ActivityLogComponent implements OnInit, OnDestroy {
   protected outcome(e: ActivityEntry): string {
     if (e.state === 'failed' && e.error) return this.activity.failureLine(e.error);
     if (e.state === 'cancelled' && e.error?.code === 'CANCELLED') return this.i18n.instant('activity.interrupted-body');
-    return e.result ?? e.message ?? '';
+    return entryText(e, 'result', this.say) ?? entryText(e, 'message', this.say) ?? '';
   }
 
   /** When it started, and how long it ran (or has been running). */

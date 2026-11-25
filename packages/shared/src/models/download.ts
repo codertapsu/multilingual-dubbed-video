@@ -168,12 +168,66 @@ export interface DubPreset {
   sourceLanguage?: string;
   /** Applied over the settings the app recommends for this machine (engines, voice, subtitles, mix…). */
   settings: Partial<ProjectSettings>;
-  /** Where finished files go; absent = each project's own folder. */
+  /**
+   * Where finished files go; absent = each project's own folder. `{series}`
+   * (or `{name}`) is the job's name as a folder name, filled in when the job
+   * is made: "D:\\Dubs\\{series}" gives each series its own folder.
+   */
   outputDir?: string;
   /** Start dubbing as soon as a project is made from it. */
   start?: boolean;
+  /** Long videos made from it are dubbed as a series of parts with these choices. */
+  series?: PresetSeries;
+  /** One of the presets every computer has (GET /presets/builtin); absent on the user's own. */
+  builtin?: BuiltinPresetInfo;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * The presets every computer has, worked out for it (GET /presets/builtin):
+ * local engines only, never a cloud AI (the user's rule: a cloud AI runs only
+ * where the user chooses it). Their ids start with {@link BUILTIN_PRESET_PREFIX}.
+ */
+export type BuiltinPresetKind = 'quality' | 'balanced' | 'economy';
+
+/** `builtin:quality`, `builtin:balanced`, `builtin:economy`. */
+export const BUILTIN_PRESET_PREFIX = 'builtin:';
+
+/** Whether a preset id names a built-in preset. */
+export function isBuiltinPresetId(id: string | undefined): boolean {
+  return typeof id === 'string' && id.trim().startsWith(BUILTIN_PRESET_PREFIX);
+}
+
+/** A line about a built-in preset: the app's words (an i18n key, as ActivityPhrase) and the English text. */
+export interface PresetNote {
+  key: string;
+  params?: Record<string, string | number>;
+  text: string;
+}
+
+export interface BuiltinPresetInfo {
+  kind: BuiltinPresetKind;
+  /** What it gains and what it costs, then what holds for all of them. */
+  tradeoffs: PresetNote[];
+}
+
+/**
+ * A preset's series block: a video longer than `longerThanMinutes` (default
+ * 1.5 x maxMinutes) made from the preset becomes a series of parts; a
+ * shorter one is dubbed whole. A job that asks for a series itself lays its
+ * own choices over these.
+ */
+export interface PresetSeries {
+  minMinutes?: number;
+  maxMinutes?: number;
+  /** The AI that plans the parts: anthropic | openai | gemini | llama-cpp-chat, or an id from GET /series/ai-options. */
+  aiProviderId?: string;
+  recapSec?: number;
+  autoStart?: boolean;
+  /** How the parts are named: {series}, {n}, {nn}, {total}, {title} (needs {n} or {nn}). */
+  nameTemplate?: string;
+  longerThanMinutes?: number;
 }
 
 /** POST /downloads/dub: a project per finished download. */

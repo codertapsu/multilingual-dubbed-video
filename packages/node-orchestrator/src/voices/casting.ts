@@ -51,6 +51,8 @@ export interface CastVoice {
   genderConfirmed?: boolean;
   f0Hz?: number;
   print?: readonly number[];
+  /** Kept for one main character (VoiceProfile.mainOnly): never in a pool, never a default. */
+  mainOnly?: boolean;
 }
 
 export interface CastAssignment {
@@ -342,7 +344,12 @@ export function proposeCast(speakers: readonly CastSpeaker[], voices: readonly C
     const minutesOf = new Map(mine.map((s) => [s.speakerId, s.minutes]));
     const mainOf = new Map(mains.map((a) => [a.voiceId, a.speakerId]));
     const voiceById = new Map([...clones, ...presets].map((v) => [v.voiceId, v]));
-    const picked = [...new Set(opts.minorPool?.[gender] ?? [])].map((id) => voiceById.get(id)).filter((v): v is CastVoice => v !== undefined);
+    const asked = [...new Set(opts.minorPool?.[gender] ?? [])].map((id) => voiceById.get(id)).filter((v): v is CastVoice => v !== undefined);
+    // A voice kept for one main character is never shared by the crowd, even picked.
+    const picked = asked.filter((v) => !v.mainOnly);
+    for (const v of asked.filter((v) => v.mainOnly)) {
+      notes.push(`"${v.name}" is kept for one main character: it is not one of the voices the minor speakers share.`);
+    }
     const size = picked.length > 0 ? picked.length : minorPoolSize(minors.length, opts.minorVoices);
     const want = picked.length > 0 ? picked.length : Math.max(1, Math.min(size, minors.length));
     const pool: CastPoolVoice[] = [];

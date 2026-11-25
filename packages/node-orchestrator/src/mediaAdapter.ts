@@ -20,6 +20,7 @@ import type {
   ClipTrim,
   DuckAndMixInput,
   PipelineMediaService,
+  SubtitlePresenceScan,
   TimelineStretchReport, MediaRange } from './media.js';
 import type {
   AudioExtractResult,
@@ -118,6 +119,14 @@ interface MediaWorkerModule {
   mixStems?(inputs: readonly string[], output: string, run?: MediaWorkerRunOptions): Promise<AudioExtractResult>;
   renderThumbnail?(input: string, atMs: number, output: string, run?: MediaWorkerRunOptions): Promise<{ path: string }>;
   detectSceneChanges?(input: string, spans: readonly MediaRange[], run?: MediaWorkerRunOptions): Promise<number[]>;
+  scanSubtitlePresence?(
+    input: { videoPath: string; band: { y: number; h: number; x?: number; w?: number }; startMs?: number; endMs?: number },
+    opts?: MediaWorkerRunOptions & { onProgress?: (fraction: number) => void },
+  ): Promise<SubtitlePresenceScan>;
+  readBandFrames?(
+    input: { videoPath: string; band: { y: number; h: number; x?: number; w?: number }; timesMs: readonly number[]; outputPath: string },
+    opts?: MediaWorkerRunOptions & { onProgress?: (fraction: number) => void },
+  ): ReturnType<NonNullable<PipelineMediaService['readBandFrames']>>;
 }
 
 /**
@@ -278,6 +287,28 @@ export async function createFfmpegMediaService(): Promise<PipelineMediaService> 
       ? {
           detectSceneChanges: (i: string, spans: readonly MediaRange[], signal?: AbortSignal) =>
             mod.detectSceneChanges!(i, spans, runOpts(signal)),
+        }
+      : {}),
+    // The video's own subtitles on screen (pipeline/subtitleCoverage.ts).
+    ...(typeof mod.scanSubtitlePresence === 'function'
+      ? {
+          scanSubtitlePresence: (
+            i: string,
+            input: Parameters<NonNullable<PipelineMediaService['scanSubtitlePresence']>>[1],
+            onProgress?: (fraction: number) => void,
+            signal?: AbortSignal,
+          ) => mod.scanSubtitlePresence!({ videoPath: i, ...input }, { ...runOpts(signal), ...(onProgress ? { onProgress } : {}) }),
+        }
+      : {}),
+    // The frames the subtitle reader reads (pipeline/burnedInTranscript.ts).
+    ...(typeof mod.readBandFrames === 'function'
+      ? {
+          readBandFrames: (
+            i: string,
+            input: Parameters<NonNullable<PipelineMediaService['readBandFrames']>>[1],
+            onProgress?: (fraction: number) => void,
+            signal?: AbortSignal,
+          ) => mod.readBandFrames!({ videoPath: i, ...input }, { ...runOpts(signal), ...(onProgress ? { onProgress } : {}) }),
         }
       : {}),
     // clip16kMono is optional on the interface: only expose it when the loaded

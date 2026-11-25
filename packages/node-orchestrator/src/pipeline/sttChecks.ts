@@ -176,7 +176,7 @@ export function findLinesOverSilence(
 }
 
 /** Which of two overlapping loop ranges names their merge: over silence wins (see loopRepair `silence`). */
-const MERGE_RANK: Record<LoopKind, number> = { silence: 4, repeat: 3, 'low-diversity': 2, phrase: 1 };
+const MERGE_RANK: Record<LoopKind, number> = { silence: 4, repeat: 3, 'low-diversity': 2, phrase: 1, overlong: 0 };
 
 /**
  * One sorted list of loop ranges without overlaps (repairLoops needs that),

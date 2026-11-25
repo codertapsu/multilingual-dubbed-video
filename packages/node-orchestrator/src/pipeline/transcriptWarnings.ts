@@ -14,13 +14,76 @@ import fsp from 'node:fs/promises';
 import type { PipelineState, ProjectWarning, ProjectWarningCode, TranscriptSegment } from '@videodubber/shared';
 import { formatClock } from '../activity/history.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
+import { flaggedLinesWarning } from './beforeVoicing.js';
 import type { RepairedRange } from './loopRepair.js';
+import { coverageWarnings, readPresenceReport, subtitleCoverage, type SubtitleSpan } from './subtitleCoverage.js';
 
 type Warning = Omit<ProjectWarning, 'at' | 'step'>;
 type Line = Pick<TranscriptSegment, 'startMs' | 'endMs' | 'speakerId' | 'loopSuspect'>;
 
 /** The codes kept current here. */
-export const TRANSCRIPT_WARNING_CODES: readonly ProjectWarningCode[] = ['loops-repaired', 'loops-left', 'speakers-unassigned'];
+export const TRANSCRIPT_WARNING_CODES: readonly ProjectWarningCode[] = [
+  'loops-repaired',
+  'loops-left',
+  'speakers-unassigned',
+  // The video's own subtitles against the lines (subtitleCoverage.ts): a line
+  // written where a subtitle had none settles it.
+  'subtitles-without-lines',
+  'lines-without-subtitles',
+];
+
+/**
+ * Warnings about a stretch of the transcript that a rewrite of that stretch
+ * settles: lines over silence, a spot check that disagreed. They stayed on the
+ * project after claude-dubber re-transcribed and replaced every one of those
+ * stretches (2026-11-25).
+ */
+export const STRETCH_WARNING_CODES: readonly ProjectWarningCode[] = ['stt-no-speech', 'transcript-mismatch'];
+
+/** Share of a warning's stretch a rewrite must cover to settle it. */
+const SETTLED_SHARE = 0.8;
+
+/**
+ * `warnings` without those a rewrite of [fromMs, toMs) settled: a stretch
+ * warning whose stretch it covers (most of it). Pure.
+ */
+export function settledByRewrite(
+  warnings: readonly ProjectWarning[],
+  rewritten: { fromMs: number; toMs: number } | readonly { fromMs: number; toMs: number }[],
+): ProjectWarning[] {
+  const ranges = Array.isArray(rewritten) ? rewritten : [rewritten as { fromMs: number; toMs: number }];
+  return warnings.filter((w) => {
+    if (!(STRETCH_WARNING_CODES as readonly string[]).includes(w.code)) return true;
+    const from = Number(w.params?.['fromMs']);
+    const to = Number(w.params?.['toMs']);
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return true;
+    const covered = ranges.reduce((n, r) => n + Math.max(0, Math.min(to, r.toMs) - Math.max(from, r.fromMs)), 0);
+    return covered < (to - from) * SETTLED_SHARE;
+  });
+}
+
+/** A translated line as the lines-flagged warning reads it. */
+type FlagLine = Pick<TranscriptSegment, 'id' | 'qualityFlags' | 'locked' | 'song' | 'translatedText'>;
+
+/**
+ * The lines-flagged warning (refine step) as the lines are now: fewer lines
+ * once some are fixed, gone once all are (a hand edit clears a line's flags,
+ * and locks it). Only a warning a run raised is updated, never added; its time
+ * and step stay. Undefined when nothing changes. Pure.
+ */
+export function withFlaggedLinesNow(current: readonly ProjectWarning[], lines: readonly FlagLine[]): ProjectWarning[] | undefined {
+  const at = current.findIndex((w) => w.code === 'lines-flagged');
+  if (at < 0) return undefined;
+  const old = current[at]!;
+  const still = lines.filter((l) => l.locked !== true && l.song !== true && (l.qualityFlags?.length ?? 0) > 0);
+  if (still.length === 0) return current.filter((_, i) => i !== at);
+  if (Number(old.params?.['count']) === still.length) return undefined;
+  const fresh = flaggedLinesWarning(
+    still.map((l) => ({ id: l.id, flags: l.qualityFlags ?? [], text: l.translatedText ?? '' })),
+    old.key === 'warning.lines-flagged-held',
+  );
+  return current.map((w, i) => (i === at ? { ...w, ...fresh } : w));
+}
 
 /** Lines without a speaker closer than this are named as one stretch. */
 const SPAN_JOIN_MS = 5 * 60_000;
@@ -88,10 +151,19 @@ export function unassignedWarning(lines: readonly Line[]): Warning | undefined {
   };
 }
 
-/** The warnings the transcript calls for now (speakers only in a project that detects them). Pure. */
-export function transcriptWarnings(lines: readonly Line[], loopReport: readonly RepairedRange[], diarized: boolean): Warning[] {
+/**
+ * The warnings the transcript calls for now (speakers only in a project that
+ * detects them; the subtitle check only where it read the video's subtitles). Pure.
+ */
+export function transcriptWarnings(
+  lines: readonly Line[],
+  loopReport: readonly RepairedRange[],
+  diarized: boolean,
+  subtitles?: readonly SubtitleSpan[],
+): Warning[] {
   const speakers = diarized ? unassignedWarning(lines) : undefined;
-  return [...loopWarnings(loopReport, lines), ...(speakers ? [speakers] : [])];
+  const coverage = subtitles ? coverageWarnings(subtitleCoverage(subtitles, lines)) : [];
+  return [...loopWarnings(loopReport, lines), ...(speakers ? [speakers] : []), ...coverage];
 }
 
 /**
@@ -131,21 +203,37 @@ export interface TranscriptWarningDeps {
  * translated ones once they exist: those are dubbed) and its loop report.
  * Never throws: a warning that could not be updated must not fail the edit.
  */
-export async function refreshTranscriptWarnings(deps: TranscriptWarningDeps, projectId: string): Promise<void> {
+export async function refreshTranscriptWarnings(
+  deps: TranscriptWarningDeps,
+  projectId: string,
+  /** Stretches just written again (replace_lines, a re-transcription): their stretch warnings are settled. */
+  opts: { rewritten?: { fromMs: number; toMs: number } | readonly { fromMs: number; toMs: number }[] } = {},
+): Promise<void> {
   try {
     const paths = deps.store.paths(projectId);
-    const [project, translated, source, report] = await Promise.all([
+    const [project, translated, source, report, presence] = await Promise.all([
       deps.store.getProject(projectId),
       readJson<{ segments?: Line[] }>(paths.translatedJson),
       readJson<{ segments?: Line[] }>(paths.sourceJson),
       readJson<{ ranges?: RepairedRange[] }>(paths.loopRangesJson),
+      readPresenceReport(paths.subtitlePresenceJson),
     ]);
     const lines = translated?.segments ?? source?.segments;
     if (!Array.isArray(lines)) return;
-    const next = transcriptWarnings(lines, Array.isArray(report?.ranges) ? report.ranges : [], project.settings.diarize === true);
+    const next = transcriptWarnings(
+      lines,
+      Array.isArray(report?.ranges) ? report.ranges : [],
+      project.settings.diarize === true,
+      presence?.events,
+    );
     if (deps.isRunning(projectId)) return;
     const pipeline = await deps.store.getPipeline(projectId);
-    const warnings = withTranscriptWarnings(pipeline.warnings ?? [], next, new Date().toISOString());
+    const current = pipeline.warnings ?? [];
+    const rewrittenSettled = opts.rewritten ? settledByRewrite(current, opts.rewritten) : current;
+    // Lines fixed since the run named them (H7): fewer, or none.
+    const settled = (translated ? withFlaggedLinesNow(rewrittenSettled, lines as unknown as FlagLine[]) : undefined) ?? rewrittenSettled;
+    const changed = settled !== current;
+    const warnings = withTranscriptWarnings(settled, next, new Date().toISOString()) ?? (changed ? settled : undefined);
     if (!warnings || deps.isRunning(projectId)) return;
     const { warnings: _old, ...rest } = pipeline;
     const saved: PipelineState = warnings.length > 0 ? { ...rest, warnings } : rest;

@@ -30,6 +30,7 @@ import {
   type JobOrchestrator,
   type MediaInfo,
   type PipelineState,
+  type ProjectWarning,
   type PipelineStepId,
   type CapacityRecommendation,
   type Project,
@@ -51,7 +52,8 @@ import {
 import { alignSegments, type AlignSettings } from './alignment/align.js';
 import { formatClock, recordEdit } from './activity/history.js';
 import { copySpeakerLabels, redetectSpeakers, redetectSpeakersInRange, remapSpeakerVoices } from './pipeline/diarization.js';
-import { activity } from './activity/registry.js';
+import { activity, said } from './activity/registry.js';
+import { changesOnlyMixAndRender, SUBTITLE_FILE_KEYS } from './series/partWork.js';
 import {
   RETRANSCRIBE_JOBS_KEPT,
   RETRANSCRIBE_WINDOW_MS,
@@ -65,6 +67,7 @@ import {
   silenceTest,
   widenToLines,
   windowSummary,
+  windowPhrase,
   windowSummaryParams,
   type HearDeps,
   type RetranscribeJobView,
@@ -78,6 +81,7 @@ import {
   readSpeakerJob,
   saveSpeakerJob,
   speakerJobFile,
+  speakerJobPhrase,
   speakerJobSummary,
   speakerJobView,
   type SpeakerJobState,
@@ -108,6 +112,7 @@ import { ProjectLogger } from './logging.js';
 import type { ClipTrim, PipelineMediaService, SeparationService } from './media.js';
 import type { AlignmentService } from './providers/alignment/whisperxProvider.js';
 import type { DiarizationService } from './providers/diarization/sherpaDiarizationProvider.js';
+import type { SubtitleOcrService } from './providers/ocr/rapidOcrProvider.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { assertRunReady, type ProviderReadiness } from './providers/readiness.js';
 import {
@@ -133,6 +138,8 @@ import type { BrandKit } from './branding/brandKit.js';
 import { greetingSettingsKey, readGreetingPlan } from './branding/greetingMix.js';
 import { sanitizeBranding } from './branding/sanitize.js';
 import { sanitizeBlurRegions, sanitizeCoverFields, withoutClearedCoverFields } from './picture/pictureSanitize.js';
+import { sanitizeWatermarkAuto } from './picture/watermarkAuto.js';
+import { assertMainOnly } from './voices/mainOnly.js';
 import { rangedMediaInfo } from './series/seriesRange.js';
 import { acceptOutputDir, moveOutputFiles, samePath } from './workspace/outputFolder.js';
 import { clearCueOverridesFor, displayCuesFor, readCueOverrides, songSubtitlesOn } from './workspace/subtitleTiming.js';
@@ -158,6 +165,24 @@ export function etaSeconds(startedAtIso: string, progressPercent: number, now = 
 }
 
 export interface OrchestratorDeps {
+  /**
+   * The user's voices kept for one main character (VoiceProfile.mainOnly), id
+   * to name: a settings change that makes one a default voice or gives it to
+   * two speakers is refused (voices/mainOnly.ts). Absent: not checked.
+   */
+  mainOnlyVoices?: (projectId: string) => Promise<ReadonlyMap<string, string>>;
+  /**
+   * Finding a project's watermark (picture/pictureDetection.ts), for a render
+   * whose settings ask for it to be hidden by itself (watermarkAuto). Absent:
+   * such a render hides only the boxes it was given, and says so.
+   */
+  watermark?: RunnerDeps['watermark'];
+  /**
+   * The computer is under pressure now (HealthMonitor.pressure: little free
+   * memory, or the app stalling): renders then wait for a full dub running
+   * beside them (scheduler/admit.ts). Absent: never.
+   */
+  pressure?: () => boolean;
   config: OrchestratorConfig;
   /** Warnings raised outside a run (engine fallbacks), for its steps to keep. */
   warningInbox?: WarningInbox;
@@ -175,6 +200,8 @@ export interface OrchestratorDeps {
   alignment?: AlignmentService;
   /** Optional speaker detection: who says each line (the diarize setting). */
   diarization?: DiarizationService;
+  /** Optional reader of burned-in subtitles (settings.useBurnedInSubtitles). */
+  ocr?: SubtitleOcrService;
   /** Where speech is in a project's audio, to anchor transcript lines (see RunnerDeps). */
   speechMap?: SpeechMapService;
   /** Engine lifecycle manager, so a finished run releases its heavy-engine lane. */
@@ -274,12 +301,15 @@ const EDITABLE_SETTING_KEYS = [
   'synthesisGrouping',
   'syncSubtitlesToVoice',
   'reviewBeforeSynthesis',
+  'holdFlaggedLines',
   'roomTone',
   'renderQuality',
   'subtitleExportMode',
   'forcedAlignment',
   'diarize',
   'transcriptSpotCheck',
+  'subtitleCoverageCheck',
+  'useBurnedInSubtitles',
   'useSourceSubtitles',
 ] as const satisfies readonly (keyof ProjectSettings)[];
 
@@ -423,17 +453,41 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       ...(this.deps.separation ? { separation: this.deps.separation } : {}),
       ...(this.deps.alignment ? { alignment: this.deps.alignment } : {}),
       ...(this.deps.diarization ? { diarization: this.deps.diarization } : {}),
+      ...(this.deps.ocr ? { ocr: this.deps.ocr } : {}),
       ...(this.deps.speechMap ? { speechMap: this.deps.speechMap } : {}),
       // How fast each voice really speaks, measured from its clips and kept
       // between runs, so the next translation budgets lines at the voice's pace.
       voiceRates: voiceRateBookFor(this.deps.config.configDir),
       ...(this.deps.brandKit ? { brandKit: this.deps.brandKit } : {}),
       ...(this.deps.warningInbox ? { warningInbox: this.deps.warningInbox } : {}),
+      ...(this.deps.watermark ? { watermark: this.deps.watermark } : {}),
     };
     return { runner: new PipelineRunner(deps), bus, logger };
   }
 
   // ----- JobOrchestrator contract ------------------------------------------
+
+  /**
+   * A change asked of a project while its dub runs: taken when it only
+   * touches the mix and the render (series/partWork.ts MIX_AND_RENDER_KEYS)
+   * and nothing has used those yet: a series parent (its run only transcribes;
+   * its parts are made from its settings afterwards), or a run that has not
+   * started mixing (the mix and the render read the settings when they start).
+   * claude-dubber asked for it (2026-11-25): the watermark boxes it found while
+   * a 30-hour series was being transcribed were refused for hours.
+   */
+  private async takesMixChangeWhileRunning(projectId: string, patch: Partial<ProjectSettings>): Promise<boolean> {
+    if (!changesOnlyMixAndRender(patch)) return false;
+    const project = await this.deps.store.getProject(projectId).catch(() => undefined);
+    if (project?.series?.role === 'parent') return true;
+    const pipeline = await this.deps.store.getPipeline(projectId).catch(() => undefined);
+    const status = (id: PipelineStepId) => pipeline?.steps.find((s) => s.id === id)?.status;
+    // The subtitle files are written at the alignment: what shapes them must come before it.
+    const shapesSubtitles = (Object.keys(patch) as (keyof ProjectSettings)[]).some((k) => patch[k] !== undefined && SUBTITLE_FILE_KEYS.has(k));
+    if (shapesSubtitles && status('alignment') !== 'pending') return false;
+    // Not started mixing in this run: a mix done in an earlier run (a redo of the render) would not take it.
+    return status('audio-mix') === 'pending' && status('render') === 'pending';
+  }
 
   /** Create a project workspace and persist its initial state. */
   async createProject(input: CreateProjectInput): Promise<Project> {
@@ -636,18 +690,29 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   async updateProjectSettings(
     projectId: string,
     patch: Partial<ProjectSettings>,
+    /**
+     * `whileQueued`: a series part waiting in the queue may take a change that
+     * only touches its mix and render (series/partWork.ts MIX_AND_RENDER_KEYS),
+     * which the queue's classification never reads. The caller holds the queue
+     * ({@link whileQueueHeld}) so the part cannot start half-changed.
+     */
+    opts: { whileQueued?: boolean } = {},
   ): Promise<{ project: Project; pipeline: PipelineState }> {
-    if (this.running.has(projectId)) {
+    if (this.running.has(projectId) && !(await this.takesMixChangeWhileRunning(projectId, patch))) {
       throw new AppErrorException(
         'RUN_IN_PROGRESS',
         'Cannot change settings while the pipeline is running. Cancel the run first.',
+        {
+          remediation:
+            'Only what changes the mix and the render (the picture boxes, the watermark blur, logo and greeting, subtitles, levels, render quality) can change while a dub runs, and only until it starts mixing. Pause the dub (it keeps its work), change the setting, then continue.',
+        },
       );
     }
     // Queued runs are frozen too: the scheduler classified this project's cost
     // (heavy engine? cloud-only?) at enqueue time, and letting the settings
     // change underneath would make that classification — and therefore the
     // queue's ordering decisions — silently wrong.
-    if (this.queued.has(projectId)) {
+    if (this.queued.has(projectId) && !(opts.whileQueued === true && changesOnlyMixAndRender(patch))) {
       throw new AppErrorException(
         'RUN_IN_PROGRESS',
         'This project is waiting in the dubbing queue. Cancel it to change settings.',
@@ -677,7 +742,18 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     if (patch.blurRegions !== undefined) {
       const regions = sanitizeBlurRegions(patch.blurRegions);
       if (regions) next.blurRegions = regions;
-      else delete next.blurRegions;
+      else {
+        delete next.blurRegions;
+        // Cleared on purpose: the automatic blur would only find the same
+        // mark again at the next render and bring the box back.
+        if (patch.watermarkAuto === undefined) delete next.watermarkAuto;
+      }
+    }
+    // Find the watermark and hide it (picture/watermarkAuto.ts); null or false turns it off.
+    if (patch.watermarkAuto !== undefined) {
+      const auto = sanitizeWatermarkAuto(patch.watermarkAuto);
+      if (auto) next.watermarkAuto = auto;
+      else delete next.watermarkAuto;
     }
     // Logo and greeting: checked field by field; null or {} turns both off.
     if (patch.branding !== undefined) {
@@ -722,6 +798,14 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     if (patch.songSubtitles !== undefined) {
       if (patch.songSubtitles === true) next.songSubtitles = true;
       else delete next.songSubtitles;
+    }
+    // A voice kept for one main character (voices/mainOnly.ts): never a
+    // default, never on two speakers. Checked only when those change, so an
+    // unrelated edit never trips over a table made before the voice was kept.
+    const voicesChanged = patch.speakerVoices !== undefined;
+    const defaultsChanged = patch.defaultMaleVoiceId !== undefined || patch.defaultFemaleVoiceId !== undefined;
+    if ((voicesChanged || defaultsChanged) && this.deps.mainOnlyVoices) {
+      assertMainOnly(next, { speakerVoices: voicesChanged, defaults: defaultsChanged }, await this.deps.mainOnlyVoices(projectId));
     }
     if (
       patch.speakerVoices !== undefined ||
@@ -797,7 +881,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     };
     const handle = activity.start({
       kind: 'speakers.detect',
-      title: range ? `Detecting speakers at ${formatClock(range.fromMs)}–${formatClock(range.toMs)}` : 'Detecting speakers',
+      title: range
+        ? said(`Detecting speakers at ${formatClock(range.fromMs)}–${formatClock(range.toMs)}`, 'activity.text.speakers-range', {
+            from: formatClock(range.fromMs),
+            to: formatClock(range.toMs),
+          })
+        : said('Detecting speakers', 'activity.text.speakers'),
       projectId,
     });
     job.activityId = handle.id;
@@ -808,7 +897,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       job.done = done;
       job.total = total;
       const percent = total > 0 ? (done / total) * 100 : null;
-      handle.progress(percent, total > 1 ? `Part ${done}/${total}` : undefined, percent === null ? undefined : etaSeconds(job.startedAt, percent));
+      handle.progress(
+        percent,
+        total > 1 ? said(`Part ${done}/${total}`, 'activity.text.part-of', { done, total }) : undefined,
+        percent === null ? undefined : etaSeconds(job.startedAt, percent),
+      );
       save();
     };
     const work = range
@@ -817,7 +910,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     void work
       .then((outcome) => {
         Object.assign(job, { state: 'done', finishedAt: new Date().toISOString(), ...outcome });
-        handle.done(speakerJobSummary(job));
+        handle.done({ text: speakerJobSummary(job), phrase: speakerJobPhrase(job) });
         save();
       })
       .catch((err: unknown) => {
@@ -1022,7 +1115,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /** Bring the project's transcript warnings up to date with its lines (pipeline/transcriptWarnings.ts). */
-  private async refreshWarnings(projectId: string): Promise<void> {
+  private async refreshWarnings(
+    projectId: string,
+    opts: { rewritten?: { fromMs: number; toMs: number } | readonly { fromMs: number; toMs: number }[] } = {},
+  ): Promise<void> {
     await refreshTranscriptWarnings(
       {
         store: this.deps.store,
@@ -1030,7 +1126,34 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         emit: (id, pipeline) => this.deps.bus.get(id).emit({ type: 'state', pipeline }),
       },
       projectId,
+      opts,
     );
+  }
+
+  /**
+   * Set warnings aside (POST /projects/:id/warnings/dismiss): those with these
+   * codes, or all of them. Kept in `dismissedWarnings` with when; a step that
+   * runs again and finds the same raises it again. Not while the dub runs (its
+   * run writes the warnings).
+   */
+  async dismissWarnings(projectId: string, codes?: readonly string[]): Promise<{ dismissed: ProjectWarning[]; pipeline: PipelineState }> {
+    this.assertNotRunning(projectId, 'dismiss its warnings');
+    const pipeline = await this.deps.store.getPipeline(projectId);
+    const all = pipeline.warnings ?? [];
+    const pick = (w: ProjectWarning): boolean => !codes || codes.length === 0 || codes.includes(w.code);
+    const dismissed = all.filter(pick);
+    if (dismissed.length === 0) return { dismissed, pipeline };
+    const now = new Date().toISOString();
+    const kept = all.filter((w) => !pick(w));
+    const { warnings: _w, ...rest } = pipeline;
+    const saved: PipelineState = {
+      ...rest,
+      ...(kept.length > 0 ? { warnings: kept } : {}),
+      dismissedWarnings: [...(pipeline.dismissedWarnings ?? []), ...dismissed.map((w) => ({ ...w, dismissedAt: now }))].slice(-100),
+    };
+    await this.deps.store.savePipeline(saved);
+    this.deps.bus.get(projectId).emit({ type: 'state', pipeline: saved });
+    return { dismissed, pipeline: saved };
   }
 
   /**
@@ -1098,6 +1221,117 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const info = rangedMediaInfo(probed, project.sourceRange);
     await this.deps.store.saveProject({ ...project, mediaInfo: info });
     return info;
+  }
+
+  /**
+   * Replace the source lines of several ranges at once (POST
+   * /projects/:id/lines/replace-many, replace_lines with `ranges` or a file):
+   * one write and ONE history entry over the stretch from the first range's
+   * start to the last one's end, undone as one. claude-dubber's repair of
+   * 《反相之地》 was 119 ranges and ~1,100 line edits through a script, one
+   * call and one history entry per range (2026-11-25). Same rules as
+   * {@link replaceSourceLines}: before translation, each range's lines inside
+   * it, no overlaps; the ranges themselves may not overlap.
+   */
+  async replaceSourceRanges(
+    projectId: string,
+    ranges: readonly {
+      fromMs: number;
+      toMs: number;
+      lines: readonly { startMs: number; endMs: number; text: string; speakerId?: string }[];
+    }[],
+  ): Promise<{
+    replaced: number;
+    made: number;
+    ranges: { fromMs: number; toMs: number; replaced: number; lines: { id: string; startMs: number; endMs: number; text: string; speakerId?: string }[] }[];
+  }> {
+    this.assertNotRunning(projectId, 'replace lines');
+    if (this.speakerJobs.get(projectId)?.state === 'running') {
+      throw new AppErrorException('RUN_IN_PROGRESS', 'Speakers are being detected in this project: change its lines when that is done.');
+    }
+    if (ranges.length === 0) throw new AppErrorException('INVALID_EDIT', 'Give at least one range.');
+    const sorted = [...ranges].map((r) => ({ ...r, fromMs: Math.round(r.fromMs), toMs: Math.round(r.toMs) })).sort((a, b) => a.fromMs - b.fromMs);
+    for (const [i, r] of sorted.entries()) {
+      if (!(r.toMs > r.fromMs)) throw new AppErrorException('INVALID_EDIT', `Range ${i + 1} must end after it starts.`);
+      if (i > 0 && r.fromMs < sorted[i - 1]!.toMs) {
+        throw new AppErrorException('INVALID_EDIT', `Ranges at ${formatClock(sorted[i - 1]!.fromMs)} and ${formatClock(r.fromMs)} overlap: give each stretch once.`);
+      }
+    }
+    await this.deps.store.getProject(projectId);
+    const paths = this.deps.store.paths(projectId);
+    if (await fileExistsNonEmpty(paths.translatedJson)) {
+      throw new AppErrorException('INVALID_EDIT', 'This project is already translated: its lines can no longer be restructured.', {
+        remediation: 'Replace lines before translation. In a series, fix the series (parent) transcript, then rebuild the parts not translated yet (rebuild_parts).',
+      });
+    }
+    const fresh = sorted.map((r) => {
+      const lines = r.lines
+        .map((l) => ({ startMs: Math.round(l.startMs), endMs: Math.round(l.endMs), text: String(l.text ?? '').trim(), speakerId: l.speakerId }))
+        .filter((l) => l.text && l.endMs > l.startMs && l.startMs >= r.fromMs - 1 && l.endMs <= r.toMs + 1)
+        .sort((a, b) => a.startMs - b.startMs);
+      for (let i = 1; i < lines.length; i++) {
+        if (lines[i]!.startMs < lines[i - 1]!.endMs) {
+          throw new AppErrorException('INVALID_EDIT', `In the range at ${formatClock(r.fromMs)}, lines ${i} and ${i + 1} overlap; each line must end before the next starts.`);
+        }
+      }
+      return { ...r, lines };
+    });
+    return this.artifactLock.run(projectId, async () => {
+      const current = (await this.tryReadSegments(paths.sourceJson)) ?? [];
+      const inside = (s: TranscriptSegment, r: { fromMs: number; toMs: number }): boolean => s.startMs < r.toMs && s.endMs > r.fromMs;
+      const made = fresh.map((r) =>
+        r.lines.map(
+          (l): TranscriptSegment => ({
+            id: '',
+            index: 0,
+            startMs: l.startMs,
+            endMs: l.endMs,
+            sourceText: l.text,
+            ...(l.speakerId && /^SPEAKER_\d+$/.test(l.speakerId) ? { speakerId: l.speakerId } : {}),
+          }),
+        ),
+      );
+      const kept = current.filter((s) => !fresh.some((r) => inside(s, r)));
+      // Renumbered; each new line remembered by the range it was given for.
+      const rangeOf = new Map<TranscriptSegment, number>();
+      made.forEach((lines, k) => lines.forEach((l) => rangeOf.set(l, k)));
+      const placed: { line: TranscriptSegment; range: number | undefined }[] = [];
+      const all = [...kept, ...made.flat()]
+        .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
+        .map((s, i) => {
+          const line = { ...s, index: i, id: `seg_${String(i + 1).padStart(4, '0')}` };
+          placed.push({ line, range: rangeOf.get(s) });
+          return line;
+        });
+      await writeJsonAtomic(paths.sourceJson, { segments: all });
+      await writeTextAtomic(paths.sourceSrt, segmentsToSrt(displayCuesFor(all, { songSubtitles: await songSubtitlesOn(paths.projectJson) })));
+      const span = { fromMs: fresh[0]!.fromMs, toMs: fresh[fresh.length - 1]!.toMs };
+      const replaced = current.length - kept.length;
+      const count = made.reduce((n, m) => n + m.length, 0);
+      await recordEdit({
+        projectId,
+        target: 'source',
+        range: span,
+        summary: `Replaced ${replaced} line(s) with ${count} in ${fresh.length} range(s), ${formatClock(span.fromMs)}–${formatClock(span.toMs)}`,
+        summaryKey: 'history.summary.replaced-many',
+        summaryParams: { replaced, made: count, ranges: fresh.length, from: formatClock(span.fromMs), to: formatClock(span.toMs) },
+        before: current.filter((s) => inside(s, span)),
+        after: all.filter((s) => inside(s, span)),
+      });
+      await this.refreshWarnings(projectId, { rewritten: fresh.map((r) => ({ fromMs: r.fromMs, toMs: r.toMs })) });
+      return {
+        replaced,
+        made: count,
+        ranges: fresh.map((r, k) => ({
+          fromMs: r.fromMs,
+          toMs: r.toMs,
+          replaced: current.filter((s) => inside(s, r)).length,
+          lines: placed
+            .filter((p) => p.range === k)
+            .map(({ line: s }) => ({ id: s.id, startMs: s.startMs, endMs: s.endMs, text: s.sourceText, ...(s.speakerId ? { speakerId: s.speakerId } : {}) })),
+        })),
+      };
+    });
   }
 
   /**
@@ -1196,8 +1430,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         after: all.slice(first, first + made.length),
         ...(opts.undoOf ? { undoOf: opts.undoOf } : {}),
       });
-      // A loop left LOOP? may be gone now, or lines may have lost their speaker.
-      await this.refreshWarnings(projectId);
+      // A loop left LOOP? may be gone now, or lines may have lost their
+      // speaker; and the stretch's own warnings (lines over silence, a failed
+      // spot check) are settled by its new lines.
+      await this.refreshWarnings(projectId, { rewritten: { fromMs, toMs } });
       return {
         replaced,
         lines: all.slice(first, first + made.length).map((s) => ({
@@ -1271,12 +1507,15 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const model = opts.model ?? project.settings.sttModel ?? 'small';
     const regions = await readSavedSpeechRegions(paths.original16kMonoWav, paths.speechRegionsJson);
     const hear: HearDeps = {
-      decode: async (from, to, noContext, signal) => {
+      decode: async (from, to, noContext, signal, decodeOpts = {}) => {
         await fsp.mkdir(paths.sttChunksDir, { recursive: true });
         const clipPath = path.join(paths.sttChunksDir, `range_${Math.round(from)}_${Math.round(to)}.wav`);
         try {
           await clip(paths.original16kMonoWav, clipPath, from, to, signal);
-          const heard = await stt.transcribe({ audioPath: clipPath, language, model, wordTimestamps: true, noContext }, signal);
+          const heard = await stt.transcribe(
+            { audioPath: clipPath, language, model, wordTimestamps: true, noContext, ...(decodeOpts.listenToAll ? { vadFilter: false } : {}) },
+            signal,
+          );
           return heard.segments.map((s) => ({ ...s, startMs: s.startMs + from, endMs: s.endMs + from }));
         } finally {
           await fsp.rm(clipPath, { force: true }).catch(() => undefined);
@@ -1288,9 +1527,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const startedAt = new Date().toISOString();
     const handle = activity.start({
       kind: 'lines.retranscribe',
-      title: `Re-transcribing ${formatClock(range.fromMs)}–${formatClock(range.toMs)}`,
+      title: said(`Re-transcribing ${formatClock(range.fromMs)}–${formatClock(range.toMs)}`, 'activity.text.retranscribe', {
+        from: formatClock(range.fromMs),
+        to: formatClock(range.toMs),
+      }),
       projectId,
-      ...(asJob ? { message: `${windows.length} windows of up to 15 minutes` } : {}),
+      ...(asJob ? { message: said(`${windows.length} windows of up to 15 minutes`, 'activity.text.windows-planned', { n: windows.length }) } : {}),
     });
     const lineJob: LineJob = { kind: 'retranscribe', abort: new AbortController(), activityId: handle.id };
     this.lineJobs.set(projectId, lineJob);
@@ -1311,7 +1553,13 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         view.done += 1;
         view.results.push(result);
         const percent = (view.done / windows.length) * 100;
-        handle.progress(percent, `${view.done}/${windows.length}: ${result.summary}`, etaSeconds(startedAt, percent));
+        handle.progress(
+          percent,
+          said(`${view.done}/${windows.length}: ${result.summary}`, 'activity.text.window-of', { done: view.done, total: windows.length }, [
+            windowPhrase(result, result.lines, result.loops, result.speakers.unassigned),
+          ]),
+          etaSeconds(startedAt, percent),
+        );
       }),
     ).finally(() => {
       if (this.lineJobs.get(projectId) === lineJob) this.lineJobs.delete(projectId);
@@ -1320,7 +1568,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     if (!asJob) {
       try {
         const result = await work;
-        handle.done(windowSummary(range, result.lines.length, loopCounts(result.loops), result.speakers.unassigned));
+        const counts = loopCounts(result.loops);
+        handle.done({
+          text: windowSummary(range, result.lines.length, counts, result.speakers.unassigned),
+          phrase: windowPhrase(range, result.lines.length, counts, result.speakers.unassigned),
+        });
         return result;
       } catch (err) {
         handle.fail(err);
@@ -1337,7 +1589,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
           result: { lines: result.lines.length, replaced: result.applied?.replaced ?? 0, loops, speakers: result.speakers },
           ...(apply ? {} : { lines: result.lines }),
         });
-        handle.done(windowSummary(range, result.lines.length, loops, result.speakers.unassigned));
+        handle.done({
+          text: windowSummary(range, result.lines.length, loops, result.speakers.unassigned),
+          phrase: windowPhrase(range, result.lines.length, loops, result.speakers.unassigned),
+        });
       },
       (err: unknown) => {
         Object.assign(view, { state: 'failed', finishedAt: new Date().toISOString(), error: toAppError(err).message });
@@ -1483,6 +1738,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         before: base,
         after: merged,
       });
+      // A line fixed by hand is no longer one the run flagged (lines-flagged).
+      await this.refreshWarnings(projectId);
     });
   }
 
@@ -1797,8 +2054,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         after: outcome.segments,
         ...(opts.undoOf ? { undoOf: opts.undoOf } : {}),
       });
-      // A speaker set by hand may be one a re-transcription left out (speakers-unassigned).
-      if (outcome.speakerChanged.size > 0) await this.refreshWarnings(projectId);
+      // A speaker set by hand may be one a re-transcription left out
+      // (speakers-unassigned); a line rewritten by hand, one the run flagged.
+      if (outcome.speakerChanged.size > 0 || outcome.textChanged.size > 0) await this.refreshWarnings(projectId);
     });
     return this.getTimeline(projectId);
   }
@@ -1884,6 +2142,13 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const segment = segments.find((s) => s.id === segmentId);
     if (!segment) {
       throw new AppErrorException('UNKNOWN', `Segment not found: ${segmentId}`);
+    }
+    // A song line plays the original and never gets a voice (mix.ts): a clip
+    // made for it would only take time and lie unused on disk.
+    if (segment.song === true) {
+      throw new AppErrorException('INVALID_EDIT', 'This line is kept as the original song, so it has no dub voice.', {
+        remediation: 'Dub it again first (“Dub this line again” in the editor, or mark_song with song=false), then make its voice.',
+      });
     }
 
     const text = (opts.text ?? segment.translatedText ?? segment.sourceText ?? '').trim();
@@ -2038,6 +2303,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         )[0]!
       );
     });
+    // New text from the editor clears the line's flags (lines-flagged).
+    if (opts.text !== undefined) await this.refreshWarnings(projectId);
 
     return { segment: ttsSegment, alignment };
   }
@@ -2377,6 +2644,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
             {
               budgetPoints: capacity.budgetPoints,
               paused: prefs?.concurrency?.paused === true,
+              pressure: this.deps.pressure?.() === true,
               ...(this.externalHeavyOwner() ? { externalHeavyOwner: this.externalHeavyOwner() } : {}),
             },
           );
@@ -2392,8 +2660,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // atomically, so the queue survives a restart with no second source of
     // truth), then register in memory — a failed write must not leave a
     // phantom queue entry the user cannot see or cancel.
+    // A series part waits ahead of its own series' later parts: retried after
+    // a failure, part 16 went behind parts 20-48, and the agent paused 29
+    // parts to bring it forward (claude-dubber, 2026-11-24).
+    const successor = await this.laterPartInQueue(project);
     const entry: ProjectQueueEntry = {
-      queuedAt: new Date().toISOString(),
+      queuedAt: successor ? new Date(Date.parse(successor.queuedAt) - 1).toISOString() : new Date().toISOString(),
       previousStatus: project.status,
       ...(retryFromStep ? { fromStep: retryFromStep } : {}),
     };
@@ -2402,10 +2674,30 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       return { started: false, queued: true, position: this.queuePosition(project.id) };
     }
     this.workloads.set(project.id, workload);
-    this.queue.push(project.id);
+    const at = successor ? this.queue.indexOf(successor.projectId) : -1;
+    if (at >= 0) this.queue.splice(at, 0, project.id);
+    else this.queue.push(project.id);
     this.queued.add(project.id);
     dubRuns.scheduled(project, { queued: true, ...(retryFromStep ? { fromStep: retryFromStep } : {}) });
     return { started: false, queued: true, position: this.queuePosition(project.id) };
+  }
+
+  /**
+   * The first queued part of the same series with a later number than this
+   * part, with when it was queued: a part is queued ahead of it, keeping the
+   * series' order. Undefined for anything but a series part, or when none waits.
+   */
+  private async laterPartInQueue(project: Project): Promise<{ projectId: string; queuedAt: string } | undefined> {
+    const own = project.series;
+    if (own?.role !== 'part') return undefined;
+    for (const id of this.queue) {
+      const other = await this.deps.store.getProject(id).catch(() => undefined);
+      const s = other?.series;
+      if (s?.role === 'part' && s.parentId === own.parentId && s.index > own.index && other?.queue?.queuedAt) {
+        return { projectId: id, queuedAt: other.queue.queuedAt };
+      }
+    }
+    return undefined;
   }
 
   /** 1-based queue position (0 when not queued). */
@@ -2487,6 +2779,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const decision = decideAdmissions(candidates, this.runningRuns(), {
       budgetPoints: capacity.budgetPoints,
       paused: prefs?.concurrency?.paused === true,
+      pressure: this.deps.pressure?.() === true,
       ...(externalHeavyOwner ? { externalHeavyOwner } : {}),
     });
     if (decision.start.length === 0) return false;
@@ -2747,6 +3040,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       budgetPoints: capacity.budgetPoints,
       paused,
       nameOf: (id) => names.get(id),
+      pressure: this.deps.pressure?.() === true,
       ...(externalHeavyOwner ? { externalHeavyOwner } : {}),
     });
     return {
@@ -2758,8 +3052,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       running: await Promise.all(
         [...this.running.keys()].map(async (projectId) => {
           const pipeline = await this.deps.store.getPipeline(projectId).catch(() => undefined);
-          const started = pipeline?.steps.find((s) => s.startedAt)?.startedAt;
-          const eta = pipeline && started ? etaSeconds(started, pipeline.progressPercent) : undefined;
+          // From this run's own pace (activity/dubRuns.ts): the first step's
+          // start belongs to the first run, and a 7-minute re-mix of a part
+          // dubbed days ago showed ~8 h left (claude-dubber, 2026-11-24).
+          const eta = dubRuns.etaOf(projectId);
           return {
             projectId,
             name: names.get(projectId) ?? projectId,
@@ -2786,11 +3082,22 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     await this.pump();
   }
 
-  /** Move a queued project to the head (rewrites its ordering key). */
-  async runNext(projectId: string): Promise<void> {
-    if (!this.queued.has(projectId)) return;
+  /**
+   * Move a queued project to the head (rewrites its ordering key). Refused,
+   * saying why, for a project that is not waiting: an agent asking to run a
+   * part next learned nothing from a silent no-op.
+   */
+  async runNext(projectId: string): Promise<{ position: number }> {
+    if (!this.queued.has(projectId)) {
+      const project = await this.deps.store.getProject(projectId);
+      throw new AppErrorException(
+        'INVALID_EDIT',
+        this.running.has(projectId) ? `"${project.name}" is dubbing already.` : `"${project.name}" is not waiting in the queue.`,
+        { remediation: 'start_dubbing queues it; then run_next moves it to the front.' },
+      );
+    }
     const head = this.queue[0];
-    if (head === projectId) return;
+    if (head === projectId) return { position: 1 };
     const project = await this.deps.store.getProject(projectId);
     const headProject = head ? await this.deps.store.getProject(head).catch(() => undefined) : undefined;
     const headAt = headProject?.queue?.queuedAt ?? project.queue?.queuedAt ?? new Date().toISOString();
@@ -2801,6 +3108,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     });
     this.queue = [projectId, ...this.queue.filter((id) => id !== projectId)];
     void this.pump();
+    return { position: this.queuePosition(projectId) };
   }
 
   /** Schedule and track a pipeline run. */

@@ -403,6 +403,84 @@ describe('run queue (simultaneous-dub capacity)', () => {
     await sched.cancelJob(a);
   });
 
+  it('takes a change to only the mix or render while a dub runs, until it starts mixing; a series being analysed always', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const media = new FakeMediaService();
+    const extract = media.extractAudio.bind(media);
+    // The dub stops at its audio extraction until the test lets it go.
+    media.extractAudio = async (...args: Parameters<FakeMediaService['extractAudio']>) => {
+      await held;
+      return extract(...args);
+    };
+    const running = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media,
+      registry: fakeRegistry(new FakeSttProvider(makeSegments([[0, 1000, 'hi']])), new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+    });
+    const video = await writeDummyVideo(tmp);
+    const single = await running.createProject(createProjectInput(video));
+    const parent = await running.createProject({
+      ...createProjectInput(video, { name: 'Series' }),
+      series: { minMinutes: 15, maxMinutes: 20, aiProviderId: 'anthropic-translate', recapSec: 4, autoStart: false },
+    });
+    const extracting = async (id: string) =>
+      vi.waitFor(async () => expect((await store.getPipeline(id)).steps.find((s) => s.id === 'extract-audio')?.status).toBe('running'));
+    await running.runPipeline(single.id);
+    await running.runPipeline(parent.id);
+    await extracting(single.id);
+    await extracting(parent.id);
+
+    // Not mixing yet: the automatic blur and the boxes are taken; an engine change is not.
+    const box = { x: 0.7, y: 0.02, w: 0.28, h: 0.06, mode: 'blur' as const };
+    const { project: changed } = await running.updateProjectSettings(single.id, { watermarkAuto: { mode: 'blur' }, blurRegions: [box] });
+    expect(changed.settings).toMatchObject({ watermarkAuto: { mode: 'blur' }, blurRegions: [box] });
+    await expect(running.updateProjectSettings(single.id, { maxSpeedRatio: 1.4 })).rejects.toMatchObject({ appError: { code: 'RUN_IN_PROGRESS' } });
+    // The subtitle files are written at the alignment: song subtitles until then, not after.
+    expect((await running.updateProjectSettings(single.id, { songSubtitles: true })).project.settings.songSubtitles).toBe(true);
+    await store.savePipeline(setStepStatus(await store.getPipeline(single.id), 'alignment', 'running'));
+    await expect(running.updateProjectSettings(single.id, { syncSubtitlesToVoice: false })).rejects.toMatchObject({ appError: { code: 'RUN_IN_PROGRESS' } });
+    expect((await running.updateProjectSettings(single.id, { renderQuality: 'quality' })).project.settings.renderQuality).toBe('quality');
+    // Once the mix has started (here, done in an earlier run), the mix is what it is.
+    await store.savePipeline(setStepStatus(await store.getPipeline(single.id), 'audio-mix', 'completed'));
+    await expect(running.updateProjectSettings(single.id, { duckingLevelDb: -9 })).rejects.toMatchObject({ appError: { code: 'RUN_IN_PROGRESS' } });
+
+    // A series parent only transcribes: its parts are made from its settings afterwards.
+    await store.savePipeline(setStepStatus(await store.getPipeline(parent.id), 'audio-mix', 'skipped'));
+    const { project: series } = await running.updateProjectSettings(parent.id, { blurRegions: [box] });
+    expect(series.settings.blurRegions).toEqual([box]);
+    await expect(running.updateProjectSettings(parent.id, { sttModel: 'tiny' })).rejects.toMatchObject({ appError: { code: 'RUN_IN_PROGRESS' } });
+
+    release();
+    await running.cancelJob(single.id);
+    await running.cancelJob(parent.id);
+  });
+
+  it('refuses a voice kept for one main character as a default or on two speakers', async () => {
+    const kept = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media: new FakeMediaService(),
+      registry: fakeRegistry(new FakeSttProvider(makeSegments([[0, 1000, 'hi']])), new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+      mainOnlyVoices: async () => new Map([['vp_mine', 'Giọng của tôi']]),
+    });
+    const p = await kept.createProject(createProjectInput(await writeDummyVideo(tmp)));
+    await expect(kept.updateProjectSettings(p.id, { defaultMaleVoiceId: 'vp_mine' })).rejects.toMatchObject({ appError: { code: 'INVALID_EDIT' } });
+    await expect(
+      kept.updateProjectSettings(p.id, {
+        speakerVoices: [
+          { speakerId: 'SPEAKER_00', voiceId: 'vp_mine' },
+          { speakerId: 'SPEAKER_03', voiceId: 'vp_mine' },
+        ],
+      }),
+    ).rejects.toMatchObject({ appError: { code: 'INVALID_EDIT' } });
+    const { project } = await kept.updateProjectSettings(p.id, { speakerVoices: [{ speakerId: 'SPEAKER_00', voiceId: 'vp_mine' }], defaultMaleVoiceId: 'builtin-a' });
+    expect(project.settings).toMatchObject({ speakerVoices: [{ speakerId: 'SPEAKER_00', voiceId: 'vp_mine' }], defaultMaleVoiceId: 'builtin-a' });
+  });
+
   it('refuses settings edits while queued (the workload classification is frozen)', async () => {
     const [a, b] = await twoProjects();
     const sched = queuedOrchestrator(1);
@@ -514,6 +592,17 @@ describe('picture options: regions hidden in the render', () => {
 
     ({ project } = await orchestrator.updateProjectSettings(p.id, { blurRegions: [] }));
     expect(project.settings.blurRegions).toBeUndefined();
+    // Find the watermark by itself: kept as a known way to hide it; clearing the boxes turns it off.
+    ({ project } = await orchestrator.updateProjectSettings(p.id, { watermarkAuto: { mode: 'pixelate', strength: 99 } }));
+    expect(project.settings.watermarkAuto).toEqual({ mode: 'pixelate', strength: 10 });
+    ({ project } = await orchestrator.updateProjectSettings(p.id, { blurRegions: [mark] }));
+    expect(project.settings.watermarkAuto).toEqual({ mode: 'pixelate', strength: 10 });
+    ({ project } = await orchestrator.updateProjectSettings(p.id, { blurRegions: [] }));
+    expect(project.settings.watermarkAuto).toBeUndefined();
+    ({ project } = await orchestrator.updateProjectSettings(p.id, { blurRegions: [], watermarkAuto: { mode: 'blur' } }));
+    expect(project.settings.watermarkAuto).toEqual({ mode: 'blur' });
+    ({ project } = await orchestrator.updateProjectSettings(p.id, { watermarkAuto: null } as never));
+    expect(project.settings.watermarkAuto).toBeUndefined();
     ({ project } = await orchestrator.updateProjectSettings(p.id, { blurRegions: [mark] }));
     expect(project.settings.blurRegions).toEqual([mark]);
     ({ project } = await orchestrator.updateProjectSettings(p.id, { blurRegions: null } as never));

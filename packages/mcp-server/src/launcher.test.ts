@@ -80,6 +80,31 @@ describe('ensureAppRunning', () => {
   });
 });
 
+describe('a slow app is a running app', () => {
+  it('never launches the app again when /health answers late (event-loop stalls, 2026-11-24)', async () => {
+    // Takes the connection, answers after 300 ms: slower than the 100 ms probe below.
+    const server = createServer((_req, res) => setTimeout(() => res.end('{"status":"ok"}'), 300));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const api = new VideoDubberApi({ baseUrl: url });
+    expect(await api.probe(100)).toBe('slow');
+    let spawned = false;
+    const quick = Object.assign(api, { probe: (ms?: number) => VideoDubberApi.prototype.probe.call(api, ms === undefined ? 100 : ms) });
+    const state = await ensureAppRunning(quick, {
+      target: { command: 'x', args: [], label: 'x' },
+      slowTimeoutMs: 1000,
+      spawnImpl: () => {
+        spawned = true;
+        return { unref: () => undefined };
+      },
+    });
+    expect(state).toBe('running');
+    expect(spawned).toBe(false);
+    await new Promise<void>((r) => server.close(() => r()));
+    expect(await api.probe(500)).toBe('down');
+  });
+});
+
 describe('resolveBaseUrl', () => {
   it('prefers --url, then VIDEODUBBER_URL, then the app default', () => {
     expect(resolveBaseUrl(['node', 'cli.js', '--url', 'http://127.0.0.1:6100'], { VIDEODUBBER_URL: 'http://x:1' })).toBe('http://127.0.0.1:6100');

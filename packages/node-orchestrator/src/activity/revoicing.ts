@@ -16,7 +16,7 @@
  */
 import { toAppError, type ActivityInitiator, type AppError } from '@videodubber/shared';
 
-import { activity, type ActivityHandle, type ActivityRegistry } from './registry.js';
+import { activity, said, type ActivityHandle, type ActivityRegistry } from './registry.js';
 
 export const REVOICE_IDLE_MS = 90_000;
 
@@ -49,7 +49,7 @@ export class RevoiceTracker {
     let batch = this.batches.get(key);
     if (!batch) {
       batch = {
-        handle: this.registry.start({ kind: 'voices.regenerate', title: 'Re-voicing lines', projectId, initiator: who }),
+        handle: this.registry.start({ kind: 'voices.regenerate', title: said('Re-voicing lines', 'activity.text.revoice'), projectId, initiator: who }),
         done: 0,
         failed: 0,
         inFlight: 0,
@@ -80,7 +80,13 @@ export class RevoiceTracker {
       `${batch.done} line(s) re-voiced` +
       (batch.failed > 0 ? `, ${batch.failed} failed` : '') +
       (remaining !== undefined ? `, ${remaining} left` : '');
-    batch.handle.progress(remaining !== undefined ? (100 * handled) / (handled + remaining) : null, message);
+    batch.handle.progress(
+      remaining !== undefined ? (100 * handled) / (handled + remaining) : null,
+      said(message, 'activity.text.revoice-progress', { n: batch.done }, [
+        ...(batch.failed > 0 ? [{ key: 'activity.text.part-failed', params: { n: batch.failed } }] : []),
+        ...(remaining !== undefined ? [{ key: 'activity.text.part-left', params: { n: remaining } }] : []),
+      ]),
+    );
     if (remaining === 0 && batch.inFlight === 0) {
       this.finish(key);
       return;
@@ -100,7 +106,14 @@ export class RevoiceTracker {
       batch.handle.fail(batch.lastError ?? 'No line could be re-voiced.');
       return;
     }
-    batch.handle.done(`Re-voiced ${batch.done} line(s)${batch.failed > 0 ? `; ${batch.failed} failed` : ''}`);
+    batch.handle.done(
+      said(
+        `Re-voiced ${batch.done} line(s)${batch.failed > 0 ? `; ${batch.failed} failed` : ''}`,
+        'activity.text.revoiced',
+        { n: batch.done },
+        batch.failed > 0 ? [{ key: 'activity.text.part-failed', params: { n: batch.failed } }] : [],
+      ),
+    );
   }
 
   /** End every open batch now (the server closing). */

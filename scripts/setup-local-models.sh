@@ -88,7 +88,7 @@ ok "Using python: $(command -v "${PYTHON_BIN}") ($("${PYTHON_BIN}" --version 2>&
 # Every suite test-workers runs: one missing here is a release gate that fails on
 # a freshly set-up machine (the diarization engine was, until the Mac's 0.13.0
 # preflight refused to build without its venv).
-WORKERS=("stt-worker" "translation-worker" "tts-worker" "tts-engine-neural" "tts-engine-omnivoice" "diarization-engine")
+WORKERS=("stt-worker" "translation-worker" "tts-worker" "tts-engine-neural" "tts-engine-omnivoice" "diarization-engine" "ocr-engine")
 
 # ----------------------------------------------------------------------------
 # 1. Create venvs and install requirements per worker.

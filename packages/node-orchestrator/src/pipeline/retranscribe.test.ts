@@ -153,6 +153,28 @@ describe('hearing a window through the loop pass', () => {
     expect(loopCounts(heard.loops)).toEqual({ removed: 0, kept: 0, left: 1 });
   });
 
+  it('leaves out a decoder window\'s opening line over music that a second listen does not hear (item D)', async () => {
+    // 1:04:28–1:11:09: "我会帮你解决的" from the window start 1:06:28.00 to 1:06:57.98, over music.
+    const asked: [number, number, boolean, boolean][] = [];
+    const decode = async (from: number, to: number, noContext: boolean, _s: AbortSignal, opts: { listenToAll?: boolean } = {}): Promise<TranscriptSegment[]> => {
+      asked.push([from, to, noContext, opts.listenToAll === true]);
+      if (from === 3_868_000) {
+        return lines([
+          [3_870_000, 3_872_000, '我看前面 你看后面'],
+          [3_988_000, 4_017_980, '我会帮你解决的'],
+          [4_020_000, 4_022_000, '你们在哪'],
+        ]);
+      }
+      return []; // Listened to again: nothing is said there.
+    };
+    const quiet = silenceTest([{ startMs: 3_869_000, endMs: 3_873_000 }, { startMs: 4_019_000, endMs: 4_023_000 }]);
+    const heard = await hearWindow({ decode, inSilence: quiet }, { fromMs: 3_868_000, toMs: 4_029_000 }, true, never);
+    expect(heard.lines.map((l) => l.sourceText)).toEqual(['我看前面 你看后面', '你们在哪']);
+    expect(heard.loops).toEqual([expect.objectContaining({ kind: 'overlong', status: 'removed' })]);
+    // The second listen is without context and without the voice filter.
+    expect(asked[1]).toEqual([3_987_500, 4_018_480, true, true]);
+  });
+
   it('takes the common credit words for credits only where the speech map heard nobody', () => {
     const silent = silenceTest([{ startMs: 0, endMs: 10_000 }]);
     expect(silent(20_000, 25_000)).toBe(true);

@@ -188,6 +188,8 @@ export class StudioStore implements OnDestroy {
   readonly dubRunning = computed(() => this.project()?.status === 'running');
   /** The dub waits at the review checkpoint: translated, no voice made yet. */
   readonly awaitingReview = computed(() => !this.dubRunning() && this.pipeline()?.awaitingReview === true);
+  /** Lines that stopped the dub before voicing (holdFlaggedLines): they still fail the translation checks. */
+  readonly heldCount = computed(() => (this.awaitingReview() ? (this.pipeline()?.heldLines?.length ?? 0) : 0));
   /** "Continue dubbing" (the toolbar's, at the review checkpoint) is on its way. */
   readonly continuing = signal(false);
   /** Voices the project's TTS engine offers here (installed ones). */

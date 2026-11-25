@@ -248,7 +248,7 @@ export class VoiceProfileService implements VoiceRefResolver {
     }
   }
 
-  async rename(id: string, patch: { name?: string; note?: string; gender?: 'female' | 'male' }): Promise<VoiceProfile> {
+  async rename(id: string, patch: { name?: string; note?: string; gender?: 'female' | 'male'; mainOnly?: boolean }): Promise<VoiceProfile> {
     const profile = await this.deps.store.require(id);
     const name = patch.name?.trim().slice(0, NAME_MAX);
     const gender = patch.gender === 'female' || patch.gender === 'male' ? patch.gender : undefined;
@@ -258,9 +258,12 @@ export class VoiceProfileService implements VoiceRefResolver {
       ...(patch.note !== undefined ? { note: patch.note.trim().slice(0, 500) } : {}),
       // The user's word: confirmed, whatever a suggestion said.
       ...(gender ? { gender: { value: gender, confirmed: true } } : {}),
+      // Kept for one main character (voices/mainOnly.ts); false shares it again.
+      ...(patch.mainOnly === true ? { mainOnly: true } : {}),
       updatedAt: this.now().toISOString(),
     };
     if (patch.note !== undefined && !next.note) delete next.note;
+    if (patch.mainOnly === false) delete next.mainOnly;
     return this.deps.store.save(next);
   }
 

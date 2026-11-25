@@ -445,7 +445,7 @@ export interface ConcurrencyPreferences {
 }
 
 /** Why a queued project has not started yet. */
-export type QueueReason = 'no-slot' | 'heavy-busy' | 'paused';
+export type QueueReason = 'no-slot' | 'heavy-busy' | 'paused' | 'pressure';
 
 /** One project waiting for a run slot. */
 export interface QueueEntry {

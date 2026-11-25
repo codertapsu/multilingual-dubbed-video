@@ -6,6 +6,7 @@ const options = [
   { id: 'anthropic-translate', label: 'Claude', ready: true, viaMotherClaude: true },
   { id: 'openai-translate', label: 'OpenAI', ready: true },
   { id: 'gemini-translate', label: 'Gemini', ready: false },
+  { id: 'llama-cpp-chat', label: 'Gemma', ready: true },
 ];
 
 function fakeStorage(): Storage {
@@ -27,19 +28,20 @@ describe('series AI default', () => {
     delete (globalThis as { localStorage?: Storage }).localStorage;
   });
 
-  it('starts from Claude through Mother Claude, then keeps the last choice while it is set up', () => {
+  it('starts from the built-in model on this computer, then keeps the last choice while it is set up', () => {
     (globalThis as { localStorage?: Storage }).localStorage = fakeStorage();
-    expect(defaultSeriesAi(options)).toBe('anthropic-translate');
+    expect(defaultSeriesAi(options)).toBe('llama-cpp-chat');
     rememberSeriesAi('openai-translate');
     expect(defaultSeriesAi(options)).toBe('openai-translate');
     // A remembered AI that is no longer set up is passed over.
     rememberSeriesAi('gemini-translate');
     expect(globalThis.localStorage.getItem(SERIES_AI_KEY)).toBe('gemini-translate');
-    expect(defaultSeriesAi(options)).toBe('anthropic-translate');
+    expect(defaultSeriesAi(options)).toBe('llama-cpp-chat');
   });
 
-  it('works without storage, and offers nothing when no AI is set up', () => {
-    expect(defaultSeriesAi(options)).toBe('anthropic-translate');
+  it('never picks a cloud AI by itself: without the built-in model and no choice, the user chooses', () => {
+    const cloudOnly = options.filter((o) => o.id !== 'llama-cpp-chat');
+    expect(defaultSeriesAi(cloudOnly)).toBe('');
     expect(() => rememberSeriesAi('openai-translate')).not.toThrow();
     expect(defaultSeriesAi(options.map((o) => ({ ...o, ready: false })))).toBe('');
   });

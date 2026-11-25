@@ -17,7 +17,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 import { AppErrorException, type Project, type TranscriptSegment } from '@videodubber/shared';
 
-import { activity } from '../activity/registry.js';
+import { activity, said } from '../activity/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
 import { isSong, windowsInPart, type SongMarkRequest, type SongMarkResult } from './songLines.js';
 import { openSuggestions, readSongSuggestions, settleSuggestions, songSuggestionsPath } from './songSuggestions.js';
@@ -133,7 +133,11 @@ async function markInParts(deps: SongRouteDeps, parentId: string, result: SongMa
   const total = parent.series.partIds?.length ?? 0;
   const job = activity.start({
     kind: 'songs',
-    title: `${result.song ? 'Keeping songs' : 'Dubbing songs again'} in the parts of "${parent.name}"`,
+    title: said(
+      `${result.song ? 'Keeping songs' : 'Dubbing songs again'} in the parts of "${parent.name}"`,
+      result.song ? 'activity.text.songs-keep' : 'activity.text.songs-dub',
+      { name: parent.name },
+    ),
     projectId: parentId,
   });
   let done = 0;
@@ -142,7 +146,7 @@ async function markInParts(deps: SongRouteDeps, parentId: string, result: SongMa
     const parts = await deps.forEachPart(parentId, async (partId) => {
       const part = await deps.store.getProject(partId);
       done++;
-      job.progress(total ? (done / total) * 100 : null, `Part ${done}/${total}`);
+      job.progress(total ? (done / total) * 100 : null, said(`Part ${done}/${total}`, 'activity.text.part-of', { done, total }));
       if (!part.sourceRange) return;
       const inPart = windowsInPart(windows, part.sourceRange);
       if (inPart.length === 0) return;
@@ -152,7 +156,8 @@ async function markInParts(deps: SongRouteDeps, parentId: string, result: SongMa
         settleSuggestions(songSuggestionsPath(deps.store.paths(partId)), r.targets.map((t) => t.id), await projectLines(deps.store, partId)),
       );
     });
-    job.done(`${marked} line(s) changed in ${parts.filter((p) => p.ok).length} part(s)`);
+    const changedParts = parts.filter((p) => p.ok).length;
+    job.done(said(`${marked} line(s) changed in ${changedParts} part(s)`, 'activity.text.songs-done', { n: marked, parts: changedParts }));
     return parts;
   } catch (err) {
     job.fail(err);

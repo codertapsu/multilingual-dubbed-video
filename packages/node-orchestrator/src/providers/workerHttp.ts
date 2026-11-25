@@ -172,19 +172,21 @@ export interface RawWorkerResponse {
  * downloads, big transcriptions) aren't killed mid-flight. Resolves with the raw
  * status + body text; rejects on transport/abort errors (mapped by the caller).
  */
-function sendJson(
+export function sendJson(
   method: 'GET' | 'POST',
   url: string,
   payload: string | undefined,
   signal: AbortSignal,
+  /** Extra request headers (a local LLM's key, say). */
+  extraHeaders: Record<string, string> = {},
 ): Promise<RawWorkerResponse> {
   return new Promise<RawWorkerResponse>((resolve, reject) => {
     const target = new URL(url);
     const transport = target.protocol === 'https:' ? https : http;
-    const headers: Record<string, string> =
-      payload !== undefined
-        ? { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) }
-        : {};
+    const headers: Record<string, string> = {
+      ...extraHeaders,
+      ...(payload !== undefined ? { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) } : {}),
+    };
 
     const req = transport.request(target, { method, headers, signal }, (res) => {
       const chunks: Buffer[] = [];

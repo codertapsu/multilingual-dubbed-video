@@ -42,8 +42,20 @@ export function parseJsonReply(text: string): Record<string, unknown> | undefine
 }
 
 /** Lines between two times as "[m:ss] text", thinned evenly to at most `maxChars`. */
-export function transcriptExcerpt(lines: readonly PlannerLine[], fromMs: number, toMs: number, maxChars: number): string {
-  const inside = lines.filter((l) => l.endMs > fromMs && l.startMs < toMs).map((l) => `[${clock(l.startMs)}] ${l.sourceText.trim()}`);
+export function transcriptExcerpt(
+  lines: readonly (PlannerLine & { speakerId?: string })[],
+  fromMs: number,
+  toMs: number,
+  maxChars: number,
+  /** Who each speaker id is (the sheet's cast): lines say who speaks them. */
+  speakers?: ReadonlyMap<string, string>,
+): string {
+  const who = (l: { speakerId?: string }): string => {
+    if (!l.speakerId) return '';
+    const name = speakers?.get(l.speakerId);
+    return name ? `${name}: ` : `${l.speakerId}: `;
+  };
+  const inside = lines.filter((l) => l.endMs > fromMs && l.startMs < toMs).map((l) => `[${clock(l.startMs)}] ${who(l)}${l.sourceText.trim()}`);
   const total = inside.reduce((n, l) => n + l.length + 1, 0);
   if (total <= maxChars) return inside.join('\n');
   const keep = Math.max(1, Math.floor((inside.length * maxChars) / total));
@@ -96,10 +108,17 @@ export async function aiTitlePart(
   part: Pick<SeriesPlanPart, 'index' | 'startMs' | 'endMs'>,
   count: number,
   lines: readonly PlannerLine[],
-  context: { seriesName: string; sourceLanguageName: string; targetLanguageName: string; names?: readonly string[] },
+  context: {
+    seriesName: string;
+    sourceLanguageName: string;
+    targetLanguageName: string;
+    names?: readonly string[];
+    /** Who each speaker id is: the summary names who said what (one named the wrong brother, F3). */
+    speakers?: ReadonlyMap<string, string>;
+  },
   signal?: AbortSignal,
 ): Promise<{ title: string; summary: string } | undefined> {
-  const transcript = transcriptExcerpt(lines, part.startMs, part.endMs, 3500);
+  const transcript = transcriptExcerpt(lines, part.startMs, part.endMs, 3500, context.speakers);
   if (!transcript) return undefined;
   // The series' own names (the shared character sheet), so a title says
   // "Lý Vân", as the dub does, not a fresh transliteration of 李云.
@@ -107,6 +126,7 @@ export async function aiTitlePart(
   const user =
     `Video: "${context.seriesName}", part ${part.index} of ${count}. What is said in this part (${context.sourceLanguageName}):\n${transcript}\n\n` +
     (names.length > 0 ? `Write names exactly as the dub does: ${names.join('; ')}.\n` : '') +
+    (context.speakers && context.speakers.size > 0 ? 'Each line says who speaks it: in the summary, name who says or does what only as the lines show it.\n' : '') +
     `Write in ${context.targetLanguageName}: a short title for this part (at most 60 characters, no part number) and a one-sentence summary for a post caption. ` +
     'Reply {"title":"...","summary":"..."}.';
   const reply = await chat.chatComplete(TITLE_SYSTEM, user, signal, {

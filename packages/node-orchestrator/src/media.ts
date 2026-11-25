@@ -290,6 +290,39 @@ export interface PipelineMediaService extends MediaService {
   prepareStemInput?(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<AudioExtractResult>;
   /** One 48 kHz stereo WAV from separated stems: one converted, several summed unscaled. */
   mixStems?(inputPaths: readonly string[], outputPath: string, signal?: AbortSignal): Promise<AudioExtractResult>;
+  /**
+   * When the source's own burned-in subtitles are on screen: the band read
+   * five times a second over the window (media-worker subtitlePresence.ts),
+   * in the input's time. Optional: an older media worker cannot, and the
+   * subtitle check is then skipped.
+   */
+  scanSubtitlePresence?(
+    inputPath: string,
+    input: { band: { y: number; h: number; x?: number; w?: number }; startMs?: number; endMs?: number },
+    onProgress?: (fraction: number) => void,
+    signal?: AbortSignal,
+  ): Promise<SubtitlePresenceScan>;
+  /**
+   * One grey frame of the subtitle band per time (ms of the input) into one
+   * raw file, for the subtitle reader (media-worker readBandFrames). Optional,
+   * like scanSubtitlePresence.
+   */
+  readBandFrames?(
+    inputPath: string,
+    input: { band: { y: number; h: number; x?: number; w?: number }; timesMs: readonly number[]; outputPath: string },
+    onProgress?: (fraction: number) => void,
+    signal?: AbortSignal,
+  ): Promise<{ width: number; height: number; count: number; indexOf: number[] }>;
+}
+
+/** What {@link PipelineMediaService.scanSubtitlePresence} returns. */
+export interface SubtitlePresenceScan {
+  fps: number;
+  startMs: number;
+  endMs: number;
+  frames: number;
+  framesWithText: number;
+  events: { startMs: number; endMs: number }[];
 }
 
 /**
@@ -330,6 +363,8 @@ const MEDIA_SERVICE_METHOD_TABLE: Record<keyof PipelineMediaService, true> = {
   mixStems: true,
   renderThumbnail: true,
   detectSceneChanges: true,
+  scanSubtitlePresence: true,
+  readBandFrames: true,
 };
 
 /** A method name of {@link PipelineMediaService}. */

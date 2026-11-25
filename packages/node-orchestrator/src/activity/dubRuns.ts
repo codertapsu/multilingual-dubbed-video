@@ -18,7 +18,8 @@
 import { pipelineStepLabel, type ActivityInitiator, type PipelineStepId, type Project } from '@videodubber/shared';
 
 import type { PipelineEvent } from '../events.js';
-import { activity, type ActivityHandle, type ActivityRegistry } from './registry.js';
+import { runEtaSeconds } from './eta.js';
+import { activity, said, type ActivityHandle, type ActivityRegistry, type ActivityText } from './registry.js';
 
 export const DUB_RUN_KINDS: readonly string[] = ['dub.run', 'dub.render'];
 
@@ -28,6 +29,10 @@ interface Run {
   step?: string;
   /** A running state was seen in this run: its later review stop or pause is its ending. */
   sawRunning: boolean;
+  /** When this run was first seen running, and how far it was then: its pace, for the time left. */
+  since?: { atMs: number; percent: number };
+  /** The time left last estimated (s), for the queue view. */
+  eta?: number;
   /** Queued again after a restart, its asker not known yet (see {@link DubRunTracker.adoptRestored}). */
   needsInitiator?: boolean;
 }
@@ -38,7 +43,10 @@ export const isRenderStep = (step: PipelineStepId | undefined): boolean => step 
 export class DubRunTracker {
   private readonly runs = new Map<string, Run>();
 
-  constructor(private readonly registry: ActivityRegistry = activity) {}
+  constructor(
+    private readonly registry: ActivityRegistry = activity,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   /**
    * A run was scheduled: started now, or waiting in the queue. Called in the
@@ -52,18 +60,19 @@ export class DubRunTracker {
     this.close(project.id, 'Replaced by a new run');
     const render = isRenderStep(how.fromStep);
     const parent = project.series?.role === 'parent';
+    const name = { name: project.name };
     const title = render
-      ? `Rendering “${project.name}”`
+      ? said(`Rendering “${project.name}”`, 'activity.text.dub-render', name)
       : parent
-        ? `Transcribing “${project.name}” for its parts`
-        : `Dubbing “${project.name}”`;
+        ? said(`Transcribing “${project.name}” for its parts`, 'activity.text.dub-parent', name)
+        : said(`Dubbing “${project.name}”`, 'activity.text.dub-run', name);
     const initiator = how.restored ? this.lastInitiatorOf(project.id) : undefined;
     const handle = this.registry.start({
       kind: render ? 'dub.render' : 'dub.run',
       title,
       projectId: project.id,
       waiting: how.queued,
-      message: how.queued ? 'Waiting in the queue' : 'Starting',
+      message: how.queued ? said('Waiting in the queue', 'activity.text.queue-waiting') : said('Starting', 'activity.text.starting'),
       ...(how.restored ? { initiator: initiator ?? { kind: 'scheduler' } } : {}),
     });
     this.runs.set(project.id, { handle, percent: null, sawRunning: false, ...(how.restored && !initiator ? { needsInitiator: true } : {}) });
@@ -71,12 +80,12 @@ export class DubRunTracker {
 
   /** Taken out of the queue before it started (paused while waiting). */
   dequeued(projectId: string): void {
-    this.close(projectId, 'Taken out of the queue');
+    this.close(projectId, said('Taken out of the queue', 'activity.text.dequeued'));
   }
 
   /** The run's work is over, however it ended: an entry its events did not end stops here. */
   ended(projectId: string): void {
-    this.close(projectId, 'Stopped');
+    this.close(projectId, said('Stopped', 'activity.text.stopped'));
   }
 
   /** One event of a project's run (EventBusRegistry.observe). */
@@ -84,7 +93,7 @@ export class DubRunTracker {
     const run = this.runs.get(projectId);
     if (!run) return;
     if (event.type === 'done') {
-      run.handle.done('Finished');
+      run.handle.done(said('Finished', 'activity.text.finished'));
       this.runs.delete(projectId);
       return;
     }
@@ -98,12 +107,16 @@ export class DubRunTracker {
     // A continued run first re-reads where the last one stopped (paused, or at
     // the review): only once this run has been seen running are those its end.
     if (run.sawRunning && p.awaitingReview) {
-      run.handle.done('Waiting for your review: the draft translation is ready');
+      run.handle.done(said('Waiting for your review: the draft translation is ready', 'activity.text.review-ready'));
       this.runs.delete(projectId);
       return;
     }
     if (run.sawRunning && p.status === 'paused') {
-      run.handle.cancelled(`Paused${p.pausedStep ? ` at “${pipelineStepLabel(p.pausedStep)}”` : ''}: it continues where it stopped`);
+      run.handle.cancelled(
+        p.pausedStep
+          ? said(`Paused at “${pipelineStepLabel(p.pausedStep)}”: it continues where it stopped`, 'activity.text.paused-at', { stepKey: `opt.step.${p.pausedStep}` })
+          : said('Paused: it continues where it stopped', 'activity.text.paused'),
+      );
       this.runs.delete(projectId);
       return;
     }
@@ -111,11 +124,18 @@ export class DubRunTracker {
     run.sawRunning = true;
     const step = p.currentStep ? pipelineStepLabel(p.currentStep) : undefined;
     const percent = Number.isFinite(p.progressPercent) ? Math.round(p.progressPercent) : null;
+    if (!run.since && percent !== null) run.since = { atMs: this.now(), percent };
     // The bus repeats a state at every write; the list needs only what moved.
     if (percent === run.percent && step === run.step && this.registry.get(run.handle.id)?.state === 'running') return;
     run.percent = percent;
     run.step = step;
-    run.handle.progress(percent, step);
+    run.eta = percent !== null && run.since ? runEtaSeconds(run.since, percent, this.now()) : undefined;
+    run.handle.progress(percent, p.currentStep && step ? said(step, `opt.step.${p.currentStep}`) : undefined, run.eta);
+  }
+
+  /** A running dub's time left as last estimated from its own pace (seconds), if it can tell yet. */
+  etaOf(projectId: string): number | undefined {
+    return this.runs.get(projectId)?.eta;
   }
 
   /**
@@ -139,7 +159,7 @@ export class DubRunTracker {
     return last?.initiator;
   }
 
-  private close(projectId: string, message: string): void {
+  private close(projectId: string, message: ActivityText): void {
     const run = this.runs.get(projectId);
     if (!run) return;
     run.handle.cancelled(message);

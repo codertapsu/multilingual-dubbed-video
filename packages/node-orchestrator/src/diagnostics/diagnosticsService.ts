@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import type { BackendCrash, BackendHealth, QueueState } from '@videodubber/shared';
+import type { AudioDrift, BackendCrash, BackendHealth, QueueState } from '@videodubber/shared';
 
 import { freeBytes } from '../engines/diskSpace.js';
 import { engineLogFile, tailFile, type LogRecord, type StructuredLog } from './logFiles.js';
@@ -44,6 +44,13 @@ export interface DiagnosticsSummary {
   disk: { freeBytes?: number; projectsDir: string; projects: { id: string; name: string; bytes: number }[] };
   recent: { warnings: LogRecord[]; errors: LogRecord[] };
   crashes: { file: string; at: string; kind: string }[];
+  /**
+   * How far each project's source audio was off its picture, as measured at
+   * its extract-audio step (positive: longer), the largest first. Every
+   * measurement, not only the warnings from 0.5 s: P1/P2 of the 27.8-hour
+   * series sat at +0.56 s, and a value just under the warning is evidence too.
+   */
+  audioDrift: { id: string; name: string; driftMs: number; measuredAt?: string }[];
 }
 
 export interface DiagnosticsDeps {
@@ -55,7 +62,7 @@ export interface DiagnosticsDeps {
   runningEngines: () => string[];
   unusableEngines: () => string[];
   projectsDir: () => string;
-  listProjects: () => Promise<{ id: string; name: string; workspaceDir: string }[]>;
+  listProjects: () => Promise<{ id: string; name: string; workspaceDir: string; mediaInfo?: { audioDrift?: AudioDrift } }[]>;
   /** Extra JSON files for the bundle (system profile, versions, preferences): name → value. */
   extras?: () => Promise<Record<string, unknown>>;
   /** nvidia-smi (tests inject one). */
@@ -123,6 +130,7 @@ export function redactHome(text: string, home = os.homedir()): string {
 
 export class DiagnosticsService {
   private diskCache: { at: number; value: DiagnosticsSummary['disk'] } | undefined;
+  private driftCache: { at: number; value: DiagnosticsSummary['audioDrift'] } | undefined;
 
   constructor(private readonly deps: DiagnosticsDeps) {}
 
@@ -168,6 +176,21 @@ export class DiagnosticsService {
     return value;
   }
 
+  /** Every project's measured audio drift, the largest first (at most 40). */
+  private async audioDrift(): Promise<DiagnosticsSummary['audioDrift']> {
+    if (this.driftCache && Date.now() - this.driftCache.at < 60_000) return this.driftCache.value;
+    const projects = await this.deps.listProjects().catch(() => []);
+    const value = projects
+      .flatMap((p) => {
+        const d = p.mediaInfo?.audioDrift;
+        return d ? [{ id: p.id, name: p.name, driftMs: d.driftMs, ...(d.measuredAt ? { measuredAt: d.measuredAt } : {}) }] : [];
+      })
+      .sort((a, b) => Math.abs(b.driftMs) - Math.abs(a.driftMs))
+      .slice(0, 40);
+    this.driftCache = { at: Date.now(), value };
+    return value;
+  }
+
   async summary(): Promise<DiagnosticsSummary> {
     const records = this.deps.structured.recent(512 * 1024);
     const running = this.deps.runningEngines();
@@ -190,6 +213,7 @@ export class DiagnosticsService {
         errors: records.filter((r) => r.level === 'error').slice(-30),
       },
       crashes: this.crashes(),
+      audioDrift: await this.audioDrift(),
     };
   }
 

@@ -145,14 +145,28 @@ describe('the loop pass over silence', () => {
     expect(kept.ranges[0]).toMatchObject({ status: 'kept' });
   });
 
-  it('what the second decode writes over silence is dropped; what it hears over speech replaces the run', async () => {
+  it('over "silence" the two decodes are paired by time: a line both heard keeps its words, the rest go', async () => {
+    // Worded differently without context (别喊 / 别看): the first decode's text and timing stay.
     const again = lines([
       [1000, 3000, '谢谢大家'],
       [12_000, 14_000, '你来了'],
     ]);
     const out = await repairLoops(silent, [range], deps(again, [{ startMs: 11_800, endMs: 14_200 }]), never);
-    expect(out.ranges[0]).toMatchObject({ status: 'replaced', after: 1 });
-    expect(out.lines.map((l) => l.sourceText)).toEqual(['你来了']);
+    expect(out.ranges[0]).toMatchObject({ status: 'replaced', before: 10, after: 2 });
+    expect(out.ranges[0]!.reason).toContain('paired with a decode without context by time: 2 heard by both, 8 not heard again, removed');
+    expect(out.lines.map((l) => [l.startMs, l.endMs, l.sourceText])).toEqual([
+      [0, 2500, '他走了0'],
+      [12_000, 14_500, '明天再来4'],
+    ]);
+    // What each decode heard is kept as evidence (audio/loop_ranges.json).
+    expect(out.ranges[0]!.originalLines).toHaveLength(10);
+    expect(out.ranges[0]!.heardLines!.map((l) => l.text)).toEqual(['谢谢大家', '你来了']);
+  });
+
+  it('the same words heard again over "silence" are speech the speech map missed: kept (《反相之地》 chase scenes)', async () => {
+    const out = await repairLoops(silent, [range], deps(silent), never);
+    expect(out.ranges[0]).toMatchObject({ status: 'kept', after: 10 });
+    expect(out.lines.map((l) => l.sourceText)).toEqual(silent.map((l) => l.sourceText));
   });
 
   it('a loop the second decode repeats over silence is not "really said"', async () => {

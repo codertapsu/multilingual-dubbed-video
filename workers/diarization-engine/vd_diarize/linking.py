@@ -8,11 +8,21 @@ diar_link.py, the script that rescued the field report's 10-hour drama
 
 - Average linkage (UPGMA) on cosine distance, numpy only, merging while the
   closest pair of groups is within the link distance.
-- Cannot-links: two local speakers of one chunk, both with 15 s or more, whose
-  prints are less alike than the cannot-link similarity, never end in one
-  group: the chunk's diarizer had both voices in front of it and kept them
-  apart. Without this, 0.30 merged the drama's two main co-occurring voices
-  (53 and 49 minutes) into one; with it the result held from 0.30 to 0.40.
+- Cannot-links: two local speakers of one chunk whose prints are less alike
+  than the cannot-link similarity never end in one group: the chunk's
+  diarizer had both voices in front of it and kept them apart. Without this,
+  0.30 merged the drama's two main co-occurring voices (53 and 49 minutes)
+  into one; with it the result held from 0.30 to 0.40. It first held only
+  between speakers who talk 15 s or more in their chunk, and in 《反相之地》
+  (claude-dubber, 2026-11-25: an AI-voiced drama, 692 local speakers in 25
+  chunks, most of them under 15 s) the main voice then took in 72 local
+  speakers, 51 of them from chunks it already had a speaker in, prints as
+  little as 0.11 alike, and its lines called three different students by
+  name. Every pair whose prints can be trusted (`min_print_sec`) counts now,
+  and the two later steps keep the chunk's verdict too: a print too short to
+  trust never joins a group holding a speaker of its own chunk, and past
+  `max_speakers` a speaker merges into the nearest one with no chunk in
+  common when there is one. Same-chunk merges in that drama: 276 -> 54.
   Confident male and female seeds (gender.py) never link either. Their
   distance is infinite, and average linkage carries an infinite pair into
   every merge that contains it.
@@ -136,10 +146,10 @@ def upgma(distances: np.ndarray, stop: float) -> np.ndarray:
     return labels.astype(int)
 
 
-def _cannot_links(items: Sequence[LinkItem], sims: np.ndarray, cannot_link_sim: float) -> np.ndarray:
+def _cannot_links(items: Sequence[LinkItem], sims: np.ndarray, cannot_link_sim: float, min_print_sec: float = 3.0) -> np.ndarray:
     chunk = np.array([it.chunk for it in items])
-    big = np.array([it.sec >= CANNOT_LINK_MIN_SEC for it in items])
-    out = (chunk[:, None] == chunk[None, :]) & big[:, None] & big[None, :] & (sims < cannot_link_sim)
+    trusted = np.array([it.print_sec >= min_print_sec for it in items])
+    out = (chunk[:, None] == chunk[None, :]) & trusted[:, None] & trusted[None, :] & (sims < cannot_link_sim)
     male = np.array([is_male_seed(it.f0_hz, it.low_share, it.sec) for it in items])
     female = np.array([is_female_seed(it.f0_hz, it.low_share, it.sec) for it in items])
     out |= (male[:, None] & female[None, :]) | (female[:, None] & male[None, :])
@@ -147,10 +157,12 @@ def _cannot_links(items: Sequence[LinkItem], sims: np.ndarray, cannot_link_sim: 
     return out
 
 
-def _cluster(items: Sequence[LinkItem], prints: np.ndarray, link_distance: float, cannot_link_sim: float) -> np.ndarray:
+def _cluster(
+    items: Sequence[LinkItem], prints: np.ndarray, link_distance: float, cannot_link_sim: float, min_print_sec: float = 3.0
+) -> np.ndarray:
     sims = prints @ prints.T
     dist = 1.0 - sims
-    dist[_cannot_links(items, sims, cannot_link_sim)] = np.inf
+    dist[_cannot_links(items, sims, cannot_link_sim, min_print_sec)] = np.inf
     return upgma(dist, link_distance)
 
 
@@ -248,9 +260,13 @@ def link_speakers(
     labels = np.full(n, -1)
     groups = 0
     if len(reliable) > 0:
-        rel_labels = _cluster(rel_items, rel_prints, link, cannot)
+        rel_labels = _cluster(rel_items, rel_prints, link, cannot, min_print_sec)
         labels[reliable] = rel_labels
         groups = int(rel_labels.max()) + 1
+    # The chunks each group has a speaker in: a chunk's verdict holds in the later steps too.
+    chunks_of: dict[int, set[int]] = {}
+    for i in reliable:
+        chunks_of.setdefault(int(labels[i]), set()).add(items[i].chunk)
 
     weights = np.array([it.sec for it in items], dtype=np.float64)
     if len(unreliable) > 0 and groups > 0:
@@ -260,11 +276,20 @@ def link_speakers(
             cent[g] = (prints[members] * np.maximum(weights[members], 1e-6)[:, None]).sum(axis=0)
         cent /= np.maximum(np.linalg.norm(cent, axis=1, keepdims=True), 1e-12)
         sims = prints[unreliable] @ cent.T
-        best = sims.argmax(axis=1)
-        close = 1.0 - sims[np.arange(len(unreliable)), best] <= link + JOIN_SLACK
-        labels[unreliable[close]] = best[close]
+        for row, i in enumerate(unreliable):
+            # The nearest group close enough that has no speaker of this chunk:
+            # the chunk's diarizer heard this voice apart from the one it has there.
+            for g in np.argsort(-sims[row], kind="stable"):
+                if 1.0 - sims[row, g] > link + JOIN_SLACK:
+                    break
+                if items[i].chunk in chunks_of.get(int(g), set()):
+                    continue
+                labels[i] = int(g)
+                chunks_of.setdefault(int(g), set()).add(items[i].chunk)
+                break
     for i in np.nonzero(labels < 0)[0]:
         labels[i] = groups
+        chunks_of.setdefault(groups, set()).add(items[i].chunk)
         groups += 1
 
     # Each group as one speaker: talk time, print, pitch.
@@ -302,11 +327,15 @@ def link_speakers(
     for t in tail:
         same = [k for k in keep if g_gender[t].label != "unknown" and g_gender[k].label == g_gender[t].label]
         pool = same or keep
+        # One that shares no chunk with it, when there is one: in a chunk they share, the diarizer kept them apart.
+        apart = [k for k in pool if not (chunks_of.get(k, set()) & chunks_of.get(t, set()))]
+        pool = apart or pool
         printed = [k for k in pool if g_prints[k] is not None]
         if g_prints[t] is not None and printed:
             target[t] = max(printed, key=lambda k: (float(g_prints[t] @ g_prints[k]), -k))
         else:
             target[t] = pool[0]  # the one who talks most
+        chunks_of.setdefault(target[t], set()).update(chunks_of.get(t, set()))
     final_sec = {k: 0.0 for k in keep}
     for g in range(groups):
         final_sec[target[g]] += sec[g]

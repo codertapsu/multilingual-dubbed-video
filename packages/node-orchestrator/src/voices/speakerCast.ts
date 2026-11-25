@@ -146,6 +146,7 @@ export async function castCandidates(
         ...(v.kind === 'profile' ? { genderConfirmed: v.genderConfirmed === true } : {}),
         ...(m?.f0Hz ? { f0Hz: m.f0Hz } : {}),
         ...(m?.print?.length ? { print: m.print } : {}),
+        ...(v.mainOnly ? { mainOnly: true } : {}),
       });
     }
   }
@@ -205,7 +206,10 @@ export function castChoices(voices: readonly CastVoice[]): NonNullable<CastResul
 /**
  * The cast with the user's swaps applied (a swap must name a speaker of the
  * project and a voice the cast could use). A swapped minor speaker leaves its
- * pool voice's list. Pure.
+ * pool voice's list. A voice kept for one main character (mainOnly) goes to
+ * one speaker: a swap that would give it to a second one, while the first
+ * keeps it, is left out and said (move the first speaker off it in the same
+ * call). Pure.
  */
 export function withSwaps(
   proposal: CastProposal,
@@ -214,15 +218,33 @@ export function withSwaps(
 ): CastProposal {
   if (!swaps?.length) return proposal;
   const known = new Map(voices.map((v) => [v.voiceId, v]));
+  const notes = [...proposal.notes];
+  const swappedTo = new Map(swaps.map((s) => [s.speakerId, s.voiceId]));
+  /** A one-main-character voice already given by an earlier swap: voice id → speaker. */
+  const given = new Map<string, string>();
+  const allowed = swaps.filter((s) => {
+    const voice = known.get(s.voiceId);
+    if (!voice?.mainOnly) return true;
+    // A speaker the cast gave it to who is not moved off it, or an earlier swap's speaker.
+    const keeper =
+      proposal.assignments.find((a) => a.speakerId !== s.speakerId && a.voiceId === s.voiceId && (swappedTo.get(a.speakerId) ?? a.voiceId) === s.voiceId)
+        ?.speakerId ?? (given.get(s.voiceId) !== s.speakerId ? given.get(s.voiceId) : undefined);
+    if (keeper) {
+      notes.push(`"${voice.name}" is kept for one main character (${keeper} has it): not given to ${s.speakerId} too.`);
+      return false;
+    }
+    given.set(s.voiceId, s.speakerId);
+    return true;
+  });
   const swapped = new Set<string>();
   const assignments = proposal.assignments.map((a) => {
-    const swap = swaps.find((s) => s.speakerId === a.speakerId);
+    const swap = allowed.find((s) => s.speakerId === a.speakerId);
     const voice = swap ? known.get(swap.voiceId) : undefined;
     if (!voice) return a;
     swapped.add(a.speakerId);
     return { ...a, voiceId: voice.voiceId, voiceName: voice.name, by: 'order' as const };
   });
-  for (const s of swaps) {
+  for (const s of allowed) {
     const voice = known.get(s.voiceId);
     if (voice && !assignments.some((a) => a.speakerId === s.speakerId) && isSpeakerId(s.speakerId)) {
       assignments.push({ speakerId: s.speakerId, voiceId: voice.voiceId, voiceName: voice.name, by: 'order' });
@@ -233,7 +255,15 @@ export function withSwaps(
     const pool = proposal.pools?.[gender];
     if (pool) pools[gender] = { ...pool, voices: pool.voices.map((v) => ({ ...v, speakers: v.speakers.filter((id) => !swapped.has(id)) })) };
   }
-  return { ...proposal, assignments, pools };
+  // A speaker of unknown gender given a voice by a swap has one now: it is no
+  // longer "left to the project voice" (the reply listed all 24 swapped
+  // speakers there; claude-dubber, 2026-11-25).
+  const voiced = new Set(assignments.map((a) => a.speakerId));
+  const unassigned = proposal.unassigned.filter((id) => !voiced.has(id));
+  const UNKNOWN_NOTE = 'speaker(s) of unknown gender keep the project voice';
+  const kept = notes.filter((note) => !note.includes(UNKNOWN_NOTE));
+  if (unassigned.length > 0 && kept.length !== notes.length) kept.push(`${unassigned.length} ${UNKNOWN_NOTE} (set them in the editor).`);
+  return { ...proposal, assignments, pools, notes: kept, unassigned };
 }
 
 /**

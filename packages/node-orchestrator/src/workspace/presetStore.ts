@@ -13,7 +13,15 @@ import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
-import { AppErrorException, type DubPreset, type ProjectSettings } from '@videodubber/shared';
+import {
+  AppErrorException,
+  partNameTemplateProblem,
+  resolveOutputDir,
+  seriesAiId,
+  type DubPreset,
+  type PresetSeries,
+  type ProjectSettings,
+} from '@videodubber/shared';
 
 import { writeJsonAtomic } from './projectStore.js';
 
@@ -21,7 +29,46 @@ export const PRESETS_FILE = 'dub-presets.json';
 
 /** What a client may set (id and times are the store's). */
 export type DubPresetInput = Pick<DubPreset, 'name' | 'targetLanguage'> &
-  Partial<Pick<DubPreset, 'sourceLanguage' | 'settings' | 'outputDir' | 'start'>>;
+  Partial<Pick<DubPreset, 'sourceLanguage' | 'settings' | 'outputDir' | 'start' | 'series'>>;
+
+/**
+ * A preset's series block, kept to well-formed values (`ai` is taken for
+ * `aiProviderId`, as the MCP tools call it, and a short name is kept as the
+ * app's id: "anthropic" is "anthropic-translate"); undefined when it says nothing.
+ * Refuses a name template that cannot name the parts. Pure.
+ */
+export function cleanPresetSeries(raw: unknown): PresetSeries | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const s = raw as Record<string, unknown>;
+  const num = (key: string, min: number, max: number): number | undefined => {
+    const v = s[key];
+    return typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : undefined;
+  };
+  const minMinutes = num('minMinutes', 5, 120);
+  const maxMinutes = num('maxMinutes', 5, 180);
+  const recapSec = num('recapSec', 0, 8);
+  const longerThanMinutes = num('longerThanMinutes', 1, 1440);
+  const ai = [s['aiProviderId'], s['ai']].find((v): v is string => typeof v === 'string' && v.trim() !== '')?.trim();
+  const nameTemplate = typeof s['nameTemplate'] === 'string' && s['nameTemplate'].trim() ? s['nameTemplate'].trim() : undefined;
+  if (nameTemplate) {
+    const problem = partNameTemplateProblem(nameTemplate);
+    if (problem) {
+      throw new AppErrorException('INVALID_EDIT', `The preset's part names "${nameTemplate}" cannot name the parts (${problem.code}).`, {
+        remediation: 'Use {series}, {n} or {nn}, {total} and {title}; it needs {n} or {nn}, e.g. "{series} - Phần {n} - {title}".',
+      });
+    }
+  }
+  const series: PresetSeries = {
+    ...(minMinutes !== undefined ? { minMinutes } : {}),
+    ...(maxMinutes !== undefined ? { maxMinutes: Math.max(maxMinutes, minMinutes ?? 0) } : {}),
+    ...(ai ? { aiProviderId: seriesAiId(ai) } : {}),
+    ...(recapSec !== undefined ? { recapSec } : {}),
+    ...(typeof s['autoStart'] === 'boolean' ? { autoStart: s['autoStart'] } : {}),
+    ...(nameTemplate ? { nameTemplate } : {}),
+    ...(longerThanMinutes !== undefined ? { longerThanMinutes } : {}),
+  };
+  return Object.keys(series).length > 0 ? series : undefined;
+}
 
 /** Keep only well-formed fields; refuse a preset without a name or a target language. Pure. */
 export function cleanPresetInput(raw: unknown): DubPresetInput {
@@ -37,9 +84,10 @@ export function cleanPresetInput(raw: unknown): DubPresetInput {
     ? (r['settings'] as Partial<ProjectSettings>)
     : {};
   const outputDir = typeof r['outputDir'] === 'string' && r['outputDir'].trim() ? r['outputDir'].trim() : undefined;
-  if (outputDir && !path.isAbsolute(outputDir)) {
-    throw new AppErrorException('INVALID_EDIT', 'The save folder must be a full path, like D:\\Dubs.');
+  if (outputDir && !path.isAbsolute(resolveOutputDir(outputDir, 'name'))) {
+    throw new AppErrorException('INVALID_EDIT', 'The save folder must be a full path, like D:\\Dubs (or D:\\Dubs\\{series}).');
   }
+  const series = cleanPresetSeries(r['series']);
   return {
     name,
     targetLanguage,
@@ -50,6 +98,7 @@ export function cleanPresetInput(raw: unknown): DubPresetInput {
     ) as Partial<ProjectSettings>,
     ...(outputDir ? { outputDir } : {}),
     ...(r['start'] === true ? { start: true } : {}),
+    ...(series ? { series } : {}),
   };
 }
 

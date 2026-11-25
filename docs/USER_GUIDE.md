@@ -156,7 +156,7 @@ progress:
 | 2 | Extract Audio | Pulls the soundtrack out for transcription. |
 | 3 | Transcribe (Speech-to-Text) | Turns the spoken audio into timed text. |
 | 4 | Translate | Translates each line into the target language. |
-| 5 | Review & Refine Translation | An optional AI polish pass. It finishes instantly when you have not configured a refine engine. |
+| 5 | Review & Refine Translation | An optional AI polish pass. It finishes instantly when you have not configured a refine engine. Lines that still fail the translation checks (Chinese letters or a pinyin name in a Vietnamese line, no tone marks, "anh/chị" alternatives) get one more repair here, with the words at fault named; see [Lines that still fail the checks](#lines-that-still-fail-the-checks). |
 | 6 | Synthesize Speech (Text-to-Speech) | Speaks the translated lines in the new voice. |
 | 7 | Align Timing | Stretches or compresses each line so it lands on the original timing, and flags lines that could not fit. |
 | 8 | Mix Audio | Mixes the new voice over the original background, optionally ducking it. |
@@ -165,6 +165,29 @@ progress:
 You can **retry a single step** — retrying re-runs that step and everything
 after it, and skips the steps whose output already exists. That is why
 re-running a project is much faster than the first run.
+
+<a id="lines-that-still-fail-the-checks"></a>
+
+### Lines that still fail the checks
+
+Every translated line is checked for what a voice cannot say well: Chinese
+letters or a pinyin name left in a Vietnamese line ("Kunlun" where the voice
+needs "Côn Lôn"), a line with no tone marks, a "thầy/cô" that offers two words,
+an untranslated line. A failing line is repaired by the review model or the
+Gemma chat model during translation, and once more just before any voice is
+made, this time told exactly which words are wrong and how the character sheet
+writes the names in it. A line that still fails is voiced as it is and listed
+in a warning on the Processing screen and under Problems in the editor.
+
+To fix such lines before they are voiced, tick **Stop before voicing while
+lines still fail the translation checks** (New project → More options, next to
+the review pause; or the editor's Project tab). The dub then stops before the
+voices and says how many lines are left; fix them in the editor and press
+**Continue dubbing**, which voices the lines as they are then.
+
+Lines whose voice cannot fit their time even at the fastest speed allowed are
+a warning too, with the lines named: shorten them in the editor, or allow a
+faster speed.
 
 <a id="pausing-a-dub"></a>
 
@@ -299,6 +322,14 @@ again** renders only the picture, in a few minutes, keeping the voices and the
 mix; in a series, **Render the finished parts again** does it for every
 finished part, one after another.
 
+**Find the watermark and blur it by itself** (in New project too) does this
+without you: a single video looks for the mark when it is rendered; a series
+looks once in the whole video while it is analysed and makes every part with
+the box (review shows what was found). Only a mark that stands out clearly (50 %
+sure or more) is hidden. What it finds becomes a box you can move or change;
+removing the boxes turns the option off. The picture can change while a dub runs,
+until the dub starts mixing, and always while a series is being analysed.
+
 ### Songs: keeping the original
 
 A sung line (an opening song, a ballad in a funeral scene) is usually better
@@ -324,6 +355,10 @@ built-in voice that sounds like one of your clones is left out of the pool.
 Speakers whose gender is unknown are listed with how long they speak and their
 longest lines, so you can listen and choose. You see the choice before anything
 changes.
+
+For your own voice, tick **Only for one main character** under it in Voices →
+My voices: casting then gives it to one main character at most, never to the
+minor speakers and never as the voice of every speaker who has none.
 
 ### Getting the finished file
 
@@ -392,10 +427,11 @@ the first part is ready much sooner, a failure holds up only one part, and each
 part is easier to post. In New project, tick **Dub this video as a series of
 parts** under **Split into parts**.
 
-It needs an AI set up in Settings: Claude (an API key, or your Claude plan
-through Mother Claude), OpenAI, Gemini, or the built-in Gemma chat model. With
-more than one, **AI that chooses the cuts** picks which; Claude through Mother
-Claude comes first when it is set up.
+It needs an AI to choose the cuts: the built-in Gemma chat model (Settings →
+Engines; everything stays on your computer), or one you have set up: Claude (an
+API key, or your Claude plan through Mother Claude), OpenAI or Gemini. **AI that
+chooses the cuts** starts on the built-in model, or on the one you chose last
+time; a cloud AI is used only when you choose it.
 
 - **Length of each part**: 15–20 minutes (the default), 30–40 minutes, about an
   hour, or your own shortest and longest.
@@ -598,6 +634,35 @@ collection, series list, favourites folder or uploader's page adds its videos
 Copy the address out of your browser's address bar. A search-results page is not
 a video, and the app will tell you so.
 
+### Using the subtitles burned into the picture
+
+Most Chinese dramas draw their own subtitles into the picture. Those subtitles
+are the script: the names are spelled right and no line is missing. Tick **Use
+the subtitles burned into the picture as the transcript** (New project → More
+options) and the app reads them as text on this computer instead of
+transcribing the speech: each subtitle becomes a line, timed by when it shows.
+It needs the **subtitle reader** (about 250 MB, installed from the same place
+with one click, or from Settings → Engines & models → Speech-to-text). It reads
+Chinese and English subtitles, in a few minutes per hour of video, and nothing
+leaves your computer.
+
+The app finds the subtitles' place in the picture by itself (or uses the band
+you set under Picture). If it finds none, or cannot read enough of them, the
+speech is transcribed as usual and a warning says why. Speaker detection,
+translation and everything after work as for any transcript.
+
+### Checking the transcript against the video's own subtitles
+
+For a Chinese, Japanese or Korean video the app also checks speech-to-text
+against the subtitles in the picture (New project → More options → **Check
+against the video's own subtitles**, on by default for those languages; any
+other video can turn it on). It reads where the subtitles sit five times a
+second, without reading their text, to know when someone speaks. A line under
+a subtitle is never removed as silence, and a warning lists the subtitles with
+no line under them (speech that was lost: transcribe those stretches again in
+the editor) and, where the subtitles follow the dialogue, lines with no
+subtitle at all (maybe made up). It adds a few minutes per hour of video.
+
 ### Why the quality is lower than what the site shows
 
 VideoDubber never signs in on your behalf, and these sites cap what an anonymous
@@ -643,6 +708,22 @@ In **New project**, fill in the form and press **Save as preset** (the same name
 replaces that preset); choose one from **Preset** to fill the form in. The
 Download screen uses presets to dub many videos at once, and so can Claude
 through the plugin.
+
+With **Split into parts** on, the preset also keeps how long videos are split:
+a video longer than about 1.5 × the longest part is dubbed as a series with the
+preset's choices. Choosing such a preset fills in those choices; turn **Split
+into parts** on for a long video. A save folder like `D:\Dubs\{series}` gives
+each project its own folder, named after it.
+
+Three presets are **built in** (under **Preset**, "Built in"): **Highest
+quality** (the largest speech model, the translation re-read by the Gemma chat
+model, long lines rewritten shorter, speakers detected, the best picture:
+slowest), **Balanced** (what New project picks anyway) and **Lowest cost** (the
+least work for the computer: a faster speech model, no re-reading, no speaker
+detection, a fast render). Each says what it gains and what it costs. They only
+ever use engines on your computer: if Settings choose a cloud AI, it is left
+out and the preset says so; choose it in the form to use it. They change the
+engines and how much work each step does, never your subtitles, voice or look.
 
 ---
 
@@ -915,8 +996,11 @@ A dub's **warnings** appear on its Processing screen: things the app decided on
 its own that the result depends on, such as a step that ran on the processor
 because the graphics card was busy, speaker detection that failed (the dub then
 uses one voice), transcription loops it repaired or could not repair (the lines
-are marked in the editor's Problems), or lines with nothing to say (left
-silent).
+are marked in the editor's Problems), lines with nothing to say (left silent),
+lines that still fail the translation checks or cannot fit their time, or the
+video's own subtitles showing speech the transcript has no line for. A warning
+about lines updates itself as you fix them, and **Dismiss** sets aside one you
+have dealt with; running the step again raises it again if it still holds.
 
 If it is reproducible, open an
 [issue](https://github.com/codertapsu/multilingual-dubbed-video/issues), paste

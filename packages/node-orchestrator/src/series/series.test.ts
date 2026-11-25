@@ -2,7 +2,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { projectOutputThumbnailPath, type TranscriptSegment } from '@videodubber/shared';
+import { projectOutputThumbnailPath, type PictureDetection, type TranscriptSegment } from '@videodubber/shared';
 
 import { loadConfig } from '../config.js';
 import { EventBusRegistry } from '../events.js';
@@ -199,7 +199,17 @@ describe('a long video dubbed as a series', { timeout: 60_000 }, () => {
 });
 
 describe('a series that should not start by itself, and parts made again', { timeout: 30_000 }, () => {
-  async function analysedParent(opts: { autoStart: boolean; minMinutes?: number; maxMinutes?: number; warnings?: string[]; diarize?: boolean }) {
+  async function analysedParent(opts: {
+    autoStart: boolean;
+    minMinutes?: number;
+    maxMinutes?: number;
+    warnings?: string[];
+    diarize?: boolean;
+    watermarkAuto?: boolean;
+    detectWatermark?: (id: string) => Promise<PictureDetection>;
+    /** Joined from files starting at these times (ms), with one part per file. */
+    perFileAt?: number[];
+  }) {
     const media = new FakeMediaService({ mediaInfo: fakeMediaInfo(40 * MIN) });
     const orchestrator = new LocalJobOrchestrator({
       config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
@@ -217,13 +227,35 @@ describe('a series that should not start by itself, and parts made again', { tim
         return { started: true, queued: false };
       },
       chatFor: () => undefined,
+      ...(opts.detectWatermark ? { detectWatermark: opts.detectWatermark } : {}),
     });
     const video = await writeDummyVideo(tmp);
     const parent = await orchestrator.createProject({
       ...createProjectInput(video, { name: 'Z' }),
-      series: { minMinutes: opts.minMinutes ?? 15, maxMinutes: opts.maxMinutes ?? 20, aiProviderId: 'gone', recapSec: 4, autoStart: opts.autoStart },
+      series: {
+        minMinutes: opts.minMinutes ?? 15,
+        maxMinutes: opts.maxMinutes ?? 20,
+        aiProviderId: 'gone',
+        recapSec: 4,
+        autoStart: opts.autoStart,
+        ...(opts.perFileAt ? { perFile: true } : {}),
+      },
     });
-    await store.saveProject({ ...(await store.getProject(parent.id)), settings: { ...parent.settings, diarize: opts.diarize ?? true }, mediaInfo: fakeMediaInfo(40 * MIN) });
+    await store.saveProject({
+      ...(await store.getProject(parent.id)),
+      settings: { ...parent.settings, diarize: opts.diarize ?? true, ...(opts.watermarkAuto ? { watermarkAuto: { mode: 'pixelate' as const } } : {}) },
+      mediaInfo: fakeMediaInfo(40 * MIN),
+      ...(opts.perFileAt
+        ? {
+            inputFiles: opts.perFileAt.map((startMs, i, all) => ({
+              name: `P${i + 1}.mp4`,
+              path: `D:/v/P${i + 1}.mp4`,
+              startMs,
+              durationMs: (all[i + 1] ?? 40 * MIN) - startMs,
+            })),
+          }
+        : {}),
+    });
     await fsp.mkdir(path.dirname(store.paths(parent.id).sourceJson), { recursive: true });
     await fsp.writeFile(store.paths(parent.id).sourceJson, JSON.stringify({ segments: talk() }), 'utf8');
     const pipeline = await store.getPipeline(parent.id);
@@ -256,6 +288,55 @@ describe('a series that should not start by itself, and parts made again', { tim
       expect(inside || view.plan!.notes.some((n) => n.startsWith(`Part ${p.index} is`))).toBe(true);
       expect(Math.abs(minutes - 20)).toBeLessThan(1);
     }
+  });
+
+  it('finds the watermark once in the whole video while planning, and makes every part with the box', async () => {
+    const looked: string[] = [];
+    const detectWatermark = async (id: string): Promise<PictureDetection> => {
+      looked.push(id);
+      return {
+        at: '2026-11-25T00:00:00Z',
+        videoWidth: 1280,
+        videoHeight: 720,
+        regions: [{ x: 0.7, y: 0.02, w: 0.28, h: 0.06, mode: 'blur', corner: 'top-right', confidence: 0.83 }],
+        frameAtMs: 60_000,
+        frames: 100,
+        notes: [],
+      };
+    };
+    const { series, parent, started } = await analysedParent({ autoStart: true, watermarkAuto: true, detectWatermark });
+    const box = { x: 0.7, y: 0.02, w: 0.28, h: 0.06, mode: 'pixelate' };
+    expect(looked).toEqual([parent.id]);
+    const view = await series.view(parent.id);
+    expect(view.plan!.notes.some((n) => n.startsWith('Found a watermark at the top right (clear: 83 %) in the whole video: every part is made with it blurred'))).toBe(true);
+    expect((await store.getProject(parent.id)).settings.blurRegions).toEqual([box]);
+    // Every part got the box: none of them looks again when it renders.
+    expect(started.length).toBeGreaterThan(1);
+    for (const id of started) expect((await store.getProject(id)).settings).toMatchObject({ blurRegions: [box], watermarkAuto: { mode: 'pixelate' } });
+  });
+
+  it('leaves the parts to look for their own mark when the whole video shows none, and never fails the plan for it', async () => {
+    const { series, parent } = await analysedParent({
+      autoStart: false,
+      watermarkAuto: true,
+      detectWatermark: async () => {
+        throw new Error('no frames');
+      },
+    });
+    const view = await series.view(parent.id);
+    expect(view.state).toBe('review');
+    expect(view.plan!.notes).toContain('The watermark could not be looked for (no frames): each part looks for its own when it renders.');
+    expect((await store.getProject(parent.id)).settings.blurRegions).toBeUndefined();
+  });
+
+  it('one part per joined file: cut exactly where each file begins, whatever the length', async () => {
+    const { series, parent } = await analysedParent({ autoStart: false, perFileAt: [0, 26 * MIN + 2_500] });
+    const view = await series.view(parent.id);
+    expect(view.plan!.parts.map((p) => [p.startMs, p.cutBy])).toEqual([
+      [0, 'start'],
+      [26 * MIN + 2_500, 'file'],
+    ]);
+    expect(view.plan!.notes).toContain('One part per file: 2 parts, cut where each file begins.');
   });
 
   it('remakes the parts from the fixed series transcript, leaving translated ones alone unless forced', async () => {

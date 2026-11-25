@@ -55,7 +55,7 @@ import type * as MediaWorkerModule from '@videodubber/media-worker';
 
 import { currentInitiator } from '../activity/context.js';
 import { formatClock } from '../activity/history.js';
-import { activity as appActivity, type ActivityHandle, type ActivityRegistry } from '../activity/registry.js';
+import { activity as appActivity, said, type ActivityHandle, type ActivityRegistry } from '../activity/registry.js';
 import { freeBytes as volumeFreeBytes } from '../engines/diskSpace.js';
 import { fileExistsNonEmpty } from '../workspace/paths.js';
 import { writeJsonAtomic, type ProjectStore } from '../workspace/projectStore.js';
@@ -270,6 +270,20 @@ export class JoinService {
     };
   }
 
+  /**
+   * How long these files are joined, read from the files alone (no test
+   * encode, unlike {@link check}); undefined when they cannot be joined. A
+   * preset's series block is chosen by it.
+   */
+  async totalDurationMs(videoPaths: unknown): Promise<number | undefined> {
+    try {
+      const ins = await this.inspect(validJoinPaths(videoPaths));
+      return ins.ok ? ins.totalDurationMs : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   // ----------------------------------------------------------------- create
 
   /**
@@ -471,10 +485,12 @@ export class JoinService {
     const waiting = this.running !== undefined || this.jobs.size > 0;
     const handle = this.activity.start({
       kind: 'project.join',
-      title: `Joining ${record.videoPaths.length} videos into "${name}"`,
+      title: said(`Joining ${record.videoPaths.length} videos into "${name}"`, 'activity.text.join', { n: record.videoPaths.length, name }),
       projectId: record.projectId,
       initiator,
-      ...(waiting ? { waiting: true, message: 'Waiting for another join to finish' } : { message: 'Starting' }),
+      ...(waiting
+        ? { waiting: true, message: said('Waiting for another join to finish', 'activity.text.join-waiting') }
+        : { message: said('Starting', 'activity.text.starting') }),
     });
     record.activityId = handle.id;
     const job: Job = {
@@ -501,7 +517,7 @@ export class JoinService {
       r.state = 'running';
       r.attempts += 1;
       await this.saveRecord(r);
-      job.handle.progress(null, 'Checking the files');
+      job.handle.progress(null, said('Checking the files', 'activity.text.checking-files'));
 
       // Again now: a file may have changed (or gone) since the project was made.
       const ins = await this.inspect(r.videoPaths, signal);
@@ -549,7 +565,15 @@ export class JoinService {
             reportedAt = t;
             reportedFile = pos.fileIndex;
             const how = plan.mode === 'reencode' ? ', encoding the picture again' : '';
-            job.handle.progress(job.live.percent, `File ${pos.fileIndex + 1} of ${names.length}: ${names[pos.fileIndex]}${how}`, job.live.etaSec);
+            job.handle.progress(
+              job.live.percent,
+              said(
+                `File ${pos.fileIndex + 1} of ${names.length}: ${names[pos.fileIndex]}${how}`,
+                plan.mode === 'reencode' ? 'activity.text.join-file-reencode' : 'activity.text.join-file',
+                { n: pos.fileIndex + 1, count: names.length, name: names[pos.fileIndex] ?? '' },
+              ),
+              job.live.etaSec,
+            );
           },
           verify: async (partial) => {
             measured = await this.verify(partial, ins, signal);
@@ -567,7 +591,13 @@ export class JoinService {
       };
       // The activity list first: the record's state is what callers wait on.
       job.live = { percent: 100 };
-      job.handle.done(`Joined ${names.length} videos: ${formatClock(result.durationMs)}, ${gb(size)} GB`);
+      job.handle.done(
+        said(`Joined ${names.length} videos: ${formatClock(result.durationMs)}, ${gb(size)} GB`, 'activity.text.joined', {
+          n: names.length,
+          duration: formatClock(result.durationMs),
+          size: String(gb(size)),
+        }),
+      );
       r.state = 'done';
       r.endedAt = new Date(this.now()).toISOString();
       delete r.error;
@@ -577,7 +607,11 @@ export class JoinService {
       await this.afterJoined(r);
     } catch (err) {
       if (signal.aborted) {
-        job.handle.cancelled(job.stopAs === 'interrupted' ? 'Stopped: VideoDubber is closing (it starts again next time)' : 'Cancelled');
+        job.handle.cancelled(
+          job.stopAs === 'interrupted'
+            ? said('Stopped: VideoDubber is closing (it starts again next time)', 'activity.text.join-interrupted')
+            : said('Cancelled', 'activity.text.cancelled'),
+        );
         r.state = job.stopAs;
         delete r.error;
       } else {

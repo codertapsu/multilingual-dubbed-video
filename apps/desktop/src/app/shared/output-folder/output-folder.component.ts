@@ -81,7 +81,7 @@ import { ErrorBannerComponent } from '../error-banner/error-banner.component';
           <input
             id="of-typed-path"
             type="text"
-            [ngModel]="typed()"
+            [ngModelOptions]="{ standalone: true }" [ngModel]="typed()"
             (ngModelChange)="typed.set($event)"
             (keydown.enter)="applyTyped()"
             [placeholder]="'output-folder.path-ph' | translate"

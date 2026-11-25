@@ -160,7 +160,7 @@ export type {
   SystemProfileResponse,
 } from './models/setup.js';
 export { ALL_CLOUD_SERVICES, MOTHER_CLAUDE_DEFAULT_URL } from './models/setup.js';
-export { QUALITY_LADDER, pickClosestHeight } from './models/download.js';
+export { BUILTIN_PRESET_PREFIX, QUALITY_LADDER, isBuiltinPresetId, pickClosestHeight } from './models/download.js';
 export type {
   QualityTarget,
   DownloadItem,
@@ -171,6 +171,10 @@ export type {
   DubDownloadResult,
   DubDownloadsRequest,
   DubPreset,
+  PresetSeries,
+  BuiltinPresetInfo,
+  BuiltinPresetKind,
+  PresetNote,
 } from './models/download.js';
 export type {
   BrandAsset,
@@ -196,7 +200,7 @@ export type {
   SeriesState,
   SeriesView,
 } from './models/series.js';
-export { DEFAULT_SERIES_SETTINGS } from './models/series.js';
+export { DEFAULT_SERIES_SETTINGS, LOCAL_SERIES_AI_ID, SERIES_AI_ALIASES, defaultSeriesAiId, seriesAiId } from './models/series.js';
 export type { SeriesListItem } from './models/series.js';
 export {
   PART_NAME_PLACEHOLDERS,
@@ -218,6 +222,7 @@ export type {
   PictureDetectionJob,
   PictureFrame,
   SubtitleBandProposal,
+  WatermarkAutoSettings,
   WatermarkProposal,
 } from './models/picture.js';
 export type {
@@ -225,6 +230,7 @@ export type {
   ActivityEntry,
   ActivityInitiator,
   ActivityInitiatorKind,
+  ActivityPhrase,
   ActivityReport,
   ActivityState,
   ActivityStreamEvent,
@@ -330,6 +336,7 @@ export {
   projectOutputVideoPath,
   projectOutputThumbnailPath,
   safeFileStem,
+  resolveOutputDir,
 } from './pipeline/output.js';
 export {
   speechBudget,
@@ -371,3 +378,4 @@ export {
   voiceForLine,
 } from './pipeline/speakers.js';
 export type { LineVoiceSettings, SpeakerSummary } from './pipeline/speakers.js';
+export { subtitleCheckOn } from './pipeline/subtitleCheck.js';

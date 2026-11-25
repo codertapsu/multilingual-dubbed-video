@@ -25,6 +25,8 @@ import path from 'node:path';
 import {
   AppErrorException,
   toAppError,
+  type ActivityPhrase,
+  type ErrorCode,
   type PictureDetection,
   type PictureDetectionJob,
   type PictureFrame,
@@ -32,7 +34,7 @@ import {
   type TranscriptSegment,
 } from '@videodubber/shared';
 
-import { activity as appActivity, type ActivityRegistry } from '../activity/registry.js';
+import { activity as appActivity, said, type ActivityRegistry } from '../activity/registry.js';
 import { writeJsonAtomic } from '../workspace/projectStore.js';
 
 /** What the media worker is asked to look at (its DetectPictureInput). */
@@ -142,6 +144,19 @@ export function detectionSummary(d: PictureDetection): string {
   return `${marks}, ${band} (${d.frames} frames)`;
 }
 
+/** {@link detectionSummary} as a phrase the app shows in the reader's language. Pure. */
+export function detectionPhrase(d: PictureDetection): ActivityPhrase {
+  return {
+    key: d.regions.length === 0 ? 'activity.text.picture-no-marks' : 'activity.text.picture-marks',
+    params: { n: d.regions.length, frames: d.frames },
+    parts: [
+      d.band
+        ? { key: 'activity.text.part-band-at', params: { from: Math.round(d.band.y * 100), to: Math.round((d.band.y + d.band.h) * 100) } }
+        : { key: 'activity.text.part-no-band' },
+    ],
+  };
+}
+
 /**
  * What to look at in a project: its window of the input (a part's), file by
  * file when the source was joined from several (the part's parent holds the
@@ -211,6 +226,28 @@ export class PictureDetectionService {
       return result;
     });
     return this.answer(key, opts.waitMs, () => this.savedProjectResult(project));
+  }
+
+  /**
+   * A project's detection run to its end, with no cap on the wait: what the
+   * automatic watermark blur needs (picture/watermarkAuto.ts). A result saved
+   * earlier (also from an earlier run of the app) is used as it is unless
+   * `fresh`. Throws what the detection failed with.
+   */
+  async detectNow(projectId: string, opts: { fresh?: boolean } = {}): Promise<PictureDetection> {
+    const project = await this.deps.store.getProject(projectId);
+    if (!opts.fresh) {
+      const saved = (await this.savedProjectResult(project)).result;
+      if (saved) return saved;
+    }
+    await this.detectProject(projectId, opts.fresh ? { fresh: true } : {});
+    const job = this.jobs.get(`project:${project.id}`);
+    if (!job) throw new AppErrorException('UNKNOWN', 'The picture detection did not start.');
+    await job.promise;
+    if (job.state === 'done' && job.result) return job.result;
+    throw new AppErrorException((job.error?.code as ErrorCode | undefined) ?? 'UNKNOWN', job.error?.message ?? 'The picture could not be looked at.', {
+      ...(job.error?.remediation ? { remediation: job.error.remediation } : {}),
+    });
   }
 
   /** What a project's detection is doing, or its last result (also from an earlier run of the app). */
@@ -320,7 +357,9 @@ export class PictureDetectionService {
     if (current?.state === 'done' && !opts.fresh && current.endedAt !== undefined && Date.now() - current.endedAt < (this.deps.reuseMs ?? 10 * 60_000)) return;
     const handle = this.activity.start({
       kind: 'picture.detect',
-      title: projectId ? 'Finding the watermark and the subtitle band' : 'Finding the watermark and the subtitle band of a new video',
+      title: projectId
+        ? said('Finding the watermark and the subtitle band', 'activity.text.picture')
+        : said('Finding the watermark and the subtitle band of a new video', 'activity.text.picture-new'),
       ...(projectId ? { projectId } : {}),
     });
     const job: Job = { state: 'running', percent: 0, startedAt: new Date().toISOString(), activityId: handle.id, promise: Promise.resolve() };
@@ -332,7 +371,7 @@ export class PictureDetectionService {
     job.promise = work(report).then(
       (result) => {
         Object.assign(job, { state: 'done', percent: 100, result, endedAt: Date.now(), message: detectionSummary(result) });
-        handle.done(detectionSummary(result));
+        handle.done({ text: detectionSummary(result), phrase: detectionPhrase(result) });
       },
       (err: unknown) => {
         const e = toAppError(err);

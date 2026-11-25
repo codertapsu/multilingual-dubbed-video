@@ -197,6 +197,21 @@ describe('the speaker detection cache', () => {
     expect(diarize).toHaveBeenCalledTimes(1);
   });
 
+  it("a detection linked by older rules is linked again: the service's linkKey (《反相之地》, 2026-11-25)", async () => {
+    const turns = [{ startMs: 0, endMs: 1000, speaker: 0 }];
+    const found = { turns, speakers: [voice(0, [1, 0])] };
+    const diarize = vi.fn(async () => found);
+    const before: DiarizationService = { diarize, available: async () => true, modelKey: 'm' };
+    await cachedDiarization(before, audio, cache, {});
+    expect((await readDiarizationCache(cache))?.link).toBeUndefined();
+    const after: DiarizationService = { ...before, linkKey: 'link-2' };
+    await cachedDiarization(after, audio, cache, {});
+    expect(diarize).toHaveBeenCalledTimes(2);
+    expect((await readDiarizationCache(cache))?.link).toBe('link-2');
+    await cachedDiarization(after, audio, cache, {});
+    expect(diarize).toHaveBeenCalledTimes(2);
+  });
+
   it('labels the lines, and records which line id each detected speaker became', async () => {
     const turns = [
       { startMs: 0, endMs: 2000, speaker: 1 },

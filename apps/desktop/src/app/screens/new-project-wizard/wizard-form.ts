@@ -4,8 +4,10 @@
  * while it works, and the series part of the create request. Pure, so
  * wizard-form.spec.ts can hold each rule to the incident that made it.
  */
+import { seriesAiId, type PresetSeries } from '@videodubber/shared';
+
 import type { CreateProjectInput, ProjectSettings } from '../../core/models';
-import type { DraftJoin, DraftSeries, NewProjectDraft } from '../../core/state/new-project-draft.service';
+import type { DraftJoin, DraftSeries, DraftSeriesLength, NewProjectDraft } from '../../core/state/new-project-draft.service';
 
 /** Everything the form shows, as plain values. */
 export interface DraftForm {
@@ -82,7 +84,67 @@ export function seriesRequestOf(s: DraftSeries): CreateProjectInput['series'] | 
     ...(nameTemplate ? { nameTemplate } : {}),
     ...(s.continues ? { continues: s.continues } : {}),
     ...(total > 0 ? { totalParts: total } : {}),
+    ...(s.perFile ? { perFile: true } : {}),
   };
+}
+
+/** The part length the form offers for these minutes ('custom' when it offers none). Pure. */
+export function seriesLengthOf(min: number, max: number): DraftSeriesLength {
+  const key = `${min}-${max}`;
+  return key === '15-20' || key === '30-40' || key === '55-65' ? key : 'custom';
+}
+
+/**
+ * "Split into parts" filled from a preset's series block: its part length,
+ * its AI (while set up here: `readyAi`), recap, start and part names. Whether
+ * THIS video is split stays as it was: the preset splits only videos longer
+ * than its threshold, and the form does not know the video's length before
+ * the project is made. Pure.
+ */
+export function seriesDraftFromPreset(current: DraftSeries, block: PresetSeries, readyAi: readonly string[]): DraftSeries {
+  const min = block.minMinutes ?? current.min;
+  const max = Math.max(min, block.maxMinutes ?? current.max);
+  const ai = block.aiProviderId ? seriesAiId(block.aiProviderId) : '';
+  return {
+    ...current,
+    length: seriesLengthOf(min, max),
+    min,
+    max,
+    ai: ai && readyAi.includes(ai) ? ai : current.ai,
+    recapSec: block.recapSec ?? current.recapSec,
+    autoStart: block.autoStart ?? current.autoStart,
+    nameTemplate: block.nameTemplate ?? current.nameTemplate ?? '',
+  };
+}
+
+/**
+ * The series block a preset saved from the form keeps: the form's when it
+ * splits this video, else `kept` (the preset's own), never dropped because one
+ * short video had Split into parts off. A series it continues and a total are
+ * this video's, not the preset's. Pure.
+ */
+export function presetSeriesOf(draft: DraftSeries, kept: PresetSeries | undefined): PresetSeries | undefined {
+  const asked = seriesRequestOf(draft);
+  if (!asked) return kept;
+  return {
+    minMinutes: asked.minMinutes,
+    maxMinutes: asked.maxMinutes,
+    aiProviderId: asked.aiProviderId,
+    recapSec: asked.recapSec,
+    autoStart: asked.autoStart,
+    ...(asked.nameTemplate ? { nameTemplate: asked.nameTemplate } : {}),
+    ...(kept?.longerThanMinutes !== undefined ? { longerThanMinutes: kept.longerThanMinutes } : {}),
+  };
+}
+
+/** The length, in minutes, over which a preset's series block splits a video (1.5 x its longest part by default). Pure. */
+export function presetSplitsOver(block: PresetSeries): number {
+  return Math.round(block.longerThanMinutes ?? (block.maxMinutes ?? DEFAULT_SERIES.max) * 1.5);
+}
+
+/** A save folder named after each project ("D:\\Dubs\\{series}"). Pure. */
+export function isNamedFolder(dir: string | null | undefined): boolean {
+  return /\{(series|name)\}/i.test(dir ?? '');
 }
 
 /**
@@ -90,18 +152,22 @@ export function seriesRequestOf(s: DraftSeries): CreateProjectInput['series'] | 
  * a long form, with the reason (an empty video field) at the top of it, was a
  * button that "did nothing" (UX audit, 2026-11-21).
  */
-export type ContinueBlocker = 'video' | 'languages' | 'voice';
+export type ContinueBlocker = 'video' | 'languages' | 'voice' | 'series-ai';
 
 export function continueBlocker(f: {
   videoPath: string;
   sourceLanguage: string;
   targetLanguage: string;
   voiceDownloading: boolean;
+  /** "Split into parts" is on without an AI chosen to plan the cuts. */
+  seriesWithoutAi?: boolean;
 }): ContinueBlocker | null {
   if (!f.videoPath.trim()) return 'video';
   // A preset saved without a source language leaves it empty.
   if (!f.sourceLanguage || !f.targetLanguage) return 'languages';
   if (f.voiceDownloading) return 'voice';
+  // Split into parts with no AI chosen used to make a whole project, without a word.
+  if (f.seriesWithoutAi) return 'series-ai';
   return null;
 }
 

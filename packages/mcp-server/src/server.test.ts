@@ -157,7 +157,7 @@ describe('VideoDubber MCP server', () => {
         'adjust_lines', 'cancel_dubbing', 'create_project', 'download_video', 'get_download', 'get_project',
         'get_status', 'get_transcript', 'get_translation_context', 'get_translation_report', 'install_engine',
         'install_voice', 'list_engines',
-        'list_languages', 'list_projects', 'list_providers', 'list_voices', 'open_output_folder', 'pause_dubbing',
+        'list_languages', 'list_projects', 'list_providers', 'list_voices', 'open_output_folder', 'pause_dubbing', 'run_next',
         'regenerate_voices', 'render_video', 'set_save_folder', 'set_translation_context', 'set_translations',
         'start_dubbing', 'update_settings',
         // Batches (Mother Claude's flow, agreed 2026-11-19).
@@ -175,6 +175,8 @@ describe('VideoDubber MCP server', () => {
         'get_activity', 'report_activity', 'get_history', 'undo_edit',
         // Picture options (0.18.0).
         'detect_watermark',
+        // Warnings set aside once checked (0.19.0).
+        'dismiss_warnings',
       ].sort(),
     );
     for (const t of tools) {

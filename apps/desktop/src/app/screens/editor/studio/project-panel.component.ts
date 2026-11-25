@@ -4,7 +4,7 @@ import { coverModeOf } from '../../../shared/picture/picture-geometry';
 import { ChangeDetectionStrategy, Component, computed, effect, inject, signal, untracked, viewChild, type OnDestroy, type OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
-import { speakerNumber, VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
+import { speakerNumber, subtitleCheckOn, VOICE_ENGINE_PROVIDER } from '@videodubber/shared';
 
 import { IpcService } from '../../../core/ipc/ipc.service';
 import { toAppError } from '../../../core/state/project.store';
@@ -357,6 +357,9 @@ export class ProjectPanelComponent implements OnInit, OnDestroy {
     () => spotCheckApplies(this.draft()?.sourceLanguage) && this.store.project()?.series?.role !== 'part',
   );
   /** Whether it runs with these settings: on by default above 2 hours. */
+  /** Speech-to-text against the video's own subtitles: never on a series part (its parent transcribed it). */
+  protected readonly subtitleCheckOffered = computed(() => this.store.project()?.series?.role !== 'part');
+  protected readonly subtitleCheck = computed(() => subtitleCheckOn(this.draft()?.subtitleCoverageCheck, this.draft()?.sourceLanguage));
   protected readonly spotCheck = computed(() =>
     spotCheckOn(this.draft()?.transcriptSpotCheck, this.store.project()?.mediaInfo?.durationMs),
   );

@@ -15,7 +15,7 @@ import { StructuredLog } from './diagnostics/logFiles.js';
 import { WarningInbox } from './diagnostics/warningInbox.js';
 import { createReadStream, mkdirSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, stat } from 'node:fs/promises';
-import { extname, join, resolve as resolvePath, sep } from 'node:path';
+import { extname, join, parse as parsePath, resolve as resolvePath, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
@@ -23,6 +23,12 @@ import {
   ALL_CLOUD_SERVICES,
   AppErrorException,
   COMMON_LANGUAGES,
+  DEFAULT_SERIES_SETTINGS,
+  defaultSeriesAiId,
+  isBuiltinPresetId,
+  pipelineStepIndex,
+  resolveOutputDir,
+  seriesAiId,
   toAppError,
   isVoiceProfileId,
   projectOutputFiles,
@@ -38,8 +44,10 @@ import {
   type DownloadItem,
   type RunScheduleResult,
   type SeriesAiOption,
+  type SeriesSettings,
   type DubDownloadResult,
   type DubDownloadsRequest,
+  type DubPreset,
   type Project,
   type ReviseProjectInput,
   type ProjectsFolderRequest,
@@ -91,6 +99,7 @@ import { AudioCppSeparationProvider, currentVocals } from './providers/separatio
 import type { SeparationService } from './media.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 import { SherpaDiarizationProvider } from './providers/diarization/sherpaDiarizationProvider.js';
+import { RapidOcrProvider } from './providers/ocr/rapidOcrProvider.js';
 import { diarizationBudget, registerTranscriptJobRoutes } from './transcriptJobs.js';
 import { EventBusRegistry } from './events.js';
 import { checkWorkersHealth } from './health.js';
@@ -168,8 +177,9 @@ import { detectInstalledModels } from './setup/detectInstalledModels.js';
 import { downloadsDirFor, resolveVideo } from './providers/download/downloadService.js';
 import { isStopped, JobFeed, type JobLine } from './jobFeed.js';
 import { cleanPresetInput, PresetStore } from './workspace/presetStore.js';
+import { builtinPresets, localProviderDefaults } from './workspace/builtinPresets.js';
 import { BrandKit } from './branding/brandKit.js';
-import { partSkipReason, seriesRedoRefusal } from './series/partWork.js';
+import { changesOnlyMixAndRender, partRedoAction, partSkipReason, seriesRedoRefusal, stableJson } from './series/partWork.js';
 import { SeriesService } from './series/seriesService.js';
 import { registerSeriesRoutes } from './series/seriesRoutes.js';
 import type { SeriesChat } from './series/seriesAi.js';
@@ -406,6 +416,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     });
   const alignment = new WhisperxAlignmentProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
   const diarization = new SherpaDiarizationProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
+  // The video's own burned-in subtitles read as text (the ocr-rapid pack).
+  const ocr = new RapidOcrProvider(engineManager, enginePackStore);
 
   // Hardware profile so the registry only offers providers whose packs can run
   // on this machine (e.g. whisper.cpp only where an NVIDIA/Metal pack exists).
@@ -598,18 +610,30 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       return downloadStartedReadiness(r, packId);
     });
 
+  // Watermarks and the source's own subtitle band (picture/): for the routes,
+  // and for the settings that ask for the watermark to be blurred by itself.
+  const pictures = new PictureDetectionService({ store });
+
   const orchestrator =
     options.orchestrator ??
     new LocalJobOrchestrator({
       config,
       warningInbox,
+      // "Find the watermark and blur it" at render (picture/watermarkAuto.ts).
+      watermark: { detect: (id: string) => pictures.detectNow(id) },
+      // The user's voices kept for one main character (voices/mainOnly.ts).
+      mainOnlyVoices: async (projectId: string) =>
+        new Map((await voiceProfileStore.list(projectId).catch(() => [])).filter((p) => p.mainOnly).map((p) => [p.id, p.name])),
       store,
       media,
       registry,
       bus,
+      // Renders wait for a full dub beside them while the computer is short of breath.
+      pressure: () => health.pressure(),
       separation,
       alignment,
       diarization,
+      ocr,
       // Anchors transcript lines to when they are spoken (the STT worker's VAD).
       speechMap: sttWorkerSpeechMap(config.sttWorkerUrl),
       // Logos and greetings (Settings → Logo & greeting); used only at run time.
@@ -1580,8 +1604,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     '/projects/:id/run-next',
     async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
       try {
-        await orchestrator.runNext(req.params.id);
-        return { ok: true };
+        return { ok: true, ...(await orchestrator.runNext(req.params.id)) };
       } catch (err) {
         return sendError(reply, err);
       }
@@ -1627,8 +1650,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // best INSTALLED engines for this machine (projectDefaults.ts). The wizard,
   // Settings → "Apply recommended" and the MCP server all start here, so a
   // GPU engine the user installed is actually used by the next project.
-  /** The settings the app recommends for a new project on this machine (also the base of a preset). */
-  const projectDefaultsFor = async (sourceLanguage: string, targetLanguage: string) => {
+  /**
+   * The settings the app recommends for a new project on this machine (also
+   * the base of a preset). `localOnly`: with the user's saved cloud choices
+   * left out (the built-in presets: a cloud AI only where the user chooses it).
+   */
+  const projectDefaultsFor = async (sourceLanguage: string, targetLanguage: string, opts: { localOnly?: boolean } = {}) => {
     const described = registry.describe();
     const rdeps = readinessDeps();
     const ctx = await buildReadinessContext(rdeps);
@@ -1640,9 +1667,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // A bundled worker that is still booting is usable by the time a run starts.
       return r.ready || r.status === 'worker-loading';
     };
+    const isLocal = (phase: 'stt' | 'translation' | 'tts', id: string): boolean =>
+      (phase === 'stt' ? described.stt : phase === 'tts' ? described.tts : described.translation).find((p) => p.id === id)?.isLocal === true;
     return recommendProjectSettings(
       {
-        providerDefaults: async () => (await setupStore.getPreferences()).providerDefaults,
+        providerDefaults: async () => {
+          const saved = (await setupStore.getPreferences()).providerDefaults;
+          return opts.localOnly ? localProviderDefaults(saved, isLocal) : saved;
+        },
         usable,
         recommendedSttModel: async () => (await buildSystemResponse().catch(() => undefined))?.recommendation.whisperModel,
         translationModelNote: async () => {
@@ -1731,14 +1763,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
    * be chosen; seen live, 2026-11-19). Claude first.
    */
   const SERIES_AI_IDS = ['anthropic-translate', 'openai-translate', 'gemini-translate', 'llama-cpp-chat'] as const;
-  /** The short names the plugin documents (`ai: "anthropic"`), as registry ids. */
-  const SERIES_AI_ALIASES: Readonly<Record<string, string>> = {
-    anthropic: 'anthropic-translate',
-    claude: 'anthropic-translate',
-    openai: 'openai-translate',
-    gemini: 'gemini-translate',
-  };
-  const seriesAiId = (id: string): string => SERIES_AI_ALIASES[id.trim().toLowerCase()] ?? id.trim();
   /**
    * What the choice is called: the AI, not the translation engine built on it
    * ("Anthropic (Claude) translation (cloud)" under "AI that chooses the
@@ -1755,10 +1779,29 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
    * through Mother Claude when it is set up (the user's call for runs Mother
    * Claude drives), else the first one set up. Undefined: none is.
    */
+  /**
+   * The AI that plans a series' cuts: the one asked for (when it is set up),
+   * else the built-in Gemma chat model; a cloud AI only when asked for by
+   * name (the user's rule, 2026-11-25). Undefined: none to use.
+   */
   const pickSeriesAi = (options: readonly SeriesAiOption[], wanted: string | undefined): SeriesAiOption | undefined => {
     const ready = options.filter((o) => o.ready);
-    return wanted?.trim() ? ready.find((o) => o.id === seriesAiId(wanted)) : (ready.find((o) => o.viaMotherClaude) ?? ready[0]);
+    if (wanted?.trim()) return ready.find((o) => o.id === seriesAiId(wanted));
+    const local = defaultSeriesAiId(ready);
+    return local ? ready.find((o) => o.id === local) : undefined;
   };
+  /** Why a series cannot be planned: the AI asked for is not set up, or none was asked for and the built-in one is missing. */
+  const seriesAiRefusal = (wanted: string | undefined): AppErrorException =>
+    new AppErrorException(
+      'CLOUD_CREDENTIALS_MISSING',
+      wanted?.trim()
+        ? `The AI "${wanted}" is not set up here, so the video cannot be split into parts with it.`
+        : 'Splitting a video into parts plans the cuts with an AI: the built-in Gemma chat model is not installed, and no other AI was chosen.',
+      {
+        remediation:
+          'Install the built-in Gemma chat model (Settings → Engines: everything stays on this computer), or choose an AI you have set up: Claude (an API key, or your Claude plan through Mother Claude), OpenAI or Gemini (series.ai in the plugin, the AI field in New project).',
+      },
+    );
   const seriesAiOptions = async (): Promise<SeriesAiOption[]> => {
     const described = registry.describe().translation;
     const rdeps = readinessDeps();
@@ -1782,6 +1825,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   };
 
   const series: SeriesService = new SeriesService({
+    // A series asked to blur its watermark looks once, in the whole video, during its analysis.
+    detectWatermark: (id: string) => pictures.detectNow(id),
     store,
     projects: orchestrator,
     start: (id) => startWhenReady(id) as Promise<RunScheduleResult | { waiting: true }>,
@@ -1805,6 +1850,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     logger: { info: (m) => console.info(`[series] ${m}`), warn: (m) => console.warn(`[series] ${m}`) },
   });
 
+  /** What an apply of {@link forEachPart} answers when the part already had the change. */
+  const UNCHANGED = Symbol('unchanged');
+
   /**
    * Apply one change to every part of a series (`applyToParts`): each part
    * reports what happened; a part being dubbed or waiting in the queue is
@@ -1814,25 +1862,80 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   async function forEachPart(
     projectId: string,
     apply: (partId: string) => Promise<unknown>,
-  ): Promise<{ projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[]> {
+    /** `whileQueued`: a part waiting in the queue takes the change where it waits (the queue held meanwhile). */
+    opts: { whileQueued?: boolean } = {},
+  ): Promise<{ projectId: string; index: number; ok: boolean; queued?: boolean; unchanged?: boolean; skipped?: string; error?: string }[]> {
     const ids = await series.partIdsOf(projectId);
     // Parts by the numbers they are shown with (a continued series starts at its offset + 1).
     const offset = ids.length > 0 ? await series.numberOffsetOf(projectId) : 0;
-    const out: { projectId: string; index: number; ok: boolean; skipped?: string; error?: string }[] = [];
+    const out: { projectId: string; index: number; ok: boolean; queued?: boolean; unchanged?: boolean; skipped?: string; error?: string }[] = [];
     for (const [i, id] of ids.entries()) {
       if (orchestrator.busyProjects().includes(id)) {
-        out.push({ projectId: id, index: offset + i + 1, ok: false, skipped: partSkipReason(orchestrator.workOn(id)) });
+        const work = orchestrator.workOn(id);
+        if (opts.whileQueued === true && work === 'queued') {
+          try {
+            const result = await orchestrator.whileQueueHeld(() => apply(id));
+            out.push({ projectId: id, index: offset + i + 1, ok: true, queued: true, ...(result === UNCHANGED ? { unchanged: true } : {}) });
+          } catch (err) {
+            out.push({ projectId: id, index: offset + i + 1, ok: false, error: toAppError(err).message });
+          }
+          continue;
+        }
+        out.push({ projectId: id, index: offset + i + 1, ok: false, skipped: partSkipReason(work) });
         continue;
       }
       try {
-        await apply(id);
-        out.push({ projectId: id, index: offset + i + 1, ok: true });
+        const result = await apply(id);
+        out.push({ projectId: id, index: offset + i + 1, ok: true, ...(result === UNCHANGED ? { unchanged: true } : {}) });
       } catch (err) {
         out.push({ projectId: id, index: offset + i + 1, ok: false, error: toAppError(err).message });
       }
     }
     return out;
   }
+
+  /**
+   * A series redoes a late step (series/partWork.ts SERIES_REDO_STEPS) in
+   * every part that made it, in order; the others are left as they are and
+   * say why (they use the change when they get there).
+   */
+  async function redoParts(
+    parentId: string,
+    partIds: readonly string[],
+    stepId: PipelineStepId,
+  ): Promise<{ projectId: string; index: number; started?: boolean; queued?: boolean; left?: string; error?: string }[]> {
+    const offset = await series.numberOffsetOf(parentId);
+    const out: { projectId: string; index: number; started?: boolean; queued?: boolean; left?: string; error?: string }[] = [];
+    for (const [i, id] of partIds.entries()) {
+      const index = offset + i + 1;
+      const busy = orchestrator.busyProjects().includes(id) ? { work: orchestrator.workOn(id) } : undefined;
+      const pipeline = busy ? undefined : await store.getPipeline(id).catch(() => undefined);
+      const action = partRedoAction(stepId, pipeline?.steps.find((s) => s.id === stepId)?.status, busy);
+      if (!action.redo) {
+        out.push({ projectId: id, index, left: action.reason });
+        continue;
+      }
+      try {
+        const r = await orchestrator.retryStep(id, stepId);
+        out.push({ projectId: id, index, ...(r.queued ? { queued: true } : { started: true }) });
+      } catch (err) {
+        out.push({ projectId: id, index, error: toAppError(err).message });
+      }
+    }
+    return out;
+  }
+
+  // Set a project's warnings aside (all, or those with these codes): the
+  // user or an agent checked them. A step that runs again raises them again.
+  app.post('/projects/:id/warnings/dismiss', async (req: FastifyRequest<{ Params: { id: string }; Body: { codes?: unknown } }>, reply) => {
+    try {
+      const codes = Array.isArray(req.body?.codes) ? req.body.codes.filter((c): c is string => typeof c === 'string') : undefined;
+      const { dismissed, pipeline } = await orchestrator.dismissWarnings(req.params.id, codes);
+      return { dismissed: dismissed.length, codes: [...new Set(dismissed.map((w) => w.code))], warnings: pipeline.warnings ?? [] };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
 
   // The whole transcript as a file (a 10-hour series has ~19,000 lines: 48
   // pages of get_transcript), JSON or tab-separated, in the project's folder.
@@ -1854,6 +1957,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           source: s.sourceText,
           ...(s.translatedText !== undefined ? { translation: s.translatedText } : {}),
           ...(s.loopSuspect ? { loopSuspect: true } : {}),
+          // Every flag source.json carries (claude-dubber, 2026-11-25: the
+          // export lacked the speaker and song marks a review works from).
+          ...(s.speakerLowConfidence ? { speakerLowConfidence: true } : {}),
+          ...(s.song ? { song: true } : {}),
+          ...(s.locked ? { locked: true } : {}),
           ...(s.qualityFlags?.length ? { flags: s.qualityFlags } : {}),
         }));
         const clean = (t: string | undefined): string => (t ?? '').replace(/[\t\r\n]+/g, ' ');
@@ -1863,7 +1971,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
             : [
                 'id\tstartMs\tendMs\tspeaker\tsource\ttranslation\tflags',
                 ...rows.map((r) =>
-                  [r.id, r.startMs, r.endMs, r.speakerId ?? '', clean(r.source), clean(r.translation), [...(r.flags ?? []), ...(r.loopSuspect ? ['loop?'] : [])].join(',')].join('\t'),
+                  [r.id, r.startMs, r.endMs, r.speakerId ?? '', clean(r.source), clean(r.translation), [
+                    ...(r.flags ?? []),
+                    ...(r.loopSuspect ? ['loop?'] : []),
+                    ...(r.speakerLowConfidence ? ['speaker?'] : []),
+                    ...(r.song ? ['song'] : []),
+                    ...(r.locked ? ['locked'] : []),
+                  ].join(',')].join('\t'),
                 ),
               ].join('\n');
         await writeTextAtomic(file, body);
@@ -1890,6 +2004,30 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: 'Send fromMs, toMs and lines.' } });
         }
         return await orchestrator.replaceSourceLines(req.params.id, b.fromMs, b.toMs, b.lines);
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  // Many ranges at once, one history entry (replace_lines with ranges or a file).
+  app.post(
+    '/projects/:id/lines/replace-many',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { ranges?: unknown } }>, reply) => {
+      try {
+        const ranges = req.body?.ranges;
+        if (!Array.isArray(ranges) || ranges.length === 0 || ranges.length > 2000) {
+          return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: 'Send ranges: [{ fromMs, toMs, lines }] (1 to 2000 of them).' } });
+        }
+        const valid = ranges.every(
+          (r: unknown) =>
+            r && typeof r === 'object' && typeof (r as { fromMs?: unknown }).fromMs === 'number' && typeof (r as { toMs?: unknown }).toMs === 'number' && Array.isArray((r as { lines?: unknown }).lines),
+        );
+        if (!valid) return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: 'Each range needs fromMs, toMs and lines.' } });
+        return await orchestrator.replaceSourceRanges(
+          req.params.id,
+          ranges as { fromMs: number; toMs: number; lines: { startMs: number; endMs: number; text: string; speakerId?: string }[] }[],
+        );
       } catch (err) {
         return sendError(reply, err);
       }
@@ -1979,18 +2117,23 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   // Plan the cuts again (the AI failed, or another AI was set up since);
   // `keepTitles` keeps the titles and summaries written in review.
-  app.post('/projects/:id/series/replan', async (req: FastifyRequest<{ Params: { id: string }; Body: { keepTitles?: boolean } }>, reply) => {
+  app.post(
+    '/projects/:id/series/replan',
+    async (req: FastifyRequest<{ Params: { id: string }; Body: { keepTitles?: boolean; perFile?: boolean } }>, reply) => {
     try {
       const view = await series.view(req.params.id);
       if (view.parts.some((p) => p.projectId)) {
         return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: 'The parts are already made.' } });
       }
+      // One part per joined file, or back to parts by length.
+      if (typeof req.body?.perFile === 'boolean') await series.setPerFile(view.parentId, req.body.perFile);
       void series.analysed(view.parentId, { again: true, keepTitles: req.body?.keepTitles === true });
       return reply.status(202).send({ planning: true });
     } catch (err) {
       return sendError(reply, err);
     }
-  });
+    },
+  );
 
   app.post('/projects/:id/series/start', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     try {
@@ -2174,6 +2317,105 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     }
   };
 
+  /**
+   * The built-in presets for these languages (workspace/builtinPresets.ts):
+   * Highest quality, Balanced, Lowest cost, on this computer's engines only.
+   */
+  async function builtinPresetsFor(sourceLanguage: string, targetLanguage: string): Promise<DubPreset[]> {
+    const described = registry.describe();
+    const saved = (await setupStore.getPreferences().catch(() => undefined))?.providerDefaults ?? {};
+    const replacedCloud = (['stt', 'translation', 'tts'] as const).flatMap((phase) => {
+      const id = saved[`${phase}ProviderId`];
+      const provider = id ? described[phase].find((p) => p.id === id) : undefined;
+      return provider && !provider.isLocal ? [{ phase, name: provider.displayName }] : [];
+    });
+    const [local, speakerDetection] = await Promise.all([
+      projectDefaultsFor(sourceLanguage, targetLanguage, { localOnly: true }),
+      diarization.available().catch(() => false),
+    ]);
+    return builtinPresets({ local: local.settings, replacedCloud, speakerDetection }, new Date().toISOString());
+  }
+
+  /** A preset by id: the user's, or a built-in one worked out for the job's languages (which it then needs). */
+  async function presetById(presetId: string, languages: { sourceLanguage?: string; targetLanguage?: string }): Promise<DubPreset> {
+    if (!isBuiltinPresetId(presetId)) return presets.get(presetId);
+    const target = languages.targetLanguage?.trim();
+    if (!target) {
+      throw new AppErrorException('INVALID_LANGUAGE', `Say which language to dub into: the built-in preset "${presetId}" works for any language.`, {
+        remediation: 'Give targetLanguage (e.g. "vi-VN") and sourceLanguage (e.g. "zh") with it.',
+      });
+    }
+    const found = (await builtinPresetsFor(languages.sourceLanguage?.trim() ?? '', target)).find((p) => p.id === presetId.trim());
+    if (!found) {
+      throw new AppErrorException('INVALID_EDIT', `There is no built-in preset "${presetId}".`, {
+        remediation: 'The built-in presets are builtin:quality, builtin:balanced and builtin:economy (GET /presets/builtin).',
+      });
+    }
+    return found;
+  }
+
+  app.get(
+    '/presets/builtin',
+    async (req: FastifyRequest<{ Querystring: { sourceLanguage?: string; targetLanguage?: string } }>, reply) => {
+      try {
+        return await builtinPresetsFor(req.query.sourceLanguage ?? '', req.query.targetLanguage?.trim() || 'vi-VN');
+      } catch (err) {
+        return sendError(reply, err);
+      }
+    },
+  );
+
+  /**
+   * A job made from a preset (`presetId` on POST /projects and POST
+   * /projects/join): the machine's recommended settings, the preset's over
+   * them, the job's own over both; the preset's save folder ({series}: the
+   * job's name) and, for a video longer than its series block allows
+   * (`durationMs`), that block, unless the job asks for a series itself. Any
+   * save folder's {series} is filled in. Every job the claude-dubber agent
+   * makes is a create_project or a join_videos of one preset (2026-11-25).
+   */
+  async function presetJob<T extends { name: string; presetId?: string; settings?: Partial<ProjectSettings>; outputDir?: string; series?: Partial<SeriesSettings> }>(
+    body: T,
+    durationMs: () => Promise<number | undefined>,
+    /** The name the job gets when it is given none (the file's), for {series}. */
+    fallbackName?: string,
+  ): Promise<T & { settings: ProjectSettings }> {
+    if (!body || typeof body !== 'object') return body as T & { settings: ProjectSettings };
+    const { presetId, ...rest } = body;
+    const jobName = (typeof rest.name === 'string' && rest.name.trim()) || fallbackName || '';
+    const named = (dir: string | undefined): { outputDir?: string } => (dir?.trim() ? { outputDir: resolveOutputDir(dir.trim(), jobName) } : {});
+    if (!presetId) return { ...(rest as T & { settings: ProjectSettings }), ...named(rest.outputDir) };
+    const own: Partial<ProjectSettings> = rest.settings ?? {};
+    const preset = await presetById(presetId, own);
+    const targetLanguage = own.targetLanguage?.trim() || preset.targetLanguage;
+    const sourceLanguage = own.sourceLanguage?.trim() || preset.sourceLanguage?.trim() || '';
+    if (!sourceLanguage) {
+      throw new AppErrorException('INVALID_LANGUAGE', `Say which language the video speaks: the preset "${preset.name}" does not say.`, {
+        remediation: 'Give sourceLanguage (e.g. "zh"), or save it in the preset.',
+      });
+    }
+    const defaults = await projectDefaultsFor(sourceLanguage, targetLanguage);
+    const settings = { ...defaults.settings, ...preset.settings, ...own, sourceLanguage, targetLanguage } as ProjectSettings;
+    const seriesOf = (s: Partial<SeriesSettings>): SeriesSettings => ({ ...s, maxMinutes: Math.max(s.maxMinutes ?? 0, s.minMinutes ?? 0) }) as SeriesSettings;
+    let series = rest.series as Partial<SeriesSettings> | undefined;
+    if (preset.series) {
+      const { longerThanMinutes, ...block } = preset.series;
+      if (series) series = { ...block, ...series };
+      else {
+        const longer = (longerThanMinutes ?? (block.maxMinutes ?? DEFAULT_SERIES_SETTINGS.maxMinutes) * 1.5) * 60_000;
+        const ms = await durationMs();
+        if (ms !== undefined && ms > longer) series = block;
+      }
+    }
+    return {
+      ...(rest as T),
+      settings,
+      ...named(rest.outputDir || preset.outputDir),
+      // Parts start by themselves unless the preset or the job says otherwise, as dub_downloads does.
+      ...(series ? { series: seriesOf({ ...DEFAULT_SERIES_SETTINGS, autoStart: true, ...series }) } : {}),
+    };
+  }
+
   /** A project's name from its download: the title, and the part when the video has several. */
   const projectNameFor = (item: DownloadItem): string => {
     const s = item.source;
@@ -2188,7 +2430,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       if (ids.length === 0 || ids.length > 200) {
         return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: 'Send between 1 and 200 download ids in "downloadIds".' } });
       }
-      const preset = body.presetId ? await presets.get(body.presetId) : undefined;
+      const preset = body.presetId
+        ? await presetById(body.presetId, {
+            ...(body.sourceLanguage ? { sourceLanguage: body.sourceLanguage } : {}),
+            ...(body.targetLanguage ? { targetLanguage: body.targetLanguage } : {}),
+          })
+        : undefined;
       const targetLanguage = body.targetLanguage?.trim() || preset?.targetLanguage;
       if (!targetLanguage) {
         return reply.status(400).send({ error: { code: 'INVALID_LANGUAGE', message: 'Say which language to dub into: "targetLanguage", or a preset that has one.' } });
@@ -2211,19 +2458,20 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       };
       const outputDir = body.outputDir?.trim() || preset?.outputDir;
       const start = body.start ?? preset?.start ?? false;
-      // Long ones as a series: an AI from Settings chooses the cuts.
+      // Long ones as a series: an AI from Settings chooses the cuts. The
+      // request's own series block, else the preset's.
+      const seriesAsk = body.series ? { ...(preset?.series ?? {}), ...body.series } : preset?.series;
       let seriesFor: ((durationSec: number | undefined) => CreateProjectInput['series']) | undefined;
-      if (body.series) {
-        const chosen = pickSeriesAi(await seriesAiOptions(), body.series.aiProviderId);
+      if (seriesAsk) {
+        const chosen = pickSeriesAi(await seriesAiOptions(), seriesAsk.aiProviderId);
         if (!chosen) {
-          return reply.status(400).send({
-            error: { code: 'CLOUD_CREDENTIALS_MISSING', message: 'Splitting videos into parts needs an AI set up in Settings.' },
-          });
+          const { error } = toHttpError(seriesAiRefusal(seriesAsk.aiProviderId));
+          return reply.status(400).send({ error });
         }
-        const minMinutes = body.series.minMinutes ?? 15;
-        const maxMinutes = body.series.maxMinutes ?? 20;
-        const longer = (body.series.longerThanMinutes ?? maxMinutes * 1.5) * 60;
-        const nameTemplate = body.series.nameTemplate?.trim();
+        const minMinutes = seriesAsk.minMinutes ?? 15;
+        const maxMinutes = seriesAsk.maxMinutes ?? 20;
+        const longer = (seriesAsk.longerThanMinutes ?? maxMinutes * 1.5) * 60;
+        const nameTemplate = seriesAsk.nameTemplate?.trim();
         if (nameTemplate) series.checkNameTemplate(nameTemplate);
         seriesFor = (durationSec) =>
           durationSec !== undefined && durationSec > longer
@@ -2231,8 +2479,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
                 minMinutes,
                 maxMinutes,
                 aiProviderId: chosen.id,
-                recapSec: body.series!.recapSec ?? 4,
-                autoStart: body.series!.autoStart ?? true,
+                recapSec: seriesAsk.recapSec ?? 4,
+                autoStart: seriesAsk.autoStart ?? true,
                 ...(nameTemplate ? { nameTemplate } : {}),
               }
             : undefined;
@@ -2255,7 +2503,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
             name: projectNameFor(item),
             inputVideoPath: item.filePath,
             settings,
-            ...(outputDir ? { outputDir } : {}),
+            ...(outputDir ? { outputDir: resolveOutputDir(outputDir, projectNameFor(item)) } : {}),
             linkInputVideo: true,
             ...(item.source ? { source: item.source } : {}),
             ...(series ? { series } : {}),
@@ -2742,22 +2990,20 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       // A video VideoDubber downloaded is linked into the project (no second
       // copy on the drive) and keeps its source (site, link, uploader), however
       // the project is made: New project, the plugin, a batch.
-      const body = req.body;
+      // From a preset: the job's own choices over it (presetJob).
+      const input = typeof req.body?.inputVideoPath === 'string' ? req.body.inputVideoPath : undefined;
+      const body: CreateProjectInput = await presetJob(
+        req.body,
+        async () => (input ? (await media.probe(input).catch(() => undefined))?.durationMs : undefined),
+        input ? parsePath(input).name : undefined,
+      );
       // A series needs an AI from Settings to choose the cuts (the user's call, 2026-11-19).
       if (body?.series) {
         const wanted = body.series.aiProviderId;
         const chosen = pickSeriesAi(await seriesAiOptions(), wanted);
         if (!chosen) {
-          return reply.status(400).send({
-            error: {
-              code: 'CLOUD_CREDENTIALS_MISSING',
-              message: wanted
-                ? `The AI "${wanted}" is not set up here, so the video cannot be split into parts with it.`
-                : 'Splitting a video into parts needs an AI set up in Settings.',
-              remediation:
-                'Set up Claude (an API key, or your Claude plan through Mother Claude), OpenAI or Gemini in Settings → Cloud API keys, or install the built-in Gemma chat model in Settings → Engines.',
-            },
-          });
+          const { error } = toHttpError(seriesAiRefusal(wanted));
+          return reply.status(400).send({ error });
         }
         body.series = { ...body.series, aiProviderId: chosen.id };
         // Its part name template checked; continuing another series: that one's name and numbers.
@@ -2949,9 +3195,15 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     async (req: FastifyRequest<{ Params: { id: string }; Body: { stepId: PipelineStepId } }>, reply) => {
       try {
         // A series' parent runs nothing after speech-to-text: a redo of a later
-        // step there "finished" at once and redid no part. Say how instead.
-        const refused = seriesRedoRefusal(req.body.stepId, (await series.partIdsOf(req.params.id).catch(() => [])).length);
-        if (refused) throw refused;
+        // step there "finished" at once and redid no part. The timing, the mix
+        // and the render are redone in every part that made them; any other
+        // step is refused, with how to do it part by part.
+        const partIds = await series.partIdsOf(req.params.id).catch(() => []);
+        if (partIds.length > 0 && pipelineStepIndex(req.body.stepId) > pipelineStepIndex('stt')) {
+          const refused = seriesRedoRefusal(req.body.stepId, partIds.length);
+          if (refused) throw refused;
+          return reply.status(202).send({ started: true, parts: await redoParts(req.params.id, partIds, req.body.stepId) });
+        }
         await orchestrator.retryStep(req.params.id, req.body.stepId);
         return reply.status(202).send({ started: true });
       } catch (err) {
@@ -2972,9 +3224,25 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       try {
         const updated = await orchestrator.updateProjectSettings(req.params.id, req.body ?? {});
         // `?applyToParts=true` on a series: the same change on every part (speaker voices included).
+        // A part waiting in the queue takes a change to its mix or render where it waits.
         if (req.query?.applyToParts === 'true' || req.query?.applyToParts === '1') {
           const body = req.body ?? {};
-          return { ...updated, parts: await forEachPart(req.params.id, (id) => orchestrator.updateProjectSettings(id, body)) };
+          const whileQueued = changesOnlyMixAndRender(body);
+          return {
+            ...updated,
+            // A part that already had these values says so: "changed" for every
+            // part, identical ones included, hid which parts really moved
+            // (claude-dubber, 2026-11-24).
+            parts: await forEachPart(
+              req.params.id,
+              async (id) => {
+                const before = stableJson((await store.getProject(id)).settings);
+                const after = await orchestrator.updateProjectSettings(id, body, { whileQueued });
+                return stableJson(after.project.settings) === before ? UNCHANGED : undefined;
+              },
+              { whileQueued },
+            ),
+          };
         }
         return updated;
       } catch (err) {
@@ -3243,6 +3511,14 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           body.swaps,
           voices,
         );
+        // Speakers of unknown gender keep the project voice: say so when that
+        // voice is kept for one main character (they would all speak with it).
+        const projectVoice = voices.find((v) => v.voiceId === project.settings.ttsVoiceId);
+        if (projectVoice?.mainOnly && proposal.unassigned.length > 0) {
+          proposal.notes.push(
+            `${proposal.unassigned.length} speaker(s) of unknown gender would speak with the project voice "${projectVoice.name}", which is kept for one main character: set their gender (the editor, or get_speakers) so they get voices of their own.`,
+          );
+        }
         const result: CastResult = {
           ...proposal,
           unknown: unknownSpeakers(rows, proposal),
@@ -3560,21 +3836,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     registerJoinRoutes(app, {
       joins,
       sendError,
+      presetJob,
       // As POST /projects: a series needs an AI from Settings to choose the cuts.
       resolveSeries: async (s) => {
         const chosen = pickSeriesAi(await seriesAiOptions(), s.aiProviderId);
-        if (!chosen) {
-          throw new AppErrorException(
-            'CLOUD_CREDENTIALS_MISSING',
-            s.aiProviderId
-              ? `The AI "${s.aiProviderId}" is not set up here, so the video cannot be split into parts with it.`
-              : 'Splitting a video into parts needs an AI set up in Settings.',
-            {
-              remediation:
-                'Set up Claude (an API key, or your Claude plan through Mother Claude), OpenAI or Gemini in Settings → Cloud API keys, or install the built-in Gemma chat model in Settings → Engines.',
-            },
-          );
-        }
+        if (!chosen) throw seriesAiRefusal(s.aiProviderId);
         // As POST /projects: the name template checked, a continuation's
         // numbering and settings resolved (series agent's prepareSeries).
         return series.prepareSeries({ ...s, aiProviderId: chosen.id });
@@ -3588,7 +3854,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // [routes: picture options]
   // Watermarks and the band over the source's subtitles: found without AI
   // (a job in the activity list), saved with PUT /projects/:id/settings.
-  registerPictureRoutes(app, { pictures: new PictureDetectionService({ store }), sendError });
+  registerPictureRoutes(app, { pictures, sendError });
 
 
   // [routes: activity and edit history]

@@ -88,6 +88,14 @@
               @if (noSuggestion() === p.id && !p.gender?.confirmed) {
                 <p class="note small" role="status">{{ 'voices.my-gender-no-suggestion' | translate }}</p>
               }
+              <!-- Kept for one main character: casting never gives it to the crowd or makes it a default (the user's own voice). -->
+              <label class="gender-line small" [title]="'voices.my-main-only-help' | translate">
+                <input type="checkbox" [ngModel]="p.mainOnly === true" (ngModelChange)="setMainOnly(p, $event)" />
+                <span>{{ 'voices.my-main-only' | translate }}</span>
+              </label>
+              @if (p.mainOnly) {
+                <p class="note small muted">{{ 'voices.my-main-only-help' | translate }}</p>
+              }
               <div class="meta muted small">
                 <span>{{ 'voices.my-made' | translate: { date: dateLabel(p.createdAt) } }}</span>
                 <span [title]="p.consent.statementText">· {{ relationLabel(p) }}</span>

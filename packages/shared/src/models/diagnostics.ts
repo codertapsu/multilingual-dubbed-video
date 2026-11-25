@@ -84,6 +84,16 @@ export type ProjectWarningCode =
   | 'speakers-unassigned'
   /** Lines that look like a song, offered to keep as the original. */
   | 'songs-suggested'
+  /** Lines still failing the translation checks after both repairs, before voicing. */
+  | 'lines-flagged'
+  /** Lines whose voice cannot fit their time even at the fastest speed allowed. */
+  | 'timing-conflicts'
+  /** The video's own subtitles show speech where the transcript has no line (speech lost). */
+  | 'subtitles-without-lines'
+  /** Lines with no subtitle of the video under them where its subtitles follow the dialogue (maybe hallucinated). */
+  | 'lines-without-subtitles'
+  /** The video's own subtitles were asked for as the transcript but could not be read: speech-to-text ran. */
+  | 'burned-in-fallback'
   /** Anything else worth knowing (the message says what). */
   | 'other';
 

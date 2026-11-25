@@ -232,6 +232,8 @@ export function recurringTerms(
 
 /** Options for {@link buildAnalysisPrompt}. */
 export interface AnalysisPromptOptions {
+  /** How the source names itself (title, file names): spellings to prefer over what was heard. */
+  hints?: readonly string[];
   /**
    * The reduced retry: ask for the glossary only. A small model that ran out of
    * room or broke its JSON on the full sheet usually still gets a name list
@@ -261,6 +263,19 @@ export function buildAnalysisPrompt(
   opts: AnalysisPromptOptions = {},
 ): string {
   const fromChinese = sourceLanguage.split('-')[0]!.toLowerCase() === 'zh';
+  // How people wrote the source's names (its title, the files' names), unlike
+  // what speech recognition heard: 《反相之地》 was heard 反向之地, and the
+  // glossary and every part title carried the mishearing (claude-dubber, F1).
+  const hints = (opts.hints ?? []).map((h) => h.trim()).filter(Boolean).slice(0, 20);
+  const hintBlock =
+    hints.length > 0
+      ? [
+          'The source as people named it (its title, its files), written by hand, unlike the transcript:',
+          ...hints.map((h) => `  ${h}`),
+          'When a name in the transcript sounds like one written here, use the written form.',
+        ]
+      : [];
+  const labelled = /^SPEAKER_\d+: /m.test(sample);
   const vi = isVietnamese(targetLanguage);
   const candidates =
     opts.candidates && opts.candidates.length > 0
@@ -291,6 +306,7 @@ export function buildAnalysisPrompt(
   if (opts.glossaryOnly) {
     return [
       `You are preparing a name list for a professional dubbing translator working from "${sourceLanguage}" to "${targetLanguage}".`,
+      ...hintBlock,
       'Analyze the following transcript and respond with ONLY a strict JSON object with one key:',
       ...glossaryAsk,
       'No prose, no markdown fences — JSON only.',
@@ -311,7 +327,7 @@ export function buildAnalysisPrompt(
         '  entry with listener "audience". "self" and "address" are Vietnamese words.',
         // Only when the transcript HAS labels: told about them unconditionally,
         // Gemma 3 4B invented SPEAKER_00..04 for an undiarized video.
-        ...(/^SPEAKER_\d+: /m.test(sample) ? ['  Speaker labels like SPEAKER_00 in the transcript mark who is talking.'] : []),
+        ...(labelled ? ['  Speaker labels like SPEAKER_00 in the transcript mark who is talking.'] : []),
       ].join('\n')
     : [
         '- "pronounGuide": the register/formality plan for the target language (formal vs informal address,',
@@ -319,11 +335,20 @@ export function buildAnalysisPrompt(
       ].join('\n');
   return [
     `You are preparing notes for a professional subtitle/dubbing translator working from "${sourceLanguage}" to "${targetLanguage}".`,
+    ...hintBlock,
     'Analyze the following transcript sample and respond with ONLY a strict JSON object with these keys:',
     '- "synopsis": 1-2 sentences on what this video is about (genre, setting, who is talking to whom).',
-    '- "cast": array of {"name","role"} for each character who speaks or is spoken to (labels like "narrator",',
+    `- "cast": array of {"name","role"${labelled ? ',"speakerId"' : ''}} for each character who speaks or is spoken to (labels like "narrator",`,
     `  "master" when unnamed). "name" is the name AS IT SHOULD SOUND IN ${vi ? 'VIETNAMESE (Hán-Việt for Chinese names)' : 'THE TARGET LANGUAGE'},`,
     '  followed by the source form in parentheses.',
+    // The translator keys the forms of address by speaker: without the ids
+    // the sheet of 《反相之地》 mapped nobody (claude-dubber, F2).
+    ...(labelled
+      ? [
+          '  "speakerId": the label of THAT character\'s own lines (e.g. "SPEAKER_02"), for every main character who speaks;',
+          '  find it from who is called by name and who answers. Leave it out when unsure; never give two characters one id.',
+        ]
+      : []),
     ...glossaryAsk,
     pronounAsk,
     'No prose, no markdown fences — JSON only.',
@@ -389,7 +414,7 @@ export function analysisJsonSchema(targetLanguage: string): Record<string, unkno
         maxItems: 16,
         items: {
           type: 'object',
-          properties: { name: { type: 'string' }, role: { type: 'string' } },
+          properties: { name: { type: 'string' }, role: { type: 'string' }, speakerId: { type: 'string' } },
           required: ['name', 'role'],
         },
       },
@@ -479,7 +504,7 @@ export function parseAnalysisReply(
   const parsed = extractJsonObject(reply) as
     | {
         synopsis?: unknown;
-        cast?: { name?: unknown; role?: unknown }[];
+        cast?: { name?: unknown; role?: unknown; speakerId?: unknown }[];
         glossary?: { source?: unknown; target?: unknown }[];
         pronounGuide?: unknown;
       }
@@ -494,6 +519,7 @@ export function parseAnalysisReply(
       .map((c) => ({
         name: (c.name as string).trim(),
         ...(typeof c.role === 'string' && c.role.trim() ? { role: c.role.trim() } : {}),
+        ...(typeof c.speakerId === 'string' && /^SPEAKER_\d+$/.test(c.speakerId.trim()) ? { speakerId: c.speakerId.trim() } : {}),
       }))
       .filter((c) => cjkTarget || !CJK_LETTER_RE.test(c.name.replace(/\([^)]*\)/g, '')));
     if (cast.length > 0) analysis.cast = cast;
@@ -532,7 +558,7 @@ export interface AnalysisChat {
 
 /** One analysis request and how it ended. */
 export interface AnalysisAttempt {
-  mode: 'full' | 'glossary-only';
+  mode: 'full' | 'full-short' | 'glossary-only';
   ok: boolean;
   /** Why it failed: the engine's error, or "unusable reply". */
   error?: string;
@@ -569,13 +595,20 @@ function isAbort(err: unknown): boolean {
  */
 export async function generateCharacterSheet(
   chat: AnalysisChat,
-  input: { sourceLanguage: string; targetLanguage: string; segments: readonly PromptSegment[] },
+  input: {
+    sourceLanguage: string;
+    targetLanguage: string;
+    segments: readonly PromptSegment[];
+    /** How the source names itself (title, file names): spellings to prefer over what was heard. */
+    hints?: readonly string[];
+  },
   signal?: AbortSignal,
 ): Promise<AnalysisOutcome> {
   const languages = { sourceLanguage: input.sourceLanguage, targetLanguage: input.targetLanguage };
   const context = chat.contextTokens ?? DEFAULT_CONTEXT_TOKENS;
   const transcriptBudget = Math.max(1000, context - ANALYSIS_REPLY_TOKENS - ANALYSIS_PROMPT_OVERHEAD_TOKENS);
   const transcript = buildAnalysisTranscript(input.segments, transcriptBudget);
+  const shorter = buildAnalysisTranscript(input.segments, Math.max(1000, Math.floor(transcriptBudget / 2)));
   // Every source line (not just the sampled ones): the glossary is checked
   // against it, and recurring terms are counted over the whole video.
   const sourceText = input.segments.map((s) => s.sourceText).join('\n');
@@ -588,13 +621,14 @@ export async function generateCharacterSheet(
     try {
       const reply = await chat.chatComplete(
         ANALYSIS_SYSTEM,
-        buildAnalysisPrompt(input.sourceLanguage, input.targetLanguage, transcript, {
+        buildAnalysisPrompt(input.sourceLanguage, input.targetLanguage, mode === 'full-short' ? shorter : transcript, {
           glossaryOnly: mode === 'glossary-only',
           candidates,
+          ...(input.hints?.length ? { hints: input.hints } : {}),
         }),
         signal,
         {
-          jsonSchema: mode === 'full' ? analysisJsonSchema(input.targetLanguage) : GLOSSARY_JSON_SCHEMA,
+          jsonSchema: mode === 'glossary-only' ? GLOSSARY_JSON_SCHEMA : analysisJsonSchema(input.targetLanguage),
           maxTokens: ANALYSIS_REPLY_TOKENS,
         },
       );
@@ -614,6 +648,13 @@ export async function generateCharacterSheet(
 
   const full = await attempt('full');
   if (full) return { analysis: full, attempts };
+  // The whole sheet once more on half the transcript before settling for
+  // names alone: the glossary-only fallback has no cast and no pronoun plan,
+  // and the translator then has no forms of address (claude-dubber, F2).
+  if (shorter !== transcript) {
+    const short = await attempt('full-short');
+    if (short) return { analysis: short, attempts };
+  }
   const glossary = await attempt('glossary-only');
   return glossary ? { analysis: glossary, attempts } : { attempts };
 }

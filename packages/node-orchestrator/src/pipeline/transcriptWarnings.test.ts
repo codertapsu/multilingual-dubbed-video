@@ -6,7 +6,7 @@ import type { ProjectWarning, TranscriptSegment } from '@videodubber/shared';
 
 import type { RepairedRange } from './loopRepair.js';
 import { detectionRange, readSpeakerJob, saveSpeakerJob, speakerJobSummary, speakerJobView } from './speakerJob.js';
-import { loopWarnings, transcriptWarnings, unassignedWarning, withTranscriptWarnings } from './transcriptWarnings.js';
+import { loopWarnings, settledByRewrite, transcriptWarnings, unassignedWarning, withTranscriptWarnings } from './transcriptWarnings.js';
 
 const line = (startMs: number, endMs: number, extra: Partial<TranscriptSegment> = {}) => ({ startMs, endMs, ...extra });
 const range = (fromMs: number, toMs: number, status: RepairedRange['status']): RepairedRange => ({ fromMs, toMs, kind: 'repeat', status, before: 10, after: 2 });
@@ -95,5 +95,21 @@ describe('the saved speaker detection job', () => {
     expect(speakerJobSummary({ state: 'done', done: 1, total: 1, startedAt: '', range: { fromMs: 0, toMs: 1 }, relabelled: 9, added: 1, detectedParts: 0 })).toBe(
       '9 line(s) changed speaker, 1 new speaker(s), from the saved detection',
     );
+  });
+});
+
+describe('stretch warnings settled by a rewrite', () => {
+  const w = (code: ProjectWarning['code'], fromMs?: number, toMs?: number): ProjectWarning => ({
+    code,
+    at: '',
+    key: 'k',
+    message: 'm',
+    ...(fromMs !== undefined ? { params: { fromMs, toMs: toMs! } } : {}),
+  });
+  it('a rewrite covering most of a stretch settles its warning; other warnings and other stretches stay', () => {
+    const all = [w('stt-no-speech', 1000, 11_000), w('transcript-mismatch', 50_000, 60_000), w('speakers-failed'), w('stt-no-speech', 100_000, 200_000)];
+    expect(settledByRewrite(all, { fromMs: 0, toMs: 10_000 }).map((x) => x.code)).toEqual(['transcript-mismatch', 'speakers-failed', 'stt-no-speech']);
+    // Only a part of it rewritten: it stays.
+    expect(settledByRewrite([w('stt-no-speech', 100_000, 200_000)], { fromMs: 100_000, toMs: 150_000 })).toHaveLength(1);
   });
 });

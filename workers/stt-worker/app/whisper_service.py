@@ -622,10 +622,15 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
     if effective_batch <= 0 and settings.device == "cuda":
         effective_batch = 8
 
+    # The request may turn the VAD filter off: the orchestrator's second
+    # opinion on a range the speech map called silent (loopRepair.ts) must
+    # hear what that detector missed (shouted or music-covered dialogue).
+    requested_vad = getattr(request, "vadFilter", None)
+    vad_filter = settings.vad_filter if requested_vad is None else bool(requested_vad)
     transcribe_kwargs: dict[str, Any] = {
         "language": whisper_language,  # None => auto-detect
         "word_timestamps": request.wordTimestamps,
-        "vad_filter": settings.vad_filter,
+        "vad_filter": vad_filter,
     }
     # A loop's range decoded again (orchestrator pipeline/loopRepair.ts): the
     # previous text is what carried the loop, so leave it out.
@@ -634,7 +639,9 @@ def transcribe(request: TranscribeRequest) -> TranscribeResponse:
 
     try:
         runner = model
-        if effective_batch and effective_batch > 1:
+        # The batched pipeline needs VAD (or clip timestamps) for audio over
+        # 30 s: without it faster-whisper raises "No clip timestamps found".
+        if effective_batch and effective_batch > 1 and vad_filter:
             try:
                 from faster_whisper import BatchedInferencePipeline  # type: ignore
 

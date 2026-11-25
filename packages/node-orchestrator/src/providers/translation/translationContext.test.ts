@@ -259,6 +259,33 @@ describe('character sheet (analysis) — constrained, whole-transcript, retried,
     expect(failed.attempts.map((a) => a.ok)).toEqual([false, false]);
   });
 
+  it('asks who each speaker is and prefers the source\'s own spellings (《反相之地》, F1/F2)', () => {
+    const prompt = buildAnalysisPrompt('zh', 'vi-VN', 'SPEAKER_02: 潘博文是我哥', { hints: ['File: 反相之地 07', 'Project: 反相之地'] });
+    expect(prompt).toContain('The source as people named it');
+    expect(prompt).toContain('  File: 反相之地 07');
+    expect(prompt).toContain('"speakerId": the label of THAT character\'s own lines');
+    expect(buildAnalysisPrompt('zh', 'vi-VN', '潘博文是我哥')).not.toContain('"speakerId"');
+    const schema = analysisJsonSchema('vi') as { properties: { cast: { items: { properties: Record<string, unknown> } } } };
+    expect(schema.properties.cast.items.properties).toHaveProperty('speakerId');
+    const parsed = parseAnalysisReply(
+      JSON.stringify({ cast: [{ name: 'Phan Bác Nhã (潘博雅)', role: 'em', speakerId: 'SPEAKER_02' }, { name: 'A Cẩu (阿狗)', role: 'bạn', speakerId: 'speaker two' }] }),
+      { sourceLanguage: 'zh', targetLanguage: 'vi' },
+    );
+    expect(parsed?.cast).toEqual([
+      { name: 'Phan Bác Nhã (潘博雅)', role: 'em', speakerId: 'SPEAKER_02' },
+      { name: 'A Cẩu (阿狗)', role: 'bạn' },
+    ]);
+  });
+
+  it('tries the whole sheet once more on half the transcript before names alone (no pronoun plan without it)', async () => {
+    const long = { ...input, segments: Array.from({ length: 3000 }, (_, i) => ({ id: `s${i}`, sourceText: `这是第${i}句很长的台词` })) };
+    const engine = chat([new Error('timed out'), JSON.stringify({ synopsis: 'x', cast: [], glossary: [], pronounGuide: 'y' })], 8192);
+    const out = await generateCharacterSheet(engine, long);
+    expect(out.attempts.map((a) => a.mode)).toEqual(['full', 'full-short']);
+    expect(out.analysis?.pronounGuide).toBe('y');
+    expect(engine.calls[1]!.user.length).toBeLessThan(engine.calls[0]!.user.length);
+  });
+
   it('propagates cancellation instead of retrying', async () => {
     const engine = chat([new AppErrorException('CANCELLED', 'cancelled')]);
     await expect(generateCharacterSheet(engine, input)).rejects.toMatchObject({ appError: { code: 'CANCELLED' } });

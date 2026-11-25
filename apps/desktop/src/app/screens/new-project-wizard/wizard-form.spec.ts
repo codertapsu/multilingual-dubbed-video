@@ -9,7 +9,12 @@ import {
   draftOf,
   draftOnLeave,
   draftSnapshot,
+  isNamedFolder,
   leaveWarningFor,
+  presetSeriesOf,
+  presetSplitsOver,
+  seriesDraftFromPreset,
+  seriesLengthOf,
   seriesRequestOf,
   type DraftForm,
   type LeaveState,
@@ -154,6 +159,51 @@ describe('seriesRequestOf', () => {
   });
 });
 
+describe('a preset’s series of parts in the form', () => {
+  const block = { minMinutes: 30, maxMinutes: 40, aiProviderId: 'anthropic', recapSec: 2, autoStart: true, nameTemplate: '{series} - Phần {n} - {title}' };
+
+  it('fills the choices from the preset, leaving this video’s split as it was', () => {
+    const filled = seriesDraftFromPreset(DEFAULT_SERIES, block, ['anthropic-translate']);
+    expect(filled).toEqual({
+      ...DEFAULT_SERIES,
+      length: '30-40',
+      min: 30,
+      max: 40,
+      ai: 'anthropic-translate',
+      recapSec: 2,
+      autoStart: true,
+      nameTemplate: '{series} - Phần {n} - {title}',
+    });
+    expect(filled.split).toBe(false);
+    // An AI not set up here leaves the form's choice; odd lengths are the custom ones.
+    expect(seriesDraftFromPreset({ ...DEFAULT_SERIES, ai: 'openai-translate' }, { ...block, minMinutes: 25 }, [])).toMatchObject({
+      ai: 'openai-translate',
+      length: 'custom',
+      min: 25,
+      max: 40,
+    });
+    expect(seriesLengthOf(55, 65)).toBe('55-65');
+  });
+
+  it('saves the form’s series when it splits, else keeps the preset’s own', () => {
+    const kept = { ...block, longerThanMinutes: 90 };
+    expect(presetSeriesOf(DEFAULT_SERIES, kept)).toBe(kept);
+    expect(presetSeriesOf(DEFAULT_SERIES, undefined)).toBeUndefined();
+    const on = { ...DEFAULT_SERIES, split: true, ai: 'gemini-translate', length: '15-20' as const, continues: 'proj_s1', total: 60 };
+    expect(presetSeriesOf(on, kept)).toEqual({ minMinutes: 15, maxMinutes: 20, aiProviderId: 'gemini-translate', recapSec: 4, autoStart: false, longerThanMinutes: 90 });
+  });
+
+  it('says when a preset splits a video, and when its folder is named after each project', () => {
+    expect(presetSplitsOver(block)).toBe(60);
+    expect(presetSplitsOver({ longerThanMinutes: 45.4 })).toBe(45);
+    expect(presetSplitsOver({})).toBe(30);
+    expect(isNamedFolder(String.raw`D:\Dubs\{series}`)).toBe(true);
+    expect(isNamedFolder('/Dubs/{Name}')).toBe(true);
+    expect(isNamedFolder(String.raw`D:\Dubs`)).toBe(false);
+    expect(isNamedFolder(null)).toBe(false);
+  });
+});
+
 describe('continueBlocker', () => {
   const f = { videoPath: 'D:\\a.mp4', sourceLanguage: 'en-US', targetLanguage: 'vi-VN', voiceDownloading: false };
 
@@ -162,6 +212,11 @@ describe('continueBlocker', () => {
     expect(continueBlocker({ ...f, sourceLanguage: '' })).toBe('languages');
     expect(continueBlocker({ ...f, voiceDownloading: true })).toBe('voice');
     expect(continueBlocker(f)).toBeNull();
+  });
+
+  it('waits for the AI that plans the parts when the video is to be split: none is picked for the user', () => {
+    expect(continueBlocker({ ...f, seriesWithoutAi: true })).toBe('series-ai');
+    expect(continueBlocker({ ...f, seriesWithoutAi: false })).toBeNull();
   });
 });
 

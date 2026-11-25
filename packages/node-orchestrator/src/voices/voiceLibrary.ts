@@ -96,6 +96,7 @@ export function libraryItems(
       scope: p.scope,
       ...(p.gender ? { gender: p.gender.value } : {}),
       genderConfirmed: p.gender?.confirmed === true,
+      ...(p.mainOnly ? { mainOnly: true } : {}),
     });
   }
   return items;

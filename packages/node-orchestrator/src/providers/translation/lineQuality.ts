@@ -271,15 +271,49 @@ const VI_LATIN_LOANWORDS: ReadonlySet<string> = new Set([
  * capitalized head. A pinyin-only tone mark is pinyin wherever it is.
  */
 function hasPinyinName(line: string): boolean {
+  return pinyinNames(line).length > 0;
+}
+
+/** The pinyin names of a Vietnamese line, as written ("Kunlun", "Na-er-gơ"). */
+function pinyinNames(line: string): string[] {
+  const names: string[] = [];
   for (const compound of line.normalize('NFC').split(/[^\p{L}\p{M}-]+/u)) {
     const parts = compound.split('-').filter((w) => w.length > 0 && /\p{Script=Latin}/u.test(w));
-    if (parts.some((p) => PINYIN_ONLY_MARKS.test(p))) return true;
+    if (parts.some((p) => PINYIN_ONLY_MARKS.test(p))) {
+      names.push(compound);
+      continue;
+    }
     const head = parts[0];
     if (!head || head[0] === head[0]!.toLowerCase()) continue; // "chơi game": a loanword, not a name
     if (parts.length === 1 && VI_LATIN_LOANWORDS.has(head.toLowerCase())) continue;
-    if (parts.some(isPinyinToken)) return true;
+    if (parts.some(isPinyinToken)) names.push(compound);
   }
-  return false;
+  return names;
+}
+
+/**
+ * The words that made a line fail its checks, as written in it: the pinyin
+ * name, the word with Chinese (or Thai…) letters in it, the "anh/chị" hedge.
+ * A repair told only "it contains a pinyin name" kept it: four lines of
+ * 《反相之地》 were voiced with theirs after one (2026-11-25), so the second
+ * try names them. Pure.
+ */
+export function wordsAtFault(text: string, ctx: LineCheckContext, flags: readonly QualityFlag[]): string[] {
+  const line = text.normalize('NFC').trim();
+  const out: string[] = [];
+  if (flags.includes('wrong-script')) {
+    const wrong = new Set(wrongScripts(line, ctx));
+    for (const word of line.split(/\s+/u)) {
+      if ([...scriptsIn(word)].some((s) => wrong.has(s))) out.push(word.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, ''));
+    }
+  }
+  if (flags.includes('pinyin')) out.push(...pinyinNames(line));
+  if (flags.includes('alternatives')) {
+    for (const m of line.matchAll(ALTERNATIVES_RE)) {
+      if (!UNIT_BEFORE_SLASH.test(m[1]!) && m[2]!.length > 1) out.push(m[0]);
+    }
+  }
+  return [...new Set(out.filter((w) => w.length > 0))];
 }
 
 /** Any Latin letter beyond ASCII — Vietnamese tones/hooks/breves, đ. */

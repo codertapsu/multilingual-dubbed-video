@@ -145,6 +145,30 @@
             </label>
             <p class="hint">{{ 'source-checks.spot-check-hint' | translate }}</p>
           }
+          @if (subtitleCheckOffered() && offeredPacks().has('ocr-rapid')) {
+            <label class="setting-row check-row">
+              <input
+                type="checkbox"
+                [ngModel]="s.useBurnedInSubtitles === true"
+                (ngModelChange)="onSettingChange('useBurnedInSubtitles', $event)"
+                [disabled]="redubbing()"
+              />
+              <span>{{ 'wizard.use-burned-in' | translate }}</span>
+            </label>
+            <p class="hint">{{ 'editor.use-burned-in-hint' | translate }}</p>
+          }
+          @if (subtitleCheckOffered()) {
+            <label class="setting-row check-row">
+              <input
+                type="checkbox"
+                [ngModel]="subtitleCheck()"
+                (ngModelChange)="onSettingChange('subtitleCoverageCheck', $event)"
+                [disabled]="redubbing()"
+              />
+              <span>{{ 'source-checks.subtitle-check' | translate }}</span>
+            </label>
+            <p class="hint">{{ 'source-checks.subtitle-check-hint' | translate }}</p>
+          }
         </div>
 
         <!-- Translation -->
@@ -182,6 +206,16 @@
             <span class="label">{{ 'editor.auto-fit' | translate }}</span>
             <span class="value">{{ (s.autoFitOverflow ? 'editor.on' : 'editor.off') | translate }}</span>
           </div>
+          <label class="setting-row check-row">
+            <input
+              type="checkbox"
+              [ngModel]="s.holdFlaggedLines ?? false"
+              (ngModelChange)="onSettingChange('holdFlaggedLines', $event)"
+              [disabled]="redubbing()"
+            />
+            <span>{{ 'wizard.hold-flagged' | translate }}</span>
+          </label>
+          <p class="hint">{{ 'wizard.hold-flagged-hint' | translate }}</p>
           <p class="hint">
             {{ 'editor.refine-hint' | translate }}
           </p>

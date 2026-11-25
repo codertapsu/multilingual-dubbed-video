@@ -106,6 +106,15 @@ describe('decideAdmissions — the light lane (mix and render only)', () => {
   it('starts nothing on the light lane while the queue is paused', () => {
     expect(decideAdmissions([render('r')], [], ctx(4, true)).start).toEqual([]);
   });
+
+  it('holds a render while a full dub runs on a computer under pressure, and only then (part 16, 2026-11-24)', () => {
+    const squeezed = decideAdmissions([render('r')], [runningHeavy('a')], { ...ctx(2), pressure: true });
+    expect(squeezed.start).toEqual([]);
+    expect(squeezed.held.get('r')).toMatchObject({ reason: 'pressure', message: expect.stringContaining('short of memory') });
+    // No dub beside it, or memory to spare: the render goes.
+    expect(decideAdmissions([render('r')], [], { ...ctx(2), pressure: true }).start).toEqual(['r']);
+    expect(decideAdmissions([render('r')], [runningHeavy('a')], ctx(2)).start).toEqual(['r']);
+  });
 });
 
 describe('decideAdmissions — external heavy-lane holder (editor actions)', () => {

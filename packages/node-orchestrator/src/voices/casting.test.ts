@@ -223,6 +223,18 @@ describe('the minor speakers share a pool (F4)', () => {
     expect(picked.pools.male!.voices).toMatchObject([{ voiceId: 'clone-b', from: 'picked', sharedWith: 'S1' }]);
   });
 
+  it('never shares a voice kept for one main character, even picked for the pool, nor makes it a default', () => {
+    const mine = { ...profile('vp_mine', 'male', 120), name: 'Giọng của tôi', mainOnly: true };
+    const voices = [mine, preset('builtin-a', 'male', 100), preset('builtin-b', 'male', 140)];
+    const speakers = [speaker('S0', 50, 'male', 120), speaker('S1', 20, 'male', 100), speaker('S2', 3, 'male', 130), speaker('S3', 2, 'male', 135)];
+    const cast = proposeCast(speakers, voices, { minorPool: { male: ['vp_mine', 'builtin-b'] } });
+    // The most-heard speaker gets it, and nobody else.
+    expect(cast.assignments.filter((a) => a.voiceId === 'vp_mine').map((a) => a.speakerId)).toEqual(['S0']);
+    expect(cast.pools.male!.voices.map((v) => v.voiceId)).toEqual(['builtin-b']);
+    expect(cast.defaults.male).toBe('builtin-b');
+    expect(cast.notes).toContain('"Giọng của tôi" is kept for one main character: it is not one of the voices the minor speakers share.');
+  });
+
   it('casts a built-in that sounds like a clone only after the others', () => {
     const voices = [
       { ...preset('sounds-like-clone', 'male', 120), print: [1, 0, 0] },

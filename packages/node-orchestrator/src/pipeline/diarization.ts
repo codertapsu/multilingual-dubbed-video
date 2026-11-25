@@ -209,6 +209,8 @@ export interface DiarizationCache {
   /** The audio the turns were detected in, and how. */
   audio: { sizeBytes: number; mtimeMs: number };
   model: string;
+  /** The linking rules of a long audio's parts (DiarizationService.linkKey); absent: the first ones. */
+  link?: string;
   numSpeakers?: number;
   turns: SpeakerTurn[];
   speakers: CachedSpeaker[];
@@ -263,6 +265,7 @@ export async function cachedDiarization(
     saved.audio.sizeBytes === audio.sizeBytes &&
     saved.audio.mtimeMs === audio.mtimeMs &&
     saved.model === service.modelKey &&
+    saved.link === service.linkKey &&
     (saved.numSpeakers ?? 0) === (opts.numSpeakers ?? 0)
   ) {
     return { turns: saved.turns, speakers: saved.speakers.map(({ speakerId: _id, ...voice }) => voice) };
@@ -274,6 +277,7 @@ export async function cachedDiarization(
     format: 2,
     audio,
     model: service.modelKey,
+    ...(service.linkKey ? { link: service.linkKey } : {}),
     ...(opts.numSpeakers ? { numSpeakers: opts.numSpeakers } : {}),
     turns: result.turns,
     speakers: result.speakers,

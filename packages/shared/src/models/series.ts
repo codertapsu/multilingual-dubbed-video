@@ -48,6 +48,13 @@ export interface SeriesSettings {
    * here whose voice prints match its speakers'.
    */
   continues?: string;
+  /**
+   * A project joined from several files: one part per file, cut exactly where
+   * one file ends and the next begins (the files' own lengths, whatever the
+   * minutes above say). claude-dubber offered the user that choice for the
+   * nine episodes of 《反相之地》 (2026-11-25).
+   */
+  perFile?: boolean;
 }
 
 export const DEFAULT_SERIES_SETTINGS: Omit<SeriesSettings, 'aiProviderId'> = {
@@ -56,6 +63,33 @@ export const DEFAULT_SERIES_SETTINGS: Omit<SeriesSettings, 'aiProviderId'> = {
   recapSec: 4,
   autoStart: false,
 };
+
+/** The short names agents use for the AI that plans a series (`ai: "anthropic"`), as the app's ids. */
+export const SERIES_AI_ALIASES: Readonly<Record<string, string>> = {
+  anthropic: 'anthropic-translate',
+  claude: 'anthropic-translate',
+  openai: 'openai-translate',
+  gemini: 'gemini-translate',
+};
+
+/** The built-in Gemma chat model on this computer: the series' AI unless one is chosen. */
+export const LOCAL_SERIES_AI_ID = 'llama-cpp-chat';
+
+/**
+ * The AI that plans a series' cuts when none is chosen: the built-in Gemma
+ * chat model when it can run here, never a cloud AI (the user's rule,
+ * 2026-11-25: "Prioritize keeping local-only, and use AI only when the user
+ * chooses to engage it"). Undefined: the user (or the agent) must choose one.
+ * Pure.
+ */
+export function defaultSeriesAiId(options: readonly Pick<SeriesAiOption, 'id' | 'ready'>[]): string | undefined {
+  return options.find((o) => o.ready && o.id === LOCAL_SERIES_AI_ID)?.id;
+}
+
+/** A series AI as the app's id: a short name ("anthropic") mapped, any other id as it is. Pure. */
+export function seriesAiId(id: string): string {
+  return SERIES_AI_ALIASES[id.trim().toLowerCase()] ?? id.trim();
+}
 
 /** Where a series is. */
 export type SeriesState = 'analysing' | 'planning' | 'review' | 'parts' | 'failed';
@@ -118,7 +152,7 @@ export interface SeriesPlanPart {
   title: string;
   summary: string;
   /** What chose the cut that starts this part. */
-  cutBy: 'start' | 'ai' | 'pause' | 'manual';
+  cutBy: 'start' | 'ai' | 'pause' | 'manual' | 'file';
   /** What the user wrote in review: planning again with `keepTitles` keeps it. */
   edited?: { title?: boolean; summary?: boolean };
 }

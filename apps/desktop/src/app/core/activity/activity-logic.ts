@@ -12,7 +12,7 @@
  */
 import type { PipelineStepId, Project, PipelineState, ProjectsFolderInfo } from '../models';
 import type { DownloadItem, DownloadState } from '../models/download';
-import type { ActivityEntry, ActivityInitiator } from './activity-models';
+import type { ActivityEntry, ActivityInitiator, ActivityPhrase } from './activity-models';
 
 // ------------------------------------------------------------------ dubs
 
@@ -300,4 +300,35 @@ export function mergeEntries(list: readonly ActivityEntry[], incoming: readonly 
   return [...byId.values()]
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, max);
+}
+
+/** Translates a key with its values (TranslateService.instant). */
+export type ActivityTranslate = (key: string, params?: Record<string, string | number>) => string;
+
+/**
+ * A phrase in the reader's language (ActivityPhrase): its key with its values,
+ * then its parts joined with ", ". A value named `…Key` is a key translated
+ * first (`stepKey: 'opt.step.tts'` gives `step`). Undefined when this version
+ * has no such key (a newer app wrote it): the caller shows the English text.
+ */
+export function phraseText(phrase: ActivityPhrase, t: ActivityTranslate): string | undefined {
+  const params: Record<string, string | number> = { ...(phrase.params ?? {}) };
+  for (const [name, value] of Object.entries(phrase.params ?? {})) {
+    if (name.endsWith('Key') && typeof value === 'string') params[name.slice(0, -3)] = t(value);
+  }
+  const head = t(phrase.key, params);
+  if (head === phrase.key) return undefined;
+  const parts: string[] = [];
+  for (const part of phrase.parts ?? []) {
+    const text = phraseText(part, t);
+    if (text === undefined) return undefined;
+    parts.push(text);
+  }
+  return [head, ...parts].join(', ');
+}
+
+/** An entry's title, step or result in the reader's language, else its English text. */
+export function entryText(entry: ActivityEntry, field: 'title' | 'message' | 'result', t: ActivityTranslate): string | undefined {
+  const phrase = entry[`${field}Phrase`];
+  return (phrase ? phraseText(phrase, t) : undefined) ?? entry[field];
 }

@@ -59,7 +59,7 @@ export function formatPeriods(spans: readonly TimeSpan[] | undefined): string {
       <div class="field">
         <label [for]="id + '-logo'">{{ 'branding.logo' | translate }}</label>
         <div class="row">
-          <select class="grow" [id]="id + '-logo'" [ngModel]="logo()?.assetId ?? ''" (ngModelChange)="setLogo($event)" [disabled]="disabled()">
+          <select class="grow" [id]="id + '-logo'" [ngModelOptions]="{ standalone: true }" [ngModel]="logo()?.assetId ?? ''" (ngModelChange)="setLogo($event)" [disabled]="disabled()">
             <option value="">{{ 'branding.logo-none' | translate }}</option>
             @for (a of logos(); track a.id) {
               <option [value]="a.id">{{ a.name }}</option>
@@ -78,7 +78,7 @@ export function formatPeriods(spans: readonly TimeSpan[] | undefined): string {
         <div class="grid">
           <label class="stack-xs">
             <span class="label">{{ 'branding.corner' | translate }}</span>
-            <select [ngModel]="l.corner" (ngModelChange)="patchLogo({ corner: $event })" [disabled]="disabled()">
+            <select [ngModelOptions]="{ standalone: true }" [ngModel]="l.corner" (ngModelChange)="patchLogo({ corner: $event })" [disabled]="disabled()">
               <option value="top-right">{{ 'branding.corner-top-right' | translate }}</option>
               <option value="top-left">{{ 'branding.corner-top-left' | translate }}</option>
               <option value="bottom-right">{{ 'branding.corner-bottom-right' | translate }}</option>
@@ -87,15 +87,15 @@ export function formatPeriods(spans: readonly TimeSpan[] | undefined): string {
           </label>
           <label class="stack-xs">
             <span class="label">{{ 'branding.size' | translate }}</span>
-            <input type="number" min="2" max="50" [ngModel]="l.widthPct" (ngModelChange)="patchLogo({ widthPct: +$event })" [disabled]="disabled()" />
+            <input type="number" min="2" max="50" [ngModelOptions]="{ standalone: true }" [ngModel]="l.widthPct" (ngModelChange)="patchLogo({ widthPct: +$event })" [disabled]="disabled()" />
           </label>
           <label class="stack-xs">
             <span class="label">{{ 'branding.opacity' | translate }}</span>
-            <input type="number" min="5" max="100" [ngModel]="pct(l.opacity)" (ngModelChange)="patchLogo({ opacity: +$event / 100 })" [disabled]="disabled()" />
+            <input type="number" min="5" max="100" [ngModelOptions]="{ standalone: true }" [ngModel]="pct(l.opacity)" (ngModelChange)="patchLogo({ opacity: +$event / 100 })" [disabled]="disabled()" />
           </label>
           <label class="stack-xs">
             <span class="label">{{ 'branding.show' | translate }}</span>
-            <select [ngModel]="l.show" (ngModelChange)="patchLogo({ show: $event })" [disabled]="disabled()">
+            <select [ngModelOptions]="{ standalone: true }" [ngModel]="l.show" (ngModelChange)="patchLogo({ show: $event })" [disabled]="disabled()">
               <option value="always">{{ 'branding.show-always' | translate }}</option>
               <option value="periods">{{ 'branding.show-periods' | translate }}</option>
               <option value="interval">{{ 'branding.show-interval' | translate }}</option>
@@ -105,7 +105,7 @@ export function formatPeriods(spans: readonly TimeSpan[] | undefined): string {
         @if (l.show === 'periods') {
           <label class="stack-xs">
             <span class="label">{{ 'branding.periods' | translate }}</span>
-            <input type="text" [ngModel]="periodsText()" (ngModelChange)="periodsText.set($event)" (blur)="commitPeriods()" [placeholder]="'0:00-0:10, 5:00-5:10'" [disabled]="disabled()" />
+            <input type="text" [ngModelOptions]="{ standalone: true }" [ngModel]="periodsText()" (ngModelChange)="periodsText.set($event)" (blur)="commitPeriods()" [placeholder]="'0:00-0:10, 5:00-5:10'" [disabled]="disabled()" />
             <span class="hint muted">{{ 'branding.periods-hint' | translate }}</span>
           </label>
         }
@@ -113,11 +113,11 @@ export function formatPeriods(spans: readonly TimeSpan[] | undefined): string {
           <div class="grid">
             <label class="stack-xs">
               <span class="label">{{ 'branding.show-sec' | translate }}</span>
-              <input type="number" min="1" max="600" [ngModel]="l.showSec ?? 10" (ngModelChange)="patchLogo({ showSec: +$event })" [disabled]="disabled()" />
+              <input type="number" min="1" max="600" [ngModelOptions]="{ standalone: true }" [ngModel]="l.showSec ?? 10" (ngModelChange)="patchLogo({ showSec: +$event })" [disabled]="disabled()" />
             </label>
             <label class="stack-xs">
               <span class="label">{{ 'branding.every-min' | translate }}</span>
-              <input type="number" min="1" max="120" [ngModel]="l.everyMin ?? 5" (ngModelChange)="patchLogo({ everyMin: +$event })" [disabled]="disabled()" />
+              <input type="number" min="1" max="120" [ngModelOptions]="{ standalone: true }" [ngModel]="l.everyMin ?? 5" (ngModelChange)="patchLogo({ everyMin: +$event })" [disabled]="disabled()" />
             </label>
           </div>
         }
@@ -130,7 +130,7 @@ export function formatPeriods(spans: readonly TimeSpan[] | undefined): string {
       <div class="field">
         <label [for]="id + '-greeting'">{{ 'branding.greeting' | translate }}</label>
         <div class="row">
-          <select class="grow" [id]="id + '-greeting'" [ngModel]="greeting()?.assetId ?? ''" (ngModelChange)="setGreeting($event)" [disabled]="disabled()">
+          <select class="grow" [id]="id + '-greeting'" [ngModelOptions]="{ standalone: true }" [ngModel]="greeting()?.assetId ?? ''" (ngModelChange)="setGreeting($event)" [disabled]="disabled()">
             <option value="">{{ 'branding.greeting-none' | translate }}</option>
             @for (a of greetings(); track a.id) {
               <option [value]="a.id">{{ a.name }}</option>
@@ -149,13 +149,13 @@ export function formatPeriods(spans: readonly TimeSpan[] | undefined): string {
 
       @if (greeting(); as g) {
         <label class="check">
-          <input type="checkbox" [ngModel]="g.atStart" (ngModelChange)="patchGreeting({ atStart: $event })" [disabled]="disabled()" />
+          <input type="checkbox" [ngModelOptions]="{ standalone: true }" [ngModel]="g.atStart" (ngModelChange)="patchGreeting({ atStart: $event })" [disabled]="disabled()" />
           <span>{{ 'branding.at-start' | translate: { sec: g.startWindowSec } }}</span>
         </label>
         <div class="grid">
           <label class="stack-xs">
             <span class="label">{{ 'branding.repeat' | translate }}</span>
-            <select [ngModel]="repeatValue(g)" (ngModelChange)="setRepeat($event)" [disabled]="disabled()">
+            <select [ngModelOptions]="{ standalone: true }" [ngModel]="repeatValue(g)" (ngModelChange)="setRepeat($event)" [disabled]="disabled()">
               <option value="off">{{ 'branding.repeat-off' | translate }}</option>
               <option value="auto">{{ 'branding.repeat-auto' | translate }}</option>
               @for (n of counts; track n) {
@@ -165,11 +165,11 @@ export function formatPeriods(spans: readonly TimeSpan[] | undefined): string {
           </label>
           <label class="stack-xs">
             <span class="label">{{ 'branding.window' | translate }}</span>
-            <input type="number" min="5" max="600" [ngModel]="g.startWindowSec" (ngModelChange)="patchGreeting({ startWindowSec: +$event })" [disabled]="disabled()" />
+            <input type="number" min="5" max="600" [ngModelOptions]="{ standalone: true }" [ngModel]="g.startWindowSec" (ngModelChange)="patchGreeting({ startWindowSec: +$event })" [disabled]="disabled()" />
           </label>
           <label class="stack-xs">
             <span class="label">{{ 'branding.gain' | translate }}</span>
-            <input type="number" min="-20" max="20" step="1" [ngModel]="g.gainDb" (ngModelChange)="patchGreeting({ gainDb: +$event })" [disabled]="disabled()" />
+            <input type="number" min="-20" max="20" step="1" [ngModelOptions]="{ standalone: true }" [ngModel]="g.gainDb" (ngModelChange)="patchGreeting({ gainDb: +$event })" [disabled]="disabled()" />
           </label>
         </div>
         <span class="hint muted">{{ 'branding.greeting-hint' | translate }}</span>

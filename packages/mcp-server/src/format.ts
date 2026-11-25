@@ -254,7 +254,13 @@ export function renderPipeline(p: PipelineState, now = Date.now()): string {
   if (p.warnings && p.warnings.length > 0) {
     lines.push('Warnings:', ...p.warnings.map((w) => `  - [${w.code}${w.step ? `, ${w.step}` : ''}] ${w.message}`));
   }
-  if (p.awaitingReview) {
+  if (p.awaitingReview && p.heldLines?.length) {
+    lines.push(
+      `STOPPED BEFORE VOICING: ${p.heldLines.length} line(s) still fail the translation checks (holdFlaggedLines): ` +
+        `${p.heldLines.slice(0, 10).join(', ')}${p.heldLines.length > 10 ? ', …' : ''}. ` +
+        'get_transcript marks them NEEDS FIX; fix them with set_translations, then call start_dubbing (it voices the lines as they are then).',
+    );
+  } else if (p.awaitingReview) {
     lines.push(
       'PAUSED FOR REVIEW: translation is done and no voice has been made yet. Review/rewrite lines ' +
         '(get_transcript, set_translations), then call start_dubbing to continue.',

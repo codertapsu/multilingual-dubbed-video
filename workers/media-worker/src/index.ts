@@ -252,6 +252,27 @@ export {
 } from './pictureAnalysis.js';
 export { buildVideoLengthArgs, parseVideoLengthMs, probeVideoLengthMs } from './videoLength.js';
 export {
+  bandCrop,
+  buildPresenceArgs,
+  sameColumns,
+  scanSubtitlePresence,
+  scoreBand,
+  showsText,
+  subtitleEvents,
+  PRESENCE_FPS,
+  readBandFrames,
+  readSize,
+  READ_MAX_HEIGHT,
+  type BandFrames,
+  type BandFramesInput,
+  type BandScore,
+  type PresenceBand,
+  type SubtitleEvent,
+  type SubtitlePresence,
+  type SubtitlePresenceInput,
+  type SubtitlePresenceOptions,
+} from './subtitlePresence.js';
+export {
   renderThumbnail,
   detectSceneChanges,
   buildThumbnailArgs,

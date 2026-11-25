@@ -3,7 +3,10 @@ import type { TranscriptSegment } from '@videodubber/shared';
 import {
   applyReviewOutcome,
   checkAndRepairLines,
+  linesFailingChecks,
   planUnitShortening,
+  retryFailingLines,
+  sheetNamesIn,
   shortenOverflowingLines,
   tightenOneLine,
   type PassChat,
@@ -236,5 +239,52 @@ describe('tightenOneLine (editor)', () => {
     expect(out.shortened).toBe(false);
     expect(out.text).toBe('Đây chính là đạo thuật tối cao từ thời thượng cổ đấy');
     expect(out.reason).toContain('cut too far');
+  });
+});
+
+describe('before voicing: the second try (claude-dubber H7)', () => {
+  const sheet = {
+    corrections: [{ heard: '潘伯牙', is: '潘博雅' }],
+    glossary: [{ source: '反相之地', target: 'Vùng Đất Đảo Ngược' }],
+    cast: [{ name: 'Phan Bác Nhã (潘博雅)', speakerId: 'SPEAKER_02' }, { name: 'A Cẩu' }],
+  };
+  it("gives each line the sheet's names its source holds, after the corrections", () => {
+    expect(sheetNamesIn('潘伯牙来到了反相之地', sheet)).toEqual([
+      { source: '反相之地', target: 'Vùng Đất Đảo Ngược' },
+      { source: '潘博雅', target: 'Phan Bác Nhã' },
+    ]);
+    expect(sheetNamesIn('你好', sheet)).toEqual([]);
+    expect(sheetNamesIn('潘博雅', undefined)).toEqual([]);
+  });
+
+  it('without a model only checks: locked lines and songs are neither touched nor counted', async () => {
+    const lines = [
+      line('seg_0001', '昆仑墟', 'Kunlun Xu đến rồi'),
+      { ...line('seg_0002', '谢谢', 'Cảm ơn thầy/cô'), locked: true },
+      { ...line('seg_0003', '啦啦啦', 'La la la/la'), song: true },
+      line('seg_0004', '好', 'Được'),
+    ];
+    expect(linesFailingChecks(lines, zhVi).map((s) => s.id)).toEqual(['seg_0001']);
+    const out = await retryFailingLines({ ...zhVi, segments: lines }, undefined);
+    expect(out.checked).toBe(1);
+    expect(out.flagged).toEqual([{ id: 'seg_0001', flags: ['pinyin'], text: 'Kunlun Xu đến rồi' }]);
+    expect(out.segments[0]!.qualityFlags).toEqual(['pinyin']);
+    expect(out.segments[1]).toBe(lines[1]);
+    expect(out.segments[2]).toBe(lines[2]);
+    expect(out.segments[3]).toBe(lines[3]);
+  });
+
+  it('asks with the words at fault and the names, then samples once more with what was tried', async () => {
+    const engine = chat((id, prompt) => (prompt.includes('already tried') ? 'Phan Bác Nhã đến rồi' : 'Panboya đến rồi'));
+    const out = await retryFailingLines(
+      { ...zhVi, segments: [line('seg_0001', '潘伯牙到了', 'Pan Boya đến rồi')], documentContext: sheet },
+      engine,
+    );
+    expect(out.repaired).toEqual([{ id: 'seg_0001', before: 'Pan Boya đến rồi', after: 'Phan Bác Nhã đến rồi' }]);
+    expect(out.flagged).toEqual([]);
+    expect(engine.prompts[0]).toMatch(/words at fault: .*"Boya"/);
+    expect(engine.prompts[0]).toContain('names in this line: 潘博雅 = Phan Bác Nhã');
+    expect(engine.prompts[0]).toContain('A first fix of these lines still failed the check');
+    expect(engine.prompts[1]).toContain('already tried, still wrong (do not repeat): Panboya đến rồi');
   });
 });

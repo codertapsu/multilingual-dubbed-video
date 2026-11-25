@@ -406,7 +406,8 @@
     "delete-confirm": "Delete",
     "series-badge": "Series",
     "part-badge": "Part {{n}}/{{count}}",
-    "published-badge": "Posted"
+    "published-badge": "Posted",
+    "queue-entry-pressure": "#{{ position }} {{ name }} — waiting: the computer is short of memory while a dub runs"
   },
   "settings": {
     "title": "Settings",
@@ -886,6 +887,10 @@
       "alignment": {
         "title": "Forced alignment",
         "desc": "Word-accurate timings, for a tighter sync."
+      },
+      "subtitle-reading": {
+        "title": "Reading burned-in subtitles",
+        "desc": "Reads the subtitles drawn into a video's picture as text, on the processor (RapidOCR), so a video's own subtitles can be its transcript instead of speech-to-text: turn it on per project (“Use the subtitles burned into the picture”). Chinese and English subtitles, a few minutes per hour of video."
       }
     },
     "engine-notes": {
@@ -1104,7 +1109,12 @@
     "paused-title": "⏸ Paused",
     "paused-title-at": "⏸ Paused at “{{ step }}”",
     "paused-body": "Everything done so far is saved, even if you close VideoDubber or turn off the computer. Continue dubbing picks up where it stopped: finished steps are not redone, and the step that was running keeps the part it had finished (translated lines, voice clips).",
-    "warnings": "What this dub did on its own"
+    "warnings": "What this dub did on its own",
+    "queue-reason-pressure": "The computer is short of memory while another dub runs, so this render waits for that dub to finish: run beside it, both would slow to a crawl.",
+    "dismiss-warning": "Dismiss",
+    "dismiss-warning-hint": "Set this warning aside once you have checked it. It comes back if the step runs again and finds the same.",
+    "held-title": "⚠️ {{count}} line(s) still fail the translation checks",
+    "held-body": "The dub stopped before making any voice, because \"Stop before voicing while lines still fail the translation checks\" is on. Fix the lines marked in the editor (Problems), then continue dubbing: it voices the lines as they are then."
   },
   "onboarding": {
     "title": "Welcome to VideoDubber",
@@ -1351,7 +1361,10 @@
       "no-pool-female": "No built-in female voice is free for {{ n }} minor speaker(s): they keep the project voice. Choose voices for them.",
       "soundalike": "The built-in voice “{{ voice }}” is not shared out: it sounds like your cloned voice “{{ clone }}”.",
       "unknown": "{{ n }} speaker(s) of unknown gender keep the project voice: pick their voice in the list below."
-    }
+    },
+    "held-title": "⚠️ {{count}} line(s) still fail the translation checks.",
+    "held-hint": "No voice has been made yet. Fix the lines marked under Problems (your edits save by themselves), then press Continue dubbing.",
+    "use-burned-in-hint": "Each subtitle drawn into the picture becomes a line instead of transcribing the speech (Chinese and English subtitles; needs the subtitle reader from Settings → Engines & models). Takes effect when speech-to-text runs again (Re-dub from: Transcribe (STT))."
   },
   "studio": {
     "back": "Back to projects",
@@ -1686,6 +1699,9 @@
     "preset-save": "Save as preset",
     "preset-saved": "Saved the preset \"{{name}}\".",
     "preset-folder": "It also keeps where finished videos are saved: {{folder}}",
+    "preset-folder-named": "{{token}} in the folder becomes each project's name, so every series gets a folder of its own.",
+    "preset-series": "With this preset, a video longer than {{over}} min is dubbed as a series of {{min}}–{{max}} min parts. Its choices are filled in under \"Split into parts\": turn that on for a long video.",
+    "preset-series-kept": "Saving keeps this series of parts in the preset, even with \"Split into parts\" off for this video.",
     "preset-delete": "Delete preset",
     "preset-delete-title": "Delete the preset \"{{name}}\"?",
     "preset-delete-body": "Projects already made with it are not changed.",
@@ -1694,7 +1710,8 @@
     "continue-why": {
       "video": "Choose a video above to continue.",
       "languages": "Choose the language spoken in the video and the language to dub it into.",
-      "voice": "Wait until the voice has finished downloading."
+      "voice": "Wait until the voice has finished downloading.",
+      "series-ai": "Choose the AI that plans the parts (Split into parts), or install the built-in Gemma chat model in Settings → Engines."
     },
     "leave": {
       "creating-title": "Leave while the project is being created?",
@@ -1734,7 +1751,38 @@
         "tts": "Voice",
         "other": "Processing"
       }
-    }
+    },
+    "builtin-group": "Built in (on this computer only)",
+    "builtin": {
+      "name-quality": "Highest quality",
+      "name-balanced": "Balanced",
+      "name-economy": "Lowest cost",
+      "local": "Everything runs on this computer: no cloud AI is used, and nothing is sent anywhere.",
+      "kept-local": "Your Settings choose {{name}} for {{phase}}; built-in presets stay on this computer. Choose it in the form to use it.",
+      "phase-stt": "speech-to-text",
+      "phase-translation": "translation",
+      "phase-tts": "the voice",
+      "quality-stt": "The largest speech model (large-v3): the fewest recognition mistakes, the slowest, and a download of about 3 GB the first time.",
+      "quality-stt-kept": "The largest speech model (large-v3), as recommended for this computer.",
+      "quality-stt-special": "The speech model made for this language ({{model}}) is kept.",
+      "quality-review": "The Gemma chat model on this computer re-reads the whole translation for names, forms of address and consistency: better lines, slower.",
+      "quality-review-missing": "Re-reading the translation needs the Gemma chat model (Settings → Engines): until it is installed, the translation is not re-read.",
+      "quality-fit": "Lines too long for their time are rewritten shorter on this computer before anything is sped up.",
+      "quality-speakers": "Speakers are detected: each character keeps a voice, and the translation uses the right forms of address.",
+      "quality-speakers-missing": "Detecting speakers needs its engine (Settings → Engines): until it is installed, everyone speaks with one voice.",
+      "quality-render": "Rendered at the highest picture quality: slower to render, bigger files.",
+      "balanced": "What New project picks for this computer: the best engines installed here, with their usual passes.",
+      "economy-stt": "A faster speech model (large-v3-turbo) instead of large-v3: several times faster, a little less accurate.",
+      "economy-text": "The translation is not re-read and long lines are not rewritten: lines that do not fit are sped up instead (up to {{ratio}}×).",
+      "economy-speakers": "No speaker detection: every line is spoken with the project voice.",
+      "economy-render": "A fast render: quicker, with a slightly lower picture quality."
+    },
+    "hold-flagged": "Stop before voicing while lines still fail the translation checks",
+    "hold-flagged-hint": "The app checks every translated line (Chinese letters or a pinyin name in a Vietnamese line, no tone marks, \"he/she\" alternatives, an untranslated line) and repairs what fails twice with the review model or Gemma. With this on, lines that still fail stop the dub before any voice is made, so you fix them first; continuing voices the lines as they are then. Off: they are voiced and listed in a warning.",
+    "use-burned-in": "Use the subtitles burned into the picture as the transcript",
+    "use-burned-in-hint": "For a video whose own subtitles are drawn into the picture (most Chinese dramas): the app reads them as text on this computer and makes each one a line, timed by when it shows, instead of transcribing the speech. Names and wording are the video's own. Reads Chinese and English subtitles, in a few minutes per hour of video. If they cannot be read, the speech is transcribed as usual and a warning says why.",
+    "ocr-install": "Install the subtitle reader (~250 MB)",
+    "ocr-installing": "Installing the subtitle reader…"
   },
   "status": {
     "created": "Created",
@@ -2185,7 +2233,9 @@
     "my-gender-suggest": "Suggest",
     "my-gender-suggesting": "Listening…",
     "my-gender-suggest-help": "Compares this voice with the built-in voices whose gender is known. It is only a suggestion: you confirm it.",
-    "my-gender-no-suggestion": "No suggestion: the voice is too close to call, or there is no built-in voice to compare it with. Choose its gender yourself."
+    "my-gender-no-suggestion": "No suggestion: the voice is too close to call, or there is no built-in voice to compare it with. Choose its gender yourself.",
+    "my-main-only": "Only for one main character",
+    "my-main-only-help": "Casting gives this voice to one main character at most: never to the minor speakers who share voices, and never as the voice of every speaker who has none of their own. For your own voice, say."
   },
   "voice-clone": {
     "title": "Make a cloned voice",
@@ -2486,7 +2536,10 @@
     "report-kept-busy": "Part {{n}}: not touched ({{why}}).",
     "replan-keep": "Keep the titles and summaries I wrote",
     "replan-hint": "The AI chooses the cuts and names the parts again. With the box ticked, the titles you wrote stay on the parts that cover the same stretch of the video.",
-    "reason-transcript-mismatch": "the transcript does not match the audio in places, or the audio is completely silent for minutes (a bad join or download). Check those times (Processing lists them), re-transcribe them in the editor, then make and start the parts."
+    "reason-transcript-mismatch": "the transcript does not match the audio in places, or the audio is completely silent for minutes (a bad join or download). Check those times (Processing lists them), re-transcribe them in the editor, then make and start the parts.",
+    "ai-choose": "Choose an AI…",
+    "per-file": "One part per video file",
+    "per-file-hint": "Each joined file becomes one part, cut exactly where it begins, whatever its length. Without it, the parts follow the length above and the AI places the cuts (near the files' ends where it can)."
   },
   "warning": {
     "gpu-fallback-busy": "The graphics card was busy with another job, so a step ran on the slower CPU build ({{pack}}).",
@@ -2504,7 +2557,18 @@
     "speakers-unassigned": "{{count}} line(s) have no speaker ({{ranges}}), so they would be dubbed in the project voice. Set who says them in the editor, or detect speakers again (Project tab → Speakers).",
     "speakers-low-confidence": "{{count}} line(s) were given the nearest speaker, not a sure one. Check them in the editor's Issues.",
     "loops-repaired": "{{count}} transcription loop(s) or credit line(s) were repaired: decoded again, or removed where nothing was said.",
-    "loops-left": "{{count}} range(s) that look like transcription loops could not be repaired: their lines are marked in the editor (Problems). Check them before dubbing."
+    "loops-left": "{{count}} range(s) that look like transcription loops could not be repaired: their lines are marked in the editor (Problems). Check them before dubbing.",
+    "stt-no-speech-checked": "{{count}} line(s) ({{minutes}} min) were written where the speech map heard no speech. A second decode without context checked them: {{kept}} heard again and kept, {{added}} heard only by it and added, {{removed}} removed. Biggest stretches: {{biggest}}. Each change is in the History and can be undone.",
+    "lines-flagged": "{{count}} line(s) still fail the translation checks after two repairs and are voiced as they are ({{ids}}). Fix them in the editor (Problems) and make their voices again.",
+    "lines-flagged-held": "{{count}} line(s) still fail the translation checks after two repairs ({{ids}}): the dub stopped before voicing so you can fix them.",
+    "timing-conflicts": "{{count}} line(s) cannot fit their time even at the fastest speed allowed ({{speed}}×), so they run over into what follows ({{ids}}). Shorten them in the editor, or allow a faster speed.",
+    "subtitles-without-lines": "{{count}} subtitle(s) of the video itself ({{seconds}} s) have no line under them: speech that was probably lost. Biggest stretches: {{biggest}}. Transcribe those stretches again in the editor, or write the lines.",
+    "lines-without-subtitles": "{{count}} line(s) have no subtitle of the video under them, while its subtitles follow the dialogue elsewhere: they may be made up. First ones at {{examples}}. Check them in the editor.",
+    "burned-in-not-installed": "The video's own subtitles could not be its transcript: the subtitle reader is not installed (Settings → Engines & models → Reading burned-in subtitles). Speech-to-text transcribed it instead.",
+    "burned-in-no-band": "The video's own subtitles could not be its transcript: no band of subtitles was found in the picture. Speech-to-text transcribed it instead.",
+    "burned-in-few": "The video's own subtitles could not be its transcript: only {{count}} subtitle(s) showed in the picture. Speech-to-text transcribed it instead.",
+    "burned-in-failed": "The video's own subtitles could not be its transcript: reading them failed ({{reason}}). Speech-to-text transcribed it instead.",
+    "burned-in-unreadable": "The video's own subtitles could not be its transcript: only {{count}} of the {{total}} subtitles could be read. Speech-to-text transcribed it instead."
   },
   "diagnostics": {
     "heading": "Diagnostics",
@@ -2557,7 +2621,10 @@
     "speakers": "Detecting speakers {{done}}/{{total}}",
     "spot-check": "Spot-checking the transcript {{done}}/{{total}}",
     "silence-check": "Checking the audio for complete silence",
-    "loops": "Checking transcription loops {{done}}/{{total}}"
+    "loops": "Checking transcription loops {{done}}/{{total}}",
+    "subtitle-check": "Reading the video's own subtitles {{percent}}%",
+    "subtitle-frames": "Cutting the subtitles from the picture {{percent}}%",
+    "subtitle-reading": "Reading the subtitles {{done}}/{{total}}"
   },
   "activity": {
     "heading": "Background work",
@@ -2667,7 +2734,84 @@
     "move-done-body": "Your projects are now in {{folder}}.",
     "move-failed-title": "The projects folder could not be moved",
     "move-failed-body": "Your projects are still where they were; nothing was lost.",
-    "label-update": "VideoDubber {{ version }} update"
+    "label-update": "VideoDubber {{ version }} update",
+    "text": {
+      "dub-render": "Rendering “{{name}}”",
+      "dub-parent": "Transcribing “{{name}}” for its parts",
+      "dub-run": "Dubbing “{{name}}”",
+      "revoice": "Re-voicing lines",
+      "engine-install": "Installing {{name}}",
+      "model-whisper": "Downloading the speech model {{model}}",
+      "model-argos": "Downloading the translation pack {{from}} → {{to}}",
+      "model-piper": "Downloading the voice {{voice}}",
+      "download": "Downloading “{{name}}”",
+      "join": "Joining {{n}} videos into “{{name}}”",
+      "speakers": "Detecting speakers",
+      "speakers-range": "Detecting speakers at {{from}}–{{to}}",
+      "retranscribe": "Re-transcribing {{from}}–{{to}}",
+      "picture": "Finding the watermark and the subtitle band",
+      "picture-new": "Finding the watermark and the subtitle band of a new video",
+      "series-plan": "Planning the parts of “{{name}}”",
+      "series-replan": "Planning the parts of “{{name}}” again",
+      "series-rebuild-all": "Rebuilding every part of “{{name}}” from the series transcript",
+      "series-rebuild-some": "Rebuilding part {{parts}} of “{{name}}” from the series transcript",
+      "songs-keep": "Keeping songs in the parts of “{{name}}”",
+      "songs-dub": "Dubbing songs again in the parts of “{{name}}”",
+      "projects-move": "Moving the projects to {{dir}}",
+      "queue-waiting": "Waiting in the queue",
+      "starting": "Starting",
+      "revoice-progress": "{{n}} line(s) re-voiced",
+      "part-failed": "{{n}} failed",
+      "part-left": "{{n}} left",
+      "wait-gpu": "Waiting: a dub is using the GPU",
+      "wait-dubbing": "Waiting: a dub is running",
+      "wait-memory": "Waiting: the computer is short of memory",
+      "wait-until": "Waiting until {{at}} (the site limited the downloads)",
+      "wait-turn": "Waiting its turn",
+      "asking-site": "Asking the site",
+      "merging": "Joining picture and sound",
+      "downloading-video": "Downloading the video",
+      "downloading-audio": "Downloading the audio",
+      "join-waiting": "Waiting for another join to finish",
+      "checking-files": "Checking the files",
+      "join-file": "File {{n}} of {{count}}: {{name}}",
+      "join-file-reencode": "File {{n}} of {{count}}: {{name}}, encoding the picture again",
+      "part-of": "Part {{done}}/{{total}}",
+      "windows-planned": "{{n}} windows of up to 15 minutes",
+      "window-of": "Window {{done}}/{{total}}",
+      "series-sheet": "Making the character sheet from the whole transcript",
+      "series-watermark": "Looking for a watermark in the whole video",
+      "part-n": "Part {{n}}",
+      "projects-moved-of": "{{done}} of {{total}} projects moved",
+      "dequeued": "Taken out of the queue",
+      "stopped": "Stopped",
+      "finished": "Finished",
+      "review-ready": "Waiting for your review: the draft translation is ready",
+      "paused-at": "Paused at “{{step}}”: it continues where it stopped",
+      "paused": "Paused: it continues where it stopped",
+      "revoiced": "Re-voiced {{n}} line(s)",
+      "installed": "Installed",
+      "downloaded": "Downloaded",
+      "saved-as": "Saved as {{file}}",
+      "removed": "Removed from the list",
+      "cancelled": "Cancelled",
+      "joined": "Joined {{n}} videos: {{duration}}, {{size}} GB",
+      "join-interrupted": "Stopped: VideoDubber is closing (it starts again next time)",
+      "speakers-relabelled": "{{n}} line(s) changed speaker",
+      "part-speakers-added": "{{n}} new speaker(s)",
+      "part-saved-detection": "from the saved detection",
+      "speakers-found": "{{n}} speaker(s)",
+      "part-best-guesses": "{{n}} best guess(es)",
+      "picture-marks": "{{n}} watermark(s) ({{frames}} frames)",
+      "picture-no-marks": "No watermark ({{frames}} frames)",
+      "part-band-at": "the subtitle band at {{from}}–{{to}} % of the height",
+      "part-no-band": "no subtitle band",
+      "series-started": "{{n}} parts planned, made and started",
+      "series-review": "{{n}} parts planned, ready for review",
+      "series-rebuilt": "{{n}} of {{total}} part(s) rebuilt",
+      "songs-done": "{{n}} line(s) changed in {{parts}} part(s)",
+      "projects-moved": "The projects are in {{dir}}"
+    }
   },
   "source-checks": {
     "spot-check": "Spot-check the transcript",
@@ -2676,7 +2820,9 @@
     "drift-longer": "The audio was {{seconds}} s longer than the picture: re-timed to the picture",
     "drift-match": "In step with the picture ({{seconds}} s)",
     "drift-shorter": "The audio ends {{seconds}} s before the picture: silence fills the rest",
-    "drift-hint": "Measured from the audio's own samples when the audio is extracted. The extracted audio always follows the picture's clock and ends with it, so the dub stays in sync and the video keeps its length."
+    "drift-hint": "Measured from the audio's own samples when the audio is extracted. The extracted audio always follows the picture's clock and ends with it, so the dub stays in sync and the video keeps its length.",
+    "subtitle-check": "Check against the video's own subtitles",
+    "subtitle-check-hint": "When the video has subtitles burned into the picture, the app reads where they sit (five times a second, no text recognition) to know when someone speaks. Lines under a subtitle are never removed as silence, and a warning lists subtitles with no line under them (speech that was lost) and lines with no subtitle (maybe made up). Adds a few minutes per hour of video. On by default for Chinese, Japanese and Korean video."
   },
   "join": {
     "mode-aria": "What to dub",
@@ -2847,10 +2993,16 @@
       "songs-dubbed": "Dubbed {{n}} song line(s) again at {{at}}",
       "rebuilt": "Rebuilt from the series transcript: {{from}} → {{to}} line(s)",
       "rebuilt-set-aside": "Rebuilt from the series transcript: {{from}} → {{to}} line(s); its translation was set aside",
-      "undo": "Undid: {{what}}"
+      "undo": "Undid: {{what}}",
+      "stt-checked": "Speech-to-text checked {{from}}–{{to}} again: {{before}} → {{after}} line(s)",
+      "replaced-many": "Replaced {{replaced}} line(s) with {{made}} in {{ranges}} range(s), {{from}}–{{to}}"
     }
   },
   "picture": {
+    "auto": "Find the watermark and blur it by itself",
+    "auto-mode": "How to hide what it finds",
+    "auto-hint": "When the video is rendered, VideoDubber looks for a mark that stays still in a corner (about a hundred frames, no AI) and hides it if it stands out clearly (50 % sure or more). What it finds becomes a box here: move it, change it or remove it. Removing the boxes turns this off.",
+    "auto-hint-series": "The series looks once in the whole video while it is analysed, and every part is made with the box (you see it at review). If nothing stands out, each part looks for its own when it is rendered. Removing the boxes turns this off.",
     "heading": "Picture: watermark and the video's own subtitles",
     "intro": "Hides a watermark (a channel's name or logo in a corner) and the subtitles the video already has burned in. VideoDubber finds both itself by looking at about a hundred frames: no AI, nothing leaves this computer. They are hidden when the video is rendered, under your subtitles, logo and titles.",
     "detect": "Find them",

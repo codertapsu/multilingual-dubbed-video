@@ -24,6 +24,19 @@ export interface ActivityInitiator {
 export type ActivityState = 'running' | 'waiting' | 'done' | 'failed' | 'cancelled';
 
 /** One piece of long work, as the activity list shows it (GET /activity). */
+/**
+ * A sentence of the activity list as a translation key (`activity.text.*`, or
+ * any key the app has) and its values, so the app shows it in the reader's
+ * language; `parts` follow it, joined with ", ". A value whose name ends in
+ * `Key` is a key the app translates first (`stepKey` → `step`). The English
+ * text stays beside it, for agents and the logs.
+ */
+export interface ActivityPhrase {
+  key: string;
+  params?: Record<string, string | number>;
+  parts?: ActivityPhrase[];
+}
+
 export interface ActivityEntry {
   id: string;
   /**
@@ -48,6 +61,14 @@ export interface ActivityEntry {
   etaSec?: number;
   /** What it produced ("14 lines replaced"), when it ended well. */
   result?: string;
+  /**
+   * {@link title}, {@link message} and {@link result} as phrases the app shows
+   * in the reader's language. Absent on agents' reports and on entries written
+   * before 0.18.1: the app shows the English text.
+   */
+  titlePhrase?: ActivityPhrase;
+  messagePhrase?: ActivityPhrase;
+  resultPhrase?: ActivityPhrase;
   error?: AppError;
   /** Reported by an agent for work it did outside the app (MCP `report_activity`). */
   external?: boolean;

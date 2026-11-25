@@ -12,7 +12,7 @@
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { AppErrorException } from '@videodubber/shared';
+import { AppErrorException, type ActivityPhrase } from '@videodubber/shared';
 import type { WorkspacePaths } from '../workspace/paths.js';
 import { writeJsonAtomic } from '../workspace/projectStore.js';
 
@@ -100,6 +100,25 @@ export function detectionRange(opts: { fromMs?: unknown; toMs?: unknown }): { fr
 }
 
 /** How a detection ended, for the activity list ("12 speakers, 40 best guesses"). Pure. */
+/** {@link speakerJobSummary} as a phrase the app shows in the reader's language. Pure. */
+export function speakerJobPhrase(job: SpeakerJobState): ActivityPhrase {
+  if (job.range) {
+    return {
+      key: 'activity.text.speakers-relabelled',
+      params: { n: job.relabelled ?? 0 },
+      parts: [
+        ...(job.added ? [{ key: 'activity.text.part-speakers-added', params: { n: job.added } }] : []),
+        ...(job.detectedParts === 0 ? [{ key: 'activity.text.part-saved-detection' }] : []),
+      ],
+    };
+  }
+  return {
+    key: 'activity.text.speakers-found',
+    params: { n: job.speakers ?? 0 },
+    parts: job.lowConfidence ? [{ key: 'activity.text.part-best-guesses', params: { n: job.lowConfidence } }] : [],
+  };
+}
+
 export function speakerJobSummary(job: SpeakerJobState): string {
   if (job.range) {
     const parts = [`${job.relabelled ?? 0} line(s) changed speaker`];

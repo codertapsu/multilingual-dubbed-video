@@ -17,6 +17,8 @@ import {
   type TranscriptSegment,
 } from '@videodubber/shared';
 import { PipelineRunner, type RunnerDeps } from './runner.js';
+import { listEdits } from '../activity/history.js';
+import { planUndo } from '../activity/undo.js';
 import type { SpeechMapService } from './speechMap.js';
 import { ProjectStore } from '../workspace/projectStore.js';
 import { EventBusRegistry } from '../events.js';
@@ -221,15 +223,27 @@ describe('stt: lines written over silence (1.6a)', () => {
     });
     await runToStt(b);
 
+    // Said once the loop pass decided them: how many, and what became of them.
     const silent = (await warningsOf(b.project.id)).find((w) => w.code === 'stt-no-speech');
-    expect(silent).toMatchObject({ step: 'stt', key: 'warning.stt-no-speech', params: { chunk: '2', chunks: 4, count: 8, from: '0:30', speech: 0 } });
-    expect(silent!.message).toMatch(/^STT chunk 2 of 4 heard no speech at 0:30-0:5\d: 8 line\(s\) over silence/);
-    // The second decode heard nothing: the lines are gone, and the loop pass says so.
+    expect(silent).toMatchObject({ step: 'stt', key: 'warning.stt-no-speech-checked', params: { count: 8, kept: 0, added: 0, removed: 8 } });
+    expect(silent!.message).toMatch(/^8 line\(s\) \([\d.]+ min\) were written where the speech map heard no speech\. A second decode without context checked them: 0 heard again and kept, 0 heard only by it and added, 8 removed\./);
+    // The second decode heard only its neighbours' words there: two signals of no speech, the lines go.
     expect((await sourceLines(b)).filter((l) => l.startMs >= 30_000 && l.startMs < 60_000)).toEqual([]);
-    const report = JSON.parse(await fsp.readFile(b.paths.loopRangesJson, 'utf8')) as { ranges: { kind: string; status: string }[] };
-    expect(report.ranges).toContainEqual(expect.objectContaining({ kind: 'silence', status: 'removed' }));
+    const report = JSON.parse(await fsp.readFile(b.paths.loopRangesJson, 'utf8')) as { ranges: { kind: string; status: string; originalLines?: unknown[] }[] };
+    expect(report.ranges).toContainEqual(expect.objectContaining({ kind: 'silence', status: 'removed', counts: expect.objectContaining({ kept: 0, dropped: 8 }) }));
+    // The evidence stays with the report: what each decode heard.
+    expect(report.ranges.find((r) => r.kind === 'silence')!.originalLines).toHaveLength(8);
     expect((await warningsOf(b.project.id)).map((w) => w.code)).toContain('loops-repaired');
-    expect(stt.asked.filter((a) => a.noContext)).toHaveLength(1);
+    // The second opinion listens to every second (no voice filter), without context.
+    expect(stt.asked.filter((a) => a.noContext)).toEqual([expect.objectContaining({ noContext: true, vadFilter: false })]);
+    // And the change is an undoable entry of the edit history.
+    const edits = await listEdits(b.project.id);
+    const entry = edits.find((e) => e.summaryKey === 'history.summary.stt-checked');
+    expect(entry).toMatchObject({ target: 'source', summaryParams: { before: 8, after: 0 } });
+    // Undone, the range gets its eight lines back, as speech-to-text wrote them.
+    const plan = planUndo(entry!, await sourceLines(b), false);
+    expect(plan).toMatchObject({ kind: 'range' });
+    expect(plan.kind === 'range' ? plan.lines.map((l) => l.text) : []).toEqual(Array.from({ length: 8 }, (_, i) => said(10 + i, 1)));
   });
 
   it('inSilence reaches the loop pass: a common credit word over silence is removed, in speech it stays', async () => {
@@ -276,6 +290,166 @@ describe('stt: lines written over silence (1.6a)', () => {
     await runToStt(b);
     expect(asked).toBe(0);
     expect(await log(b)).toContain('Lines over silence are not checked on this long video');
+  });
+});
+
+describe("stt: the video's own subtitles (claude-dubber A2, 2026-11-25)", () => {
+  /** Chunk 2 (30–60 s) is silent to the speech map, and the engine wrote 8 real lines there. */
+  const sttWithQuietSpeech = () =>
+    engine((audioPath) => {
+      if (!audioPath.includes('chunk_0001')) return makeSegments([[2000, 5000, `${said(1)}啊`], [10_000, 14_000, said(2)]]);
+      return makeSegments(Array.from({ length: 8 }, (_, i) => [i * 3500, i * 3500 + 3000, said(10 + i, 1)] as [number, number, string]));
+    });
+  const detection = {
+    at: '2026-11-25T00:00:00.000Z',
+    videoWidth: 1920,
+    videoHeight: 1080,
+    regions: [],
+    band: { y: 0.915, h: 0.055, confidence: 0.8, method: 'appearance' as const },
+    frameAtMs: 0,
+    frames: 100,
+    notes: [],
+  };
+  /** Subtitles under every line (the 8 quiet ones too), and 6 more at 76–88 s that no line has. */
+  const onScreen = [
+    ...[2000, 10_000, 62_000, 70_000, 92_000].map((t) => ({ startMs: t, endMs: t + 3000 })),
+    ...Array.from({ length: 8 }, (_, i) => ({ startMs: 30_000 + i * 3500 + 100, endMs: 30_000 + i * 3500 + 2900 })),
+    ...Array.from({ length: 6 }, (_, k) => ({ startMs: 76_000 + k * 2000, endMs: 77_500 + k * 2000 })),
+  ].sort((a, b) => a.startMs - b.startMs);
+
+  async function withSubtitles(settings: Partial<ProjectSettings> = {}) {
+    const b = await build({
+      durationMs: 100_000,
+      settings: { sourceLanguage: 'zh-CN', ...settings },
+      stt: sttWithQuietSpeech(),
+      speechMap: regionsOf([[0, 30_000], [60_000, 100_000]]),
+      sttChunkWindowMs: 30_000,
+      sttChunkThresholdMs: 20_000,
+    });
+    const scans: unknown[] = [];
+    b.deps.watermark = { detect: async () => detection };
+    b.media.scanSubtitlePresence = async (_video, input, onProgress) => {
+      scans.push(input);
+      onProgress?.(1);
+      return { fps: 5, startMs: 0, endMs: 100_000, frames: 500, framesWithText: 150, events: onScreen };
+    };
+    return { b, scans };
+  }
+
+  it('lines under a subtitle are never taken for silence; subtitles with no line are named', async () => {
+    const { b, scans } = await withSubtitles();
+    await runToStt(b);
+
+    expect(scans).toEqual([{ band: { y: 0.915, h: 0.055 }, startMs: 0 }]);
+    expect((await sourceLines(b)).filter((l) => l.startMs >= 30_000 && l.startMs < 60_000)).toHaveLength(8);
+    const warnings = await warningsOf(b.project.id);
+    expect(warnings.find((w) => w.code === 'stt-no-speech')).toBeUndefined();
+    expect(warnings).toContainEqual(
+      expect.objectContaining({ code: 'subtitles-without-lines', step: 'stt', params: { count: 6, seconds: 9, biggest: '1:16–1:28 (6)' } }),
+    );
+    expect(warnings.map((w) => w.code)).not.toContain('lines-without-subtitles');
+    const report = JSON.parse(await fsp.readFile(b.paths.subtitlePresenceJson, 'utf8')) as { bandFrom: string; events: unknown[] };
+    expect(report).toMatchObject({ bandFrom: 'detection', events: onScreen });
+  });
+
+  it('read once: a retry of speech-to-text uses what was read', async () => {
+    const { b, scans } = await withSubtitles();
+    await runToStt(b);
+    await new PipelineRunner(b.deps).run(await store.getProject(b.project.id), { signal: new AbortController().signal, retryFromStep: 'stt' });
+    expect(scans).toHaveLength(1);
+  });
+
+  it('off by the setting, and by default for a language that does not burn its subtitles in', async () => {
+    const off = await withSubtitles({ subtitleCoverageCheck: false });
+    await runToStt(off.b);
+    expect(off.scans).toEqual([]);
+    expect((await warningsOf(off.b.project.id)).map((w) => w.code)).toContain('stt-no-speech');
+
+    const english = await withSubtitles({ sourceLanguage: 'en' });
+    await runToStt(english.b);
+    expect(english.scans).toEqual([]);
+  });
+});
+
+describe("stt: the video's own subtitles as the transcript (claude-dubber A3)", () => {
+  const detection = {
+    at: '2026-11-25T00:00:00.000Z',
+    videoWidth: 1920,
+    videoHeight: 1080,
+    regions: [],
+    band: { y: 0.915, h: 0.055, confidence: 0.8, method: 'appearance' as const },
+    frameAtMs: 0,
+    frames: 100,
+    notes: [],
+  };
+  const events = Array.from({ length: 12 }, (_, k) => ({ startMs: k * 4000 + 500, endMs: k * 4000 + 2500 }));
+
+  async function reading(opts: { installed?: boolean; readable?: boolean } = {}) {
+    const stt = engine(() => makeSegments([[0, 3000, '我是语音识别']]));
+    const b = await build({
+      durationMs: 60_000,
+      settings: { sourceLanguage: 'zh-CN', useBurnedInSubtitles: true },
+      stt,
+      speechMap: regionsOf([[0, 60_000]]),
+    });
+    b.deps.watermark = { detect: async () => detection };
+    b.media.scanSubtitlePresence = async () => ({ fps: 5, startMs: 0, endMs: 60_000, frames: 300, framesWithText: 120, events });
+    const cuts: { timesMs: readonly number[]; outputPath: string }[] = [];
+    b.media.readBandFrames = async (_video, input) => {
+      cuts.push(input);
+      await fsp.writeFile(input.outputPath, Buffer.alloc(input.timesMs.length * 100));
+      return { width: 10, height: 10, count: input.timesMs.length, indexOf: input.timesMs.map((_, i) => i) };
+    };
+    let reads = 0;
+    b.deps.ocr = {
+      available: async () => opts.installed !== false,
+      read: async (frames) => {
+        reads += 1;
+        return Array.from({ length: frames.count }, (_, i) => ({
+          index: i,
+          text: opts.readable === false ? '' : said(i),
+          confidence: 0.95,
+          lines: 1,
+        }));
+      },
+    };
+    return { b, stt, cuts, reads: () => reads };
+  }
+
+  it('reads the subtitles instead of transcribing the speech, and only once', async () => {
+    const { b, stt, cuts, reads } = await reading();
+    await runToStt(b);
+
+    expect(stt.asked).toEqual([]);
+    const lines = await sourceLines(b);
+    expect(lines.map((l) => l.sourceText)).toEqual(events.map((_, i) => said(i)));
+    expect(lines[3]).toMatchObject({ startMs: 12_500, endMs: 14_500 });
+    // One frame 40 % into each subtitle, cut into a file that is gone afterwards.
+    expect(cuts[0]!.timesMs).toEqual(events.map((e) => e.startMs + 800));
+    await expect(fsp.stat(cuts[0]!.outputPath)).rejects.toThrow();
+    expect(await log(b)).toContain("Using the video's own subtitles (12 lines read from the picture) instead of speech-to-text.");
+
+    await new PipelineRunner(b.deps).run(await store.getProject(b.project.id), { signal: new AbortController().signal, retryFromStep: 'stt' });
+    expect(reads()).toBe(1);
+    expect(stt.asked).toEqual([]);
+  });
+
+  it('without the reader, speech-to-text transcribes, and a warning says why', async () => {
+    const { b, stt } = await reading({ installed: false });
+    await runToStt(b);
+    expect(stt.asked.length).toBeGreaterThan(0);
+    expect(await warningsOf(b.project.id)).toContainEqual(
+      expect.objectContaining({ code: 'burned-in-fallback', key: 'warning.burned-in-not-installed', step: 'stt' }),
+    );
+  });
+
+  it('subtitles that read as nothing are no transcript: speech-to-text, with the count', async () => {
+    const { b, stt } = await reading({ readable: false });
+    await runToStt(b);
+    expect(stt.asked.length).toBeGreaterThan(0);
+    expect(await warningsOf(b.project.id)).toContainEqual(
+      expect.objectContaining({ key: 'warning.burned-in-unreadable', params: { count: 0, total: 12 } }),
+    );
   });
 });
 

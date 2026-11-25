@@ -42,7 +42,7 @@ import { PLACEHOLDER_PARAMS, exampleNames, templateProblemText } from './part-na
           maxlength="200"
           spellcheck="false"
           autocomplete="off"
-          [ngModel]="value()"
+          [ngModelOptions]="{ standalone: true }" [ngModel]="value()"
           (ngModelChange)="valueChange.emit($event)"
           [placeholder]="defaultTemplate()"
           [disabled]="disabled()"

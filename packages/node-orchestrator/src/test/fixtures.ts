@@ -306,6 +306,23 @@ export class FakeMediaService implements PipelineMediaService {
     };
   }
 
+  /** The video's own subtitles on screen: none, unless a test replaces this method. */
+  async scanSubtitlePresence(
+    _inputPath: string,
+    input: Parameters<NonNullable<PipelineMediaService['scanSubtitlePresence']>>[1],
+  ): ReturnType<NonNullable<PipelineMediaService['scanSubtitlePresence']>> {
+    return { fps: 5, startMs: input.startMs ?? 0, endMs: input.endMs ?? 0, frames: 0, framesWithText: 0, events: [] };
+  }
+
+  /** The subtitles' frames for the reader: an empty file, unless a test replaces this method. */
+  async readBandFrames(
+    _inputPath: string,
+    input: Parameters<NonNullable<PipelineMediaService['readBandFrames']>>[1],
+  ): ReturnType<NonNullable<PipelineMediaService['readBandFrames']>> {
+    await fsp.writeFile(input.outputPath, '');
+    return { width: 0, height: 0, count: 0, indexOf: input.timesMs.map(() => 0) };
+  }
+
   /** The audio against the picture a test wants measured (default: nothing measured), and the windows asked. */
   public audioDrift: Awaited<ReturnType<NonNullable<PipelineMediaService['measureAudioDrift']>>> = undefined;
   public driftRanges: Array<{ startMs: number; endMs: number } | undefined> = [];

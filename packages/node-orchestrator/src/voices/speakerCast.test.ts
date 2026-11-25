@@ -103,6 +103,52 @@ describe('castSettings / withSwaps', () => {
     expect(proposal.pools.male!.voices[0]!.speakers).toEqual(['SPEAKER_02']);
   });
 
+  it('gives a voice kept for one main character to one speaker: a swap to a second one is left out, and said', () => {
+    const speakers = [
+      { speakerId: 'SPEAKER_00', minutes: 50, gender: 'male' as const, f0Hz: 110 },
+      { speakerId: 'SPEAKER_01', minutes: 10, gender: 'male' as const, f0Hz: 130 },
+    ];
+    const voices = [
+      { voiceId: 'vp_mine', name: 'Giọng của tôi', kind: 'profile' as const, gender: 'male' as const, genderConfirmed: true, f0Hz: 116, mainOnly: true },
+      { voiceId: 'builtin-a', name: 'A', kind: 'preset' as const, gender: 'male' as const, f0Hz: 120 },
+    ];
+    const proposal = proposeCast(speakers, voices);
+    expect(proposal.assignments.find((a) => a.speakerId === 'SPEAKER_00')).toMatchObject({ voiceId: 'vp_mine' });
+    const refused = withSwaps(proposal, [{ speakerId: 'SPEAKER_01', voiceId: 'vp_mine' }], voices);
+    expect(refused.assignments.find((a) => a.speakerId === 'SPEAKER_01')).toMatchObject({ voiceId: 'builtin-a' });
+    expect(refused.notes).toContain('"Giọng của tôi" is kept for one main character (SPEAKER_00 has it): not given to SPEAKER_01 too.');
+    // Moved in one call: the first speaker off it, the second onto it.
+    const moved = withSwaps(
+      proposal,
+      [
+        { speakerId: 'SPEAKER_00', voiceId: 'builtin-a' },
+        { speakerId: 'SPEAKER_01', voiceId: 'vp_mine' },
+      ],
+      voices,
+    );
+    expect(moved.assignments.map((a) => [a.speakerId, a.voiceId])).toEqual([
+      ['SPEAKER_00', 'builtin-a'],
+      ['SPEAKER_01', 'vp_mine'],
+    ]);
+  });
+
+  it('no longer lists a speaker of unknown gender a swap gave a voice', () => {
+    const speakers = [
+      { speakerId: 'SPEAKER_00', minutes: 50, gender: 'male' as const, f0Hz: 110 },
+      { speakerId: 'SPEAKER_05', minutes: 2, gender: 'unknown' as const },
+      { speakerId: 'SPEAKER_06', minutes: 1, gender: 'unknown' as const },
+    ];
+    const voices = [{ voiceId: 'builtin-a', name: 'A', kind: 'preset' as const, gender: 'male' as const, f0Hz: 120 }];
+    const proposal = proposeCast(speakers, voices);
+    expect(proposal.unassigned).toEqual(['SPEAKER_05', 'SPEAKER_06']);
+    const swapped = withSwaps(proposal, [{ speakerId: 'SPEAKER_05', voiceId: 'builtin-a' }], voices);
+    expect(swapped.unassigned).toEqual(['SPEAKER_06']);
+    expect(swapped.notes).toContain('1 speaker(s) of unknown gender keep the project voice (set them in the editor).');
+    const all = withSwaps(proposal, [{ speakerId: 'SPEAKER_05', voiceId: 'builtin-a' }, { speakerId: 'SPEAKER_06', voiceId: 'builtin-a' }], voices);
+    expect(all.unassigned).toEqual([]);
+    expect(all.notes.some((n) => n.includes('of unknown gender'))).toBe(false);
+  });
+
   it('lists the speakers of unknown gender with their three longest lines and talk time', async () => {
     const { unknownSpeakers } = await import('./speakerCast.js');
     const rows = speakerRows(

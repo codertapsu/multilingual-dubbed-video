@@ -21,7 +21,7 @@ import path from 'node:path';
 import type { AppError, DownloadItem, DownloadQueueEvent, EngineInstallEvent, SetupEvent } from '@videodubber/shared';
 
 import { findPack } from '../engines/enginePackCatalog.js';
-import { activity, type ActivityHandle, type ActivityRegistry } from './registry.js';
+import { activity, said, textOf, type ActivityHandle, type ActivityRegistry, type ActivityText } from './registry.js';
 
 /** Least time between two progress updates whose percentage did not move. */
 const PROGRESS_EVERY_MS = 2000;
@@ -34,11 +34,11 @@ interface Open {
 }
 
 /** Pass a progress change on when it moved, or after a while. */
-function progressed(o: Open, percent: number | null, message: string, now: number): void {
+function progressed(o: Open, percent: number | null, message: ActivityText, now: number): void {
   const p = percent === null || !Number.isFinite(percent) ? null : Math.round(percent);
-  if (p === o.percent && (message === o.message || now - o.at < PROGRESS_EVERY_MS)) return;
+  if (p === o.percent && (textOf(message) === o.message || now - o.at < PROGRESS_EVERY_MS)) return;
   o.percent = p;
-  o.message = message;
+  o.message = textOf(message);
   o.at = now;
   o.handle.progress(p, message);
 }
@@ -56,7 +56,8 @@ export function followEngineInstalls(
   const entry = (packId: string): Open => {
     let o = open.get(packId);
     if (!o) {
-      o = { handle: registry.start({ kind: 'engine.install', title: `Installing ${nameOf(packId)}` }), percent: null, message: '', at: 0 };
+      const name = nameOf(packId);
+      o = { handle: registry.start({ kind: 'engine.install', title: said(`Installing ${name}`, 'activity.text.engine-install', { name }) }), percent: null, message: '', at: 0 };
       open.set(packId, o);
     }
     return o;
@@ -66,7 +67,7 @@ export function followEngineInstalls(
     const o = entry(event.packId);
     if (event.type === 'progress') progressed(o, event.percent, event.message, now());
     else {
-      if (event.type === 'done') o.handle.done('Installed');
+      if (event.type === 'done') o.handle.done(said('Installed', 'activity.text.installed'));
       else o.handle.fail(event.error);
       open.delete(event.packId);
     }
@@ -85,13 +86,26 @@ export function modelLabel(item: string): string {
   return item;
 }
 
+/** A model download's title, with its phrase (`whisper:large-v3` → "Downloading the speech model large-v3"). */
+export function modelTitle(item: string): ActivityText {
+  const [kind, rest = ''] = item.split(':');
+  const text = `Downloading the ${modelLabel(item)}`;
+  if (kind === 'whisper') return said(text, 'activity.text.model-whisper', { model: rest });
+  if (kind === 'argos') {
+    const [from = '', to = ''] = rest.split('->');
+    return said(text, 'activity.text.model-argos', { from, to });
+  }
+  if (kind === 'piper') return said(text, 'activity.text.model-piper', { voice: rest });
+  return text;
+}
+
 /** Model downloads (speech, translation and voice models: setup/installer.ts). */
 export function followModelInstalls(bus: Subscribable<SetupEvent>, registry: ActivityRegistry = activity, now: () => number = Date.now): () => void {
   const open = new Map<string, Open>();
   const entry = (item: string): Open => {
     let o = open.get(item);
     if (!o) {
-      o = { handle: registry.start({ kind: 'model.install', title: `Downloading the ${modelLabel(item)}` }), percent: null, message: '', at: 0 };
+      o = { handle: registry.start({ kind: 'model.install', title: modelTitle(item) }), percent: null, message: '', at: 0 };
       open.set(item, o);
     }
     return o;
@@ -99,7 +113,7 @@ export function followModelInstalls(bus: Subscribable<SetupEvent>, registry: Act
   const settle = (error?: AppError): void => {
     for (const o of open.values()) {
       if (error) o.handle.fail(error);
-      else o.handle.done('Downloaded');
+      else o.handle.done(said('Downloaded', 'activity.text.downloaded'));
     }
     open.clear();
   };
@@ -111,7 +125,7 @@ export function followModelInstalls(bus: Subscribable<SetupEvent>, registry: Act
       case 'item-done': {
         const o = open.get(event.item);
         if (o) {
-          o.handle.done('Downloaded');
+          o.handle.done(said('Downloaded', 'activity.text.downloaded'));
           open.delete(event.item);
         }
         return;
@@ -131,17 +145,23 @@ export function followModelInstalls(bus: Subscribable<SetupEvent>, registry: Act
 /** A download's name: the video's title once the site answered, else what was pasted. */
 export const downloadTitle = (item: Pick<DownloadItem, 'input' | 'source'>): string => `Downloading “${item.source?.title ?? item.input}”`;
 
+/** A download's title as the list shows it, with its phrase. */
+const downloadTitleText = (item: Pick<DownloadItem, 'input' | 'source'>): ActivityText =>
+  said(downloadTitle(item), 'activity.text.download', { name: item.source?.title ?? item.input });
+
 /** Why a download waits, in a sentence. */
-function waitingMessage(item: DownloadItem): string {
+function waitingMessage(item: DownloadItem): ActivityText {
   switch (item.heldBy) {
     case 'gpu-heavy':
-      return 'Waiting: a dub is using the GPU';
+      return said('Waiting: a dub is using the GPU', 'activity.text.wait-gpu');
     case 'dubbing':
-      return 'Waiting: a dub is running';
+      return said('Waiting: a dub is running', 'activity.text.wait-dubbing');
     case 'pressure':
-      return 'Waiting: the computer is short of memory';
+      return said('Waiting: the computer is short of memory', 'activity.text.wait-memory');
     default:
-      return item.retryAt ? `Waiting until ${item.retryAt} (the site limited the downloads)` : 'Waiting its turn';
+      return item.retryAt
+        ? said(`Waiting until ${item.retryAt} (the site limited the downloads)`, 'activity.text.wait-until', { at: item.retryAt })
+        : said('Waiting its turn', 'activity.text.wait-turn');
   }
 }
 
@@ -150,7 +170,7 @@ export function followDownloads(queue: Subscribable<DownloadQueueEvent>, registr
   const open = new Map<string, Open & { title: string; waiting: boolean }>();
   return queue.subscribe((event) => {
     if (event.type === 'removed') {
-      open.get(event.id)?.handle.cancelled('Removed from the list');
+      open.get(event.id)?.handle.cancelled(said('Removed from the list', 'activity.text.removed'));
       open.delete(event.id);
       return;
     }
@@ -165,7 +185,7 @@ export function followDownloads(queue: Subscribable<DownloadQueueEvent>, registr
       o = {
         handle: registry.start({
           kind: 'download',
-          title,
+          title: downloadTitleText(item),
           waiting,
           ...(waiting ? { message: waitingMessage(item) } : {}),
           // What the app resumes by itself after a restart is its own doing.
@@ -182,7 +202,7 @@ export function followDownloads(queue: Subscribable<DownloadQueueEvent>, registr
     const title = downloadTitle(item);
     if (title !== o.title) {
       o.title = title;
-      registry.patch(o.handle.id, { title });
+      registry.patch(o.handle.id, { title: downloadTitleText(item) });
     }
     switch (item.state) {
       case 'queued':
@@ -195,18 +215,27 @@ export function followDownloads(queue: Subscribable<DownloadQueueEvent>, registr
       case 'downloading':
       case 'merging': {
         o.waiting = false;
-        const message = item.state === 'resolving' ? 'Asking the site' : item.state === 'merging' ? 'Joining picture and sound' : `Downloading the ${item.phase ?? 'video'}`;
+        const message =
+          item.state === 'resolving'
+            ? said('Asking the site', 'activity.text.asking-site')
+            : item.state === 'merging'
+              ? said('Joining picture and sound', 'activity.text.merging')
+              : said(`Downloading the ${item.phase ?? 'video'}`, item.phase === 'audio' ? 'activity.text.downloading-audio' : 'activity.text.downloading-video');
         progressed(o, item.percent, message, now());
         return;
       }
       case 'done':
-        o.handle.done(item.filePath ? `Saved as ${path.basename(item.filePath)}` : 'Downloaded');
+        o.handle.done(
+          item.filePath
+            ? said(`Saved as ${path.basename(item.filePath)}`, 'activity.text.saved-as', { file: path.basename(item.filePath) })
+            : said('Downloaded', 'activity.text.downloaded'),
+        );
         break;
       case 'failed':
         o.handle.fail(item.error ?? 'The download failed.');
         break;
       case 'cancelled':
-        o.handle.cancelled('Cancelled');
+        o.handle.cancelled(said('Cancelled', 'activity.text.cancelled'));
         break;
     }
     open.delete(item.id);

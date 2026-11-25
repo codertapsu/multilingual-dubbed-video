@@ -194,6 +194,16 @@ describe('findSubtitleBand', () => {
     expect(band!.top).toBeLessThanOrEqual(490);
   });
 
+  it('falls back to the picture alone when the transcript misses lines and subtitles show in "silence" too', () => {
+    // 《反相之地》: the loop check had removed ~780 real lines, so frames labelled silence showed subtitles as often.
+    const c = clip({ mark: false, subs: true });
+    const profiles = profilesOf(c, false).map((p, i) => ({ ...p, label: (i % 2 === 0 ? 'speech' : 'silence') as 'speech' | 'silence' }));
+    const band = findSubtitleBand(profiles, H);
+    expect(band).toBeDefined();
+    expect(band!.method).toBe('appearance');
+    expect(band!.bottom).toBeGreaterThanOrEqual(505);
+  });
+
   it('finds nothing on a clean clip, with or without a transcript', () => {
     const c = clip({ mark: true, subs: false, seed: 5 });
     expect(findSubtitleBand(profilesOf(c, true), H)).toBeUndefined();

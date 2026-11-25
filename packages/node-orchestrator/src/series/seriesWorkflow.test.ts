@@ -372,6 +372,26 @@ describe('rebuilding some parts while the queue goes on (2.4)', { timeout: 60_00
     await r.orchestrator.cancelJob(p3!);
   });
 
+  it('queues a part ahead of its series\' later parts, and run_next moves one to the front (part 16, 2026-11-24)', async () => {
+    const r = rig();
+    const parent = await analysedParent(r);
+    const [p1, p2, p3] = await r.series.createParts(parent.id);
+    // Parts 2 and 3 wait; part 1 is retried after them and takes its place ahead.
+    expect(await r.orchestrator.runPipeline(p2!)).toMatchObject({ queued: true, position: 1 });
+    expect(await r.orchestrator.runPipeline(p3!)).toMatchObject({ queued: true, position: 2 });
+    expect(await r.orchestrator.runPipeline(p1!)).toMatchObject({ queued: true, position: 1 });
+    expect(await r.orchestrator.runPipeline(p3!)).toMatchObject({ position: 3 });
+    // Its saved place keeps that order after a restart (queuedAt sorts it).
+    const at = async (id: string): Promise<string> => (await store.getProject(id)).queue!.queuedAt;
+    expect(await at(p1!) < (await at(p2!))).toBe(true);
+
+    expect(await r.orchestrator.runNext(p3!)).toEqual({ position: 1 });
+    expect(await r.orchestrator.runPipeline(p1!)).toMatchObject({ position: 2 });
+    await r.orchestrator.cancelJob(p3!);
+    await expect(r.orchestrator.runNext(p3!)).rejects.toMatchObject({ appError: { code: 'INVALID_EDIT' } });
+    for (const id of [p1!, p2!]) await r.orchestrator.cancelJob(id);
+  });
+
   it('starts nothing from the queue while it is held, and goes on after', async () => {
     const r = rig();
     const video = await writeDummyVideo(tmp);

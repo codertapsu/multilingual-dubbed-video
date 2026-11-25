@@ -160,6 +160,21 @@ are drawn FIRST in the render's filter graph, then the logo, title cards and sub
 region times are the input video's time, so a series part shifts its parent's regions to its
 window.
 
+**The video's own subtitles are evidence of speech.** Where a source burns its subtitles in
+(`subtitleCoverageCheck`, on for zh/ja/ko by `subtitleCheckOn`), the STT step reads the band five
+times a second (media-worker `subtitlePresence.ts`, no OCR), keeps when a subtitle is on screen in
+`audio/subtitle_presence.json`, and the loop check's silence test counts that time as speech
+(`speechWithSubtitles`): never remove a line under a subtitle as silence. 0.18.0 trusted the speech
+map alone and dropped ~780 real lines of 《反相之地》. `useBurnedInSubtitles` makes the subtitles the
+transcript instead: one frame per subtitle (`readBandFrames`) read by the `ocr-rapid` pack
+(`vd_ocr`, the PP-OCRv4 recogniser on each text line's box only), falling back to STT with a
+`burned-in-fallback` warning, never silently.
+
+**Lines that fail the checks get a second try before voicing** (end of the refine step,
+`dubPasses.retryFailingLines`): told the words at fault and the sheet's names, never touching a
+locked line or a song. What still fails is a `lines-flagged` warning; `holdFlaggedLines` stops the
+run there (`PipelineState.heldLines`), and continuing voices the lines as they are.
+
 **Tests never reach a running app.** `node-orchestrator/vitest.config.ts` points the worker URLs
 at port 1: the server tests build the real server, whose readiness probes would otherwise call a
 running VideoDubber's own workers on 5101–5103 (a 48-part production ran on the development PC
@@ -221,6 +236,20 @@ install ends with a real-kernel probe (`gpuVerify.ts`) because `is_available()` 
 the build cannot run. Both HF repos it loads with `trust_remote_code` are pinned to commits in
 `vd_tts_engine/pinned.py`. Don't load them from `main`: that flag executes the repo's Python.
 GPU packs are heavy at pack level (`isHeavyPack`), so they evict a resident llama.cpp.
+
+**A pin is the content, not the upload.** sherpa-onnx re-exported the speaker-embedding model on
+2026-11-19 (one byte longer, identical embeddings) and every fresh install of speaker detection was
+discarded as corrupt. When an upstream file changes, measure that it is the same content, then add
+its checksum to the artifact's `alsoSha256`; never swap `sha256` of a model whose hash is a cache
+key (the speaker engine's `modelKey` keys saved detections, part checkpoints and cloned voices'
+prints).
+
+**Speaker linking keeps each part's own verdict.** Long audio is diarized in 10-minute parts and
+linked by voice print (`vd_diarize/linking.py`). Two speakers a part kept apart never merge when
+both prints can be trusted (3 s of speech), and the join of short prints and the merge past 100
+speakers respect it too: with the old 15-s rule a drama's main voice took in 72 local speakers.
+A change to the linking rules bumps the provider's `linkKey`, which re-links saved detections from
+their kept parts.
 
 ### Dev vs production runtime
 

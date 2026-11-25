@@ -663,6 +663,25 @@ describe('VideoDubber MCP server', () => {
     expect(r.text).toContain('at "alignment"');
   });
 
+  it("get_project says the app's time left: a render redo is not timed from the dub days earlier", async () => {
+    // claude-dubber, 2026-11-25: a render-only redo at 89% read "about 2 h 25 min left".
+    const steps = [
+      { id: 'stt', label: 'STT', status: 'completed', progressPercent: 100, startedAt: '2026-11-20T08:00:00Z', finishedAt: '2026-11-20T09:00:00Z' },
+      { id: 'render', label: 'Render', status: 'running', progressPercent: 40, startedAt: new Date(Date.now() - 120_000).toISOString() },
+    ];
+    let etaSec: number | undefined = 240;
+    fake.routes.set('GET /projects/proj_1', () => ({
+      project: project({ status: 'running' }),
+      pipeline: pipeline({ status: 'running', currentStep: 'render', progressPercent: 89, steps }),
+      ...(etaSec !== undefined ? { etaSec } : {}),
+    }));
+    await connect();
+    const pipelineLine = async () => (await call('get_project', { projectId: 'proj_1' })).text.split('\n').find((l) => l.startsWith('Pipeline:'));
+    expect(await pipelineLine()).toBe('Pipeline: running, 89%, at "render", about 4 min left');
+    etaSec = undefined; // too early to tell: no guess of its own
+    expect(await pipelineLine()).toBe('Pipeline: running, 89%, at "render"');
+  });
+
   it('download_video follows the app\'s download events to the file', async () => {
     const source = { title: 'Wukong', partCount: 1, url: 'https://www.bilibili.com/video/BV1xx411c7mD' };
     const item = (state: string, extra: object = {}) => ({ id: 'dl_7', input: 'BV1xx411c7mD', page: 1, state, percent: 40, source, ...extra });

@@ -9,9 +9,13 @@ import {
   countSpeechUnits,
   fitBudget,
   fitWindowMs,
+  LINE_FLAG_WORDS,
+  OVERRUN_REPORT_MS,
   type AudioDrift,
   type FitBudget,
+  type LineQualityFlag,
   type PipelineState,
+  type ProjectLineIssues,
   type TimelineSegment,
 } from '@videodubber/shared';
 
@@ -273,4 +277,55 @@ export function renderPipeline(p: PipelineState, now = Date.now()): string {
   }
   if (p.error && p.status === 'failed') lines.push(`Error: ${p.error}`);
   return lines.join('\n');
+}
+
+/** Ids named for one kind of issue at most; more are counted. */
+const ISSUE_IDS_SHOWN = 100;
+
+const flagWords = (flags: readonly LineQualityFlag[]): string => flags.map((f) => LINE_FLAG_WORDS[f] ?? f).join(', ');
+const overSec = (ms: number): string => `+${(ms / 1000).toFixed(1)} s`;
+const andMore = (total: number, shown: number): string => (total > shown ? `, … and ${total - shown} more` : '');
+const SET_ASIDE = ' (their warning was dismissed: set aside)';
+
+/**
+ * A project's lines to look at after its dub (GET /projects/:id/issues), for
+ * get_project: every line still failing the checks with its checks, and every
+ * voice running into the next line. The warnings name five; an agent that
+ * lets flagged lines be voiced and reviews them later needs them all (H7).
+ */
+export function renderLineIssues(i: ProjectLineIssues): string[] {
+  const out: string[] = [];
+  if (i.flagged.length > 0) {
+    const shown = i.flagged.slice(0, ISSUE_IDS_SHOWN).map((f) => `${f.id} (${flagWords(f.flags)})`);
+    out.push(
+      `  ${i.flagged.length} line(s) still fail the translation checks${i.flaggedDismissed ? SET_ASIDE : ''}: ${shown.join(', ')}${andMore(i.flagged.length, shown.length)}.`,
+      '    Fix them with set_translations, then regenerate_voices. A line the user keeps as it is is locked in the editor ("Keep as is") and leaves this list.',
+    );
+  }
+  if (i.overruns.length > 0) {
+    const shown = i.overruns.slice(0, ISSUE_IDS_SHOWN).map((o) => `${o.id} (${overSec(o.overflowMs)})`);
+    out.push(
+      `  ${i.overruns.length} voice(s) run into the next line by more than ${OVERRUN_REPORT_MS / 1000} s even at the fastest speed allowed${i.overrunsDismissed ? SET_ASIDE : ''}: ` +
+        `${shown.join(', ')}${andMore(i.overruns.length, shown.length)}.`,
+      '    Shorten them with set_translations, then regenerate_voices, or allow a higher maxSpeedRatio.',
+    );
+  }
+  return out.length > 0 ? ['Lines to look at:', ...out] : [];
+}
+
+/** A series part's lines to look at in a few words, for get_series (empty when it has none). */
+export function lineIssuesBrief(i: ProjectLineIssues | undefined): string {
+  if (!i) return '';
+  const said: string[] = [];
+  if (i.flagged.length > 0) {
+    const ids = i.flagged.slice(0, ISSUE_IDS_SHOWN).map((f) => f.id);
+    said.push(`${i.flagged.length} line(s) flagged${i.flaggedDismissed ? ' (set aside)' : ''}: ${ids.join(', ')}${andMore(i.flagged.length, ids.length)}`);
+  }
+  if (i.overruns.length > 0) {
+    const ids = i.overruns.slice(0, ISSUE_IDS_SHOWN).map((o) => `${o.id} ${overSec(o.overflowMs)}`);
+    said.push(
+      `${i.overruns.length} voice(s) running over by more than ${OVERRUN_REPORT_MS / 1000} s${i.overrunsDismissed ? ' (set aside)' : ''}: ${ids.join(', ')}${andMore(i.overruns.length, ids.length)}`,
+    );
+  }
+  return said.length > 0 ? `; ${said.join('; ')}` : '';
 }

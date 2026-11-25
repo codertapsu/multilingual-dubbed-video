@@ -34,6 +34,7 @@ import {
   type PictureDetection,
   type PipelineState,
   type Project,
+  type ProjectLineIssues,
   type RunScheduleResult,
   type SeriesListItem,
   type SeriesParentInfo,
@@ -100,6 +101,8 @@ export interface SeriesServiceDeps {
   projects: {
     createProject(input: CreateProjectInput): Promise<Project>;
     getProjectWithPipeline(projectId: string): Promise<{ project: Project; pipeline: PipelineState }>;
+    /** A part's lines to look at (H7): the series view lists them per part. Optional for the fakes. */
+    lineIssues?(projectId: string): Promise<ProjectLineIssues>;
   };
   /** Start (or queue) a part; one waiting for its models starts when they arrive. */
   start: (projectId: string) => Promise<RunScheduleResult | { waiting: true }>;
@@ -1132,6 +1135,8 @@ export class SeriesService {
       const state = id ? await this.deps.projects.getProjectWithPipeline(id).catch(() => undefined) : undefined;
       const info = state?.project.series?.role === 'part' ? state.project.series : undefined;
       const summary = info?.summary ?? p.summary;
+      // Its lines to look at, so each part says it has some (and get_series which).
+      const issues = state && this.deps.projects.lineIssues ? await this.deps.projects.lineIssues(state.project.id).catch(() => undefined) : undefined;
       parts.push({
         index: p.index,
         ...(id ? { projectId: id } : {}),
@@ -1141,6 +1146,7 @@ export class SeriesService {
         startMs: p.startMs,
         endMs: p.endMs,
         ...(state ? { status: state.project.status, progressPercent: Math.round(state.pipeline.progressPercent) } : {}),
+        ...(issues && (issues.flagged.length > 0 || issues.overruns.length > 0) ? { issues } : {}),
       });
     }
     const continuesId = parent.series.settings.continues;

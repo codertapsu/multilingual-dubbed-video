@@ -12,6 +12,7 @@ import type {
   MediaInfo,
   PipelineStepId,
   Project,
+  ProjectListItem,
   ProjectSettings,
   RunScheduleResult,
   TranslationDocContext,
@@ -211,8 +212,9 @@ export class IpcService {
     );
   }
 
-  listProjects(): Promise<Project[]> {
-    return this.call<Project[]>('list_projects', {}, 'GET', '/projects');
+  /** Every project, each with the count of its lines to look at when it has any (H7). */
+  listProjects(): Promise<ProjectListItem[]> {
+    return this.call<ProjectListItem[]>('list_projects', {}, 'GET', '/projects');
   }
 
   probeVideo(projectId: string): Promise<MediaInfo> {

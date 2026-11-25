@@ -73,6 +73,14 @@
       <span class="text"><strong>{{ 'editor.review-title' | translate }}</strong> {{ 'editor.review-hint' | translate }}</span>
     }
   </div>
+} @else if (store.flaggedCount() > 0 && !store.flagsSetAside()) {
+  <!-- Voiced while still failing the checks (holdFlaggedLines off): reviewed afterwards (H7). -->
+  <div class="notice review" role="status">
+    <span class="text"><strong>{{ 'editor.flagged-title' | translate: { count: store.flaggedCount() } }}</strong> {{ 'editor.flagged-hint' | translate }}</span>
+    @if (store.linesFilter() !== 'flagged') {
+      <button type="button" class="btn btn-sm" (click)="store.showFlagged()">{{ 'editor.flagged-show' | translate }}</button>
+    }
+  </div>
 }
 
 <vd-error-banner [error]="store.error()" (dismiss)="store.dismissError()" />

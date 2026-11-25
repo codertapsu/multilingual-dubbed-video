@@ -173,7 +173,11 @@ transcript instead: one frame per subtitle (`readBandFrames`) read by the `ocr-r
 **Lines that fail the checks get a second try before voicing** (end of the refine step,
 `dubPasses.retryFailingLines`): told the words at fault and the sheet's names, never touching a
 locked line or a song. What still fails is a `lines-flagged` warning; `holdFlaggedLines` stops the
-run there (`PipelineState.heldLines`), and continuing voices the lines as they are.
+run there (`PipelineState.heldLines`), and continuing voices the lines as they are. A flagged line
+stays visible until it is rewritten or locked ("Keep as is"; a locked line is the user's): shared
+`pipeline/lineIssues.ts` is the one rule (`isFlaggedLine`), read from the files through an mtime
+cache (`workspace/lineIssueReader.ts`) for the list chips (GET /projects), each series part, GET
+/projects/:id/issues and get_project / get_series, which name every id (the warning names five).
 
 **Tests never reach a running app.** `node-orchestrator/vitest.config.ts` points the worker URLs
 at port 1: the server tests build the real server, whose readiness probes would otherwise call a

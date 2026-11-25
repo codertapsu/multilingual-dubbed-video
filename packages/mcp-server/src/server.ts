@@ -24,6 +24,8 @@ import type {
   PipelineState,
   PipelineStepId,
   Project,
+  ProjectLineIssues,
+  ProjectListItem,
   ProjectSettings,
   TimelineDocument,
   TranslationDocContext,
@@ -48,7 +50,9 @@ import {
   audioDriftLines,
   clock,
   lineFlags,
+  lineIssuesBrief,
   renderLine,
+  renderLineIssues,
   renderPipeline,
   renderTranslationReport,
   type TranslationReportDoc,
@@ -1333,6 +1337,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       endMs: number;
       status?: string;
       progressPercent?: number;
+      /** Its lines to look at (H7), when it has any. */
+      issues?: ProjectLineIssues;
     }[];
     continues?: { parentId: string; name: string };
     error?: { message?: string };
@@ -1350,7 +1356,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       ...(v.plan?.notes ?? []).map((n) => `Note: ${n}`),
       ...v.parts.map((p) => {
         const summary = p.summary ?? v.plan?.parts.find((x) => x.index === p.index)?.summary;
-        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${summary ? ` (${summary})` : ''}${p.projectId ? ` project ${p.projectId}${p.name ? ` "${p.name}"` : ''}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}`;
+        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${summary ? ` (${summary})` : ''}${p.projectId ? ` project ${p.projectId}${p.name ? ` "${p.name}"` : ''}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}${lineIssuesBrief(p.issues)}`;
       }),
     ];
     if (v.state === 'review') {
@@ -1421,7 +1427,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'A long video dubbed in parts',
       description:
-        'Where a series stands (analysing, planning, review, parts, failed), its planned cuts with titles and summaries, and each part\'s project and progress. Works with the parent or any part\'s project id.',
+        'Where a series stands (analysing, planning, review, parts, failed), its planned cuts with titles and summaries, and each part\'s project and progress, with the ids of its lines to look at (still failing the translation checks, or voiced running into the next line by more than 0.3 s). Works with the parent or any part\'s project id.',
       inputSchema: z.object({ projectId: z.string() }),
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
@@ -1560,13 +1566,17 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     },
     guarded(async (_args, ctx) => {
-      const projects = await api.get<Project[]>('/projects', { signal: ctx.mcpReq.signal });
+      const projects = await api.get<ProjectListItem[]>('/projects', { signal: ctx.mcpReq.signal });
       if (projects.length === 0) return text('No projects yet.');
       return text(
         projects
           .map((p) => {
             const dur = p.mediaInfo?.durationMs ? clock(p.mediaInfo.durationMs) : '?';
-            return `- ${p.id} "${p.name}" ${p.status}, ${dur}, ${p.settings.sourceLanguage || 'auto'} -> ${p.settings.targetLanguage}, updated ${p.updatedAt}`;
+            // Its lines to look at (H7): get_project names them.
+            const issues =
+              `${p.issues?.flagged ? `, ${p.issues.flagged} line(s) flagged` : ''}` +
+              `${p.issues?.overruns ? `, ${p.issues.overruns} voice(s) running over` : ''}`;
+            return `- ${p.id} "${p.name}" ${p.status}, ${dur}, ${p.settings.sourceLanguage || 'auto'} -> ${p.settings.targetLanguage}, updated ${p.updatedAt}${issues}`;
           })
           .join('\n'),
       );
@@ -1578,7 +1588,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Project and dubbing progress',
       description:
-        'A project\'s settings, each pipeline step\'s status, errors with how to fix them, recent log lines and output files, and the jobs working on it outside the dub (speaker detection, re-transcription of a long range, and the like) with their progress. With waitSeconds > 0 it waits (up to 50 s) for the dub to move on before answering — call it repeatedly to follow a dub.',
+        'A project\'s settings, each pipeline step\'s status, errors with how to fix them, recent log lines and output files, the jobs working on it outside the dub (speaker detection, re-transcription of a long range, and the like) with their progress, and its lines to look at: every line still failing the translation checks (with the checks) and every voice running into the next line by more than 0.3 s. With waitSeconds > 0 it waits (up to 50 s) for the dub to move on before answering — call it repeatedly to follow a dub.',
       inputSchema: z.object({
         projectId: z.string(),
         waitSeconds: z.number().min(0).max(50).default(0),
@@ -1609,6 +1619,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       // Work on the project outside its dub (an app of before 0.18 has no such route: nothing to list).
       const jobs = await api.get<{ jobs: ProjectJobLite[] }>(`/projects/${encodeURIComponent(projectId)}/jobs`, { signal }).catch(() => undefined);
       if (jobs?.jobs.length) lines.push('Jobs outside the dub:', ...renderProjectJobs(jobs.jobs));
+      // Its lines to look at after the dub, all of them (H7; an app of before 0.20 has no such route).
+      const issues = await api.get<ProjectLineIssues>(`/projects/${encodeURIComponent(projectId)}/issues`, { signal }).catch(() => undefined);
+      if (issues) lines.push(...renderLineIssues(issues));
       if (pipeline.status === 'running' || pipeline.status === 'failed') {
         const tail = await logTail(project, 8);
         if (tail.length > 0) lines.push('Recent log:', ...tail.map((l) => `  ${l}`));

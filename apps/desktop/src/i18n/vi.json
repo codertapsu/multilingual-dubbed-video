@@ -407,6 +407,8 @@
     "series-badge": "Bộ phim",
     "part-badge": "Phần {{n}}/{{count}}",
     "published-badge": "Đã đăng",
+    "lines-flagged": "⚠ {{count}} câu cần xem lại",
+    "lines-flagged-title": "Đã lồng tiếng dù chưa đạt kiểm tra bản dịch (tên phiên âm pinyin, thiếu dấu, chữ của ngôn ngữ khác…). Mở dự án để xem lại: các câu này vẫn được đánh dấu cho đến khi được sửa hoặc được giữ nguyên.",
     "queue-entry-pressure": "#{{ position }} {{ name }} — đang chờ: máy đang thiếu bộ nhớ trong lúc một bản lồng tiếng chạy"
   },
   "settings": {
@@ -1364,6 +1366,9 @@
     },
     "held-title": "⚠️ Còn {{count}} câu dịch chưa đạt kiểm tra.",
     "held-hint": "Chưa tạo giọng nào. Hãy sửa các câu được đánh dấu ở mục Vấn đề (chỉnh sửa được lưu tự động), rồi bấm Tiếp tục lồng tiếng.",
+    "flagged-title": "⚠️ Còn {{count}} câu chưa đạt kiểm tra bản dịch sau hai lần sửa tự động.",
+    "flagged-hint": "Các câu này đã được lồng tiếng như hiện tại. Hãy sửa từng câu, hoặc giữ nguyên nếu câu đã đúng.",
+    "flagged-show": "Xem các câu này",
     "use-burned-in-hint": "Mỗi phụ đề in trên hình trở thành một câu, thay vì chép lời từ giọng nói (phụ đề tiếng Trung và tiếng Anh; cần cài trình đọc phụ đề ở Cài đặt → Engine & mô hình). Có hiệu lực khi bước chép lời chạy lại (Lồng tiếng lại từ: Nhận dạng lời thoại (STT))."
   },
   "studio": {
@@ -1473,6 +1478,7 @@
     "search-ph": "Tìm văn bản…",
     "filter-all": "Tất cả",
     "filter-problems": "Cần xem",
+    "filter-flagged": "Cần xem lại",
     "filter-changed": "Đã sửa",
     "filter-locked": "Đã khoá",
     "no-matches": "Không có câu nào khớp.",
@@ -1553,7 +1559,10 @@
       "into-next": "Đã đọc nhanh {{ x }}× mà vẫn dài thêm {{ s }} giây, lấn sang câu sau. Hãy rút gọn bản dịch (nút Rút gọn cho vừa có thể làm việc này).",
       "beyond": "Đã đọc nhanh {{ x }}× mà vẫn dài thêm {{ s }} giây, quá mức cho phép {{ allowed }} giây. Hãy rút gọn bản dịch (nút Rút gọn cho vừa có thể làm việc này).",
       "native-rate": "Giọng tự đọc nhanh hơn {{ x }}× cho vừa thời gian, không cần kéo giãn âm thanh."
-    }
+    },
+    "keep-as-is": "Giữ nguyên",
+    "keep-as-is-title": "Câu này đã đúng: khoá câu lại để câu không còn bị tính là cần xem lại, và không lượt tự động nào viết lại câu. Mở khoá (hoặc hoàn tác) để đánh dấu lại.",
+    "kept-as-is-title": "Đã giữ nguyên: kết quả kiểm tra này được bỏ qua."
   },
   "wizard": {
     "title": "Dự án mới",

@@ -395,4 +395,34 @@ describe('series and create tools (0.18.0)', () => {
     expect(r.text).toContain('Parts named "{series} - Tập {nn}".');
     expect(r.text).toContain('- part 49: 00:00.00-01:00.00 "Mùa mới" (Bắt đầu.) project proj_p49 "Xuyên Không - Tập 49", created');
   });
+
+  it("get_series names each part's lines to look at: flagged lines and voices running over (H7)", async () => {
+    fake.routes.set('GET /projects/proj_s12/series', () =>
+      view({
+        parentId: 'proj_s12',
+        parts: [
+          { index: 1, projectId: 'proj_p1', name: 'Phần 1', title: 'Mở đầu', startMs: 0, endMs: 60_000, status: 'completed' },
+          {
+            index: 2,
+            projectId: 'proj_p2',
+            name: 'Phần 2',
+            title: 'Tiếp',
+            startMs: 60_000,
+            endMs: 120_000,
+            status: 'completed',
+            issues: {
+              flagged: [{ id: 'seg_0012', flags: ['pinyin'] }, { id: 'seg_0040', flags: ['no-diacritics'] }],
+              overruns: [{ id: 'seg_0101', overflowMs: 640 }],
+            },
+          },
+        ],
+      }),
+    );
+    await connect();
+    const r = await call('get_series', { projectId: 'proj_s12' });
+    expect(r.text).toContain('- part 1: 00:00.00-01:00.00 "Mở đầu" project proj_p1 "Phần 1", completed\n');
+    expect(r.text).toContain(
+      '"Phần 2", completed; 2 line(s) flagged: seg_0012, seg_0040; 1 voice(s) running over by more than 0.3 s: seg_0101 +0.6 s',
+    );
+  });
 });

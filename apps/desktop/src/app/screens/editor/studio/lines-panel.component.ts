@@ -14,10 +14,9 @@ import { speakerNumber } from '@videodubber/shared';
 
 import { TranslatePipe } from '../../../core/i18n';
 import { formatTimecode } from '../../../core/util/format';
-import { StudioStore, type LineVm } from './studio.store';
+import { QUALITY_LABELS } from './quality-labels';
+import { StudioStore, type LineVm, type LinesFilter } from './studio.store';
 import { VOICE_DRAG_TYPE } from './timeline.component';
-
-type Filter = 'all' | 'problems' | 'changed' | 'locked';
 
 const ROW_H = 54;
 const OVERSCAN = 6;
@@ -51,7 +50,7 @@ function fold(text: string): string {
         [attr.aria-label]="'studio.search' | translate"
       />
       <div class="seg-control filters" role="radiogroup">
-        @for (f of filters; track f) {
+        @for (f of filters(); track f) {
           <button
             type="button"
             role="radio"
@@ -62,6 +61,9 @@ function fold(text: string): string {
             {{ filterKeys[f] | translate }}
             @if (f === 'problems' && store.problemCount() > 0) {
               <span class="count">{{ store.problemCount() }}</span>
+            }
+            @if (f === 'flagged' && store.flaggedCount() > 0) {
+              <span class="count">{{ store.flaggedCount() }}</span>
             }
             @if (f === 'changed' && store.staleCount() > 0) {
               <span class="count">{{ store.staleCount() }}</span>
@@ -112,6 +114,12 @@ function fold(text: string): string {
                   [title]="'studio.speaker-n' | translate: { n: speakerN(spk) }"
                   >{{ 'studio.speaker-short' | translate: { n: speakerN(spk) } }}</span
                 >
+              }
+              <!-- Why the checks still flag it, right on the row (H7). -->
+              @if (r.line.flagged) {
+                @for (flag of r.line.seg.qualityFlags ?? []; track flag) {
+                  <span class="why" [title]="qualityLabels[flag].title | translate">{{ qualityLabels[flag].label | translate }}</span>
+                }
               }
               <span class="icons">
                 @if (r.line.status === 'timing-conflict') {
@@ -253,6 +261,14 @@ function fold(text: string): string {
         font-size: 0.72rem;
         color: var(--vd-info);
       }
+      .why {
+        padding: 0 5px;
+        border-radius: 999px;
+        font-size: 0.62rem;
+        white-space: nowrap;
+        color: var(--vd-danger);
+        background: color-mix(in srgb, var(--vd-danger) 16%, transparent);
+      }
       .spk {
         padding: 0 5px;
         border-radius: 999px;
@@ -293,14 +309,22 @@ export class LinesPanelComponent {
   protected speakerHue(id: string): number {
     return Math.round((speakerNumber(id) * 137.5) % 360);
   }
-  protected readonly filters: readonly Filter[] = ['all', 'problems', 'changed', 'locked'];
-  protected readonly filterKeys: Record<Filter, string> = {
+  /** Flagged appears while some line is still flagged (or while it is the filter). */
+  protected readonly filters = computed<readonly LinesFilter[]>(() =>
+    this.store.flaggedCount() > 0 || this.filter() === 'flagged'
+      ? ['all', 'problems', 'flagged', 'changed', 'locked']
+      : ['all', 'problems', 'changed', 'locked'],
+  );
+  protected readonly filterKeys: Record<LinesFilter, string> = {
     all: 'studio.filter-all',
     problems: 'studio.filter-problems',
+    flagged: 'studio.filter-flagged',
     changed: 'studio.filter-changed',
     locked: 'studio.filter-locked',
   };
-  protected readonly filter = signal<Filter>('all');
+  /** The store's, so the editor's banner can show the flagged lines. */
+  protected readonly filter = this.store.linesFilter;
+  protected readonly qualityLabels = QUALITY_LABELS;
   protected readonly query = signal('');
   protected readonly scrollTop = signal(0);
   protected readonly viewport = signal(600);
@@ -312,6 +336,7 @@ export class LinesPanelComponent {
     const q = fold(this.query().trim());
     return this.store.lines().filter((l) => {
       if (f === 'problems' && !l.problem) return false;
+      if (f === 'flagged' && !l.flagged) return false;
       if (f === 'changed' && !l.stale) return false;
       if (f === 'locked' && !l.locked) return false;
       return !q || fold(l.text).includes(q) || fold(l.seg.sourceText).includes(q);

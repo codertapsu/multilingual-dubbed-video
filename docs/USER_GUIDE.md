@@ -179,6 +179,19 @@ made, this time told exactly which words are wrong and how the character sheet
 writes the names in it. A line that still fails is voiced as it is and listed
 in a warning on the Processing screen and under Problems in the editor.
 
+Those lines stay flagged until you fix them, so you can let the dub finish and
+look at them later:
+
+- the project, and its part in a series, carries a **⚠ N line(s) flagged**
+  chip in the Projects list and on the series screen;
+- the editor says how many there are above the timeline. **Show them**, or the
+  **Flagged** filter of the lines list, lists only those lines, each with what
+  the checks found (Pinyin, No diacritics, Another script…); click one to go to
+  it;
+- rewriting a line clears its flag. A line that is right as it is gets
+  **Keep as is** in the inspector: the line is locked, so no automatic pass
+  rewrites it, and it no longer counts. Unlock it, or undo, to flag it again.
+
 To fix such lines before they are voiced, tick **Stop before voicing while
 lines still fail the translation checks** (New project → More options, next to
 the review pause; or the editor's Project tab). The dub then stops before the

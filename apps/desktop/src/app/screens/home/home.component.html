@@ -149,6 +149,12 @@
               @if (project.published?.length) {
                 <span class="badge badge-completed">{{ 'home.published-badge' | translate }}</span>
               }
+              <!-- Lines voiced while still failing the translation checks: there until fixed or kept as they are (H7). -->
+              @if (project.issues?.flagged; as flagged) {
+                <span class="badge badge-warning" [title]="'home.lines-flagged-title' | translate">{{
+                  'home.lines-flagged' | translate: { count: flagged }
+                }}</span>
+              }
               <span class="badge badge-pending">{{ dubLabel(project) }}</span>
               @if (project.mediaInfo) {
                 <span class="muted">{{

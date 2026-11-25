@@ -53,8 +53,13 @@ export type {
   AudioStreamInfo,
   // Project
   Project,
+  ProjectListItem,
   CreateProjectInput,
   ReviseProjectInput,
+  // Lines to look at after a dub (H7)
+  LineIssueCounts,
+  LineQualityFlag,
+  ProjectLineIssues,
   // Transcript / segments
   TranscriptWord,
   TranscriptSegment,

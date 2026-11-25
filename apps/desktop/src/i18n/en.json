@@ -407,6 +407,8 @@
     "series-badge": "Series",
     "part-badge": "Part {{n}}/{{count}}",
     "published-badge": "Posted",
+    "lines-flagged": "⚠ {{count}} line(s) flagged",
+    "lines-flagged-title": "Voiced while still failing the translation checks (a pinyin name, no diacritics, another script…). Open the project to look at them: they stay flagged until fixed or kept as they are.",
     "queue-entry-pressure": "#{{ position }} {{ name }} — waiting: the computer is short of memory while a dub runs"
   },
   "settings": {
@@ -1364,6 +1366,9 @@
     },
     "held-title": "⚠️ {{count}} line(s) still fail the translation checks.",
     "held-hint": "No voice has been made yet. Fix the lines marked under Problems (your edits save by themselves), then press Continue dubbing.",
+    "flagged-title": "⚠️ {{count}} line(s) still fail the translation checks after two repairs.",
+    "flagged-hint": "They were voiced as they are. Fix each one, or keep it as it is when it is right.",
+    "flagged-show": "Show them",
     "use-burned-in-hint": "Each subtitle drawn into the picture becomes a line instead of transcribing the speech (Chinese and English subtitles; needs the subtitle reader from Settings → Engines & models). Takes effect when speech-to-text runs again (Re-dub from: Transcribe (STT))."
   },
   "studio": {
@@ -1473,6 +1478,7 @@
     "search-ph": "Search text…",
     "filter-all": "All",
     "filter-problems": "Issues",
+    "filter-flagged": "Flagged",
     "filter-changed": "Changed",
     "filter-locked": "Locked",
     "no-matches": "No lines match.",
@@ -1553,7 +1559,10 @@
       "into-next": "Still {{ s }} s too long even sped up to {{ x }}×: it runs into the next line. Shorten the translation (Tighten to fit can do it).",
       "beyond": "Still {{ s }} s too long even sped up to {{ x }}×, more than the {{ allowed }} s allowed. Shorten the translation (Tighten to fit can do it).",
       "native-rate": "The voice reads it {{ x }}× faster on its own to fit, with no time-stretch."
-    }
+    },
+    "keep-as-is": "Keep as is",
+    "keep-as-is-title": "This line is right as it is: lock it, so it no longer counts as flagged and no automatic pass rewrites it. Unlock it (or undo) to flag it again.",
+    "kept-as-is-title": "Kept as it is: this finding of the checks is set aside."
   },
   "wizard": {
     "title": "New project",

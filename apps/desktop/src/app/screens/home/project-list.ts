@@ -4,17 +4,18 @@
  * other projects. A part whose series is gone (deleted) stands on its own.
  * Pure.
  */
-import type { Project } from '../../core/models';
+import type { Project, ProjectListItem } from '../../core/models';
 
 export interface ListedProject {
-  project: Project;
+  /** With the count of its lines to look at, when it has any. */
+  project: ProjectListItem;
   /** A part, shown under its series. */
   nested: boolean;
 }
 
-export function groupSeries(projects: readonly Project[]): ListedProject[] {
+export function groupSeries(projects: readonly ProjectListItem[]): ListedProject[] {
   const ids = new Set(projects.map((p) => p.id));
-  const partsOf = new Map<string, Project[]>();
+  const partsOf = new Map<string, ProjectListItem[]>();
   const isNestedPart = (p: Project): boolean => p.series?.role === 'part' && ids.has(p.series.parentId);
   for (const p of projects) {
     if (p.series?.role === 'part' && isNestedPart(p)) {

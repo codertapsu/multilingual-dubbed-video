@@ -545,6 +545,40 @@ export interface TranscriptSegment {
   song?: boolean;
 }
 
+/** One of the checks a translated line can fail ({@link TranscriptSegment.qualityFlags}). */
+export type LineQualityFlag = NonNullable<TranscriptSegment['qualityFlags']>[number];
+
+/**
+ * A project's lines to look at after its dub (GET /projects/:id/issues,
+ * pipeline/lineIssues.ts). The user may let flagged lines be voiced as they
+ * are and review them later (claude-dubber, 2026-11-25, H7), so they stay
+ * visible: on the project and its part in the lists, in the editor, and for an
+ * agent in get_project and get_series.
+ */
+export interface ProjectLineIssues {
+  /**
+   * Lines still failing the checks after the repairs, with the checks. A
+   * locked line is the user's (written, or kept as it is) and a song gets no
+   * voice: neither is listed.
+   */
+  flagged: { id: string; flags: LineQualityFlag[] }[];
+  /** Voices that run into the next line by more than OVERRUN_REPORT_MS even at the fastest speed allowed (ms over). */
+  overruns: { id: string; overflowMs: number }[];
+  /** The run's warning about the flagged lines was dismissed: they are set aside, and the lists do not count them. */
+  flaggedDismissed?: true;
+  /** The same for the overruns (the timing-conflicts warning). */
+  overrunsDismissed?: true;
+}
+
+/** How many lines to look at, as the lists count them (set-aside ones are not). */
+export interface LineIssueCounts {
+  flagged: number;
+  overruns: number;
+}
+
+/** GET /projects: a project, with its lines to look at when it has any. */
+export type ProjectListItem = Project & { issues?: LineIssueCounts };
+
 /**
  * One editor change to a segment (PATCH /projects/:id/segments). Every field
  * except `id` is optional; `null` CLEARS an override. Timing edits may move or

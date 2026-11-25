@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal, type Signal } from '@angular/core';
 
 import { IpcService } from '../ipc/ipc.service';
-import type { AppError, PipelineState, Project } from '../models';
+import type { AppError, PipelineState, Project, ProjectListItem } from '../models';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/error-banner/error-view';
 
 /**
@@ -17,20 +17,21 @@ import { GENERIC_ERROR_MESSAGE } from '../../shared/error-banner/error-view';
 export class ProjectStore {
   private readonly ipc = inject(IpcService);
 
-  private readonly _projects = signal<Project[]>([]);
+  /** As GET /projects lists them: each with the count of its lines to look at, when it has any. */
+  private readonly _projects = signal<ProjectListItem[]>([]);
   private readonly _current = signal<Project | null>(null);
   private readonly _pipeline = signal<PipelineState | null>(null);
   private readonly _loading = signal(false);
   private readonly _error = signal<AppError | null>(null);
 
-  readonly projects: Signal<Project[]> = this._projects.asReadonly();
+  readonly projects: Signal<ProjectListItem[]> = this._projects.asReadonly();
   readonly current: Signal<Project | null> = this._current.asReadonly();
   readonly pipeline: Signal<PipelineState | null> = this._pipeline.asReadonly();
   readonly loading: Signal<boolean> = this._loading.asReadonly();
   readonly lastError: Signal<AppError | null> = this._error.asReadonly();
 
   /** Projects sorted most-recently-updated first (for the Home list). */
-  readonly recentProjects = computed<Project[]>(() =>
+  readonly recentProjects = computed<ProjectListItem[]>(() =>
     [...this._projects()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
   );
 

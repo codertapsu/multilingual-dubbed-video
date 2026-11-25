@@ -3107,9 +3107,19 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     },
   );
 
+  // Each project with the count of its lines to look at, when it has any (H7).
   app.get('/projects', async (_req, reply) => {
     try {
-      return await orchestrator.listProjects();
+      return await orchestrator.listProjectsWithIssues();
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  // The project's lines to look at: still flagged by the checks, voices running over.
+  app.get('/projects/:id/issues', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    try {
+      return await orchestrator.lineIssues(req.params.id);
     } catch (err) {
       return sendError(reply, err);
     }

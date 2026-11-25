@@ -17,13 +17,53 @@
   color: var(--vd-primary);
 }
 
+/* Search, what to show and in what order, above the list. */
+.list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--vd-sp-3);
+}
+.list-search {
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 420px;
+}
+.list-filters .count {
+  margin-left: 5px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--vd-surface-3);
+  font-size: 0.7rem;
+}
+.list-filters .count.attention {
+  background: var(--vd-warning-bg);
+  color: var(--vd-warning);
+}
+.list-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+  margin-left: auto;
+  white-space: nowrap;
+
+  .hint {
+    margin: 0;
+  }
+}
+
 .project-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--vd-sp-3);
+  gap: var(--vd-sp-2);
+}
+
+.show-more {
+  display: flex;
+  justify-content: center;
 }
 
 .project-card {
@@ -63,7 +103,7 @@
   gap: var(--vd-sp-4);
   width: 100%;
   box-sizing: border-box;
-  padding: var(--vd-sp-4) var(--vd-sp-5);
+  padding: var(--vd-sp-3) var(--vd-sp-4);
   cursor: pointer;
 }
 .project-open:hover {
@@ -82,20 +122,29 @@
 .project-name {
   font-weight: 650;
   font-size: 1rem;
-}
-.project-path {
-  color: var(--vd-text-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 56ch;
+}
+/* One quiet line under the name: file, languages, last change. */
+.project-sub {
+  color: var(--vd-text-subtle);
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-meta {
   display: flex;
   align-items: center;
-  gap: var(--vd-sp-3);
+  gap: var(--vd-sp-2);
   flex-shrink: 0;
+}
+.duration {
+  font-variant-numeric: tabular-nums;
+  min-width: 6ch;
+  text-align: right;
 }
 
 /* The "you skipped the model download" reminder. Amber rather than red: the app
@@ -132,9 +181,177 @@
   text-decoration: none;
 }
 
-/* A series' parts sit under its card, indented, so a series reads as one
-   entry instead of n + 1 scattered ones. */
-.project-card.nested {
-  margin-left: var(--vd-sp-6);
-  border-left: 3px solid var(--vd-border);
+/* A series: one card whose header says where its parts stand; the parts fold
+   under it as compact rows (a 48-part series was 49 cards in a row). */
+.series-group {
+  background: var(--vd-surface);
+  border: 1px solid var(--vd-border);
+  border-radius: var(--vd-radius);
+  box-shadow: var(--vd-shadow-sm);
+  overflow: hidden;
+}
+.series-head {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-3);
+}
+.series-toggle {
+  all: unset;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: var(--vd-sp-2);
+  row-gap: 2px;
+  box-sizing: border-box;
+  padding: var(--vd-sp-3) var(--vd-sp-2) var(--vd-sp-3) var(--vd-sp-4);
+  cursor: pointer;
+
+  .project-sub {
+    grid-column: 2;
+  }
+}
+.series-toggle:hover:not(:disabled) {
+  background: var(--vd-surface-2);
+}
+.series-toggle:disabled {
+  cursor: default;
+}
+.series-toggle:focus-visible {
+  box-shadow: var(--vd-focus-ring);
+}
+.chevron {
+  grid-row: span 2;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  color: var(--vd-text-subtle);
+  transition: transform 0.15s ease;
+}
+.series-group.open .chevron {
+  transform: rotate(90deg);
+}
+.series-toggle:disabled .chevron {
+  opacity: 0.35;
+}
+.series-title {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+  min-width: 0;
+}
+.series-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex: none;
+}
+.series-bar {
+  display: flex;
+  width: 168px;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--vd-surface-3);
+
+  .seg.done {
+    background: var(--vd-success);
+  }
+  .seg.running {
+    background: var(--vd-info);
+  }
+  .seg.waiting {
+    background: var(--vd-warning);
+  }
+  .seg.failed {
+    background: var(--vd-danger);
+  }
+}
+.series-counts {
+  display: flex;
+  gap: var(--vd-sp-2);
+  font-size: 0.75rem;
+  color: var(--vd-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+
+  > span + span::before {
+    content: '·';
+    margin-right: var(--vd-sp-2);
+    color: var(--vd-text-subtle);
+  }
+}
+.c-running {
+  color: var(--vd-info);
+}
+.c-waiting {
+  color: var(--vd-warning);
+}
+.c-failed {
+  color: var(--vd-danger);
+}
+.series-open {
+  flex: none;
+}
+.series-head .project-delete {
+  margin-left: 0;
+}
+.series-narrowed {
+  margin: 0;
+  padding: var(--vd-sp-1) var(--vd-sp-4) var(--vd-sp-1) calc(var(--vd-sp-4) + 26px);
+  border-top: 1px solid var(--vd-border);
+}
+
+.part-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--vd-border);
+  background: var(--vd-surface-2);
+}
+.part-row {
+  display: flex;
+  align-items: center;
+}
+.part-row + .part-row {
+  border-top: 1px solid var(--vd-border);
+}
+.part-open {
+  all: unset;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 9ch minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--vd-sp-3);
+  box-sizing: border-box;
+  padding: 6px var(--vd-sp-2) 6px calc(var(--vd-sp-4) + 26px);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.part-open:hover {
+  background: var(--vd-surface);
+}
+.part-open:focus-visible {
+  box-shadow: var(--vd-focus-ring);
+}
+.part-n {
+  font-weight: 600;
+  color: var(--vd-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.part-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.part-row .project-delete {
+  margin-right: var(--vd-sp-2);
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
 }

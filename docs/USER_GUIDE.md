@@ -511,6 +511,24 @@ speaker of the earlier series get that speaker's voice; the others get the
 voices for minor speakers. **Use the settings of** that series copies its
 engines, voices, subtitles and mix.
 
+### The Projects page
+
+A series is one card. Its header says how far the parts are (a bar, and how
+many are done, being dubbed, waiting or failed), their total length and the
+lines still flagged in them. Click the header to show or hide its parts, one
+short row each; **Open series** opens the series screen. The page remembers
+which series you left open.
+
+- **Search** finds a project by its name, its file or its series, with or
+  without Vietnamese accents ("xuyen khong" finds "Xuyên Không").
+- **In progress**, **Needs attention** and **Finished** show only those
+  projects, with how many there are. Needs attention means failed, with lines
+  still flagged, or a series whose parts wait for your review. A series then
+  shows just its matching parts and opens by itself.
+- **Sort** puts the last changed first (the default), orders by name (Part 2
+  before Part 10), or puts the newest first.
+- After 30 entries, **Show more** shows the next ones.
+
 ### Everything the app works on (Activity)
 
 The **Background work** button in the top bar lists what runs now (dubs,

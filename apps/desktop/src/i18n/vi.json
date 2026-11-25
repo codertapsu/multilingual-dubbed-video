@@ -405,10 +405,10 @@
     "delete-body-kept": "Video hoàn chỉnh và phụ đề của nó trong {{ folder }} vẫn được giữ.",
     "delete-confirm": "Xoá",
     "series-badge": "Bộ phim",
-    "part-badge": "Phần {{n}}/{{count}}",
-    "published-badge": "Đã đăng",
     "lines-flagged": "⚠ {{count}} câu cần xem lại",
     "lines-flagged-title": "Đã lồng tiếng dù chưa đạt kiểm tra bản dịch (tên phiên âm pinyin, thiếu dấu, chữ của ngôn ngữ khác…). Mở dự án để xem lại: các câu này vẫn được đánh dấu cho đến khi được sửa hoặc được giữ nguyên.",
+    "part-badge": "Phần {{n}}/{{count}}",
+    "published-badge": "Đã đăng",
     "queue-entry-pressure": "#{{ position }} {{ name }} — đang chờ: máy đang thiếu bộ nhớ trong lúc một bản lồng tiếng chạy"
   },
   "settings": {

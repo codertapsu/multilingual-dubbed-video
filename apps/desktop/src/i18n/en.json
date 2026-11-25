@@ -405,10 +405,10 @@
     "delete-body-kept": "Its finished video and subtitles in {{ folder }} are kept.",
     "delete-confirm": "Delete",
     "series-badge": "Series",
-    "part-badge": "Part {{n}}/{{count}}",
-    "published-badge": "Posted",
     "lines-flagged": "⚠ {{count}} line(s) flagged",
     "lines-flagged-title": "Voiced while still failing the translation checks (a pinyin name, no diacritics, another script…). Open the project to look at them: they stay flagged until fixed or kept as they are.",
+    "part-badge": "Part {{n}}/{{count}}",
+    "published-badge": "Posted",
     "queue-entry-pressure": "#{{ position }} {{ name }} — waiting: the computer is short of memory while a dub runs"
   },
   "settings": {

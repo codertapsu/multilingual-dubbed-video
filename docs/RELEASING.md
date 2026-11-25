@@ -520,6 +520,13 @@ that may not exist yet.
 → *Guard:* SYNC 2. `release:status` exits 0 only on the full 8-asset set, and
 `release:publish` will not act without it.
 
+**An upload that never finished.** GitHub lists an asset whose upload was cut off
+(the machine slept or rebooted mid-transfer) with its full size, in state
+`starter`, and drops it when the release is published: v0.19.0 went out without
+its `.dmg` that way and needed it uploaded again afterwards.
+→ *Guard:* `release:status` counts an asset only in state `uploaded` and marks the
+other `[PARTIAL]`; upload it again (`release-upload.sh upload <file>` replaces it).
+
 Plus the smaller ones that have each cost a rebuild:
 
 | Gotcha | Why it bites | Guard |

@@ -255,21 +255,41 @@ export async function collectStatus({ token, repo, tag }) {
   // anyway: a release with >30 assets would silently truncate on the embedded list.
   const assets = await (await gh(token, `${api}/releases/${release.id}/assets?per_page=100`)).json();
   const byName = new Map(assets.map((a) => [a.name, a]));
+  // Only a finished upload is on the release. GitHub lists an upload that never
+  // finished (the machine slept or rebooted mid-transfer) as an asset in state
+  // "starter" WITH its full size, and drops it when the release is published:
+  // v0.19.0 went out without its .dmg that way (2026-11-25), after this script
+  // had called the draft complete. An asset counts once its state is "uploaded".
+  const finished = (asset) => asset?.state === 'uploaded';
 
   for (const machine of MACHINES) {
     const rows = machine.assets.map(({ suffix, note }) => {
       const name = `VideoDubber_${version}${suffix}`;
       const asset = byName.get(name);
-      return { name, note, present: Boolean(asset), size: asset?.size ?? 0, id: asset?.id ?? null };
+      return {
+        name,
+        note,
+        present: finished(asset),
+        unfinished: Boolean(asset) && !finished(asset),
+        size: asset?.size ?? 0,
+        id: asset?.id ?? null,
+      };
     });
     const missing = rows.filter((r) => !r.present);
     status.machines.push({ name: machine.name, detail: machine.detail, rows, complete: missing.length === 0 });
     if (missing.length) {
-      status.outstanding.push(`${machine.name}: ${missing.length}/${rows.length} asset(s) missing (${missing.map((r) => r.name).join(', ')})`);
+      const unfinished = missing.filter((r) => r.unfinished);
+      status.outstanding.push(
+        `${machine.name}: ${missing.length}/${rows.length} asset(s) missing (${missing.map((r) => r.name).join(', ')})` +
+          (unfinished.length > 0
+            ? ` — ${unfinished.length} of them an upload that never finished: upload it again (publishing would drop it)`
+            : ''),
+      );
     }
   }
 
-  const sharedAsset = byName.get(SHARED_ASSET);
+  const listedShared = byName.get(SHARED_ASSET);
+  const sharedAsset = finished(listedShared) ? listedShared : undefined;
   status.shared = { name: SHARED_ASSET, present: Boolean(sharedAsset), size: sharedAsset?.size ?? 0 };
 
   if (!sharedAsset) {
@@ -296,7 +316,7 @@ export async function collectStatus({ token, repo, tag }) {
       // updater downloads a 404 and the failure surfaces to the user as a broken app.
       const dangling = present.filter((k) => {
         const base = decodeURIComponent(platforms[k].url.split('/').pop() ?? '');
-        return !byName.has(base);
+        return !finished(byName.get(base));
       });
       status.latestJson = {
         version: manifest.version ?? null,
@@ -372,8 +392,8 @@ export function render(status) {
     out.push('');
     out.push(`  ${machine.name} (${machine.rows.length} assets) — ${head}   ${dim(machine.detail)}`);
     for (const row of machine.rows) {
-      const mark = row.present ? green('[ok]     ') : red('[MISSING]');
-      const size = row.present ? humanSize(row.size).padStart(9) : '        -';
+      const mark = row.present ? green('[ok]     ') : row.unfinished ? red('[PARTIAL]') : red('[MISSING]');
+      const size = row.present || row.unfinished ? humanSize(row.size).padStart(9) : '        -';
       out.push(`    ${mark} ${size}  ${row.name}  ${dim(row.note)}`);
     }
   }

@@ -158,7 +158,9 @@ original in its window (each original-audio mode has its rule in `mix.ts`); its 
 only with `songSubtitles` (through `displayCuesFor`). Blur regions and the blurred subtitle band
 are drawn FIRST in the render's filter graph, then the logo, title cards and subtitles on top;
 region times are the input video's time, so a series part shifts its parent's regions to its
-window.
+window. Burned-in subtitles default to `position: 'auto'`: just above the source's own subtitles
+when the render knows where they are (`coverBand`, else a picture detection already saved; a part
+uses its parent's) and they are not covered. The render never runs a detection for it.
 
 **The video's own subtitles are evidence of speech.** Where a source burns its subtitles in
 (`subtitleCoverageCheck`, on for zh/ja/ko by `subtitleCheckOn`), the STT step reads the band five

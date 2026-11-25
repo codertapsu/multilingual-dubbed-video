@@ -123,10 +123,15 @@ export const SETTING_AFFECTS_STEP: Partial<Record<keyof ProjectSettings, Pipelin
   burnSubtitleStyle: 'render',
 };
 
-/** Where burned-in subtitles sit (SubtitleStyle.position). */
-export const SUBTITLE_POSITIONS = ['bottom', 'raised', 'top'] as const;
+/**
+ * Where burned-in subtitles sit (SubtitleStyle.position). `auto`, the
+ * default, sits just above the video's own subtitles when the app found them
+ * and they are not covered (claude-dubber, 2026-11-25).
+ */
+export const SUBTITLE_POSITIONS = ['auto', 'bottom', 'raised', 'top'] as const;
 export type SubtitlePosition = (typeof SUBTITLE_POSITIONS)[number];
 export const SUBTITLE_POSITION_LABELS: Record<SubtitlePosition, string> = {
+  auto: 'opt.subtitle-position.auto',
   bottom: 'opt.subtitle-position.bottom',
   raised: 'opt.subtitle-position.raised',
   top: 'opt.subtitle-position.top',

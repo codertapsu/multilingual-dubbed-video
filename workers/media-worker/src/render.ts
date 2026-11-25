@@ -373,7 +373,10 @@ function writeBurnScript(
   if (isAssScript(subtitlePath)) return subtitlePath;
   const cues = parseSubtitleCues(readFileSync(subtitlePath, 'utf8'));
   const style = { ...input.burnSubtitleStyle, fontFamily: burnFont.family };
-  const layout = computeAssLayout(style, geometry.width, geometry.height);
+  // The video's own subtitles, when found: the dub's text keeps clear of them.
+  const layout = computeAssLayout(style, geometry.width, geometry.height, {
+    ...(input.sourceSubtitleBand ? { sourceBand: input.sourceSubtitleBand } : {}),
+  });
   // The band spans the whole video; a little past the container duration
   // covers streams that run slightly long. Unknown duration: the ASS max.
   const endMs = durationMs > 0 ? durationMs + 1000 : Number.MAX_SAFE_INTEGER;

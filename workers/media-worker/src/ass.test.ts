@@ -10,6 +10,7 @@ import {
   cueTextToAss,
   formatAssTime,
   parseSubtitleCues,
+  sourceBandRect,
   type SubtitleCue,
 } from './ass.js';
 import {
@@ -142,6 +143,37 @@ describe('computeAssLayout', () => {
   it('positions: raised clears a two-line source subtitle strip; top flips the anchor', () => {
     expect(computeAssLayout({ position: 'raised' }, 1280, 720)).toMatchObject({ alignment: 2, marginV: 130 });
     expect(computeAssLayout({ position: 'top' }, 1280, 720)).toMatchObject({ alignment: 8, marginV: 32 });
+  });
+
+  it("auto (nothing chosen) sits just above the video's own subtitles when they were found and are left in view (claude-dubber, 2026-11-25)", () => {
+    // The report's landscape source: its Chinese line at 0.92–0.965 of the height, where bottom draws.
+    const band = { y: 0.92, h: 0.045 };
+    // 720 - 662 (the band's top) + 2 % of 720.
+    const auto = computeAssLayout(undefined, 1280, 720, { sourceBand: band });
+    expect(auto).toMatchObject({ alignment: 2, marginV: 72 });
+    expect(computeAssLayout({ position: 'auto' }, 1280, 720, { sourceBand: band })).toEqual(auto);
+    // Vertical sources alike: 76–81 % of a 1080×1920 frame.
+    expect(computeAssLayout(undefined, 1080, 1920, { sourceBand: { y: 0.755, h: 0.06 } }).marginV).toBe(508);
+    // Chosen by hand, the strip stays where it was chosen.
+    expect(computeAssLayout({ position: 'bottom' }, 1280, 720, { sourceBand: band }).marginV).toBe(32);
+    // Nothing found: the conventional strip, as before.
+    expect(computeAssLayout(undefined, 1280, 720)).toEqual(computeAssLayout({ position: 'bottom' }, 1280, 720));
+  });
+
+  it('auto leaves a band in the top half alone, and a covered band to the cover', () => {
+    expect(computeAssLayout(undefined, 1280, 720, { sourceBand: { y: 0.05, h: 0.06 } }).marginV).toBe(32);
+    const style = { coverOriginal: 'blur' as const, coverBand: { y: 0.92, h: 0.045 } };
+    expect(computeAssLayout(style, 1280, 720, { sourceBand: { y: 0.92, h: 0.045 } })).toEqual(computeAssLayout(style, 1280, 720));
+    expect(sourceBandRect({ y: 0.92, h: 0.045 }, 720)).toEqual({ top: 662, height: 32 });
+    expect(sourceBandRect({ y: 0.3, h: 0.1 }, 720)).toBeUndefined();
+    expect(sourceBandRect({ y: 0.9, h: 0 }, 720)).toBeUndefined();
+  });
+
+  it("raised keeps clear of the video's own subtitles found higher than its strip; top stays at the top", () => {
+    // 76–81 % of a 1280×720 frame, above raised's 18 % (130 px): 720 - 547 + 14.4.
+    expect(computeAssLayout({ position: 'raised' }, 1280, 720, { sourceBand: { y: 0.76, h: 0.05 } }).marginV).toBe(187);
+    expect(computeAssLayout({ position: 'raised' }, 1280, 720, { sourceBand: { y: 0.92, h: 0.045 } }).marginV).toBe(130);
+    expect(computeAssLayout({ position: 'top' }, 1280, 720, { sourceBand: { y: 0.92, h: 0.045 } })).toMatchObject({ alignment: 8, marginV: 32 });
   });
 
   it('coverOriginal: an opaque band over the bottom strip, tall enough for two lines', () => {

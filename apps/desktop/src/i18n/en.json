@@ -1248,6 +1248,7 @@
     "subtitles-render": "Subtitles & render",
     "subtitles": "Subtitles",
     "subtitle-position": "Subtitle position",
+    "subtitle-position-hint": "Automatic puts the dub's subtitles just above the video's own burned-in subtitles when the app has found them (see \"Picture\" below) and they are not covered; otherwise at the bottom. Bottom always draws at the bottom.",
     "cover-original": "Cover the original subtitles",
     "cover-original-hint": "Many videos have their own subtitles burned in. Under \"Picture\" below, the app finds where they are, and you choose to blur them or cover them with a solid band.",
     "render-quality": "Render quality",
@@ -1831,6 +1832,7 @@
       "remove": "Remove original audio completely"
     },
     "subtitle-position": {
+      "auto": "Automatic — just above the video's own subtitles when it has them",
       "bottom": "Bottom (standard)",
       "raised": "Raised — above the video's own subtitles",
       "top": "Top of the picture"

@@ -1936,6 +1936,38 @@ describe('PipelineRunner — picture options in the render', () => {
     notes: [],
   });
 
+  /** A detection saved where the picture detection keeps it (picture/detection.json). */
+  async function saveDetection(workspaceDir: string, band: { y: number; h: number; confidence: number }): Promise<void> {
+    await fsp.mkdir(path.join(workspaceDir, 'picture'), { recursive: true });
+    await fsp.writeFile(path.join(workspaceDir, 'picture', 'detection.json'), JSON.stringify({ ...detection(0.8), band }));
+  }
+
+  it("tells a burned-in render where the video's own subtitles are, from a detection already made (claude-dubber, 2026-11-25)", async () => {
+    const { project, deps, media } = await buildProject({ settings: { ...defaultSettings(), subtitleExportMode: 'burned-in' } });
+    await saveDetection(project.workspaceDir, { y: 0.92, h: 0.045, confidence: 0.9 });
+    await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
+    expect(media.renderInputs.at(-1)!.sourceSubtitleBand).toEqual({ y: 0.92, h: 0.045 });
+  });
+
+  it('names no band that is too unsure, none without burned-in subtitles, and the band set to cover first', async () => {
+    const unsure = await buildProject({ settings: { ...defaultSettings(), subtitleExportMode: 'burned-in' } });
+    await saveDetection(unsure.project.workspaceDir, { y: 0.92, h: 0.045, confidence: 0.2 });
+    await new PipelineRunner(unsure.deps).run(unsure.project, { signal: new AbortController().signal });
+    expect(unsure.media.renderInputs.at(-1)).not.toHaveProperty('sourceSubtitleBand');
+
+    const sidecar = await buildProject();
+    await saveDetection(sidecar.project.workspaceDir, { y: 0.92, h: 0.045, confidence: 0.9 });
+    await new PipelineRunner(sidecar.deps).run(sidecar.project, { signal: new AbortController().signal });
+    expect(sidecar.media.renderInputs.at(-1)).not.toHaveProperty('sourceSubtitleBand');
+
+    const set = await buildProject({
+      settings: { ...defaultSettings(), subtitleExportMode: 'burned-in', burnSubtitleStyle: { coverBand: { y: 0.755, h: 0.06 } } },
+    });
+    await saveDetection(set.project.workspaceDir, { y: 0.92, h: 0.045, confidence: 0.9 });
+    await new PipelineRunner(set.deps).run(set.project, { signal: new AbortController().signal });
+    expect(set.media.renderInputs.at(-1)!.sourceSubtitleBand).toEqual({ y: 0.755, h: 0.06 });
+  });
+
   it('finds the watermark at render when asked to, saves the box in the project and blurs it', async () => {
     const { project, deps, media } = await buildProject({ settings: { ...defaultSettings(), watermarkAuto: { mode: 'pixelate', strength: 6 } } });
     const asked: string[] = [];

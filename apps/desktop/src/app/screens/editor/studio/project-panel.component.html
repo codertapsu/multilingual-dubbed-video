@@ -351,7 +351,7 @@
             <label class="setting-row">
               <span class="label">{{ 'editor.subtitle-position' | translate }}</span>
               <select
-                [ngModel]="s.burnSubtitleStyle?.position ?? 'bottom'"
+                [ngModel]="s.burnSubtitleStyle?.position ?? 'auto'"
                 (ngModelChange)="onBurnStyleChange({ position: $event })"
                 [disabled]="redubbing()"
               >
@@ -360,6 +360,7 @@
                 }
               </select>
             </label>
+            <p class="hint">{{ 'editor.subtitle-position-hint' | translate }}</p>
             <!-- Set in the Picture block below (the band's way, place and strength). -->
             <div class="setting-row">
               <span class="label">{{ 'editor.cover-original' | translate }}</span>

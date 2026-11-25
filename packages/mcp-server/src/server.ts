@@ -170,8 +170,10 @@ const editableSettings = z
     burnSubtitleStyle: z
       .object({
         position: z
-          .enum(['bottom', 'raised', 'top'])
-          .describe('Where burned-in subtitles sit: bottom (standard), raised (above a source\'s own hardsubs), top.'),
+          .enum(['auto', 'bottom', 'raised', 'top'])
+          .describe(
+            "Where burned-in subtitles sit: auto (default) = just above the source's own hardsubs when the app found them (detect_watermark, or the band set to cover) and they are not covered, else at the bottom; bottom = always the standard strip; raised = above that strip and above the source's hardsubs; top.",
+          ),
         coverOriginal: z
           .union([z.boolean(), z.enum(['solid', 'blur'])])
           .describe(

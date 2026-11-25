@@ -143,6 +143,7 @@ import { reuseRecapTranslations } from '../series/recap.js';
 import { siteTranscript } from '../providers/download/siteSubtitles.js';
 import { thumbnailMomentMs } from './thumbnailMoment.js';
 import { autoBlurRegions, describeMarks, faintMarks } from '../picture/watermarkAuto.js';
+import { savedDetection } from '../picture/pictureDetection.js';
 import type { WarningInbox } from '../diagnostics/warningInbox.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
@@ -3355,6 +3356,20 @@ export class PipelineRunner {
     );
   }
 
+  /**
+   * Where the video's own burned-in subtitles are, for the render to keep the
+   * dub's text clear of them: the band set to cover, else a picture detection
+   * already made (the project's own; a part's series looked at the whole
+   * video). Nothing is detected here: a render never waits for a detection.
+   */
+  private async sourceSubtitleBand(project: Project): Promise<{ y: number; h: number } | undefined> {
+    const own = subtitleBandFor(project, await savedDetection(project));
+    if (own) return own.band;
+    if (project.series?.role !== 'part') return undefined;
+    const parent = await this.deps.store.getProject(project.series.parentId).catch(() => undefined);
+    return parent ? subtitleBandFor(project, await savedDetection(parent))?.band : undefined;
+  }
+
   private async stepRender(project: Project, paths: WorkspacePaths, signal: AbortSignal): Promise<void> {
     throwIfCancelled(signal);
     const mode = project.settings.subtitleExportMode;
@@ -3388,6 +3403,13 @@ export class PipelineRunner {
     // default); it may have been removed since it was chosen.
     const outputPath = projectOutputVideoPath(project);
     await fsp.mkdir(project.outputDir, { recursive: true });
+    const sourceBand = mode === 'burned-in' ? await this.sourceSubtitleBand(project) : undefined;
+    if (sourceBand) {
+      this.deps.logger.info(
+        `The video's own subtitles are at ${Math.round(sourceBand.y * 100)}–${Math.round((sourceBand.y + sourceBand.h) * 100)} % of the height: ` +
+          `the dub's subtitles keep clear of them unless they are covered (position ${project.settings.burnSubtitleStyle?.position ?? 'auto'}).`,
+      );
+    }
     this.deps.logger.info(`Rendering final video (subtitle mode: ${mode}) to ${outputPath}...`);
     const result = await this.deps.media.renderFinalVideo(
       {
@@ -3397,6 +3419,7 @@ export class PipelineRunner {
         subtitleExportMode: mode,
         subtitlePath,
         burnSubtitleStyle: project.settings.burnSubtitleStyle,
+        ...(sourceBand ? { sourceSubtitleBand: sourceBand } : {}),
         copyVideoStream: mode !== 'burned-in',
         ...(project.settings.renderQuality ? { renderQuality: project.settings.renderQuality } : {}),
         ...(logo ? { logo } : {}),

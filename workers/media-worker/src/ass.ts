@@ -217,11 +217,33 @@ export function coverBandRect(style: SubtitleStyle | undefined, width: number, h
   return { top: h - bandHeight, height: bandHeight };
 }
 
+/** The gap kept between the dub's text and a band it stays clear of, % of the height. */
+const CLEAR_GAP_PERCENT = 2;
+
+/**
+ * The video's own burned-in subtitles as a rectangle to keep clear of, in
+ * pixels, when they sit in the lower half of the picture: a band at the top
+ * never meets a dub drawn at the bottom. Pure.
+ */
+export function sourceBandRect(band: { y: number; h: number } | undefined, height: number): { top: number; height: number } | undefined {
+  if (!band || !finite(band.y) || !finite(band.h) || band.h <= 0 || band.y < 0.5 || band.y >= 1) return undefined;
+  const h = Math.max(16, Math.round(height));
+  const top = Math.min(h - 2, Math.round(band.y * h));
+  return { top, height: Math.min(h - top, Math.max(2, Math.round(Math.min(1, band.h) * h))) };
+}
+
 /**
  * Lay out burned subtitles for a `width`x`height` frame (display orientation).
- * Pure; see SubtitleStyle for what each field means and its default.
+ * `sourceBand`: where the video's own subtitles are (RenderFinalVideoInput
+ * .sourceSubtitleBand), kept clear of when they are not covered. Pure; see
+ * SubtitleStyle for what each field means and its default.
  */
-export function computeAssLayout(style: SubtitleStyle | undefined, width: number, height: number): AssLayout {
+export function computeAssLayout(
+  style: SubtitleStyle | undefined,
+  width: number,
+  height: number,
+  opts: { sourceBand?: { y: number; h: number } } = {},
+): AssLayout {
   const s = style ?? {};
   const w = Math.max(16, Math.round(width));
   const h = Math.max(16, Math.round(height));
@@ -232,7 +254,10 @@ export function computeAssLayout(style: SubtitleStyle | undefined, width: number
     ? (s.outlineWidth / LEGACY_CANVAS) * shortSide
     : em * OUTLINE_PER_EM;
 
-  const position = s.position ?? (s.alignment === 'top' ? 'top' : s.alignment === 'center' ? 'center' : 'bottom');
+  // Nothing chosen is `auto`; the legacy `alignment` still says top or centre
+  // (its `bottom` was only ever the default).
+  const chosen = s.position === 'auto' ? undefined : s.position;
+  const position = chosen ?? (s.alignment === 'top' ? 'top' : s.alignment === 'center' ? 'center' : 'auto');
   const bottomMargin = (BOTTOM_MARGIN_PERCENT / 100) * h;
 
   // The band over the source's subtitles: drawn here when solid; a blurred
@@ -244,6 +269,10 @@ export function computeAssLayout(style: SubtitleStyle | undefined, width: number
     const opacity = finite(s.coverOpacity) ? Math.min(1, Math.max(0, s.coverOpacity)) : DEFAULT_COVER_OPACITY;
     band = { top: cover.top, height: cover.height, opacity };
   }
+
+  // The video's own subtitles, left in view (not covered): kept clear of.
+  const own = cover ? undefined : sourceBandRect(opts.sourceBand, h);
+  const above = (r: { top: number }): number => h - r.top + (CLEAR_GAP_PERCENT / 100) * h;
 
   let alignment = 2;
   let marginV = bottomMargin;
@@ -261,8 +290,14 @@ export function computeAssLayout(style: SubtitleStyle | undefined, width: number
     marginV = 0;
   } else if (position === 'raised') {
     // Above the original's strip — and above the band when one is drawn, so
-    // the text never straddles its edge.
-    marginV = Math.max((RAISED_MARGIN_PERCENT / 100) * h, cover ? h - cover.top + 0.02 * h : 0);
+    // the text never straddles its edge, or the video's own subtitles when
+    // they were found higher than the strip.
+    marginV = Math.max((RAISED_MARGIN_PERCENT / 100) * h, cover ? above(cover) : 0, own ? above(own) : 0);
+  } else if (position === 'auto' && own) {
+    // Just above the video's own subtitles: on landscape sources their line
+    // sits exactly where the bottom strip draws, and every line of a dub
+    // overlapped until the user raised them by hand (claude-dubber, 2026-11-25).
+    marginV = above(own);
   }
 
   return {

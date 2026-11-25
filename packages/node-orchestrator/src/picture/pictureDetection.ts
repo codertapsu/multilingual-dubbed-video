@@ -135,6 +135,19 @@ export function pictureDirOf(project: Pick<Project, 'workspaceDir'>): string {
   return path.join(project.workspaceDir, 'picture');
 }
 
+/**
+ * The project's last picture detection as saved, or undefined when none ran
+ * (or its file is unreadable). Only reads: the render asks it where the
+ * video's own subtitles are, and a render never waits for a detection.
+ */
+export async function savedDetection(project: Pick<Project, 'workspaceDir'>): Promise<PictureDetection | undefined> {
+  try {
+    return JSON.parse(await fsp.readFile(path.join(pictureDirOf(project), DETECTION_FILE), 'utf8')) as PictureDetection;
+  } catch {
+    return undefined;
+  }
+}
+
 /** A short sentence of what was found, for the activity list. Pure. */
 export function detectionSummary(d: PictureDetection): string {
   const marks = d.regions.length === 0 ? 'no watermark' : d.regions.length === 1 ? '1 watermark' : `${d.regions.length} watermarks`;
@@ -327,12 +340,8 @@ export class PictureDetectionService {
   }
 
   private async savedProjectResult(project: Project): Promise<PictureDetectionJob> {
-    try {
-      const result = JSON.parse(await fsp.readFile(path.join(pictureDirOf(project), DETECTION_FILE), 'utf8')) as PictureDetection;
-      return { state: 'done', result };
-    } catch {
-      return { state: 'idle' };
-    }
+    const result = await savedDetection(project);
+    return result ? { state: 'done', result } : { state: 'idle' };
   }
 
   private async withAi(result: PictureDetection, opts: StartDetection, project?: Project): Promise<PictureDetection> {

@@ -269,8 +269,12 @@ What you can do, and how:
   final file; transcription and translation are reused, so it takes seconds to
   minutes, not the whole pipeline again.
 - **Place burned-in subtitles.** With subtitles burned in, the Project tab has
-  **Subtitle position** (bottom, raised above the video's own subtitles, or top)
-  and **Cover the original subtitles**, for the many videos (Chinese dramas
+  **Subtitle position**: **Automatic** (the default) puts the dub's subtitles
+  just above the video's own when the app has found them (the **Picture**
+  section, or a dub of Chinese, Japanese or Korean, which looks for them) and
+  they are not covered, and at the bottom otherwise; **Bottom** always draws at
+  the bottom, **Raised** higher up, **Top** at the top. There is also
+  **Cover the original subtitles**, for the many videos (Chinese dramas
   especially) that have their own subtitles burned in: the **Picture** section
   finds where they are and blurs them or covers them with a solid band (see
   *Hiding a watermark and the video's own subtitles* below). **Render quality → Automatic** (the default for new projects) uses

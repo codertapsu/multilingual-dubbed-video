@@ -407,7 +407,9 @@
     "series-badge": "Series",
     "part-badge": "Part {{n}}/{{count}}",
     "published-badge": "Posted",
-    "queue-entry-pressure": "#{{ position }} {{ name }} — waiting: the computer is short of memory while a dub runs"
+    "queue-entry-pressure": "#{{ position }} {{ name }} — waiting: the computer is short of memory while a dub runs",
+    "queue-entry-gpu-hold": "#{{ position }} {{ name }} — waiting: {{ app }} is using the graphics card",
+    "queue-gpu-hold": "{{ app }} is using the graphics card: dubs that need it wait until it is done; what is running goes on."
   },
   "settings": {
     "title": "Settings",
@@ -1114,7 +1116,8 @@
     "dismiss-warning": "Dismiss",
     "dismiss-warning-hint": "Set this warning aside once you have checked it. It comes back if the step runs again and finds the same.",
     "held-title": "⚠️ {{count}} line(s) still fail the translation checks",
-    "held-body": "The dub stopped before making any voice, because \"Stop before voicing while lines still fail the translation checks\" is on. Fix the lines marked in the editor (Problems), then continue dubbing: it voices the lines as they are then."
+    "held-body": "The dub stopped before making any voice, because \"Stop before voicing while lines still fail the translation checks\" is on. Fix the lines marked in the editor (Problems), then continue dubbing: it voices the lines as they are then.",
+    "queue-reason-gpu-hold": "{{ app }} is using the graphics card (a live session), so this dub starts when it is done. Nothing that is already running is stopped."
   },
   "onboarding": {
     "title": "Welcome to VideoDubber",

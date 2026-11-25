@@ -113,6 +113,7 @@ import type { ClipTrim, PipelineMediaService, SeparationService } from './media.
 import type { AlignmentService } from './providers/alignment/whisperxProvider.js';
 import type { DiarizationService } from './providers/diarization/sherpaDiarizationProvider.js';
 import type { SubtitleOcrService } from './providers/ocr/rapidOcrProvider.js';
+import { HOLD_OWNER_PREFIX, holderName, holdView, type GpuHolds } from './scheduler/gpuHolds.js';
 import type { ProviderRegistry } from './providers/registry.js';
 import { assertRunReady, type ProviderReadiness } from './providers/readiness.js';
 import {
@@ -200,6 +201,8 @@ export interface OrchestratorDeps {
   alignment?: AlignmentService;
   /** Optional speaker detection: who says each line (the diarize setting). */
   diarization?: DiarizationService;
+  /** Other apps' holds on the graphics card (POST /scheduler/holds; Voice Mask's live sessions). */
+  holds?: GpuHolds;
   /** Optional reader of burned-in subtitles (settings.useBurnedInSubtitles). */
   ocr?: SubtitleOcrService;
   /** Where speech is in a project's audio, to anchor transcript lines (see RunnerDeps). */
@@ -431,6 +434,23 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // A lane whose owner is gone (a run that ended, an editor action or a
     // preview that never released it) is free: the engine manager asks us.
     deps.engines?.setOwnerLiveness?.((owner) => this.laneOwnerAlive(owner));
+    // Another app's hold on the card (scheduler/gpuHolds.ts): new owners wait,
+    // and the queue is looked at again when a hold comes, goes or expires.
+    deps.engines?.setLaneGate?.((owner) => this.laneGate(owner));
+    deps.holds?.setOnChange(() => void this.pump());
+  }
+
+  /**
+   * Whether `owner` may take the FREE heavy lane now: not while another app
+   * holds the graphics card, except a dub the scheduler admitted on the lane
+   * before the hold, which keeps its right for every one of its steps (a hold
+   * never stops or slows what already runs).
+   */
+  private laneGate(owner: string): { by: string } | undefined {
+    const hold = this.deps.holds?.holding('gpu');
+    if (!hold) return undefined;
+    if (this.running.has(owner) && this.workloads.get(owner)?.needsHeavyEngine === true) return undefined;
+    return { by: holderName(hold.holder) };
   }
 
   /** Build a per-project logger bound to the project's event bus. */
@@ -2712,7 +2732,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    */
   private externalHeavyOwner(): string | undefined {
     const owner = this.deps.engines?.heavyLaneOwner();
-    return owner !== undefined && !this.running.has(owner) ? owner : undefined;
+    if (owner !== undefined && !this.running.has(owner)) return owner;
+    // Another app's hold on the card: new heavy work waits for it.
+    const hold = this.deps.holds?.holding('gpu');
+    return hold ? `${HOLD_OWNER_PREFIX}${hold.holder}` : undefined;
   }
 
   /** Running jobs in the shape the admission rule reads. */
@@ -3067,12 +3090,14 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         }),
       ),
       ...(this.deps.engines?.heavyLaneOwner() ? { laneOwner: this.deps.engines.heavyLaneOwner()! } : {}),
+      holds: (this.deps.holds?.live() ?? []).map(holdView),
       entries: this.queue.map((projectId, i) => ({
         projectId,
         name: names.get(projectId) ?? projectId,
         position: i + 1,
         reason: held.get(projectId)?.reason ?? 'no-slot',
         message: held.get(projectId)?.message ?? 'Waiting for a free slot.',
+        ...(held.get(projectId)?.heldBy ? { heldBy: held.get(projectId)!.heldBy! } : {}),
       })),
     };
   }

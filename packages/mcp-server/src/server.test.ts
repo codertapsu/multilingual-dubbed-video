@@ -623,6 +623,22 @@ describe('VideoDubber MCP server', () => {
     expect(out).toContain('Auto-fit (3 over-long unit(s)): 1 line(s) shortened, 1 refused, 1 still long.');
   });
 
+  it("get_queue says when another app holds the graphics card, and why a dub waits for it", async () => {
+    fake.routes.set('GET /queue', () => ({
+      maxProjects: 2,
+      budgetPoints: 4,
+      usedPoints: 0,
+      paused: false,
+      running: [],
+      holds: [{ holdId: 'hold_abc', holder: 'voice-mask', name: 'Voice Mask', lanes: ['gpu'], reason: 'live session', createdAt: '2026-11-25T14:00:00.000Z', expiresAt: '2026-11-25T14:00:30.000Z' }],
+      entries: [{ projectId: 'proj_1', name: 'Tập 7', position: 1, reason: 'gpu-hold', message: 'Waiting: Voice Mask is using the graphics card.', heldBy: 'Voice Mask' }],
+    }));
+    await connect();
+    const r = await call('get_queue');
+    expect(r.text).toContain('Voice Mask is using the graphics card (hold hold_abc, until 2026-11-25T14:00:30.000Z, renewed by its app): live session.');
+    expect(r.text).toContain('gpu-hold (Waiting: Voice Mask is using the graphics card.)');
+  });
+
   it('pause_dubbing pauses, and get_project says where it stopped and how to continue', async () => {
     let paused = false;
     fake.routes.set('POST /projects/proj_1/pause', () => {

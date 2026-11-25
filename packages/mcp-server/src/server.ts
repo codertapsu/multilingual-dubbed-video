@@ -474,7 +474,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'The dubbing queue',
       description:
-        'What is dubbing now (step, progress, estimated time left), what waits and why (no free slot, the GPU is busy, the queue is paused), who holds the GPU lane (a dub, an editor action or a voice preview), and the points budget.',
+        'What is dubbing now (step, progress, estimated time left), what waits and why (no free slot, the GPU is busy, another app such as Voice Mask holds the graphics card, the queue is paused), who holds the GPU lane (a dub, an editor action or a voice preview), other apps\' holds on the graphics card, and the points budget.',
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -485,6 +485,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         usedPoints: number;
         paused: boolean;
         laneOwner?: string;
+        holds?: { holdId: string; holder: string; name?: string; reason: string; expiresAt: string }[];
         running: { projectId: string; name: string; heavy: boolean; step?: string; progressPercent?: number; etaSec?: number }[];
         entries: { projectId: string; name: string; position: number; reason: string; message: string }[];
       };
@@ -492,6 +493,10 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const lines = [
         `Dubs at once: ${q.maxProjects} (points ${q.usedPoints}/${q.budgetPoints})${q.paused ? '; the queue is PAUSED (Settings)' : ''}.`,
         `GPU lane: ${q.laneOwner ? `held by ${q.laneOwner}` : 'free'}.`,
+        // Another app's hold (Voice Mask's live session): new dubs needing the card wait; nothing running is touched.
+        ...(q.holds ?? []).map(
+          (h) => `${h.name ?? h.holder} is using the graphics card (hold ${h.holdId}, until ${h.expiresAt}, renewed by its app)${h.reason ? `: ${h.reason}` : ''}. New dubs that need it wait.`,
+        ),
         q.running.length > 0 ? 'Dubbing now:' : 'Nothing is dubbing.',
         ...q.running.map(
           (r) =>

@@ -534,6 +534,14 @@ export class EngineManager {
    * free, whatever forgot to release it.
    */
   private ownerAlive: ((owner: string) => boolean) | undefined;
+  /**
+   * Whether an owner may take the lane while it is FREE: undefined, or the
+   * app that holds the graphics card (scheduler/gpuHolds.ts). Set by the
+   * orchestrator. The owner already holding the lane keeps it.
+   */
+  private laneGate: ((owner: string) => { by: string } | undefined) | undefined;
+  /** Who the gate last refused the lane for, so a CPU fallback can say who held the card. */
+  private gatedBy: string | undefined;
   /** Packs that failed to start in this session (see ensureRunningFirstUsable). */
   private readonly unusablePacks = new Set<string>();
   /** In-flight starts per pack, so concurrent calls share one spawn. */
@@ -550,6 +558,23 @@ export class EngineManager {
   /** Tell the manager how to know whether a lane owner still exists (Orchestrator). */
   setOwnerLiveness(alive: (owner: string) => boolean): void {
     this.ownerAlive = alive;
+  }
+
+  /** Tell the manager who may take a free lane while another app holds the card (Orchestrator). */
+  setLaneGate(gate: (owner: string) => { by: string } | undefined): void {
+    this.laneGate = gate;
+  }
+
+  /**
+   * Refuse a FREE lane to `owner` while another app holds the graphics card:
+   * the same ENGINE_BUSY a dub holding it gives, so callers that move to the
+   * next installed runtime (usually the CPU build) do, as they do today.
+   */
+  private checkLaneGate(owner: string, what: string): void {
+    const gate = this.laneGate?.(owner);
+    if (!gate) return;
+    this.gatedBy = gate.by;
+    throw new AppErrorException('ENGINE_BUSY', `${gate.by} is using the graphics card, so ${what} cannot start on it now.`);
   }
 
   /**
@@ -595,6 +620,7 @@ export class EngineManager {
     if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
       throw new AppErrorException('ENGINE_BUSY', `${label} needs the engines another dub is using (${this.heavyOwner}).`);
     }
+    if (this.heavyOwner === undefined) this.checkLaneGate(owner, label);
     this.takeLane(owner);
     await this.unloadHeavyExcept('');
   }
@@ -674,7 +700,7 @@ export class EngineManager {
           const owner = opts.ownerId ?? currentEngineOwner();
           if (busy) {
             this.deps.logger?.info(
-              `Engine pack "${packId}" is waiting on the GPU, which ${this.heavyOwner ?? 'another job'} is using; ` +
+              `Engine pack "${packId}" is waiting on the GPU, which ${this.heavyOwner ?? this.gatedBy ?? 'another job'} is using; ` +
                 'this step uses the next installed runtime (usually the CPU build, slower). Nothing needs reinstalling.',
             );
           } else {
@@ -687,7 +713,7 @@ export class EngineManager {
             packId,
             ...(owner ? { ownerId: owner } : {}),
             reason: busy ? 'busy' : 'failed',
-            ...(busy && this.heavyOwner ? { busyWith: this.heavyOwner } : {}),
+            ...(busy && (this.heavyOwner ?? this.gatedBy) ? { busyWith: (this.heavyOwner ?? this.gatedBy)! } : {}),
           });
         }
       }
@@ -719,7 +745,10 @@ export class EngineManager {
           `The "${this.providerOf(packId)}" engine is in use by another dub (${this.heavyOwner}).`,
         );
       }
-      if (this.heavyOwner === undefined) claimedLane = owner;
+      if (this.heavyOwner === undefined) {
+        this.checkLaneGate(owner, `the "${this.providerOf(packId)}" engine`);
+        claimedLane = owner;
+      }
       this.takeLane(owner);
     }
 

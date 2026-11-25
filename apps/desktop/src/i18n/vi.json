@@ -407,7 +407,9 @@
     "series-badge": "Bộ phim",
     "part-badge": "Phần {{n}}/{{count}}",
     "published-badge": "Đã đăng",
-    "queue-entry-pressure": "#{{ position }} {{ name }} — đang chờ: máy đang thiếu bộ nhớ trong lúc một bản lồng tiếng chạy"
+    "queue-entry-pressure": "#{{ position }} {{ name }} — đang chờ: máy đang thiếu bộ nhớ trong lúc một bản lồng tiếng chạy",
+    "queue-entry-gpu-hold": "#{{ position }} {{ name }} — đang chờ: {{ app }} đang dùng card đồ hoạ",
+    "queue-gpu-hold": "{{ app }} đang dùng card đồ hoạ: các bản lồng tiếng cần card sẽ chờ đến khi xong; việc đang chạy vẫn tiếp tục."
   },
   "settings": {
     "title": "Cài đặt",
@@ -1114,7 +1116,8 @@
     "dismiss-warning": "Bỏ qua",
     "dismiss-warning-hint": "Ẩn cảnh báo này sau khi bạn đã kiểm tra. Nó sẽ xuất hiện lại nếu bước đó chạy lại và vẫn gặp đúng vấn đề này.",
     "held-title": "⚠️ Còn {{count}} câu dịch chưa đạt kiểm tra",
-    "held-body": "Quá trình lồng tiếng đã dừng trước khi tạo giọng vì bạn đã bật \"Dừng trước khi tạo giọng nếu còn câu dịch chưa đạt kiểm tra\". Hãy sửa các câu được đánh dấu trong trình chỉnh sửa (mục Vấn đề), rồi tiếp tục lồng tiếng: các câu sẽ được đọc đúng như lúc đó."
+    "held-body": "Quá trình lồng tiếng đã dừng trước khi tạo giọng vì bạn đã bật \"Dừng trước khi tạo giọng nếu còn câu dịch chưa đạt kiểm tra\". Hãy sửa các câu được đánh dấu trong trình chỉnh sửa (mục Vấn đề), rồi tiếp tục lồng tiếng: các câu sẽ được đọc đúng như lúc đó.",
+    "queue-reason-gpu-hold": "{{ app }} đang dùng card đồ hoạ (một phiên trực tiếp), nên bản lồng tiếng này sẽ bắt đầu khi phiên đó xong. Không việc nào đang chạy bị dừng."
   },
   "onboarding": {
     "title": "Chào mừng đến với VideoDubber",

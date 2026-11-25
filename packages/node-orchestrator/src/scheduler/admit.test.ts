@@ -141,3 +141,30 @@ describe('decideAdmissions — external heavy-lane holder (editor actions)', () 
     expect(d.start).toEqual(['b']);
   });
 });
+
+describe('decideAdmissions — another app holds the graphics card (Voice Mask, scheduler/gpuHolds.ts)', () => {
+  const held = { ...ctx(100), externalHeavyOwner: 'hold:voice-mask' };
+
+  it('a heavy dub waits, saying who holds the card', () => {
+    const d = decideAdmissions([heavy('b')], [], held);
+    expect(d.start).toEqual([]);
+    expect(d.held.get('b')).toEqual({ reason: 'gpu-hold', message: 'Waiting: Voice Mask is using the graphics card.', heldBy: 'Voice Mask' });
+  });
+
+  it('dubs that need no heavy engine, and renders, still start', () => {
+    const render = { projectId: 'r', points: 2, needsHeavyEngine: false, lightOnly: true };
+    expect(decideAdmissions([local('a'), cloud('c'), render], [], held).start).toEqual(['a', 'c', 'r']);
+  });
+
+  it('a dub already on the lane is the holder the waiting see: the hold never takes its place', () => {
+    const d = decideAdmissions([heavy('b')], [runningHeavy('a')], { ...held, nameOf: (id) => (id === 'a' ? 'Part 3' : undefined) });
+    expect(d.held.get('b')).toMatchObject({ reason: 'heavy-busy' });
+    expect(d.held.get('b')?.message).toContain('Part 3');
+  });
+
+  it('another holder is named by its id', () => {
+    expect(decideAdmissions([heavy('b')], [], { ...ctx(100), externalHeavyOwner: 'hold:other-app' }).held.get('b')?.message).toBe(
+      'Waiting: other-app is using the graphics card.',
+    );
+  });
+});

@@ -74,6 +74,28 @@ instead of silently stealing the engine. **This fixed a live bug that existed
 with a single project**: regenerating a segment in the editor while a dub ran
 could kill that dub's engine.
 
+### Another app's hold on the graphics card
+
+Voice Mask (a separate app: live voice changing, translated speech, captions)
+keeps its models on the card during a live session, on a PC that dubs for days.
+It asks VideoDubber to leave the card alone with a **hold**
+(`scheduler/gpuHolds.ts`):
+
+- While a hold is live, no **new** heavy-lane work starts: a queued dub that
+  needs the lane waits with the reason `gpu-hold` ("Waiting: Voice Mask is using
+  the graphics card"), and an editor action or a voice preview that would take
+  a free lane gets `ENGINE_BUSY`, so it uses the next installed runtime (usually
+  the CPU build) exactly as when a dub holds the card.
+- A hold never kills, pauses or slows what already runs: a dub admitted on the
+  lane before the hold keeps the lane for all its steps (the engine manager's
+  lane gate lets an admitted heavy run through).
+- Holds live in memory only. The holder renews every 10 s within a TTL of
+  5–120 s (30 by default); one not renewed expires by itself and the queue is
+  looked at again, so a crashed holder blocks dubbing for one TTL at most. A
+  restart drops every hold.
+- `GET /queue` lists them (`holds`); `laneOwner` keeps meaning the project (or
+  editor action, preview) holding the lane in the engine manager.
+
 ## The queue
 
 `decideAdmissions()` (`scheduler/admit.ts`, pure) returns both what to start
@@ -104,9 +126,12 @@ free slot" when the truth was "that engine is busy".
 | Endpoint | Purpose |
 |---|---|
 | `GET /system` | now includes `capacity` (the recommendation + reasons) |
-| `GET /queue` | running + queued entries, limit, points, paused |
+| `GET /queue` | running + queued entries (a `gpu-hold` entry carries `heldBy`), limit, points, paused, `laneOwner`, `holds: [{ holdId, holder, name, lanes, reason, createdAt, expiresAt }]` |
 | `POST /projects/:id/run` | returns `{ started, queued, position? }` |
 | `POST /projects/:id/run-next` | move a queued project to the head |
+| `POST /scheduler/holds` | `{ holder, lanes: ["gpu"], reason, ttlSec }` → 201 `{ holdId, expiresAt, ttlSec }`; holder `[a-z0-9-]{1,40}`, ttl clamped to 5–120 s, reason ≤ 200 characters (logged only); 400 on a bad body, 429 past 4 live holds |
+| `PUT /scheduler/holds/:id` | renew → 200 `{ holdId, expiresAt }`; 404 when unknown or expired (take a new one) |
+| `DELETE /scheduler/holds/:id` | release → 204, also when already gone |
 | `GET/PUT /preferences` | `concurrency: { mode: 'auto' \| 'manual', maxProjects?, paused? }` |
 
 The preference stores the **intent** (`auto`), not a computed number, so a RAM

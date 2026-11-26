@@ -38,6 +38,13 @@ export interface RenderFinalVideoInput {
   subtitlePath?: string;
   /** Style for burned-in subtitles, when mode is "burned-in". */
   burnSubtitleStyle?: SubtitleStyle;
+  /**
+   * Where the video's own burned-in subtitles are, when the app found them
+   * (the band set to cover, or picture detection): top `y` and height `h`, 0–1
+   * of the frame height. The dub's text keeps clear of them when they are not
+   * covered (SubtitleStyle.position `auto` and `raised`).
+   */
+  sourceSubtitleBand?: { y: number; h: number };
   /** Copy the source video stream without re-encoding when possible. */
   copyVideoStream?: boolean;
   /**

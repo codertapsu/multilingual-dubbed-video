@@ -1284,6 +1284,7 @@
     "subtitles-render": "Phụ đề & xuất video",
     "subtitles": "Phụ đề",
     "subtitle-position": "Vị trí phụ đề",
+    "subtitle-position-hint": "Tự động: đặt phụ đề lồng tiếng ngay phía trên phụ đề có sẵn trên hình khi ứng dụng đã tìm thấy chúng (xem mục “Hình ảnh” bên dưới) và chúng không bị che; nếu không thì đặt ở dưới cùng. Chọn Dưới cùng thì phụ đề luôn nằm ở dưới cùng.",
     "cover-original": "Che phụ đề gốc",
     "cover-original-hint": "Nhiều video đã ghi sẵn phụ đề của chúng lên hình. Ở mục “Hình ảnh” bên dưới, ứng dụng tự tìm vị trí phụ đề đó, và bạn chọn làm mờ hoặc phủ một dải màu đặc lên.",
     "render-quality": "Chất lượng xuất video",
@@ -1874,6 +1875,7 @@
       "remove": "Bỏ hẳn âm thanh gốc"
     },
     "subtitle-position": {
+      "auto": "Tự động — ngay phía trên phụ đề sẵn có của video, nếu có",
       "bottom": "Dưới cùng (tiêu chuẩn)",
       "raised": "Nâng lên — phía trên phụ đề sẵn có của video",
       "top": "Phía trên khung hình"

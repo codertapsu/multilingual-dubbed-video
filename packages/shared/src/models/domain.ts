@@ -124,12 +124,18 @@ export interface SubtitleStyle {
   alignment?: 'bottom' | 'top' | 'center';
   /**
    * Where the dub's text sits:
-   * - `bottom` (default) — the conventional subtitle strip.
-   * - `raised` — just above that strip, so a source's own burned-in subtitles
-   *   stay readable instead of colliding with the dub's.
+   * - `auto` (default, also when absent) — just above the video's own
+   *   burned-in subtitles when the app has found them (picture detection, or
+   *   the band set to cover) in the lower half of the picture and they are not
+   *   covered; otherwise the conventional strip. On landscape sources the
+   *   source's own line sits exactly where `bottom` draws, and every line
+   *   overlapped until the user chose `raised` (claude-dubber, 2026-11-25).
+   * - `bottom` — the conventional subtitle strip, whatever the video has there.
+   * - `raised` — above that strip, and above the video's own subtitles when
+   *   they were found higher up, so they stay readable.
    * - `top`    — the top of the frame.
    */
-  position?: 'bottom' | 'raised' | 'top';
+  position?: 'auto' | 'bottom' | 'raised' | 'top';
   /**
    * Draw a full-width band over the bottom strip of the frame, where sources
    * burn in their own subtitles, to hide them. It covers that strip whatever

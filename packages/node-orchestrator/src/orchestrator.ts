@@ -346,7 +346,7 @@ export function sanitizeSubtitleStyle(input: unknown): SubtitleStyle | undefined
   const num = (v: unknown, lo: number, hi: number): number | undefined =>
     typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi ? v : undefined;
   const color = (v: unknown): string | undefined => (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : undefined);
-  if (s.position === 'bottom' || s.position === 'raised' || s.position === 'top') out.position = s.position;
+  if (s.position === 'auto' || s.position === 'bottom' || s.position === 'raised' || s.position === 'top') out.position = s.position;
   // The band over the source's subtitles: solid or blurred, where, how strong (picture/pictureSanitize.ts).
   Object.assign(out, sanitizeCoverFields(s));
   const opacity = num(s.coverOpacity, 0, 1);

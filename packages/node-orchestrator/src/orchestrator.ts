@@ -1216,11 +1216,19 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
   // ----- Extra API methods -------------------------------------------------
 
-  /** Load a project together with its pipeline state. */
-  async getProjectWithPipeline(projectId: string): Promise<{ project: Project; pipeline: PipelineState }> {
+  /**
+   * Load a project together with its pipeline state and, while it dubs, the
+   * time left as the run's own pace says (activity/dubRuns.ts, the estimate
+   * GET /queue shows). WHY the server's estimate: get_project worked it out
+   * from the first step's start, which a render redo keeps from the dub days
+   * earlier: "running, 89%, at render, about 2 h 25 min left" for a render of
+   * minutes (claude-dubber, 2026-11-25).
+   */
+  async getProjectWithPipeline(projectId: string): Promise<{ project: Project; pipeline: PipelineState; etaSec?: number }> {
     const project = await this.deps.store.getProject(projectId);
     const pipeline = await this.deps.store.getPipeline(projectId);
-    return { project, pipeline };
+    const etaSec = pipeline.status === 'running' ? dubRuns.etaOf(projectId) : undefined;
+    return { project, pipeline, ...(etaSec !== undefined ? { etaSec } : {}) };
   }
 
   /** List all projects (most recently updated first). */

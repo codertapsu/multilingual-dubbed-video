@@ -229,15 +229,20 @@ export function renderTranslationReport(doc: TranslationReportDoc): string {
   return lines.length > 0 ? lines.join('\n') : 'No translation passes have run yet.';
 }
 
-/** The pipeline as a short status block. */
-export function renderPipeline(p: PipelineState, now = Date.now()): string {
+/**
+ * The pipeline as a short status block. `etaSec`: the time left as the app
+ * estimates it (GET /projects/:id), shown while the dub runs.
+ */
+export function renderPipeline(p: PipelineState, etaSec?: number): string {
   // A rough time left (steps do not take equal time): what the field report
-  // asked for after a 10-hour dub the agent could only guess the end of.
-  const started = p.steps.find((s) => s.startedAt)?.startedAt;
-  const elapsedSec = started ? (now - Date.parse(started)) / 1000 : NaN;
+  // asked for after a 10-hour dub the agent could only guess the end of. It
+  // is the app's estimate, from this run's own pace. Worked out here from the
+  // first step's start, a render redo (which keeps the steps of the dub days
+  // earlier) read "89%, at render, about 2 h 25 min left" for a render of
+  // minutes (claude-dubber, 2026-11-25). No estimate yet: none is shown.
   const eta =
-    p.status === 'running' && Number.isFinite(elapsedSec) && elapsedSec > 0 && p.progressPercent >= 3 && p.progressPercent < 100
-      ? Math.round((elapsedSec * (100 - p.progressPercent)) / p.progressPercent)
+    p.status === 'running' && etaSec !== undefined && Number.isFinite(etaSec) && p.progressPercent < 100
+      ? Math.max(0, Math.round(etaSec))
       : undefined;
   const lines = [
     `Pipeline: ${p.status}, ${Math.round(p.progressPercent)}%${p.currentStep ? `, at "${p.currentStep}"` : ''}` +

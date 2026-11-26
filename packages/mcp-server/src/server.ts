@@ -382,8 +382,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       signal?.addEventListener('abort', () => (clearTimeout(t), resolve()), { once: true });
     });
 
+  /** `etaSec`: the time left while it dubs, from the run's own pace (absent too early to tell). */
   const getProject = (id: string, signal?: AbortSignal) =>
-    api.get<{ project: Project; pipeline: PipelineState }>(`/projects/${encodeURIComponent(id)}`, { ...(signal ? { signal } : {}) });
+    api.get<{ project: Project; pipeline: PipelineState; etaSec?: number }>(`/projects/${encodeURIComponent(id)}`, { ...(signal ? { signal } : {}) });
 
   const getTimeline = (id: string, signal?: AbortSignal) =>
     api.get<TimelineDocument>(`/projects/${encodeURIComponent(id)}/timeline`, { ...(signal ? { signal } : {}) });
@@ -1592,14 +1593,14 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     },
     guarded(async ({ projectId, waitSeconds }, ctx) => {
       const signal = ctx.mcpReq.signal;
-      let { project, pipeline } = await getProject(projectId, signal);
+      let { project, pipeline, etaSec } = await getProject(projectId, signal);
       const signature = (p: PipelineState) =>
         `${p.status}|${p.currentStep}|${p.awaitingReview}|${p.steps.map((s) => `${s.status}${Math.floor(s.progressPercent / 10)}`).join(',')}`;
       const startSig = signature(pipeline);
       const deadline = Date.now() + waitSeconds * 1000;
       while (pipeline.status === 'running' && Date.now() < deadline && !signal.aborted) {
         await sleep(pollMs, signal);
-        ({ project, pipeline } = await getProject(projectId, signal));
+        ({ project, pipeline, etaSec } = await getProject(projectId, signal));
         void progress(ctx, pipeline.progressPercent, 100, `${pipeline.currentStep ?? ''} ${Math.round(pipeline.progressPercent)}%`);
         if (signature(pipeline) !== startSig) break;
       }
@@ -1609,7 +1610,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         ...audioDriftLines(project.mediaInfo),
         `Saves to: ${projectOutputVideoPath(project)} (and subtitle files beside it)`,
         `Settings: ${settingsSummary(project.settings)}`,
-        renderPipeline(pipeline),
+        renderPipeline(pipeline, etaSec),
       ];
       // Work on the project outside its dub (an app of before 0.18 has no such route: nothing to list).
       const jobs = await api.get<{ jobs: ProjectJobLite[] }>(`/projects/${encodeURIComponent(projectId)}/jobs`, { signal }).catch(() => undefined);

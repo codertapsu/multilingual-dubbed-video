@@ -132,56 +132,207 @@
       </div>
     </div>
   } @else {
-    <ul class="project-list" role="list">
-      @for (row of listed(); track row.project.id) {
-        @let project = row.project;
-        <li class="project-card" [class.nested]="row.nested">
-          <button
-            type="button"
-            class="project-open"
-            (click)="open(project)"
-            [attr.aria-label]="'home.open-aria' | translate: { name: project.name }"
-          >
-            <div class="project-main">
-              <span class="project-name">{{ project.name }}</span>
-              <span class="project-path mono">{{ project.inputVideoPath }}</span>
-            </div>
-            <div class="project-meta">
-              @if (project.series?.role === 'parent') {
-                <span class="badge badge-warning">{{ 'home.series-badge' | translate }}</span>
-              }
-              @if (project.series?.role === 'part') {
-                <span class="badge">{{ 'home.part-badge' | translate: { n: partIndex(project), count: partCount(project) } }}</span>
-              }
-              @if (project.published?.length) {
-                <span class="badge badge-completed">{{ 'home.published-badge' | translate }}</span>
-              }
-              <span class="badge badge-pending">{{ dubLabel(project) }}</span>
-              @if (project.mediaInfo) {
-                <span class="muted">{{
-                  formatDuration(project.mediaInfo.durationMs)
-                }}</span>
-              }
-              <vd-status-badge [status]="badgeStatus(project)" />
-            </div>
-          </button>
-          <!-- Beside the card, never inside it: a button may not hold another. -->
-          <button
-            type="button"
-            class="icon-btn project-delete"
-            (click)="deleteProject(project)"
-            [disabled]="deleting() !== null || isBusy(project)"
-            [attr.aria-label]="'home.delete-aria' | translate: { name: project.name }"
-            [title]="(isBusy(project) ? 'home.delete-busy' : 'home.delete') | translate"
-          >
-            @if (deleting() === project.id) {
-              …
-            } @else {
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
+    <!-- Find a project, show only what needs doing, choose the order: a long
+         list of dubs stays readable (2026-11-26). -->
+    <div class="list-toolbar">
+      <input
+        type="search"
+        class="list-search"
+        [value]="query()"
+        (input)="setQuery($any($event.target).value)"
+        [placeholder]="'home.search-ph' | translate"
+        [attr.aria-label]="'home.search' | translate"
+      />
+      <div class="seg-control list-filters" role="radiogroup" [attr.aria-label]="'home.filter-aria' | translate">
+        @for (f of filters; track f) {
+          <button type="button" role="radio" [class.active]="filter() === f" [attr.aria-checked]="filter() === f" (click)="setFilter(f)">
+            {{ filterKeys[f] | translate }}
+            @if (f !== 'all' && counts()[f] > 0) {
+              <span class="count" [class.attention]="f === 'attention'">{{ counts()[f] }}</span>
             }
           </button>
-        </li>
+        }
+      </div>
+      <label class="list-sort">
+        <span class="hint">{{ 'home.sort-label' | translate }}</span>
+        <select [value]="sort()" (change)="setSort($any($event.target).value)">
+          @for (s of sorts; track s) {
+            <option [value]="s" [selected]="sort() === s">{{ sortKeys[s] | translate }}</option>
+          }
+        </select>
+      </label>
+    </div>
+
+    @if (entries().length === 0) {
+      <div class="card empty-state stack">
+        <p class="muted">{{ 'home.no-match' | translate }}</p>
+        <div>
+          <button type="button" class="btn btn-sm" (click)="clearFilters()">{{ 'home.clear-filters' | translate }}</button>
+        </div>
+      </div>
+    } @else {
+      <ul class="project-list" role="list">
+        @for (entry of shown(); track entryKey(entry)) {
+          @if (entry.kind === 'series') {
+            <!-- A series: one card. Its header says where the parts stand; they fold
+                 under it (a 48-part series was 49 cards in a row). -->
+            @let parent = entry.parent;
+            @let s = entry.summary;
+            @let opened = isOpen(entry);
+            <li class="series-group" [class.open]="opened">
+              <div class="series-head">
+                <button
+                  type="button"
+                  class="series-toggle"
+                  (click)="toggleSeries(parent.id)"
+                  [disabled]="entry.narrowed || s.parts === 0"
+                  [attr.aria-expanded]="opened"
+                  [attr.aria-label]="(opened ? 'home.series-collapse' : 'home.series-expand') | translate: { name: seriesName(parent) }"
+                >
+                  <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+                  <span class="series-title">
+                    <span class="project-name">{{ seriesName(parent) }}</span>
+                    <span class="badge badge-warning">{{ 'home.series-badge' | translate }}</span>
+                  </span>
+                  <span class="project-sub">
+                    @if (s.parts > 0) {
+                      {{ 'home.series-parts' | translate: { count: s.parts } }} ·
+                    }
+                    @if (s.durationMs > 0) {
+                      {{ formatDuration(s.durationMs) }} ·
+                    }
+                    {{ dubLabel(parent) }} · {{ changed(parent) }}
+                  </span>
+                </button>
+                <div class="series-status">
+                  @if (stageKey(parent); as stage) {
+                    <span class="badge badge-info">{{ stage | translate }}</span>
+                  } @else if (s.parts > 0) {
+                    <div class="series-bar" role="img" [attr.aria-label]="'home.series-progress' | translate: { done: s.done, count: s.parts }">
+                      <span class="seg done" [style.width.%]="pct(s.done, s.parts)"></span>
+                      <span class="seg running" [style.width.%]="pct(s.running, s.parts)"></span>
+                      <span class="seg waiting" [style.width.%]="pct(s.waiting, s.parts)"></span>
+                      <span class="seg failed" [style.width.%]="pct(s.failed, s.parts)"></span>
+                    </div>
+                    <span class="series-counts">
+                      <span>{{ 'home.series-done' | translate: { done: s.done, count: s.parts } }}</span>
+                      @if (s.running) {
+                        <span class="c-running">{{ 'home.series-running' | translate: { count: s.running } }}</span>
+                      }
+                      @if (s.waiting) {
+                        <span class="c-waiting">{{ 'home.series-waiting' | translate: { count: s.waiting } }}</span>
+                      }
+                      @if (s.failed) {
+                        <span class="c-failed">{{ 'home.series-failed' | translate: { count: s.failed } }}</span>
+                      }
+                    </span>
+                  }
+                  @if (s.flagged) {
+                    <span class="badge badge-warning" [title]="'home.lines-flagged-title' | translate">{{
+                      'home.lines-flagged' | translate: { count: s.flagged }
+                    }}</span>
+                  }
+                </div>
+                <button type="button" class="btn btn-sm series-open" (click)="open(parent)">{{ 'home.series-open' | translate }}</button>
+                <ng-container *ngTemplateOutlet="deleteButton; context: { $implicit: parent }" />
+              </div>
+              @if (opened && entry.parts.length > 0) {
+                @if (entry.narrowed) {
+                  <p class="series-narrowed hint">{{ 'home.series-showing' | translate: { shown: entry.parts.length, count: s.parts } }}</p>
+                }
+                <ul class="part-list" role="list">
+                  @for (part of entry.parts; track part.id) {
+                    <li class="part-row">
+                      <button type="button" class="part-open" (click)="open(part)" [title]="part.name" [attr.aria-label]="'home.open-aria' | translate: { name: part.name }">
+                        <span class="part-n">{{ 'series.part-n' | translate: { n: partIndex(part) } }}</span>
+                        <span class="part-title">{{ partTitle(part, parent) }}</span>
+                        <span class="project-meta">
+                          @if (part.published?.length) {
+                            <span class="badge badge-completed">{{ 'home.published-badge' | translate }}</span>
+                          }
+                          @if (part.issues?.flagged; as flagged) {
+                            <span class="badge badge-warning" [title]="'home.lines-flagged-title' | translate">{{
+                              'home.lines-flagged' | translate: { count: flagged }
+                            }}</span>
+                          }
+                          @if (part.mediaInfo) {
+                            <span class="muted duration">{{ formatDuration(part.mediaInfo.durationMs) }}</span>
+                          }
+                          <vd-status-badge [status]="badgeStatus(part)" />
+                        </span>
+                      </button>
+                      <ng-container *ngTemplateOutlet="deleteButton; context: { $implicit: part }" />
+                    </li>
+                  }
+                </ul>
+              }
+            </li>
+          } @else {
+            @let project = entry.project;
+            <li class="project-card">
+              <button
+                type="button"
+                class="project-open"
+                (click)="open(project)"
+                [attr.aria-label]="'home.open-aria' | translate: { name: project.name }"
+              >
+                <div class="project-main">
+                  <span class="project-name">{{ project.name }}</span>
+                  <!-- The file name, not the whole path (it is in the tooltip). -->
+                  <span class="project-sub" [title]="project.inputVideoPath">
+                    {{ fileName(project.inputVideoPath) }} · {{ dubLabel(project) }} · {{ changed(project) }}
+                  </span>
+                </div>
+                <div class="project-meta">
+                  <!-- A part whose series was deleted stands on its own. -->
+                  @if (project.series?.role === 'part') {
+                    <span class="badge">{{ 'home.part-badge' | translate: { n: partIndex(project), count: partCount(project) } }}</span>
+                  }
+                  @if (project.published?.length) {
+                    <span class="badge badge-completed">{{ 'home.published-badge' | translate }}</span>
+                  }
+                  <!-- Lines voiced while still failing the translation checks: there until fixed or kept as they are (H7). -->
+                  @if (project.issues?.flagged; as flagged) {
+                    <span class="badge badge-warning" [title]="'home.lines-flagged-title' | translate">{{
+                      'home.lines-flagged' | translate: { count: flagged }
+                    }}</span>
+                  }
+                  @if (project.mediaInfo) {
+                    <span class="muted duration">{{ formatDuration(project.mediaInfo.durationMs) }}</span>
+                  }
+                  <vd-status-badge [status]="badgeStatus(project)" />
+                </div>
+              </button>
+              <ng-container *ngTemplateOutlet="deleteButton; context: { $implicit: project }" />
+            </li>
+          }
+        }
+      </ul>
+      @if (entries().length > shown().length) {
+        <div class="show-more">
+          <button type="button" class="btn" (click)="showMore()">
+            {{ 'home.show-more' | translate: { count: entries().length - shown().length } }}
+          </button>
+        </div>
       }
-    </ul>
+    }
   }
 </section>
+
+<!-- Delete, beside a card or a row and never inside it: a button may not hold another. -->
+<ng-template #deleteButton let-project>
+  <button
+    type="button"
+    class="icon-btn project-delete"
+    (click)="deleteProject(project)"
+    [disabled]="deleting() !== null || isBusy(project)"
+    [attr.aria-label]="'home.delete-aria' | translate: { name: project.name }"
+    [title]="(isBusy(project) ? 'home.delete-busy' : 'home.delete') | translate"
+  >
+    @if (deleting() === project.id) {
+      …
+    } @else {
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>
+    }
+  </button>
+</ng-template>

@@ -64,8 +64,20 @@
       @if (l.untranslated) {
         <span class="badge badge-failed" [title]="'editor.untranslated-title' | translate">{{ 'editor.untranslated' | translate }}</span>
       }
+      <!-- A locked line is the user's: kept as it is, its findings set aside (H7). -->
       @for (flag of l.quality; track flag) {
-        <span class="badge badge-failed" [title]="qualityLabels[flag].title | translate">{{ qualityLabels[flag].label | translate }}</span>
+        <span
+          class="badge"
+          [class.badge-failed]="!l.locked"
+          [class.badge-pending]="l.locked"
+          [title]="(l.locked ? 'studio.kept-as-is-title' : qualityLabels[flag].title) | translate"
+          >{{ qualityLabels[flag].label | translate }}</span
+        >
+      }
+      @if (l.flagged) {
+        <button type="button" class="btn btn-sm" (click)="keepAsIs()" [disabled]="store.dubRunning()" [title]="'studio.keep-as-is-title' | translate">
+          {{ 'studio.keep-as-is' | translate }}
+        </button>
       }
       @if (l.long) {
         <span class="badge badge-warning" [title]="'editor.long-subtitle-title' | translate">{{ 'editor.long-subtitle' | translate }}</span>

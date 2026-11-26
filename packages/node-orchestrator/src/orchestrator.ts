@@ -24,7 +24,10 @@ import {
   sanitizeSpeakerVoices,
   sanitizeSpeakerGenders,
   voiceForLine,
+  lineIssueCounts,
   type AlignedSegment,
+  type ProjectLineIssues,
+  type ProjectListItem,
   type CreateProjectInput,
   type ReviseProjectInput,
   type JobOrchestrator,
@@ -108,6 +111,7 @@ import type { SetupStore } from './setup/setupStore.js';
 import type { EventBusRegistry} from './events.js';
 import { type ProjectEventBus } from './events.js';
 import { KeyedMutex } from './keyedMutex.js';
+import { LineIssueReader } from './workspace/lineIssueReader.js';
 import { ProjectLogger } from './logging.js';
 import type { ClipTrim, PipelineMediaService, SeparationService } from './media.js';
 import type { AlignmentService } from './providers/alignment/whisperxProvider.js';
@@ -429,6 +433,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   private readonly artifactLock = new KeyedMutex();
   /** In-flight editor media builds (waveform/filmstrip), so concurrent opens share one ffmpeg. */
   private readonly editorMediaInFlight = new Map<string, Promise<unknown>>();
+  /** Each project's lines to look at, from its files, kept while they do not change (workspace/lineIssueReader.ts). */
+  private readonly issueReader = new LineIssueReader((projectId) => this.deps.store.paths(projectId));
 
   constructor(private readonly deps: OrchestratorDeps) {
     // A lane whose owner is gone (a run that ended, an editor action or a
@@ -1234,6 +1240,32 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   /** List all projects (most recently updated first). */
   async listProjects(): Promise<Project[]> {
     return this.deps.store.listProjects();
+  }
+
+  /**
+   * The project's lines to look at (GET /projects/:id/issues): those still
+   * failing the translation checks and the voices running into the next line,
+   * as its files are now (shared pipeline/lineIssues.ts).
+   */
+  async lineIssues(projectId: string): Promise<ProjectLineIssues> {
+    await this.deps.store.getProject(projectId); // an unknown project is a 404, not an empty list
+    return this.issueReader.of(projectId);
+  }
+
+  /**
+   * Every project, each with the count of its lines to look at when it has
+   * any (GET /projects): the home list's "3 lines flagged". A project whose
+   * files cannot be read is listed without, never dropped.
+   */
+  async listProjectsWithIssues(): Promise<ProjectListItem[]> {
+    const projects = await this.deps.store.listProjects();
+    return Promise.all(
+      projects.map(async (project): Promise<ProjectListItem> => {
+        const issues = await this.issueReader.of(project.id).catch(() => undefined);
+        const counts = issues ? lineIssueCounts(issues) : undefined;
+        return counts && (counts.flagged > 0 || counts.overruns > 0) ? { ...project, issues: counts } : project;
+      }),
+    );
   }
 
   /**
@@ -2083,8 +2115,11 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         ...(opts.undoOf ? { undoOf: opts.undoOf } : {}),
       });
       // A speaker set by hand may be one a re-transcription left out
-      // (speakers-unassigned); a line rewritten by hand, one the run flagged.
-      if (outcome.speakerChanged.size > 0 || outcome.textChanged.size > 0) await this.refreshWarnings(projectId);
+      // (speakers-unassigned); a line rewritten by hand, or locked as it is
+      // (the editor's "Keep as is"), one the run flagged.
+      if (outcome.speakerChanged.size > 0 || outcome.textChanged.size > 0 || outcome.lockChanged.size > 0) {
+        await this.refreshWarnings(projectId);
+      }
     });
     return this.getTimeline(projectId);
   }

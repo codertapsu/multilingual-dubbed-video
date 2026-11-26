@@ -1,6 +1,14 @@
 import { Injectable, computed, inject, signal, type OnDestroy } from '@angular/core';
 
-import { nextSpeakerId, splitSubtitleLines, summarizeSpeakers, voiceForLine, type LineVoiceSettings } from '@videodubber/shared';
+import {
+  isFlaggedLine,
+  nextSpeakerId,
+  splitSubtitleLines,
+  summarizeSpeakers,
+  voiceForLine,
+  warningDismissed,
+  type LineVoiceSettings,
+} from '@videodubber/shared';
 
 import { IpcService } from '../../../core/ipc/ipc.service';
 import { toAppError } from '../../../core/state/project.store';
@@ -75,6 +83,12 @@ export interface LineVm {
    * one repair attempt. Cleared when the user rewrites the line.
    */
   quality: NonNullable<TimelineSegment['qualityFlags']>;
+  /**
+   * Still failing the checks: flagged, and neither kept as it is (locked) nor
+   * a song, the server's rule (shared isFlaggedLine). The Flagged filter, the
+   * editor's banner and the project's chip in the lists count these (H7).
+   */
+  flagged: boolean;
   long: boolean;
   fast: boolean;
   status: UnitVm['status'];
@@ -84,6 +98,9 @@ export interface LineVm {
 }
 
 export type SaveState = 'saved' | 'pending' | 'saving' | 'error';
+
+/** What the lines list shows: everything, the problems, the lines still flagged by the checks, changed or locked ones. */
+export type LinesFilter = 'all' | 'problems' | 'flagged' | 'changed' | 'locked';
 
 /**
  * Why the last speaker detection ended without a result: it failed (the
@@ -299,6 +316,7 @@ export class StudioStore implements OnDestroy {
         cps,
         untranslated,
         quality,
+        flagged: isFlaggedLine(seg),
         long,
         fast,
         status,
@@ -306,7 +324,8 @@ export class StudioStore implements OnDestroy {
         locked: seg.locked === true,
         problem:
           untranslated ||
-          quality.length > 0 ||
+          // A finding the user set aside (kept the line as it is) is no problem any more.
+          (quality.length > 0 && seg.locked !== true) ||
           long ||
           status === 'timing-conflict' ||
           status === 'needs-review' ||
@@ -325,6 +344,17 @@ export class StudioStore implements OnDestroy {
 
   readonly staleCount = computed(() => this.segments().filter((s) => s.ttsStale === true).length);
   readonly problemCount = computed(() => this.lines().filter((l) => l.problem).length);
+  /** Lines still failing the translation checks (LineVm.flagged), voiced as they are or not yet (H7). */
+  readonly flaggedCount = computed(() => this.lines().filter((l) => l.flagged).length);
+  /** The run's warning about them was dismissed: the banner keeps quiet, the lines stay marked. */
+  readonly flagsSetAside = computed(() => warningDismissed(this.pipeline() ?? undefined, 'lines-flagged'));
+  /** The lines list's filter, kept here so the banner's "Show them" can set it. */
+  readonly linesFilter = signal<LinesFilter>('all');
+
+  /** The banner's "Show them": the lines list shows only the flagged lines. */
+  showFlagged(): void {
+    this.linesFilter.set('flagged');
+  }
 
   /** The clip a line is voiced in (a merged take's id is its first line's). */
   clipOf(segmentId: string): string {

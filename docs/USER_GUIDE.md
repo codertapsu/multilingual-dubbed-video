@@ -179,6 +179,19 @@ made, this time told exactly which words are wrong and how the character sheet
 writes the names in it. A line that still fails is voiced as it is and listed
 in a warning on the Processing screen and under Problems in the editor.
 
+Those lines stay flagged until you fix them, so you can let the dub finish and
+look at them later:
+
+- the project, and its part in a series, carries a **⚠ N line(s) flagged**
+  chip in the Projects list and on the series screen;
+- the editor says how many there are above the timeline. **Show them**, or the
+  **Flagged** filter of the lines list, lists only those lines, each with what
+  the checks found (Pinyin, No diacritics, Another script…); click one to go to
+  it;
+- rewriting a line clears its flag. A line that is right as it is gets
+  **Keep as is** in the inspector: the line is locked, so no automatic pass
+  rewrites it, and it no longer counts. Unlock it, or undo, to flag it again.
+
 To fix such lines before they are voiced, tick **Stop before voicing while
 lines still fail the translation checks** (New project → More options, next to
 the review pause; or the editor's Project tab). The dub then stops before the
@@ -497,6 +510,24 @@ that series' name and part names and are numbered on from where it ended (part
 speaker of the earlier series get that speaker's voice; the others get the
 voices for minor speakers. **Use the settings of** that series copies its
 engines, voices, subtitles and mix.
+
+### The Projects page
+
+A series is one card. Its header says how far the parts are (a bar, and how
+many are done, being dubbed, waiting or failed), their total length and the
+lines still flagged in them. Click the header to show or hide its parts, one
+short row each; **Open series** opens the series screen. The page remembers
+which series you left open.
+
+- **Search** finds a project by its name, its file or its series, with or
+  without Vietnamese accents ("xuyen khong" finds "Xuyên Không").
+- **In progress**, **Needs attention** and **Finished** show only those
+  projects, with how many there are. Needs attention means failed, with lines
+  still flagged, or a series whose parts wait for your review. A series then
+  shows just its matching parts and opens by itself.
+- **Sort** puts the last changed first (the default), orders by name (Part 2
+  before Part 10), or puts the newest first.
+- After 30 entries, **Show more** shows the next ones.
 
 ### Everything the app works on (Activity)
 

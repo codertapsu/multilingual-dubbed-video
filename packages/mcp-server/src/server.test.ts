@@ -661,6 +661,35 @@ describe('VideoDubber MCP server', () => {
     expect(g.text).toContain('start_dubbing');
   });
 
+  it('get_project names every line to look at after the dub, list_projects counts them (H7)', async () => {
+    const flagged = Array.from({ length: 7 }, (_, i) => ({ id: `seg_${String(i + 1).padStart(4, '0')}`, flags: i === 0 ? ['pinyin', 'no-diacritics'] : ['wrong-script'] }));
+    fake.routes.set('GET /projects/proj_1', () => ({ project: project({ status: 'completed' }), pipeline: pipeline({ status: 'completed', progressPercent: 100 }) }));
+    fake.routes.set('GET /projects/proj_1/issues', () => ({ flagged, overruns: [{ id: 'seg_0040', overflowMs: 1240 }] }));
+    fake.routes.set('GET /projects', () => [
+      { ...project({ status: 'completed' }), issues: { flagged: 7, overruns: 1 } },
+      project({ id: 'proj_2', name: 'clean', status: 'completed' }),
+    ]);
+    await connect();
+    const g = await call('get_project', { projectId: 'proj_1' });
+    expect(g.text).toContain(
+      'Lines to look at:\n  7 line(s) still fail the translation checks: seg_0001 (a pinyin name, no diacritics), seg_0002 (letters of another script), ',
+    );
+    // All seven, where the warning names five.
+    expect(g.text).toContain('seg_0007 (letters of another script).');
+    expect(g.text).toContain('1 voice(s) run into the next line by more than 0.3 s even at the fastest speed allowed: seg_0040 (+1.2 s).');
+    const l = await call('list_projects');
+    expect(l.text).toContain('updated 2026-11-17T00:00:00Z, 7 line(s) flagged, 1 voice(s) running over');
+    expect(l.text).toMatch(/proj_2 "clean" completed, [^\n]*updated 2026-11-17T00:00:00Z$/m);
+  });
+
+  it('get_project says nothing of lines to look at when there are none, or when the app is older', async () => {
+    fake.routes.set('GET /projects/proj_1', () => ({ project: project({ status: 'completed' }), pipeline: pipeline({ status: 'completed', progressPercent: 100 }) }));
+    await connect();
+    expect((await call('get_project', { projectId: 'proj_1' })).text).not.toContain('Lines to look at');
+    fake.routes.set('GET /projects/proj_1/issues', () => ({ flagged: [], overruns: [] }));
+    expect((await call('get_project', { projectId: 'proj_1' })).text).not.toContain('Lines to look at');
+  });
+
   it('get_project waits for the dub to move on, then reports it', async () => {
     let reads = 0;
     fake.routes.set('GET /projects/proj_1', () => {

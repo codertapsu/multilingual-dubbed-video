@@ -37,6 +37,10 @@ export type {
   ProjectInputFile,
   TranscriptWord,
   TranscriptSegment,
+  LineQualityFlag,
+  ProjectLineIssues,
+  LineIssueCounts,
+  ProjectListItem,
   SegmentPatch,
   TtsSegment,
   AlignmentStatus,
@@ -379,3 +383,4 @@ export {
 } from './pipeline/speakers.js';
 export type { LineVoiceSettings, SpeakerSummary } from './pipeline/speakers.js';
 export { subtitleCheckOn } from './pipeline/subtitleCheck.js';
+export { LINE_FLAG_WORDS, OVERRUN_REPORT_MS, isFlaggedLine, lineIssueCounts, lineIssuesFrom, warningDismissed } from './pipeline/lineIssues.js';

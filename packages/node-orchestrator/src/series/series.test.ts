@@ -129,6 +129,14 @@ describe('a long video dubbed as a series', { timeout: 60_000 }, () => {
     // Each finished part has its thumbnail for the post, beside the video.
     expect(media.thumbnails.some((t) => t.startsWith(`${projectOutputThumbnailPath(second)}@`))).toBe(true);
     expect((await series.view(p2!)).parts.every((p) => p.status === 'completed')).toBe(true);
+
+    // A part voiced with a line still failing the checks says so, naming it (H7).
+    const translated = JSON.parse(await fsp.readFile(store.paths(p2!).translatedJson, 'utf8')) as { segments: TranscriptSegment[] };
+    translated.segments[0] = { ...translated.segments[0]!, qualityFlags: ['pinyin'] };
+    await fsp.writeFile(store.paths(p2!).translatedJson, JSON.stringify(translated));
+    const flagged = await series.view(parent.id);
+    expect(flagged.parts[1]!.issues).toEqual({ flagged: [{ id: translated.segments[0]!.id, flags: ['pinyin'] }], overruns: [] });
+    expect(flagged.parts[0]).not.toHaveProperty('issues');
   });
 
   it('plans with the best pauses when the AI is not there, and says so', async () => {

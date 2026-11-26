@@ -6,9 +6,8 @@
  * the reports and the alignment (2026-11-25, H7): "Flagged lines are voiced
  * anyway". Pure.
  */
-import type { AlignedSegment, ProjectWarning } from '@videodubber/shared';
+import { LINE_FLAG_WORDS as FLAG_WORDS, type AlignedSegment, type ProjectWarning } from '@videodubber/shared';
 import type { FlaggedLine } from '../providers/translation/dubPasses.js';
-import type { QualityFlag } from '../providers/translation/lineQuality.js';
 
 type Warning = Omit<ProjectWarning, 'at' | 'step'>;
 
@@ -17,15 +16,6 @@ const NAMED = 5;
 
 /** The held lines kept in pipeline.json (PipelineState.heldLines), at most. */
 export const MAX_HELD_LINES = 200;
-
-/** Each check in a few words, for the English message (the app's own wording names only the ids). */
-const FLAG_WORDS: Record<QualityFlag, string> = {
-  untranslated: 'untranslated',
-  'wrong-script': 'letters of another script',
-  pinyin: 'a pinyin name',
-  'no-diacritics': 'no diacritics',
-  alternatives: '"/" alternatives',
-};
 
 const named = (ids: readonly string[]): string => ids.slice(0, NAMED).join(', ') + (ids.length > NAMED ? ', …' : '');
 

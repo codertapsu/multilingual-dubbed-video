@@ -23,6 +23,8 @@ interface Row {
   projectId?: string;
   status?: string;
   progressPercent?: number;
+  /** Its lines voiced while still failing the translation checks, not set aside (H7). */
+  flagged?: number;
 }
 
 /** A made part being renamed or retitled (one at a time). */
@@ -132,6 +134,12 @@ interface PartEdit {
                       @if (b === 'running' && r.progressPercent !== undefined) {
                         <span class="mono muted">{{ r.progressPercent }}%</span>
                       }
+                    }
+                    <!-- Lines voiced while still failing the checks: there until fixed or kept as they are (H7). -->
+                    @if (r.flagged) {
+                      <span class="badge badge-warning" [title]="'home.lines-flagged-title' | translate">{{
+                        'home.lines-flagged' | translate: { count: r.flagged }
+                      }}</span>
                     }
                   </div>
                   @if (v.state === 'review') {
@@ -414,6 +422,7 @@ export class SeriesComponent implements OnInit, OnDestroy {
               ...(p.projectId ? { projectId: p.projectId } : {}),
               ...(p.status ? { status: p.status } : {}),
               ...(p.progressPercent !== undefined ? { progressPercent: p.progressPercent } : {}),
+              ...(p.issues && !p.issues.flaggedDismissed && p.issues.flagged.length > 0 ? { flagged: p.issues.flagged.length } : {}),
             };
           }),
         );

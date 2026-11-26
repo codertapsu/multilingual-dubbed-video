@@ -8,6 +8,7 @@
  * Part n+1 opens a few seconds before part n's cut (a short recap).
  */
 import type { AppError } from '../errors.js';
+import type { ProjectLineIssues } from './domain.js';
 
 /** The choices a series is made with. */
 export interface SeriesSettings {
@@ -212,6 +213,8 @@ export interface SeriesView {
     endMs: number;
     status?: string;
     progressPercent?: number;
+    /** Its lines to look at, when it has any: still flagged by the checks, voices running over (H7). */
+    issues?: ProjectLineIssues;
   }[];
   /** The series this one continues (`settings.continues`), by name. */
   continues?: { parentId: string; name: string };

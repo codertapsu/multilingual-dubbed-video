@@ -100,6 +100,8 @@ import type { SeparationService } from './media.js';
 import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvider.js';
 import { SherpaDiarizationProvider } from './providers/diarization/sherpaDiarizationProvider.js';
 import { RapidOcrProvider } from './providers/ocr/rapidOcrProvider.js';
+import { GpuHolds, parseHoldRequest } from './scheduler/gpuHolds.js';
+import { installedPackFiles } from './engines/installedFiles.js';
 import { diarizationBudget, registerTranscriptJobRoutes } from './transcriptJobs.js';
 import { EventBusRegistry } from './events.js';
 import { checkWorkersHealth } from './health.js';
@@ -418,6 +420,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const diarization = new SherpaDiarizationProvider(engineManager, enginePackStore, config.workerRequestTimeoutMs);
   // The video's own burned-in subtitles read as text (the ocr-rapid pack).
   const ocr = new RapidOcrProvider(engineManager, enginePackStore);
+  // Other apps' holds on the graphics card (Voice Mask's live sessions): in
+  // memory only, each line of the log says who took or released the card.
+  const holds = new GpuHolds({ log: (msg) => console.log(`[gpu-holds] ${msg}`) });
 
   // Hardware profile so the registry only offers providers whose packs can run
   // on this machine (e.g. whisper.cpp only where an NVIDIA/Metal pack exists).
@@ -634,6 +639,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       alignment,
       diarization,
       ocr,
+      holds,
       // Anchors transcript lines to when they are spoken (the STT worker's VAD).
       speechMap: sttWorkerSpeechMap(config.sttWorkerUrl),
       // Logos and greetings (Settings → Logo & greeting); used only at run time.
@@ -906,6 +912,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   const startedAt = new Date().toISOString();
   app.get('/health', async () => ({
     status: 'ok',
+    // Discovery by name (Voice Mask finds VideoDubber on its port by this).
+    app: 'videodubber',
     ...buildInfo(),
     startedAt,
     node: process.version,
@@ -1598,6 +1606,46 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     } catch (err) {
       return sendError(reply, err);
     }
+  });
+
+  // ---- GPU holds (scheduler/gpuHolds.ts) ------------------------------------
+  // Another app on this computer (Voice Mask) holds the graphics card while a
+  // live session runs: new heavy-lane work waits, nothing running is touched,
+  // and a hold its app stops renewing expires by itself. Refused from any web
+  // page but the app's own, as /shutdown is: CORS only hides an answer.
+  const foreignOrigin = (req: FastifyRequest): boolean => {
+    const origin = req.headers.origin;
+    return typeof origin === 'string' && origin !== '' && !allowedOrigin.test(origin);
+  };
+  const refuseForeign = (reply: FastifyReply) =>
+    reply.status(403).send({ error: { code: 'UNKNOWN', message: 'Not allowed from this origin.' } });
+
+  app.post('/scheduler/holds', async (req: FastifyRequest<{ Body: unknown }>, reply) => {
+    if (foreignOrigin(req)) return refuseForeign(reply);
+    const parsed = parseHoldRequest(req.body);
+    if (!parsed.ok) return reply.status(400).send({ error: { code: 'INVALID_EDIT', message: parsed.error } });
+    const hold = holds.create(parsed.value);
+    if (hold === 'full') {
+      return reply.status(429).send({
+        error: { code: 'ENGINE_BUSY', message: 'Too many holds on the graphics card: release one (DELETE /scheduler/holds/:id) or let it expire.' },
+      });
+    }
+    return reply.status(201).send({ holdId: hold.holdId, expiresAt: hold.expiresAt, ttlSec: hold.ttlSec });
+  });
+
+  app.put('/scheduler/holds/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    if (foreignOrigin(req)) return refuseForeign(reply);
+    const hold = holds.renew(req.params.id);
+    if (!hold) {
+      return reply.status(404).send({ error: { code: 'INVALID_EDIT', message: 'No such hold: it expired or was released. Take a new one.' } });
+    }
+    return { holdId: hold.holdId, expiresAt: hold.expiresAt };
+  });
+
+  app.delete('/scheduler/holds/:id', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
+    if (foreignOrigin(req)) return refuseForeign(reply);
+    holds.release(req.params.id);
+    return reply.status(204).send();
   });
 
   app.post(
@@ -2710,6 +2758,16 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   );
 
   // ---- Engine packs (download/manage optional accelerated engines) ---------
+
+  // The installed packs' pinned files, read-only (engines/installedFiles.ts):
+  // where each model is, its size and the sha256 it was verified against.
+  app.get('/engines/installed', async (_req, reply) => {
+    try {
+      return await installedPackFiles(enginePackStore);
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
 
   app.get('/engines', async (_req, reply) => {
     try {

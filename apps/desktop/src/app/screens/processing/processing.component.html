@@ -110,6 +110,9 @@
           @case ('pressure') {
             {{ 'processing.queue-reason-pressure' | translate }}
           }
+          @case ('gpu-hold') {
+            {{ 'processing.queue-reason-gpu-hold' | translate: { app: entry.heldBy ?? 'Voice Mask' } }}
+          }
           @case ('paused') {
             {{ 'processing.queue-reason-paused' | translate }}
             <a routerLink="/settings/performance" fragment="opt-pause-queue">{{ 'processing.queue-resume' | translate }}</a>

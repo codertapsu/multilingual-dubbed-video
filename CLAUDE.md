@@ -372,3 +372,8 @@ previous binary. Verify the artifact (`GET /health` reports version + build stam
 - Admission must count every engine a run will start, not just its provider ids: the context
   engine (`contextEngine.ts`, the Gemma chat model for repairs and auto-fit) takes the heavy
   lane in a run whose providers are all light (`ClassifyOptions.contextEngine`).
+- Another app can hold the graphics card (`scheduler/gpuHolds.ts`, `POST /scheduler/holds`:
+  Voice Mask's live sessions). A hold only stops NEW heavy-lane work (queued heavy dubs wait as
+  `gpu-hold`, a free lane is refused to editor actions and previews, which fall back to the
+  CPU build); it never kills, pauses or slows a running dub, and a dub admitted on the lane
+  keeps it. Holds are in memory and expire unless renewed: never persist one.

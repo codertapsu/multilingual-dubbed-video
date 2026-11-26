@@ -333,7 +333,7 @@ export interface ConcurrencyPreferences {
 }
 
 /** Why a queued project has not started yet. */
-export type QueueReason = 'no-slot' | 'heavy-busy' | 'paused' | 'pressure';
+export type QueueReason = 'no-slot' | 'heavy-busy' | 'paused' | 'pressure' | 'gpu-hold';
 
 /** One project waiting for a run slot. */
 export interface QueueEntry {
@@ -342,6 +342,17 @@ export interface QueueEntry {
   position: number;
   reason: QueueReason;
   message: string;
+  /** For `gpu-hold`: the app holding the graphics card ("Voice Mask"). */
+  heldBy?: string;
+}
+
+/** Another app's live hold on the graphics card (Voice Mask's live sessions). */
+export interface GpuHold {
+  holdId: string;
+  holder: string;
+  /** Its name on the screens ("Voice Mask"). */
+  name: string;
+  expiresAt: string;
 }
 
 /** A currently-executing run. */
@@ -360,6 +371,8 @@ export interface QueueState {
   running: RunningEntry[];
   entries: QueueEntry[];
   capacity: CapacityRecommendation;
+  /** Other apps' live holds on the graphics card: new dubs that need it wait. */
+  holds?: GpuHold[];
 }
 
 /** Result of `check_for_update` (tauri-plugin-updater). */

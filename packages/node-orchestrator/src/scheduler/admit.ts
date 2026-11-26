@@ -27,6 +27,7 @@
  * no flaky tests.
  */
 import type { QueueReason } from '@videodubber/shared';
+import { HOLD_OWNER_PREFIX, holderName } from './gpuHolds.js';
 
 /** One queued candidate, in queue order. */
 export interface AdmissionCandidate {
@@ -56,6 +57,8 @@ export const LIGHT_LANE_SLOTS = 1;
 export interface HeldBack {
   reason: QueueReason;
   message: string;
+  /** For `gpu-hold`: the app holding the graphics card ("Voice Mask"). */
+  heldBy?: string;
 }
 
 /** Result of one admission pass. */
@@ -74,9 +77,10 @@ export interface AdmissionContext {
   nameOf?: (projectId: string) => string | undefined;
   /**
    * The heavy-engine lane is held by something that is NOT a pipeline run —
-   * an editor action ("editor:<projectId>"). Without this the scheduler would
-   * dispatch a heavy run straight into an ENGINE_BUSY failure instead of
-   * waiting for the lane.
+   * an editor action ("editor:<projectId>"), or another app's hold on the
+   * graphics card ("hold:<holder>", scheduler/gpuHolds.ts). Without this the
+   * scheduler would dispatch a heavy run straight into an ENGINE_BUSY failure
+   * instead of waiting for the lane.
    */
   externalHeavyOwner?: string;
   /** Light-lane slots (default {@link LIGHT_LANE_SLOTS}). */
@@ -152,11 +156,17 @@ export function decideAdmissions(
       continue;
     }
     if (c.needsHeavyEngine && heavyHolder !== undefined) {
-      const holder = nameFor(heavyHolder);
-      const message = holder.startsWith('an edit')
-        ? `Needs the machine to itself — waiting for ${holder} to finish.`
-        : `Needs the machine to itself — waiting for “${holder}” to finish.`;
-      held.set(c.projectId, { reason: 'heavy-busy', message });
+      if (heavyHolder.startsWith(HOLD_OWNER_PREFIX)) {
+        // Another app holds the card (scheduler/gpuHolds.ts): Voice Mask's live session.
+        const app = holderName(heavyHolder.slice(HOLD_OWNER_PREFIX.length));
+        held.set(c.projectId, { reason: 'gpu-hold', message: `Waiting: ${app} is using the graphics card.`, heldBy: app });
+      } else {
+        const holder = nameFor(heavyHolder);
+        const message = holder.startsWith('an edit')
+          ? `Needs the machine to itself — waiting for ${holder} to finish.`
+          : `Needs the machine to itself — waiting for “${holder}” to finish.`;
+        held.set(c.projectId, { reason: 'heavy-busy', message });
+      }
       // A blocked heavy run reserves its points too: otherwise a stream of
       // cloud runs could consume the budget it will need the moment the lane
       // frees.

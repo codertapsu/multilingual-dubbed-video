@@ -272,6 +272,34 @@ Three things a plain requirement set cannot express live in code instead:
 
 ---
 
+## 5b. The installed packs, for another app (read-only)
+
+`GET /engines/installed` describes what is installed, so another app on the
+same computer (Voice Mask's model locator) can reuse a downloaded model in
+place instead of assuming the layout under `<config>/engines`:
+
+```json
+[
+  {
+    "id": "translategemma-4b",
+    "version": "…",
+    "kind": "translation",
+    "providerId": "llama-cpp",
+    "files": [
+      { "path": "C:\\Users\\…\\engines\\translategemma-4b\\model.gguf", "size": 2489909760, "sha256": "81200d03…" }
+    ]
+  }
+]
+```
+
+- A file is listed when the catalog pins it: its absolute path, its size on
+  disk now, and the `sha256` its download was verified against (`alsoSha256`
+  when the catalog accepts a re-upload of the same content).
+- Python environments (`uv-env://`) and files extracted from archives carry no
+  pin of their own and are not listed.
+- Nothing is hashed on request. A reader verifies a file against its own pinned
+  catalog before using it, and never writes into these folders.
+
 ## 6. Verify a pack end to end
 
 ```bash

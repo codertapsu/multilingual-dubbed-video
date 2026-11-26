@@ -79,6 +79,9 @@
                 @case ('pressure') {
                   {{ 'home.queue-entry-pressure' | translate: { position: e.position, name: e.name } }}
                 }
+                @case ('gpu-hold') {
+                  {{ 'home.queue-entry-gpu-hold' | translate: { position: e.position, name: e.name, app: e.heldBy ?? 'Voice Mask' } }}
+                }
                 @case ('paused') {
                   {{ 'home.queue-entry-paused' | translate: { position: e.position, name: e.name } }}
                 }
@@ -88,6 +91,10 @@
               }
             </a>
           }
+        }
+        <!-- Another app (Voice Mask) holds the graphics card: what needs it waits. -->
+        @for (h of q.holds ?? []; track h.holdId) {
+          <p class="hint">{{ 'home.queue-gpu-hold' | translate: { app: h.name } }}</p>
         }
         @if (q.paused) {
           <p class="hint">

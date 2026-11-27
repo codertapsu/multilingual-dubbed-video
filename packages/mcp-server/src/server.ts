@@ -1227,7 +1227,15 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           : `- ${r.downloadId}: not made: ${r.error?.message ?? 'unknown error'}`,
       );
       const ids = res.results.flatMap((r) => (r.projectId ? [r.projectId] : []));
-      if (res.results.some((r) => r.series)) lines.push(seriesGateNote(series?.autoStart ?? true));
+      // How the series start, as the app made them: the preset's own choice
+      // when the call names no series block. This said "autoStart=true" for a
+      // preset with false, while the projects were made right (2026-11-27).
+      const madeSeries = res.results.find((r) => r.series && r.projectId);
+      if (madeSeries?.projectId) {
+        const made = await getProject(madeSeries.projectId, ctx.mcpReq.signal).catch(() => undefined);
+        const settings = made?.project.series?.role === 'parent' ? made.project.series.settings : undefined;
+        lines.push(seriesGateNote(settings?.autoStart ?? series?.autoStart ?? true));
+      }
       if (ids.length > 0) lines.push(`Project ids: ${JSON.stringify(ids)}`);
       return text(lines.join('\n'));
     }),

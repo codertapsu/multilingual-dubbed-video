@@ -661,6 +661,30 @@ describe('VideoDubber MCP server', () => {
     expect(g.text).toContain('start_dubbing');
   });
 
+  it("dub_downloads says how a series made from a preset starts: the made project's own choice", async () => {
+    const parent = (autoStart: boolean) => ({
+      role: 'parent' as const,
+      state: 'analysing' as const,
+      settings: { minMinutes: 30, maxMinutes: 40, aiProviderId: 'anthropic-translate', recapSec: 4, autoStart },
+    });
+    let autoStart = false;
+    fake.routes.set('GET /presets/preset_b3644eee88', () => ({ id: 'preset_b3644eee88', name: 'Trung → Việt (series)', targetLanguage: 'vi-VN', settings: {} }));
+    fake.routes.set('GET /presets', () => [{ id: 'preset_b3644eee88', name: 'Trung → Việt (series)', targetLanguage: 'vi-VN', settings: {} }]);
+    fake.routes.set('POST /downloads/dub', () => ({
+      results: [
+        { downloadId: 'dl_1', projectId: 'proj_long', name: 'Long', series: true, queued: true },
+        { downloadId: 'dl_2', projectId: 'proj_short', name: 'Short', queued: true },
+      ],
+    }));
+    fake.routes.set('GET /projects/proj_long', () => ({ project: project({ id: 'proj_long', series: parent(autoStart) }), pipeline: pipeline() }));
+    await connect();
+    // The preset's series block says false: the reply said "autoStart=true" (2026-11-27).
+    const r = await call('dub_downloads', { downloadIds: ['dl_1', 'dl_2'], presetId: 'preset_b3644eee88' });
+    expect(r.text).toContain('Series: autoStart=false. It stops at review after its analysis');
+    autoStart = true;
+    expect((await call('dub_downloads', { downloadIds: ['dl_1', 'dl_2'], presetId: 'preset_b3644eee88' })).text).toContain('Series: autoStart=true.');
+  });
+
   it('get_project names every line to look at after the dub, list_projects counts them (H7)', async () => {
     const flagged = Array.from({ length: 7 }, (_, i) => ({ id: `seg_${String(i + 1).padStart(4, '0')}`, flags: i === 0 ? ['pinyin', 'no-diacritics'] : ['wrong-script'] }));
     fake.routes.set('GET /projects/proj_1', () => ({ project: project({ status: 'completed' }), pipeline: pipeline({ status: 'completed', progressPercent: 100 }) }));

@@ -39,6 +39,7 @@ import {
 import { buildContextHeader } from './translationContext.js';
 import { checkDubLine, describeFlags, looksUntranslated, qualityScore, type QualityFlag } from './lineQuality.js';
 import { countSpeechUnits } from './speechFit.js';
+import { viEstablishedNamesRule } from './viNames.js';
 
 /** Provider id of the built-in context-aware Gemma chat model (registry.ts). */
 export const BUILT_IN_CHAT_PROVIDER_ID = 'llama-cpp-chat';
@@ -256,7 +257,7 @@ export function buildRewritePrompt(args: RewritePromptArgs): string {
         ]
       : [
           `Each line below is a ${vi ? 'Vietnamese' : targetLanguage} dubbing line that failed an automatic check (see "problem"). Rewrite the CURRENT line so the problem is gone:`,
-          `- Fix only the problem; keep the meaning, the pronouns/terms of address and the tone.${vi ? ' Every name in Hán-Việt with Vietnamese letters (each syllable a separate word, full diacritics) — never Chinese characters, never pinyin.' : ''}`,
+          `- Fix only the problem; keep the meaning, the pronouns/terms of address and the tone.${vi ? ` Every name in Hán-Việt with Vietnamese letters (each syllable a separate word, full diacritics) — never Chinese characters, never pinyin. ${viEstablishedNamesRule()}` : ''}`,
           '- When the current line is empty or untranslated, translate the source, consistent with the lines before and after.',
           ...(args.strict
             ? [

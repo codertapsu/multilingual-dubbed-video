@@ -518,7 +518,15 @@ export class SeriesService {
         let cause: string | undefined = said ? undefined : 'nothing is said in it';
         for (let attempt = 1; said && attempt <= 2 && !named; attempt++) {
           try {
-            named = await aiTitlePart(chat, part, total, lines, { seriesName, sourceLanguageName, targetLanguageName, names, speakers });
+            named = await aiTitlePart(chat, part, total, lines, {
+              seriesName,
+              sourceLanguageName,
+              targetLanguageName,
+              targetLanguage,
+              sourceLanguage: parent.settings.sourceLanguage,
+              names,
+              speakers,
+            });
             if (!named) cause = 'no usable answer';
           } catch (err) {
             cause = toAppError(err).message;

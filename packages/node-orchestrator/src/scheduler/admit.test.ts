@@ -168,3 +168,43 @@ describe('decideAdmissions — another app holds the graphics card (Voice Mask, 
     );
   });
 });
+
+describe('decideAdmissions: dubs taking turns on the graphics card (shareGpu)', () => {
+  const sharing = (budgetPoints: number, extra: Record<string, unknown> = {}) => ({ ...ctx(budgetPoints), shareGpu: true, ...extra });
+
+  it('admits a second heavy dub beside the first: they take turns on the card inside their runs', () => {
+    const d = decideAdmissions([heavy('b'), heavy('c')], [runningHeavy('a')], sharing(100));
+    expect(d.start).toEqual(['b']);
+    expect(d.held.get('c')).toMatchObject({ reason: 'gpu-turns', message: expect.stringContaining('2 dubs already take turns') });
+    // From an idle machine, two start together; dubs that need no card still start beside them.
+    expect(decideAdmissions([heavy('a'), heavy('b'), heavy('c'), local('x')], [], sharing(100)).start).toEqual(['a', 'b', 'x']);
+    // A dub that handed the card on for good (only its mix and render left) leaves room for the next.
+    expect(decideAdmissions([heavy('c')], [runningHeavy('a'), runningLocal('b')], sharing(100)).start).toEqual(['c']);
+    // And the points budget still holds.
+    expect(decideAdmissions([heavy('b')], [runningHeavy('a'), runningLocal('x')], sharing(4)).held.get('b')?.reason).toBe('no-slot');
+  });
+
+  it('an edit or a voice preview on the card keeps no dub in the queue', () => {
+    expect(decideAdmissions([heavy('b')], [], sharing(4, { externalHeavyOwner: 'editor:proj_x' })).start).toEqual(['b']);
+    expect(decideAdmissions([heavy('b')], [], sharing(4, { externalHeavyOwner: 'preview:vieneu-1' })).start).toEqual(['b']);
+  });
+
+  it('another app holding the card still keeps new heavy dubs queued, saying who', () => {
+    const d = decideAdmissions([heavy('b'), local('c')], [runningHeavy('a')], sharing(100, { externalHeavyOwner: 'hold:voice-mask' }));
+    expect(d.start).toEqual(['c']);
+    expect(d.held.get('b')).toEqual({ reason: 'gpu-hold', message: 'Waiting: Voice Mask is using the graphics card.', heldBy: 'Voice Mask' });
+  });
+
+  it('short of memory, a second heavy dub waits for room; the first one starts', () => {
+    const d = decideAdmissions([heavy('a'), heavy('b')], [], sharing(100, { pressure: true }));
+    expect(d.start).toEqual(['a']);
+    expect(d.held.get('b')?.reason).toBe('pressure');
+    expect(decideAdmissions([heavy('b')], [runningHeavy('a')], sharing(100, { pressure: true })).held.get('b')?.reason).toBe('pressure');
+  });
+
+  it('off, one heavy dub at a time, as before', () => {
+    const d = decideAdmissions([heavy('b')], [runningHeavy('a')], { ...ctx(100), shareGpu: false });
+    expect(d.start).toEqual([]);
+    expect(d.held.get('b')?.reason).toBe('heavy-busy');
+  });
+});

@@ -184,6 +184,27 @@ describe('a graphics card too full to start an engine (claude-dubber, 2026-11-27
     await manager.stopAll();
   });
 
+  it('keeps its turn on the card through the retry: the dub waiting behind gets the card after, not between', async () => {
+    await install('llama-cpp-cuda', 'binary');
+    await install('llama-cpp-vulkan', 'binary');
+    const { manager, launches } = managerWithCard((pack, headroom) => pack === 'llama-cpp-cuda' && headroom === '512');
+    manager.setLaneWaiting((owner) => owner.startsWith('dub-'));
+    const first = manager.ensureRunningFirstUsable(['llama-cpp-cuda', 'llama-cpp-vulkan'], { exclusive: true, ownerId: 'dub-1' });
+    // dub-2 reaches its GPU step while dub-1's first start is failing.
+    const second = manager.ensureRunningFirstUsable(['llama-cpp-cuda', 'llama-cpp-vulkan'], { exclusive: true, ownerId: 'dub-2' });
+    await first;
+    expect(launches).toEqual([
+      { packId: 'llama-cpp-cuda', headroom: '512' },
+      { packId: 'llama-cpp-cuda', headroom: '1536' },
+    ]);
+    expect(manager.heavyLaneOwner()).toBe('dub-1');
+    expect(manager.laneWaiters().map((w) => w.owner)).toEqual(['dub-2']);
+    manager.releaseHeavyLane('dub-1');
+    await second;
+    expect(manager.heavyLaneOwner()).toBe('dub-2');
+    await manager.stopAll();
+  });
+
   it('falls back when the card stays too full, says it was memory (not "reinstall"), and tries the GPU build again next time', async () => {
     await install('llama-cpp-cuda', 'binary');
     await install('llama-cpp-vulkan', 'binary');

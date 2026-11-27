@@ -497,7 +497,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'The dubbing queue',
       description:
-        'What is dubbing now (step, progress, estimated time left), what waits and why (no free slot, the GPU is busy, another app such as Voice Mask holds the graphics card, the queue is paused), who holds the GPU lane (a dub, an editor action or a voice preview), other apps\' holds on the graphics card, and the points budget.',
+        'What is dubbing now (step, progress, estimated time left), what waits and why (no free slot, the GPU is busy, another app such as Voice Mask holds the graphics card, the queue is paused), who holds the GPU lane (a dub, an editor action or a voice preview) and, with dubs taking turns on the card (the default), which running dubs wait for their turn and since when, other apps\' holds on the graphics card, and the points budget.',
       inputSchema: z.object({}),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -518,10 +518,23 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           stepPercent?: number;
           stepDetail?: string;
           etaSec?: number;
+          gpu?: 'using' | 'waiting';
+          gpuWaitSince?: string;
+          gpuWaitFor?: string;
         }[];
         entries: { projectId: string; name: string; position: number; reason: string; message: string }[];
+        shareGpu?: boolean;
       };
       const q = await api.get<Q>('/queue', { signal: ctx.mcpReq.signal });
+      // Dubs taking turns on the card: which one has it, which wait and since when.
+      const gpuNow = (r: Q['running'][number]): string => {
+        if (r.gpu === 'using') return ' (using the GPU now)';
+        if (r.gpu === 'waiting') {
+          const since = r.gpuWaitSince ? Math.max(0, Math.round((Date.now() - Date.parse(r.gpuWaitSince)) / 1000)) : undefined;
+          return ` (waiting for its turn on the GPU${since !== undefined ? ` for ${duration(since)}` : ''}${r.gpuWaitFor ? `, ${r.gpuWaitFor} has it` : ''})`;
+        }
+        return r.heavy && q.shareGpu !== true ? ' (uses the GPU lane)' : '';
+      };
       // The step's own progress and what it does ("stt (15%: Detecting speakers 3/20)").
       const stepNow = (r: Q['running'][number]): string => {
         const said = [r.stepPercent !== undefined ? `${r.stepPercent}%` : '', r.stepDetail ?? ''].filter(Boolean).join(': ');
@@ -530,6 +543,13 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       const lines = [
         `Dubs at once: ${q.maxProjects} (points ${q.usedPoints}/${q.budgetPoints})${q.paused ? '; the queue is PAUSED (Settings)' : ''}.`,
         `GPU lane: ${q.laneOwner ? `held by ${q.laneOwner}` : 'free'}.`,
+        ...(q.shareGpu === undefined
+          ? []
+          : [
+              q.shareGpu
+                ? 'Dubs take turns on the GPU: two that need it run side by side (a third waits in the queue as gpu-turns), each waits its turn for its GPU steps and lends the card while it works on the processor.'
+                : 'Dubs that need the GPU run one at a time (Settings: taking turns on the graphics card is off).',
+            ]),
         // Another app's hold (Voice Mask's live session): new dubs needing the card wait; nothing running is touched.
         ...(q.holds ?? []).map(
           (h) => `${h.name ?? h.holder} is using the graphics card (hold ${h.holdId}, until ${h.expiresAt}, renewed by its app)${h.reason ? `: ${h.reason}` : ''}. New dubs that need it wait.`,
@@ -537,7 +557,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         q.running.length > 0 ? 'Dubbing now:' : 'Nothing is dubbing.',
         ...q.running.map(
           (r) =>
-            `- ${r.projectId} "${r.name}"${r.step ? `, ${r.step}${stepNow(r)}` : ''}${r.progressPercent !== undefined ? `, ${r.progressPercent}%` : ''}${r.etaSec !== undefined ? `, about ${duration(r.etaSec)} left` : ''}${r.heavy ? ' (uses the GPU lane)' : ''}`,
+            `- ${r.projectId} "${r.name}"${r.step ? `, ${r.step}${stepNow(r)}` : ''}${r.progressPercent !== undefined ? `, ${r.progressPercent}%` : ''}${r.etaSec !== undefined ? `, about ${duration(r.etaSec)} left` : ''}${gpuNow(r)}`,
         ),
         ...(q.entries.length > 0 ? ['Waiting:'] : []),
         ...q.entries.map((e) => `- ${e.position}. ${e.projectId} "${e.name}": ${e.reason} (${e.message})`),

@@ -65,7 +65,11 @@
              user's language (the server's sentence is English). -->
         @for (r of q.running; track r.projectId) {
           <a class="hint queue-row" [routerLink]="['/project', r.projectId, 'processing']"
-            >▶ {{ r.name }}{{ r.heavy ? ('home.heavy-suffix' | translate) : '' }}</a
+            >▶ {{ r.name }}@switch (r.gpu) {
+              @case ('using') { {{ 'home.gpu-using-suffix' | translate }} }
+              @case ('waiting') { {{ 'home.gpu-waiting-suffix' | translate }} }
+              @default { {{ r.heavy && !q.shareGpu ? ('home.heavy-suffix' | translate) : '' }} }
+            }</a
           >
         }
         @if (q.entries.length > 0) {
@@ -81,6 +85,9 @@
                 }
                 @case ('gpu-hold') {
                   {{ 'home.queue-entry-gpu-hold' | translate: { position: e.position, name: e.name, app: e.heldBy ?? 'Voice Mask' } }}
+                }
+                @case ('gpu-turns') {
+                  {{ 'home.queue-entry-gpu-turns' | translate: { position: e.position, name: e.name } }}
                 }
                 @case ('paused') {
                   {{ 'home.queue-entry-paused' | translate: { position: e.position, name: e.name } }}

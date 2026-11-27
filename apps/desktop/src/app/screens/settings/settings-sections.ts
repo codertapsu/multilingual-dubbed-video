@@ -310,6 +310,13 @@ export const SETTINGS_OPTIONS: readonly SettingsOptionDef[] = [
     hintKey: 'settings.performance.pause-hint',
     keywords: 'queue hang doi pause tam dung stop dung',
   },
+  {
+    anchor: 'opt-share-gpu',
+    section: 'performance',
+    titleKey: 'settings.performance.share-gpu',
+    hintKey: 'settings.performance.share-gpu-hint',
+    keywords: 'gpu card do hoa graphics share chia se thay phien turns parallel song song queue hang doi',
+  },
 
   // ---- Storage
   {

@@ -458,10 +458,24 @@ export interface ConcurrencyPreferences {
   maxProjects?: number;
   /** When true, nothing new starts; queued projects stay queued. */
   paused?: boolean;
+  /**
+   * Dubs take turns on the graphics card (default on; false = one dub that
+   * needs the card runs at a time, the old way). Dubs that need it are started
+   * side by side as the limit allows. Each one uses the card for its steps
+   * that need it and waits its turn for them ("Waiting for the graphics
+   * card"). It lends the card to the next dub while it works on the
+   * processor (speaker detection, the mix, the render). Every step that runs
+   * on the card still does; only the waiting moves inside the dubs.
+   */
+  shareGpu?: boolean;
 }
 
-/** Why a queued project has not started yet. */
-export type QueueReason = 'no-slot' | 'heavy-busy' | 'paused' | 'pressure' | 'gpu-hold';
+/**
+ * Why a queued project has not started yet. `gpu-turns`: dubs take turns on
+ * the graphics card and as many as share it already run (admit.ts
+ * SHARED_GPU_RUNS).
+ */
+export type QueueReason = 'no-slot' | 'heavy-busy' | 'paused' | 'pressure' | 'gpu-hold' | 'gpu-turns';
 
 /** One project waiting for a run slot. */
 export interface QueueEntry {
@@ -508,6 +522,14 @@ export interface RunningEntry {
   stepDetail?: string;
   /** Seconds left, estimated from the time so far; absent too early to tell. */
   etaSec?: number;
+  /**
+   * The graphics card for this run: `using` (it holds the lane now), or
+   * `waiting` for its turn (since `gpuWaitSince`, behind `gpuWaitFor`: the
+   * holder's name, or the app holding the card). Absent: not using it now.
+   */
+  gpu?: 'using' | 'waiting';
+  gpuWaitSince?: string;
+  gpuWaitFor?: string;
 }
 
 /** GET /queue — the live scheduler state. */
@@ -531,6 +553,8 @@ export interface QueueState {
   laneOwner?: string;
   /** Other apps' live holds on the graphics card (Voice Mask's live sessions). */
   holds?: GpuHoldView[];
+  /** Dubs take turns on the graphics card (ConcurrencyPreferences.shareGpu, default on). */
+  shareGpu?: boolean;
 }
 
 /** Result of an update check via the Tauri updater plugin. */

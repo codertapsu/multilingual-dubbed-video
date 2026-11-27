@@ -59,6 +59,7 @@ import {
   type TranslationDocContext,
 } from '@videodubber/shared';
 import { alignSegments, summarizeAlignment, type AlignInputSegment } from '../alignment/align.js';
+import { setLaneWaitReporter, type LaneWait } from '../engines/engineOwner.js';
 import { flaggedLinesWarning, MAX_HELD_LINES, timingConflictWarning } from './beforeVoicing.js';
 import {
   coverageWarnings,
@@ -230,7 +231,23 @@ export interface RunnerDeps {
    * hides only the boxes it was given, with a note in the log.
    */
   watermark?: { detect(projectId: string, opts?: { tail?: boolean }): Promise<PictureDetection> };
+  /**
+   * The run is about to work without the graphics card (see {@link GpuBreak}):
+   * the orchestrator hands the card on when no later step uses it, or lends
+   * it to the dubs waiting for it (Orchestrator.gpuBreak). Absent: the run
+   * keeps the lane it took until it ends or hands over after its last heavy step.
+   */
+  gpuBreak?: (at: GpuBreak) => void;
 }
+
+/**
+ * Where a run stops using the graphics card for a while: before a step (the
+ * orchestrator knows which of the run's steps use the card), or inside
+ * speech-to-text once the transcription and its GPU checks are done. `rest`
+ * says what follows there: speaker detection (on the processor, an hour on a
+ * 4-hour video, long enough to lend the card for), or only short checks.
+ */
+export type GpuBreak = { before: PipelineStepId } | { within: 'stt'; rest: 'speakers' | 'short' };
 
 /**
  * A video this long at least is looked at for an advert tail at the start of
@@ -746,6 +763,9 @@ export class PipelineRunner {
           continue;
         }
 
+        // A step that does not use the graphics card lends it to the next dub
+        // (or hands it on for good): the orchestrator knows which do.
+        this.deps.gpuBreak?.({ before: stepId });
         state = await transition(this.deps, state, stepId, 'running', { progressPercent: 0 });
         logger.info(`Step "${pipelineStepLabel(stepId)}" started.`);
 
@@ -784,6 +804,24 @@ export class PipelineRunner {
             },
           },
         );
+        // While the step waits for its turn on the graphics card
+        // (EngineManager.waitForLane), it says so, and what it was doing
+        // comes back once it has the card. In the same line of writes as the
+        // progress, so neither lands over the other.
+        let waitShown = false;
+        let detailBeforeWait: StepDetail | undefined;
+        setLaneWaitReporter((wait: LaneWait | undefined) => {
+          if (options.signal.aborted || stepReturned) return;
+          if (!wait && !waitShown) return;
+          if (wait && !waitShown) detailBeforeWait = state.steps.find((s) => s.id === stepId)?.detail;
+          waitShown = wait !== undefined;
+          const write = progressWrite.then(async () => {
+            if (stepReturned || options.signal.aborted) return;
+            const detail = wait ? await this.gpuWaitDetail(wait) : detailBeforeWait;
+            state = await transition(this.deps, state, stepId, 'running', { progressPercent: highPct, detail });
+          });
+          progressWrite = write.catch(() => undefined);
+        });
         // This step's warnings replace the ones an earlier run of it left.
         const settleWarnings = (): void => {
           const fromInbox = (this.deps.warningInbox?.drain(project.id) ?? []).map((w) => ({
@@ -868,6 +906,29 @@ export class PipelineRunner {
       bus.emit({ type: 'error', error: appError });
       await this.markProjectStatus(project, 'failed');
     }
+  }
+
+  /** What a step waiting for the graphics card says it waits for: the dub, the edit or the app using it. */
+  private async gpuWaitDetail(wait: LaneWait): Promise<StepDetail> {
+    const nameOf = (id: string): Promise<string | undefined> =>
+      this.deps.store
+        .getProject(id)
+        .then((p) => p.name)
+        .catch(() => undefined);
+    if (wait.app) {
+      return { key: 'step-detail.gpu-wait-app', params: { name: wait.app }, text: `Waiting for the graphics card: ${wait.app} is using it` };
+    }
+    const owner = wait.owner;
+    if (owner?.startsWith('editor:')) {
+      const name = await nameOf(owner.slice('editor:'.length));
+      if (name) {
+        return { key: 'step-detail.gpu-wait-edit', params: { name }, text: `Waiting for the graphics card: an edit in “${name}” is using it` };
+      }
+    } else if (owner && !owner.startsWith('preview:') && owner !== 'anonymous') {
+      const name = await nameOf(owner);
+      if (name) return { key: 'step-detail.gpu-wait-dub', params: { name }, text: `Waiting for the graphics card: “${name}” is using it` };
+    }
+    return { key: 'step-detail.gpu-wait', text: 'Waiting for its turn on the graphics card' };
   }
 
   /**
@@ -1238,6 +1299,11 @@ export class PipelineRunner {
       const check = { project, paths, provider, model, language, segments, totalMs: endMs, regions: speech?.regions };
       await spotCheckTranscript(this.deps, check, signal, onProgress);
     }
+    // The transcript and the checks that decode it again are done: what is
+    // left of this step runs on the processor. The card goes to the next dub
+    // when no later step uses it (a series' analysis), or, shared, is lent
+    // for speaker detection.
+    this.deps.gpuBreak?.({ within: 'stt', rest: project.settings.diarize ? 'speakers' : 'short' });
     await checkDigitalSilence(this.deps, paths, segments, endMs, speech?.regions, signal, onProgress);
 
     // Speaker detection: who says each line, before anchoring so a line it

@@ -225,6 +225,31 @@ not have to wait for it:
 A paused dub frees its place in the queue for other dubs. Continuing it may
 make it wait for a free slot again ([RUN_QUEUE.md](RUN_QUEUE.md)).
 
+<a id="sharing-the-graphics-card"></a>
+
+### Several dubs and one graphics card
+
+Transcribing, translating and voicing on the graphics card is much faster
+than on the processor, but the card holds one of those engines at a time.
+Out of the box, dubs take turns on it (Settings → Performance, **Let dubs
+take turns on the graphics card**):
+
+- Two dubs that need the card run side by side (within the "dubs at once"
+  limit). A third waits in the queue: it would only wait for the card, and
+  slow the other two.
+- Each dub uses the card for its steps that need it. When the card is busy,
+  the step waits its turn and says so: *Waiting for the graphics card: “Tập 7”
+  is using it*. It never runs on the much slower processor instead.
+- While a dub works on the processor (speaker detection, the mix, the
+  render), the next dub uses the card.
+- A series' analysis lets go of the card as soon as its transcript is done,
+  so the dubs waiting for the card do not wait for its speaker detection.
+
+Every step that runs on the card still runs on it, so the dubs come out the
+same, sooner. Turn the option off to run one dub that needs the card at a
+time, as before. The dubs then wait in the queue instead of in their steps.
+Two dubs at once make each one's processor work a little slower.
+
 <a id="editing-a-dub"></a>
 
 ### Editing a dub (the studio)
@@ -841,7 +866,7 @@ engines and how much work each step does, never your subtitles, voice or look.
 | Section | What it is for |
 |---|---|
 | **Language** | The app's own display language — English or Tiếng Việt. It changes immediately and is remembered. |
-| **This computer** | What VideoDubber measured about your machine: the transcription model it recommends, and how many dubs it will run at once. You can lower that limit or pause the queue. |
+| **This computer** | What VideoDubber measured about your machine: the transcription model it recommends, and how many dubs it will run at once. You can lower that limit, pause the queue, or stop dubs taking turns on the graphics card ([Several dubs and one graphics card](#sharing-the-graphics-card)). |
 | **Processing defaults** | Which engine each phase of a *new* project uses. You can still change them per project. |
 | **Cloud API keys** | Optional. Only needed if you choose a cloud engine for a phase. Under the Anthropic key you choose the Claude model used for translation and review: Opus (best), Sonnet (about half the cost) or Haiku (cheapest). Claude can also use your Claude plan instead of an API key: choose **My Claude plan, through Mother Claude** and follow the steps shown there (details in [`PROVIDERS.md`](PROVIDERS.md#claude-through-mother-claude)). |
 | **Claude** | Connect Claude Desktop or Claude Code so Claude can run dubs for you — see [`MCP.md`](MCP.md). |

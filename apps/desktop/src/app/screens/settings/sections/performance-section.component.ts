@@ -102,6 +102,25 @@ import { SettingsStore } from '../settings.store';
         @if (store.queuePaused()) {
           <p class="hint warn-text" role="status">{{ 'settings.performance.paused-now' | translate }}</p>
         }
+        <div class="opt" id="opt-share-gpu">
+          <div class="opt-text">
+            <label class="opt-title" for="share-gpu">{{ 'settings.performance.share-gpu' | translate }}</label>
+            <p class="hint">{{ 'settings.performance.share-gpu-hint' | translate }}</p>
+            <p class="hint">{{ 'settings.performance.share-gpu-off' | translate }}</p>
+          </div>
+          <div class="opt-control">
+            <label class="check">
+              <input
+                id="share-gpu"
+                type="checkbox"
+                [ngModel]="store.shareGpu()"
+                (ngModelChange)="store.setShareGpu($event)"
+                [disabled]="store.prefSaving()"
+              />
+              {{ 'settings.performance.share-gpu-on' | translate }}
+            </label>
+          </div>
+        </div>
         <details>
           <summary class="hint">{{ 'settings.computer.why-limit' | translate }}</summary>
           @for (reason of sys.capacity.reasons; track reason.key) {

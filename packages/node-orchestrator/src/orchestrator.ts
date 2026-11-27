@@ -18,6 +18,7 @@ import {
   toWhisperLanguage,
   segmentsToVtt,
   pausePipelineState,
+  pipelineStepIndex,
   chosenOutputBaseName,
   projectOutputFiles,
   projectOutputVideoPath,
@@ -103,7 +104,7 @@ import {
 import type { OrchestratorConfig } from './config.js';
 import type { EngineManager } from './engines/engineManager.js';
 import { withEngineOwner } from './engines/engineOwner.js';
-import { decideAdmissions, type RunningRun } from './scheduler/admit.js';
+import { decideAdmissions, laneHolderLabel, type RunningRun } from './scheduler/admit.js';
 import { classifyWorkload, lastHeavyStep, type RunWorkload } from './scheduler/workload.js';
 import { effectiveCapacity, POINTS_PER_LOCAL_RUN, recommendCapacity } from './system/capacity.js';
 import { getSystemProfile } from './system/systemProfile.js';
@@ -133,7 +134,7 @@ import {
   type TranslationReport,
 } from './providers/translation/dubPasses.js';
 import { fitWindowMs, resolveVoiceRate, voiceRateBookFor } from './providers/translation/speechFit.js';
-import { PipelineRunner, type RunnerDeps } from './pipeline/runner.js';
+import { PipelineRunner, type GpuBreak, type RunnerDeps } from './pipeline/runner.js';
 import type { SpeechMapService } from './pipeline/speechMap.js';
 import type { ProjectStore } from './workspace/projectStore.js';
 import { fileExistsNonEmpty, segmentIdToIndex, type WorkspacePaths } from './workspace/paths.js';
@@ -404,6 +405,15 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   private pumping = false;
   /** The app is closing (pauseAll): no queued dub may start any more. */
   private closing = false;
+  /**
+   * Dubs take turns on the graphics card (Preferences.concurrency.shareGpu,
+   * default on), as last read with the preferences: the lane's gate and the
+   * runs' lending read it without waiting for the store.
+   */
+  private shareGpu = true;
+  /** The order the running dubs started in: their turn on the graphics card. */
+  private readonly runOrder = new Map<string, number>();
+  private runSeq = 0;
   /** Projects whose finished files are moving to another folder (setProjectOutputDir). */
   private readonly movingOutput = new Set<string>();
   /** Callers holding the queue (whileQueueHeld): while any does, nothing queued starts. */
@@ -443,22 +453,84 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // preview that never released it) is free: the engine manager asks us.
     deps.engines?.setOwnerLiveness?.((owner) => this.laneOwnerAlive(owner));
     // Another app's hold on the card (scheduler/gpuHolds.ts): new owners wait,
-    // and the queue is looked at again when a hold comes, goes or expires.
+    // and the queue (and the dubs waiting for the card) are looked at again
+    // when a hold comes, goes or expires.
     deps.engines?.setLaneGate?.((owner) => this.laneGate(owner));
-    deps.holds?.setOnChange(() => void this.pump());
+    // Our dubs wait their turn for a busy card rather than run the step on
+    // the CPU build of the same model (EngineManager.waitForLane), in the
+    // order they started (the queue's: a series' parts in their order);
+    // editor actions and previews are still refused it, and fall back.
+    deps.engines?.setLaneWaiting?.(
+      (owner) => this.running.has(owner),
+      (owner) => this.runOrder.get(owner),
+    );
+    deps.holds?.setOnChange(() => {
+      deps.engines?.retryLane?.();
+      void this.pump();
+    });
   }
 
   /**
    * Whether `owner` may take the FREE heavy lane now: not while another app
-   * holds the graphics card, except a dub the scheduler admitted on the lane
-   * before the hold, which keeps its right for every one of its steps (a hold
-   * never stops or slows what already runs).
+   * holds the graphics card, except a dub already on the card, which keeps
+   * its right for every one of its steps (a hold never stops or slows what
+   * already runs). On the card means: it has used it in this run, or, one
+   * GPU dub at a time, the scheduler admitted it on the lane before the hold.
+   * Sharing the card, a dub that has not used it yet is new GPU work, and
+   * waits for the hold to end.
    */
   private laneGate(owner: string): { by: string } | undefined {
     const hold = this.deps.holds?.holding('gpu');
     if (!hold) return undefined;
-    if (this.running.has(owner) && this.workloads.get(owner)?.needsHeavyEngine === true) return undefined;
+    if (this.running.has(owner)) {
+      if (this.deps.engines?.hasHeldLane?.(owner) === true) return undefined;
+      if (!this.shareGpu && this.workloads.get(owner)?.needsHeavyEngine === true) return undefined;
+    }
     return { by: holderName(hold.holder) };
+  }
+
+  /**
+   * A run is about to work on the processor for a while (the runner says
+   * where, {@link GpuBreak}). With none of its later steps on the card it
+   * hands the card on for good: the queue stops waiting for it and the lane
+   * goes to the next dub. A series' analysis detected speakers on the
+   * processor for 2.5 hours while six dubs waited for a card it no longer
+   * used (2026-11-27). Otherwise, sharing the card, it lends the lane to
+   * the dubs waiting for it and takes its turn again at its next GPU step.
+   * A step that uses the card keeps it: consecutive GPU steps swap no model
+   * out and back in.
+   */
+  private gpuBreak(project: Project, at: GpuBreak): void {
+    const w = this.workloads.get(project.id);
+    if (!w || !this.running.has(project.id)) return;
+    const from = 'before' in at ? pipelineStepIndex(at.before) : pipelineStepIndex(at.within) + 1;
+    // A series parent ends after speech-to-text: its parts dub the rest.
+    const last = project.series?.role === 'parent' ? pipelineStepIndex('stt') : Infinity;
+    const later = w.heavySteps.filter((s) => pipelineStepIndex(s) >= from && pipelineStepIndex(s) <= last);
+    const holding = this.deps.engines?.heavyLaneOwner() === project.id;
+    if (later.length === 0) {
+      // Nothing to hand on: not on the card, and the queue no longer waits for it.
+      if (!w.needsHeavyEngine && !holding) return;
+      if (w.needsHeavyEngine) {
+        this.workloads.set(project.id, { ...w, needsHeavyEngine: false });
+        this.loggerFor(project.id).info(
+          'before' in at
+            ? 'No step left uses the graphics card: it goes to the next dub now.'
+            : at.rest === 'speakers'
+              ? 'The graphics card goes to the next dub now: speaker detection, the rest of this step, runs on the processor.'
+              : 'The graphics card goes to the next dub now: the rest of this step runs on the processor.',
+        );
+      }
+      if (holding) this.deps.engines?.releaseHeavyLane(project.id);
+      void this.pump();
+      return;
+    }
+    if (!this.shareGpu || !holding) return;
+    // Lent only for work long enough to be worth a turn: a step without the
+    // card, or speaker detection. A few seconds of checks would only send
+    // this dub to the back of the line for its next GPU step.
+    const lend = 'before' in at ? !w.heavySteps.includes(at.before) : at.rest === 'speakers';
+    if (lend) this.deps.engines?.releaseHeavyLane(project.id);
   }
 
   /** Build a per-project logger bound to the project's event bus. */
@@ -469,7 +541,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
   }
 
   /** Assemble the runner dependencies for a project. */
-  private runnerDeps(projectId: string): { runner: PipelineRunner; bus: ProjectEventBus; logger: ProjectLogger } {
+  private runnerDeps(
+    projectId: string,
+    opts: { gpuBreak?: (at: GpuBreak) => void } = {},
+  ): { runner: PipelineRunner; bus: ProjectEventBus; logger: ProjectLogger } {
     const bus = this.deps.bus.get(projectId);
     const logger = this.loggerFor(projectId);
     const deps: RunnerDeps = {
@@ -489,6 +564,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       ...(this.deps.brandKit ? { brandKit: this.deps.brandKit } : {}),
       ...(this.deps.warningInbox ? { warningInbox: this.deps.warningInbox } : {}),
       ...(this.deps.watermark ? { watermark: this.deps.watermark } : {}),
+      ...(opts.gpuBreak ? { gpuBreak: opts.gpuBreak } : {}),
     };
     return { runner: new PipelineRunner(deps), bus, logger };
   }
@@ -2720,6 +2796,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
     const capacity = await this.effectiveCapacity();
     const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
+    this.shareGpu = prefs?.concurrency?.shareGpu !== false;
 
     // Re-check AFTER the awaits above: a concurrent /run (double-click, or Home
     // + Processing both firing) may have started or queued this project while
@@ -2745,6 +2822,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
               budgetPoints: capacity.budgetPoints,
               paused: prefs?.concurrency?.paused === true,
               pressure: this.deps.pressure?.() === true,
+              shareGpu: this.shareGpu,
               ...(this.externalHeavyOwner() ? { externalHeavyOwner: this.externalHeavyOwner() } : {}),
             },
           );
@@ -2869,6 +2947,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
 
     const capacity = await this.effectiveCapacity();
     const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
+    this.shareGpu = prefs?.concurrency?.shareGpu !== false;
     const candidates = this.queue.map((projectId) => {
       const w = this.workloads.get(projectId);
       return {
@@ -2883,6 +2962,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       budgetPoints: capacity.budgetPoints,
       paused: prefs?.concurrency?.paused === true,
       pressure: this.deps.pressure?.() === true,
+      shareGpu: this.shareGpu,
       ...(externalHeavyOwner ? { externalHeavyOwner } : {}),
     });
     if (decision.start.length === 0) return false;
@@ -3126,6 +3206,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const capacity = await this.effectiveCapacity();
     const prefs = await this.deps.setup?.getPreferences().catch(() => undefined);
     const paused = prefs?.concurrency?.paused === true;
+    this.shareGpu = prefs?.concurrency?.shareGpu !== false;
     const names = new Map<string, string>();
     for (const id of [...this.running.keys(), ...this.queue]) {
       try {
@@ -3149,8 +3230,18 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       paused,
       nameOf: (id) => names.get(id),
       pressure: this.deps.pressure?.() === true,
+      shareGpu: this.shareGpu,
       ...(externalHeavyOwner ? { externalHeavyOwner } : {}),
     });
+    // Who has the graphics card, and who waits for it, oldest first.
+    const laneOwner = this.deps.engines?.heavyLaneOwner();
+    const waiting = new Map<string, number>();
+    for (const w of this.deps.engines?.laneWaiters?.() ?? []) if (!waiting.has(w.owner)) waiting.set(w.owner, w.since);
+    const hold = this.deps.holds?.holding('gpu');
+    const waitFor = (): string | undefined => {
+      if (laneOwner !== undefined) return laneHolderLabel(laneOwner, (id) => names.get(id));
+      return hold ? holderName(hold.holder) : undefined;
+    };
     return {
       maxProjects: capacity.maxProjects,
       budgetPoints: capacity.budgetPoints,
@@ -3176,11 +3267,20 @@ export class LocalJobOrchestrator implements JobOrchestrator {
             ...(step?.progressPercent !== undefined ? { stepPercent: Math.round(step.progressPercent) } : {}),
             ...(step?.detail?.text ? { stepDetail: step.detail.text } : {}),
             ...(eta !== undefined ? { etaSec: eta } : {}),
+            ...(laneOwner === projectId ? { gpu: 'using' as const } : {}),
+            ...(laneOwner !== projectId && waiting.has(projectId)
+              ? {
+                  gpu: 'waiting' as const,
+                  gpuWaitSince: new Date(waiting.get(projectId)!).toISOString(),
+                  ...(waitFor() ? { gpuWaitFor: waitFor()! } : {}),
+                }
+              : {}),
           };
         }),
       ),
-      ...(this.deps.engines?.heavyLaneOwner() ? { laneOwner: this.deps.engines.heavyLaneOwner()! } : {}),
+      ...(laneOwner ? { laneOwner } : {}),
       holds: (this.deps.holds?.live() ?? []).map(holdView),
+      shareGpu: this.shareGpu,
       entries: this.queue.map((projectId, i) => ({
         projectId,
         name: names.get(projectId) ?? projectId,
@@ -3240,7 +3340,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    */
   private startRun(project: Project, retryFromStep: PipelineStepId | undefined): void {
     const controller = new AbortController();
-    const { runner, bus } = this.runnerDeps(project.id);
+    const { runner, bus } = this.runnerDeps(project.id, { gpuBreak: (at) => this.gpuBreak(project, at) });
+    this.runSeq += 1;
+    this.runOrder.set(project.id, this.runSeq);
 
     // Past its last heavy step the run only mixes and renders: hand the heavy
     // lane to the next queued dub instead of holding it to the end (see
@@ -3257,25 +3359,34 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       void this.pump();
     });
 
-    const promise = withEngineOwner(project.id, async () => {
-      // Mark the project running immediately for snappy UI feedback.
-      await this.deps.store.saveProject({ ...project, status: 'running', queue: undefined });
-      await runner.run(
-        project,
-        retryFromStep ? { retryFromStep, signal: controller.signal } : { signal: controller.signal },
-      );
-      // A series parent that has analysed its video: plan the parts.
-      if (project.series?.role === 'parent' && this.deps.seriesAnalysed) {
-        const after = await this.deps.store.getProject(project.id).catch(() => undefined);
-        if (after?.status === 'completed') void this.deps.seriesAnalysed(project.id);
-      }
-    })
+    // The run's signal goes with its engine owner: a dub waiting for the
+    // graphics card stops waiting when it is paused (EngineManager.waitForLane).
+    const promise = withEngineOwner(
+      project.id,
+      async () => {
+        // Mark the project running immediately for snappy UI feedback.
+        await this.deps.store.saveProject({ ...project, status: 'running', queue: undefined });
+        await runner.run(
+          project,
+          retryFromStep ? { retryFromStep, signal: controller.signal } : { signal: controller.signal },
+        );
+        // A series parent that has analysed its video: plan the parts.
+        if (project.series?.role === 'parent' && this.deps.seriesAnalysed) {
+          const after = await this.deps.store.getProject(project.id).catch(() => undefined);
+          if (after?.status === 'completed') void this.deps.seriesAnalysed(project.id);
+        }
+      },
+      { signal: controller.signal },
+    )
       .finally(() => {
         stopWatching();
         dubRuns.ended(project.id);
         this.running.delete(project.id);
         this.workloads.delete(project.id);
+        this.runOrder.delete(project.id);
         this.deps.engines?.releaseHeavyLane(project.id);
+        // Its next run starts with no turn on the card held from this one.
+        this.deps.engines?.forgetOwner?.(project.id);
         // A slot just freed — dispatch whatever was waiting on it.
         void this.pump();
       })

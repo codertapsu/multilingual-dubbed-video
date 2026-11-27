@@ -26,7 +26,13 @@ import { fileURLToPath } from 'node:url';
 import { AppErrorException } from '@videodubber/shared';
 import type { EnginePackStore } from './enginePackStore.js';
 import { findPack } from './enginePackCatalog.js';
-import { currentEngineOwner } from './engineOwner.js';
+import {
+  currentEngineOwner,
+  currentEngineSignal,
+  currentLaneWaitReporter,
+  type LaneWait,
+  type LaneWaitReporter,
+} from './engineOwner.js';
 import { looksLikeVcRuntimeFailure, vcRuntimeError, type VcRuntimeState } from './vcRuntime.js';
 
 /**
@@ -572,6 +578,30 @@ export interface EngineManagerDeps {
   logsDir?: string;
 }
 
+/** One owner waiting for the heavy lane (lane sharing, ensureRunning). */
+interface LaneWaiter {
+  owner: string;
+  /** The pack it will start, and its model: a waiter whose engine is still loaded may go first (no reload). */
+  packId: string;
+  model?: string;
+  since: number;
+  /** Times another waiter went ahead of it for a loaded engine; at {@link MAX_LANE_SKIPS} it goes first. */
+  skipped: number;
+  grant: () => void;
+  refuse: (err: unknown) => void;
+  /** Shows the wait in the dub's step ("Waiting for the graphics card"); set by its step. */
+  report?: LaneWaitReporter;
+  /** The wait has been shown, so its end is shown too. */
+  reported?: boolean;
+  /** What it was last shown to wait for, so the same is not shown twice. */
+  lastWait?: string;
+}
+
+/** A waiter is passed over for one whose engine is already loaded at most this often. */
+export const MAX_LANE_SKIPS = 2;
+/** How often waiters look for a lane whose holder is gone (ms). */
+const LANE_CHECK_MS = 5000;
+
 export class EngineManager {
   private readonly running = new Map<string, RunningEngine>();
   /** Owner currently holding the exclusive heavy-engine lane (see engineOwner.ts). */
@@ -592,6 +622,26 @@ export class EngineManager {
   private laneGate: ((owner: string) => { by: string } | undefined) | undefined;
   /** Who the gate last refused the lane for, so a CPU fallback can say who held the card. */
   private gatedBy: string | undefined;
+  /**
+   * Which owners WAIT for a busy lane instead of being refused (set by the
+   * orchestrator: its dubs). A dub refused the lane used to run that step on
+   * the next installed runtime, usually the CPU build: the same model, many
+   * times slower (TranslateGemma 27B), or, with lane sharing, never at all
+   * on the card it waited for.
+   */
+  private laneWaits: ((owner: string) => boolean) | undefined;
+  /**
+   * The waiters' order (set by the orchestrator: the order its runs started
+   * in, which is the queue's: a series' parts in their order). Lower first;
+   * unranked owners after, by when they began to wait.
+   */
+  private laneOrder: ((owner: string) => number | undefined) | undefined;
+  /** Owners waiting for the lane, in the order they began to wait ({@link grantLane} picks among them). */
+  private readonly laneQueue: LaneWaiter[] = [];
+  /** Owners that have held the lane since the orchestrator last forgot them (a GPU hold lets them keep using it). */
+  private readonly heldOnce = new Set<string>();
+  /** While owners wait: looks again for a lane whose holder is gone (a lease, an editor action that ended). */
+  private laneTimer: ReturnType<typeof setInterval> | undefined;
   /** Packs that failed to start in this session (see ensureRunningFirstUsable). */
   private readonly unusablePacks = new Set<string>();
   /**
@@ -602,6 +652,8 @@ export class EngineManager {
   private readonly headroomMiB = new Map<string, number>();
   /** In-flight starts per pack, so concurrent calls share one spawn. */
   private readonly starting = new Map<string, Promise<string>>();
+  /** The model each in-flight start loads. */
+  private readonly startingModel = new Map<string, string | undefined>();
 
   constructor(private readonly deps: EngineManagerDeps) {}
 
@@ -619,6 +671,42 @@ export class EngineManager {
   /** Tell the manager who may take a free lane while another app holds the card (Orchestrator). */
   setLaneGate(gate: (owner: string) => { by: string } | undefined): void {
     this.laneGate = gate;
+  }
+
+  /** Tell the manager which owners wait for a busy lane instead of being refused (Orchestrator: its dubs). */
+  setLaneWaiting(waits: (owner: string) => boolean, order?: (owner: string) => number | undefined): void {
+    this.laneWaits = waits;
+    this.laneOrder = order;
+  }
+
+  /** Whether `owner` has held the lane since it was last forgotten (a dub keeps using the card through a GPU hold). */
+  hasHeldLane(owner: string): boolean {
+    return this.heldOnce.has(owner);
+  }
+
+  /**
+   * Forget an owner whose work has ended (a dub's run): it no longer counts
+   * as having held the lane, nothing of it waits for the lane any more, and
+   * a lane it still holds goes to the next waiter.
+   */
+  forgetOwner(owner: string): void {
+    this.heldOnce.delete(owner);
+    for (const w of this.laneQueue.filter((x) => x.owner === owner)) {
+      this.dropWaiter(w);
+      w.refuse(new AppErrorException('ENGINE_BUSY', 'The work that waited for the graphics card has ended.'));
+    }
+    this.releaseHeavyLane(owner);
+  }
+
+  /** The owners waiting for the lane, oldest first, with what they wait to start (queue views). */
+  laneWaiters(): { owner: string; packId: string; since: number }[] {
+    return this.laneQueue.map((w) => ({ owner: w.owner, packId: w.packId, since: w.since }));
+  }
+
+  /** Look again for a waiter that may take a free lane: a GPU hold ended, say (Orchestrator). */
+  retryLane(): void {
+    this.releaseStaleLane();
+    this.grantLane();
   }
 
   /**
@@ -645,11 +733,143 @@ export class EngineManager {
     if (alive) return;
     this.heavyOwner = undefined;
     this.deps.logger?.info(`Released the GPU lane held by "${owner}": that work has ended.`);
+    this.grantLane();
   }
 
   private takeLane(owner: string): void {
     this.heavyOwner = owner;
     this.heavyClaimedAt = Date.now();
+    this.heldOnce.add(owner);
+  }
+
+  /**
+   * Wait until the lane is `owner`'s (a dub, with lane waiting on): in turn
+   * behind the owners already waiting, and never while another app holds the
+   * graphics card unless the gate lets this owner through (grantLane). Ends
+   * with the lane held by `owner`, or throws once its run is paused or
+   * stopped (its signal aborts): a paused dub never takes the card.
+   */
+  private waitForLane(owner: string, packId: string, model: string | undefined): Promise<void> {
+    const signal = currentEngineSignal();
+    if (signal?.aborted) return Promise.reject(new AppErrorException('CANCELLED', 'Pipeline run was cancelled.'));
+    const report = currentLaneWaitReporter();
+    return new Promise<void>((resolve, reject) => {
+      const settle = (): void => {
+        signal?.removeEventListener('abort', onAbort);
+        if (waiter.reported) waiter.report?.(undefined);
+      };
+      const waiter: LaneWaiter = {
+        owner,
+        packId,
+        ...(model ? { model } : {}),
+        since: Date.now(),
+        skipped: 0,
+        grant: () => {
+          settle();
+          resolve();
+        },
+        refuse: (err) => {
+          settle();
+          reject(err);
+        },
+        ...(report ? { report } : {}),
+      };
+      const onAbort = (): void => {
+        this.dropWaiter(waiter);
+        waiter.refuse(new AppErrorException('CANCELLED', 'Pipeline run was cancelled.'));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.laneQueue.push(waiter);
+      this.grantLane();
+      if (!this.laneQueue.includes(waiter)) return;
+      const holder = this.heavyOwner;
+      this.deps.logger?.info(
+        `"${owner}" waits for the GPU lane to start "${packId}" (${holder ? `in use by "${holder}"` : `held by ${this.gatedBy ?? 'another program'}`}).`,
+      );
+      this.reportWait(waiter);
+      this.watchLane();
+    });
+  }
+
+  /** Show a waiter what it waits for now: the lane's holder, or the app holding the card. */
+  private reportWait(waiter: LaneWaiter): void {
+    if (!waiter.report) return;
+    const wait: LaneWait = this.heavyOwner !== undefined ? { owner: this.heavyOwner } : this.gatedBy ? { app: this.gatedBy } : {};
+    const said = `${wait.owner ?? ''}|${wait.app ?? ''}`;
+    if (waiter.reported && waiter.lastWait === said) return;
+    waiter.reported = true;
+    waiter.lastWait = said;
+    waiter.report(wait);
+  }
+
+  private dropWaiter(waiter: LaneWaiter): void {
+    const i = this.laneQueue.indexOf(waiter);
+    if (i >= 0) this.laneQueue.splice(i, 1);
+    if (this.laneQueue.length === 0 && this.laneTimer) {
+      clearInterval(this.laneTimer);
+      this.laneTimer = undefined;
+    }
+  }
+
+  /**
+   * While owners wait, look now and then for a lane whose holder is gone: an
+   * anonymous claim's lease running out, an editor action that ended without
+   * a release. Nothing else would tell the waiters.
+   */
+  private watchLane(): void {
+    if (this.laneTimer || this.laneQueue.length === 0) return;
+    this.laneTimer = setInterval(() => {
+      this.releaseStaleLane();
+      this.grantLane();
+    }, LANE_CHECK_MS);
+    this.laneTimer.unref?.();
+  }
+
+  /**
+   * Give a free lane to the next waiter the gate lets through: the first in
+   * order (the dub that started first; else the one waiting longest), unless
+   * another needs the engine that is still loaded (no unload and reload of a
+   * 27B model between two dubs at the same step), which may go first at most
+   * {@link MAX_LANE_SKIPS} times past the same waiter. Every waiter of the
+   * chosen owner goes with it: they are the same dub.
+   */
+  private grantLane(): void {
+    if (this.heavyOwner !== undefined || this.laneQueue.length === 0) return;
+    const rank = (w: LaneWaiter): number => this.laneOrder?.(w.owner) ?? Number.POSITIVE_INFINITY;
+    const open = this.laneQueue
+      .filter((w) => {
+        const gate = this.laneGate?.(w.owner);
+        if (gate) this.gatedBy = gate.by;
+        return !gate;
+      })
+      // Stable: within a rank, the order they began to wait in.
+      .sort((a, b) => (rank(a) === rank(b) ? 0 : rank(a) < rank(b) ? -1 : 1));
+    if (open.length === 0) {
+      for (const w of this.laneQueue) this.reportWait(w);
+      return;
+    }
+    const warm = (w: LaneWaiter): boolean => {
+      const engine = this.running.get(w.packId);
+      return engine !== undefined && (w.model === undefined || engine.model === w.model);
+    };
+    let next = open[0]!;
+    if (!warm(next) && next.skipped < MAX_LANE_SKIPS) {
+      const ready = open.find(warm);
+      if (ready) {
+        next.skipped += 1;
+        next = ready;
+      }
+    }
+    const owner = next.owner;
+    this.takeLane(owner);
+    const waited = Math.round((Date.now() - next.since) / 1000);
+    for (const w of this.laneQueue.filter((x) => x.owner === owner)) {
+      this.dropWaiter(w);
+      w.grant();
+    }
+    this.deps.logger?.info(`The GPU lane goes to "${owner}", which waited ${waited} s for it.`);
+    // The others now wait for this one.
+    for (const w of this.laneQueue) this.reportWait(w);
   }
 
   /**
@@ -659,7 +879,9 @@ export class EngineManager {
    * engine when it happens to want the same one.
    */
   releaseHeavyLane(ownerId: string): void {
-    if (this.heavyOwner === ownerId) this.heavyOwner = undefined;
+    if (this.heavyOwner !== ownerId) return;
+    this.heavyOwner = undefined;
+    this.grantLane();
   }
 
   /**
@@ -673,10 +895,15 @@ export class EngineManager {
   async claimForJob(label: string, ownerId?: string): Promise<void> {
     const owner = ownerId ?? currentEngineOwner() ?? ANONYMOUS_OWNER;
     this.releaseStaleLane();
-    if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
-      throw new AppErrorException('ENGINE_BUSY', `${label} needs the engines another dub is using (${this.heavyOwner}).`);
+    if (this.heavyOwner !== owner && this.laneWaits?.(owner) === true) {
+      // A dub waits its turn for the card (see ensureRunning).
+      await this.waitForLane(owner, label, undefined);
+    } else {
+      if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
+        throw new AppErrorException('ENGINE_BUSY', `${label} needs the engines another dub is using (${this.heavyOwner}).`);
+      }
+      if (this.heavyOwner === undefined) this.checkLaneGate(owner, label);
     }
-    if (this.heavyOwner === undefined) this.checkLaneGate(owner, label);
     this.takeLane(owner);
     await this.unloadHeavyExcept('');
   }
@@ -738,12 +965,24 @@ export class EngineManager {
     // All known-bad: try the preferred one anyway — a driver update or a freed
     // GPU may have fixed it since — rather than refusing outright.
     const order = fresh.length > 0 ? fresh : packIds;
+    // A lane this call takes is let go only once a pack has failed for good
+    // (below): released by the failed first try, it went straight to the
+    // next dub waiting for the card, and the retry with more memory left
+    // free waited for that dub's whole step.
+    const owner = opts.ownerId ?? currentEngineOwner() ?? ANONYMOUS_OWNER;
+    const heldBefore = this.heavyOwner === owner;
     let lastError: unknown;
     for (const packId of order) {
       try {
-        return await this.ensureRunning(packId, opts);
+        return await this.ensureRunning(packId, { ...opts, keepLaneOnFailure: true });
       } catch (err) {
         lastError = err;
+        // Paused while it waited for the card: that is a stop, not a broken
+        // engine, and a paused dub starts nothing else.
+        if (currentEngineSignal()?.aborted === true) {
+          if (!heldBefore) this.releaseHeavyLane(owner);
+          throw err;
+        }
         // Out of graphics memory, by little: TranslateGemma 27B on an 8 GB card
         // was 220 MiB short (claude-dubber, 2026-11-27). An engine that fits
         // itself to the free memory gets one more try with more left free (fewer
@@ -757,12 +996,15 @@ export class EngineManager {
               `Engine pack "${packId}" ran out of graphics memory while starting; trying it once more with ${room} MiB left free (fewer layers on the card).`,
             );
             try {
-              return await this.ensureRunning(packId, { ...opts, headroomMiB: room });
+              return await this.ensureRunning(packId, { ...opts, headroomMiB: room, keepLaneOnFailure: true });
             } catch (again) {
               lastError = again;
             }
           }
         }
+        // This pack did not come up: a lane this call took goes to the next
+        // waiter (a next pack that needs it takes it again).
+        if (!heldBefore) this.releaseHeavyLane(owner);
         // Busy is not broken. Another dub holding the heavy lane (the GPU, say)
         // means "not now": fall through to the next pack for THIS call, but do
         // not write the pack off for the rest of the session. Neither is a card
@@ -805,7 +1047,14 @@ export class EngineManager {
 
   async ensureRunning(
     packId: string,
-    opts: { exclusive?: boolean; model?: string; ownerId?: string; headroomMiB?: number } = {},
+    opts: {
+      exclusive?: boolean;
+      model?: string;
+      ownerId?: string;
+      headroomMiB?: number;
+      /** The caller lets go of a lane this call took when it gives up (ensureRunningFirstUsable). */
+      keepLaneOnFailure?: boolean;
+    } = {},
   ): Promise<string> {
     const spec = ENGINE_LAUNCH_SPECS[this.providerOf(packId)];
     if (!spec) {
@@ -821,15 +1070,25 @@ export class EngineManager {
     if (wantsHeavyLane) {
       const owner = opts.ownerId ?? currentEngineOwner() ?? ANONYMOUS_OWNER;
       this.releaseStaleLane();
-      if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
-        throw new AppErrorException(
-          'ENGINE_BUSY',
-          `The "${this.providerOf(packId)}" engine is in use by another dub (${this.heavyOwner}).`,
-        );
-      }
-      if (this.heavyOwner === undefined) {
-        this.checkLaneGate(owner, `the "${this.providerOf(packId)}" engine`);
+      if (this.heavyOwner !== owner && this.laneWaits?.(owner) === true) {
+        // A dub waits its turn for the card instead of running this step on
+        // the next installed runtime: the CPU build of the same 27B model is
+        // many times slower, and with dubs sharing the card the lane is
+        // rarely free the moment a step starts. The order and a GPU hold
+        // are the waiting line's (grantLane).
+        await this.waitForLane(owner, packId, opts.model);
         claimedLane = owner;
+      } else {
+        if (this.heavyOwner !== undefined && this.heavyOwner !== owner) {
+          throw new AppErrorException(
+            'ENGINE_BUSY',
+            `The "${this.providerOf(packId)}" engine is in use by another dub (${this.heavyOwner}).`,
+          );
+        }
+        if (this.heavyOwner === undefined) {
+          this.checkLaneGate(owner, `the "${this.providerOf(packId)}" engine`);
+          claimedLane = owner;
+        }
       }
       this.takeLane(owner);
     }
@@ -838,8 +1097,9 @@ export class EngineManager {
       return await this.startOrReuse(packId, spec, opts, wantsHeavyLane);
     } catch (err) {
       // A start that never produced a usable engine must not keep the lane —
-      // otherwise one missing pack locks out every later heavy run.
-      if (claimedLane !== undefined && this.heavyOwner === claimedLane) this.heavyOwner = undefined;
+      // otherwise one missing pack locks out every later heavy run. The next
+      // waiter, if any, gets it.
+      if (!opts.keepLaneOnFailure && claimedLane !== undefined && this.heavyOwner === claimedLane) this.releaseHeavyLane(claimedLane);
       throw err;
     }
   }
@@ -851,17 +1111,27 @@ export class EngineManager {
     opts: { exclusive?: boolean; model?: string; ownerId?: string; headroomMiB?: number },
     wantsHeavyLane: boolean,
   ): Promise<string> {
-    // In-flight dedup: two concurrent calls for the same pack (same owner —
-    // different owners are already refused above) must not spawn two servers
-    // and orphan one.
+    // In-flight dedup: two concurrent calls for the same pack must not spawn
+    // two servers and orphan one. A start for another model is waited for and
+    // then swapped (startOrReuseUnguarded): with dubs taking turns on the
+    // card, the start under way can be the previous holder's, for its own
+    // model, and sharing it would serve this caller the wrong weights.
     const inFlight = this.starting.get(packId);
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      if (opts.model === undefined || this.startingModel.get(packId) === opts.model) return inFlight;
+      await inFlight.catch(() => undefined);
+      return this.startOrReuse(packId, spec, opts, wantsHeavyLane);
+    }
     const started = this.startOrReuseUnguarded(packId, spec, opts, wantsHeavyLane);
     this.starting.set(packId, started);
+    this.startingModel.set(packId, opts.model);
     try {
       return await started;
     } finally {
-      this.starting.delete(packId);
+      if (this.starting.get(packId) === started) {
+        this.starting.delete(packId);
+        this.startingModel.delete(packId);
+      }
     }
   }
 
@@ -1077,6 +1347,12 @@ export class EngineManager {
   /** Stop every running engine (call on app shutdown / project completion). */
   async stopAll(): Promise<void> {
     this.heavyOwner = undefined;
+    // Nothing starts once the engines stop (the app is quitting): the dubs
+    // still waiting for the card are told so instead of taking it.
+    for (const w of [...this.laneQueue]) {
+      this.dropWaiter(w);
+      w.refuse(new AppErrorException('ENGINE_UNAVAILABLE', 'VideoDubber is stopping its engines.'));
+    }
     await Promise.all([...this.running.values()].map((e) => e.stop()));
   }
 

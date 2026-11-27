@@ -74,6 +74,61 @@ instead of silently stealing the engine. **This fixed a live bug that existed
 with a single project**: regenerating a segment in the editor while a dub ran
 could kill that dub's engine.
 
+### Taking turns on the card (Settings → Performance, `concurrency.shareGpu`, on by default)
+
+The lane stays single: one heavy engine is loaded at a time. What changes is
+who waits where. On 2026-11-27, six dubs waited 2.5 h in the queue while a
+series' analysis detected speakers on the processor and the card sat idle
+(`docs/plans/gpu-sharing-2026-11-28.md`).
+
+- **Dubs wait for the card inside their runs.** The orchestrator tells the
+  engine manager which owners wait (`setLaneWaiting`: its runs). A dub that
+  finds the lane busy queues in `EngineManager.waitForLane` instead of getting
+  `ENGINE_BUSY` and running the step on the CPU build of the same model. A
+  27B model on the CPU is many times slower. The step shows "Waiting for the
+  graphics card: “Tập 7” is using it" (`step-detail.gpu-wait-*`). A pause
+  (the run's signal, passed to `withEngineOwner`) takes it out of the line,
+  starts nothing else, and writes no engine off. Editor actions and previews
+  are still refused, and fall back, as before.
+- **The order.** The dub that started first goes first. That is the
+  queue's order, so a series' parts go in their order. Owners without a rank
+  go by when they began to wait. A waiter whose pack and model are still
+  loaded may go ahead, so no 27B model is unloaded and loaded again between
+  two dubs at the same step. It may pass the same waiter at most
+  `MAX_LANE_SKIPS` (2) times. All waiters of the granted owner go together.
+  A lane whose holder is gone is looked for every 5 s while anyone waits.
+- **Admission.** With sharing on, heavy runs are admitted side by side
+  (`decideAdmissions` `shareGpu`), at most `SHARED_GPU_RUNS` (2) of them,
+  within the points budget. One uses the card while the other does its
+  processor work; a third would mostly wait for the card. Its processor work
+  would also slow the one on the card: TranslateGemma 27B runs part of its
+  layers on the processor on an 8 GB card. The budget allowed four on the PC
+  that dubs the series. A third waits as `gpu-turns`. A run that has handed
+  the card on for good no longer counts. Another app's hold keeps new heavy
+  runs queued, and a second one waits as `pressure` while the computer is
+  short of memory.
+- **Lending.** The runner tells the orchestrator where a run stops using the
+  card (`RunnerDeps.gpuBreak`, `GpuBreak`): before every step, and inside
+  speech-to-text once the transcript and the checks that decode it again are
+  done. `Orchestrator.gpuBreak` decides:
+  - When no later step of the run uses the card, it hands the card on for
+    good. `needsHeavyEngine` drops, the lane is released and the queue is
+    pumped. This happens with sharing on or off: a series' analysis lets go
+    before speaker detection, and a dub lets go before the mix.
+  - With sharing on, it lends the lane for a step that does not use the card,
+    and for speaker detection. It keeps the lane into a step that uses the
+    card: consecutive GPU steps swap no model out and back in. It never lends
+    for a few seconds of checks.
+  - The run takes its turn again at its next GPU step.
+- `heavySteps` (`scheduler/workload.ts`) is what "uses the card" means. It
+  counts refine whenever the context engine is heavy: its retry pass for
+  failing lines uses the chat model.
+- **The out-of-memory retry keeps its turn.** `ensureRunningFirstUsable` lets
+  go of a lane it took only once a pack has failed for good. Released by the
+  failed first try, the lane went to the dub waiting behind.
+- Off, one heavy dub runs at a time as before, and a dub still hands the card
+  on once no step left uses it.
+
 ### Another app's hold on the graphics card
 
 Voice Mask (a separate app: live voice changing, translated speech, captions)
@@ -88,7 +143,12 @@ It asks VideoDubber to leave the card alone with a **hold**
   the CPU build) exactly as when a dub holds the card.
 - A hold never kills, pauses or slows what already runs: a dub admitted on the
   lane before the hold keeps the lane for all its steps (the engine manager's
-  lane gate lets an admitted heavy run through).
+  lane gate lets an admitted heavy run through). Taking turns on the card,
+  "on the lane" means: it has used the card in this run (`hasHeldLane`). A
+  dub admitted beside others that has not used the card yet is new GPU work,
+  and waits in its run until the hold ends ("Waiting for the graphics card:
+  Voice Mask is using it"). A hold coming or going looks again at the waiters
+  (`retryLane`).
 - Holds live in memory only. The holder renews every 10 s within a TTL of
   5–120 s (30 by default); one not renewed expires by itself and the queue is
   looked at again, so a crashed holder blocks dubbing for one TTL at most. A
@@ -181,10 +241,10 @@ ones, and what changed:
   resume would treat as complete. Make those writes atomic (reuse
   `writeJsonAtomic`'s tmp+rename from `projectStore.ts`) *before* switching
   `reconcileQueue()` to auto-resume with a crash-loop guard.
-- The heavy lane is held for the whole run; a heavy project's x264 render tail
-  blocks the next heavy project. Moving the claim into `PipelineRunner` (first
-  heavy step → last) is a contained follow-up; the
-  `acquire/release` shape already supports it.
+- Taking turns on the card is not yet measured on the RTX 3050 / i5-13400F
+  PC. Still to measure: speaker detection chunk times beside a second dub's
+  GPU work, the model loads it saves or adds, and RAM with two heavy dubs
+  alive. Turn it off in Settings if a machine does worse with it.
 - `GET /queue` is polled (3–4 s) rather than pushed; a global SSE channel
   modelled on `setup/setupBus.ts` is the follow-up if more app-level state
   appears.

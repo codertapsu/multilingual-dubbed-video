@@ -162,6 +162,14 @@ window. Burned-in subtitles default to `position: 'auto'`: just above the source
 when the render knows where they are (`coverBand`, else a picture detection already saved; a part
 uses its parent's) and they are not covered. The render never runs a detection for it.
 
+**Voices are cast to characters, the user's leads first.** `cast_voices` ranks CHARACTERS
+(`voices/castGroups.ts`: the speaker ids the character sheet gives one name, by their talk time
+together) and gives the user's lead voices (`Preferences.leadVoices`, ordered per gender) to the
+most-heard, then their clones, then built-ins. A narrator or a system voice takes neither a lead
+nor a clone. A lead voice is never a project default: the defaults stay built-in (the user's rule;
+0.21.0's default voices made their clone the voice of every uncast speaker). A swapped voice is
+pinned (`pins`): taken out of every tier, so no one else is paired with it.
+
 **An advert tail ends the dub, with no review.** "全集免费" uploads are the drama only at their
 start, then hours of a banner for the full version over a still image or moving footage. The
 picture detection finds the banner (media-worker `adTail.ts`: pixels that are edges at the end,

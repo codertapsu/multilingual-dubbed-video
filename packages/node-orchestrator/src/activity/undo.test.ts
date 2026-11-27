@@ -91,8 +91,8 @@ describe('planUndo (pure)', () => {
       fromMs: 1500,
       toMs: 4000,
       lines: [
-        { startMs: 1500, endMs: 3200, text: 'loop', speakerId: 'SPEAKER_04' },
-        { startMs: 3300, endMs: 4000, text: 'loop' },
+        { startMs: 1500, endMs: 3200, text: 'loop', speakerId: 'SPEAKER_04', speakerLowConfidence: false },
+        { startMs: 3300, endMs: 4000, text: 'loop', speakerLowConfidence: false },
       ],
     });
   });
@@ -179,6 +179,17 @@ describe('undo through the orchestrator, with the history on disk', () => {
     const again = await undoEdit(deps(), id, result.entry!.id);
     expect((await read(store.paths(id).sourceJson)).map((s) => s.sourceText)).toEqual(['Before', 'once', 'After']);
     expect(again.entry).toMatchObject({ summaryKey: 'history.summary.undo', summaryParams: { of: 'history.summary.replaced', depth: 2 } });
+  });
+
+  it('puts the best-guess speaker marks back as they were: none taken from the lines it replaces (2026-11-27)', async () => {
+    // SPEAKER_01's line had no mark; rewritten in place, it was marked a best guess.
+    await orchestrator.replaceSourceLines(id, 2500, 3950, [{ startMs: 3000, endMs: 3900, text: 'again!', speakerId: 'SPEAKER_01', speakerLowConfidence: true }]);
+    expect((await read(store.paths(id).sourceJson))[1]).toMatchObject({ sourceText: 'again!', speakerLowConfidence: true });
+    const [rewritten] = await listEditSummaries(id);
+    await undoEdit(deps(), id, rewritten!.id);
+    const back = (await read(store.paths(id).sourceJson))[1]!;
+    expect(back).toMatchObject({ sourceText: 'again', speakerId: 'SPEAKER_01' });
+    expect(back.speakerLowConfidence).toBeUndefined();
   });
 
   it('undoes a speaker change made in the editor, and refuses once the line changed again', async () => {

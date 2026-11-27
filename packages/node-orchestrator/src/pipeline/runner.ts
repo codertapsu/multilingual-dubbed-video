@@ -161,6 +161,7 @@ import { onDecoderWindow } from './decodeMerge.js';
 import { recordLoopEdits, type LoopOutcome } from './loopEdits.js';
 import { checkDigitalSilence, linesOverSilence, recordAudioDrift, silenceCheckWarning, speechMapForChecks, spotCheckTranscript } from './sourceChecksStep.js';
 import { expectedSpeechMs } from '../alignment/clipSpeech.js';
+import { formatClock } from '../activity/history.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ProjectStore } from '../workspace/projectStore.js';
 import { fileExistsNonEmpty, padSegmentIndex, segmentIdToIndex, type WorkspacePaths } from '../workspace/paths.js';
@@ -227,8 +228,14 @@ export interface RunnerDeps {
    * project has no boxes yet (picture/watermarkAuto.ts). Absent: such a render
    * hides only the boxes it was given, with a note in the log.
    */
-  watermark?: { detect(projectId: string): Promise<PictureDetection> };
+  watermark?: { detect(projectId: string, opts?: { tail?: boolean }): Promise<PictureDetection> };
 }
+
+/**
+ * A video this long at least is looked at for an advert tail at the start of
+ * speech-to-text (media-worker adTail.ts: ten minutes of drama, ten of tail).
+ */
+const AD_TAIL_MIN_VIDEO_MS = 20 * 60_000;
 
 /** Options controlling a single run. */
 export interface RunOptions {
@@ -1093,9 +1100,15 @@ export class PipelineRunner {
     // the request can't outrun the worker timeout, each window is checkpointed
     // (crash-resumable), progress is visible, and memory stays bounded.
     const totalDurationMs = (await this.deps.store.getProject(project.id)).mediaInfo?.durationMs ?? 0;
+    // An advert tail: speech-to-text and its checks stop where it starts, and
+    // keep no line past it, wherever the lines came from (adTailStart).
+    const tailFrom = await this.adTailStart(project, totalDurationMs, signal, onProgress);
+    const endMs = tailFrom ?? totalDurationMs;
+    const beforeTail = (lines: TranscriptSegment[]): TranscriptSegment[] =>
+      tailFrom === undefined ? lines : lines.filter((l) => l.startMs < tailFrom);
     const windowMs = this.deps.sttChunkWindowMs ?? DEFAULT_STT_CHUNK_WINDOW_MS;
     const thresholdMs = this.deps.sttChunkThresholdMs ?? DEFAULT_STT_CHUNK_THRESHOLD_MS;
-    const plan = planSttChunks(totalDurationMs, windowMs, thresholdMs);
+    const plan = planSttChunks(endMs, windowMs, thresholdMs);
     // Chunking needs the optional clip16kMono capability; without it (an older
     // media-worker) fall back to a single request even for long audio.
     const canChunk = plan.length > 1 && typeof this.deps.media.clip16kMono === 'function';
@@ -1124,7 +1137,7 @@ export class PipelineRunner {
     // The video's own burned-in subtitles read as text, when the project asks
     // for them (pipeline/burnedInTranscript.ts); undefined: they could not be,
     // and a warning says why.
-    const fromPicture = !fromSite && project.settings.useBurnedInSubtitles ? await this.burnedInTranscript(project, paths, signal, onProgress) : undefined;
+    const fromPicture = !fromSite && project.settings.useBurnedInSubtitles ? await this.burnedInTranscript(project, paths, signal, onProgress, tailFrom) : undefined;
     if (fromSite) {
       this.deps.logger.info(
         `Using the "${fromSite.label}" subtitles the site published (${fromSite.segments.length} lines) instead of speech-to-text.`,
@@ -1146,7 +1159,7 @@ export class PipelineRunner {
       provider = fallback;
       transcript = await transcribeWith(provider);
     }
-    let { segments } = transcript;
+    let segments = beforeTail(transcript.segments);
     const { detectedLanguage } = transcript;
 
     // Optional forced alignment (WhisperX engine pack, not shipped yet):
@@ -1180,12 +1193,12 @@ export class PipelineRunner {
     let loopOutcome: LoopOutcome | undefined;
     let subtitles: SubtitlePresenceReport | undefined;
     if (!fromSite && !fromPicture) {
-      speech = await speechMapForChecks(this.deps, paths, segments, totalDurationMs, signal);
+      speech = await speechMapForChecks(this.deps, paths, segments, endMs, signal);
       // The video's own subtitles, where it burns them in: a line under one
       // is never taken for silence (pipeline/subtitleCoverage.ts).
-      subtitles = await this.subtitlePresence(project, paths, signal, onProgress);
+      subtitles = await this.subtitlePresence(project, paths, signal, onProgress, { endMs: tailFrom });
       const checkRegions = speech?.regions && subtitles ? speechWithSubtitles(speech.regions, subtitles.events) : speech?.regions;
-      const lastEnd = segments.reduce((m, s) => Math.max(m, s.endMs), totalDurationMs);
+      const lastEnd = segments.reduce((m, s) => Math.max(m, s.endMs), endMs);
       const chunks = canChunk ? plan : [{ startMs: 0, endMs: lastEnd }];
       const silent = checkRegions ? linesOverSilence(segments, checkRegions, chunks) : undefined;
       loopOutcome = await this.repairTranscriptLoops(paths, provider, model, detectedLanguage || explicitLanguage, segments, signal, onProgress, silent, chunks);
@@ -1194,10 +1207,10 @@ export class PipelineRunner {
       const silenceWarning = silent ? silenceCheckWarning(silent.findings, loopOutcome.ranges) : undefined;
       if (silenceWarning) onProgress.warn?.(silenceWarning);
       const language = detectedLanguage || explicitLanguage;
-      const check = { project, paths, provider, model, language, segments, totalMs: totalDurationMs, regions: speech?.regions };
+      const check = { project, paths, provider, model, language, segments, totalMs: endMs, regions: speech?.regions };
       await spotCheckTranscript(this.deps, check, signal, onProgress);
     }
-    await checkDigitalSilence(this.deps, paths, segments, totalDurationMs, speech?.regions, signal, onProgress);
+    await checkDigitalSilence(this.deps, paths, segments, endMs, speech?.regions, signal, onProgress);
 
     // Speaker detection: who says each line, before anchoring so a line it
     // splits keeps its speaker (pipeline/diarization.ts).
@@ -1620,6 +1633,41 @@ export class PipelineRunner {
   }
 
   /**
+   * Where an advert tail starts (media-worker adTail.ts), when speech-to-text
+   * should stop there: a project of its own (a series part is a window of
+   * its series, which stopped already), `stopAtAdTail` not off, long enough
+   * to have one, and the picture detection (saved, or run now: one saved
+   * before tails were looked for is run again) found one. Said as a warning
+   * that no review waits for: the user is not always there to review
+   * (2026-11-27). Never fails the step: without the picture, the whole video
+   * is transcribed.
+   */
+  private async adTailStart(project: Project, totalMs: number, signal: AbortSignal, onProgress: StepProgress): Promise<number | undefined> {
+    if (project.series?.role === 'part' || project.sourceRange || project.settings.stopAtAdTail === false) return undefined;
+    if (!this.deps.watermark || totalMs < AD_TAIL_MIN_VIDEO_MS) return undefined;
+    let detection: PictureDetection;
+    try {
+      detection = await untilAborted(this.deps.watermark.detect(project.id, { tail: true }), signal);
+    } catch (err) {
+      throwIfCancelled(signal);
+      this.deps.logger.info(`Could not look at the picture for an advert tail (${toAppError(err).message}): transcribing the whole video.`);
+      return undefined;
+    }
+    const tail = detection.adTail;
+    if (!tail || tail.fromMs <= 0 || tail.fromMs >= totalMs) return undefined;
+    const from = formatClock(tail.fromMs);
+    const end = formatClock(totalMs);
+    const series = project.series?.role === 'parent';
+    const message =
+      `From ${from} to the end (${end}) the same banner stays on the picture, as on uploads whose drama is only their start and the rest an advert ` +
+      `for the full version: speech-to-text stopped there${series ? ', and the series ends there' : ''}. ` +
+      'To dub the whole video, turn off "Stop where an advert tail begins" (stopAtAdTail) and redo from speech-to-text.';
+    this.deps.logger.info(message);
+    onProgress.warn?.({ code: 'ad-tail', key: series ? 'warning.ad-tail-series' : 'warning.ad-tail', params: { from, end }, message });
+    return tail.fromMs;
+  }
+
+  /**
    * When the video's own burned-in subtitles are on screen
    * (settings.subtitleCoverageCheck; pipeline/subtitleCoverage.ts): read once
    * over the project's window and kept in audio/subtitle_presence.json, in the
@@ -1632,8 +1680,12 @@ export class PipelineRunner {
     paths: WorkspacePaths,
     signal: AbortSignal,
     onProgress: StepProgress,
-    /** The transcript itself needs it (useBurnedInSubtitles): read whatever the check's setting says. */
-    opts: { required?: boolean } = {},
+    /**
+     * `required`: the transcript itself needs it (useBurnedInSubtitles): read
+     * whatever the check's setting says. `endMs`: an advert tail starts there
+     * (input time), and nothing past it is read.
+     */
+    opts: { required?: boolean; endMs?: number | undefined } = {},
   ): Promise<SubtitlePresenceReport | undefined> {
     if (!opts.required && !subtitleCheckOn(project.settings.subtitleCoverageCheck, project.settings.sourceLanguage)) return undefined;
     const { logger } = this.deps;
@@ -1657,9 +1709,10 @@ export class PipelineRunner {
       logger.info('No band of burned-in subtitles was found in this video: speech-to-text is not checked against its own subtitles.');
       return undefined;
     }
+    const windowEnd = Math.min(project.sourceRange?.endMs ?? Number.POSITIVE_INFINITY, opts.endMs ?? Number.POSITIVE_INFINITY);
     const window = {
       startMs: project.sourceRange?.startMs ?? 0,
-      ...(project.sourceRange?.endMs !== undefined ? { endMs: project.sourceRange.endMs } : {}),
+      ...(Number.isFinite(windowEnd) ? { endMs: windowEnd } : {}),
     };
     const saved = await readPresenceReport(paths.subtitlePresenceJson);
     if (saved && sameRead(saved, found.band, window)) return saved;
@@ -1712,6 +1765,8 @@ export class PipelineRunner {
     paths: WorkspacePaths,
     signal: AbortSignal,
     onProgress: StepProgress,
+    /** An advert tail starts there (input time): its subtitles are not read. */
+    tailFrom?: number,
   ): Promise<TranscriptSegment[] | undefined> {
     const { logger } = this.deps;
     const fallback = (key: string, message: string, params: Record<string, string | number> = {}): undefined => {
@@ -1731,7 +1786,7 @@ export class PipelineRunner {
         'the subtitle reader is not installed (Settings → Engines & models → Reading burned-in subtitles; MCP install_engine ocr-rapid).',
       );
     }
-    const presence = await this.subtitlePresence(project, paths, signal, onProgress, { required: true });
+    const presence = await this.subtitlePresence(project, paths, signal, onProgress, { required: true, endMs: tailFrom });
     if (!presence) return fallback('warning.burned-in-no-band', 'no band of subtitles was found in the picture.');
     if (presence.events.length < MIN_SUBTITLES) {
       return fallback('warning.burned-in-few', `only ${presence.events.length} subtitle(s) showed in the picture.`, { count: presence.events.length });

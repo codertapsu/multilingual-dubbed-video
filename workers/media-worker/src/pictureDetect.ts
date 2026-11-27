@@ -13,11 +13,12 @@
  */
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PictureDetection, WatermarkProposal } from '@videodubber/shared';
+import type { AdTailFinding, PictureDetection, WatermarkProposal } from '@videodubber/shared';
 
+import { findLateOverlay, overlayShown, SHOWN_SHARE, type LateOverlay } from './adTail.js';
 import { writeAtomically } from './atomic.js';
 import { assertInputReadable, runFfmpeg, type RunOptions } from './exec.js';
-import { analysisSize, sampleGrayFrames, spreadTimes } from './frameSample.js';
+import { analysisSize, sampleGrayFrames, spreadTimes, type GrayFrame } from './frameSample.js';
 import { findStaticMarks, findSubtitleBand, labelTimes, rowStrokeProfile, type RowProfile } from './pictureAnalysis.js';
 import { probeVideoGeometry } from './probe.js';
 import { probeVideoLengthMs } from './videoLength.js';
@@ -37,6 +38,12 @@ export interface DetectPictureInput {
   band?: boolean;
   /** Frames to look at in all (default 100); at least 40 per file of a joined source. */
   frames?: number;
+  /**
+   * Look for an advert tail (adTail.ts). Default: when what is looked at
+   * starts at the video's start and lasts 20 minutes at least (a series
+   * part, a window of its parent, is never asked).
+   */
+  adTail?: boolean;
   /** Where `frame.jpg` and `preview.jpg` go; absent: no pictures are written. */
   outputDir?: string;
 }
@@ -191,8 +198,7 @@ export async function detectPicture(input: DetectPictureInput, opts: DetectPictu
   const perSegment = segments.length > 1 ? Math.max(40, Math.ceil(total / segments.length)) : total;
   const size = analysisSize(geometry.width, geometry.height);
 
-  const found: { segment: (typeof segments)[number]; marks: WatermarkProposal[] }[] = [];
-  const profiles: RowProfile[] = [];
+  const sampled: GrayFrame[][] = [];
   let looked = 0;
   for (const [si, segment] of segments.entries()) {
     const frames = await sampleGrayFrames(input.videoPath, spreadTimes(segment.startMs, segment.endMs, perSegment), size, {
@@ -204,6 +210,37 @@ export async function detectPicture(input: DetectPictureInput, opts: DetectPictu
         ),
     });
     looked += frames.length;
+    sampled.push(frames);
+  }
+
+  // An advert tail first: its frames stay out of the watermark and band
+  // search, which locked onto its banner (y 0.51 for subtitles at 0.88).
+  const notes: string[] = [];
+  const first = segments[0]?.startMs ?? 0;
+  const last = segments[segments.length - 1]?.endMs ?? 0;
+  const lookForTail = input.adTail ?? (first === 0 && last - first >= TAIL_MIN_VIDEO_MS);
+  let adTail: AdTailFinding | undefined;
+  if (lookForTail) {
+    const all = sampled.flat().sort((a, b) => a.atMs - b.atMs);
+    const overlay = findLateOverlay(all, size.width, size.height, { videoMs: last });
+    if (overlay) {
+      const fromMs = await refineTailStart(input.videoPath, overlay, size, all[overlay.index - 1]!.atMs, all[overlay.index]!.atMs, run);
+      adTail = {
+        fromMs,
+        box: { x: round4(overlay.x / size.width), y: round4(overlay.y / size.height), w: round4(overlay.w / size.width), h: round4(overlay.h / size.height) },
+        confidence: overlay.confidence,
+      };
+      notes.push(
+        `From ${clockOf(fromMs)} to the end the same block stays on the picture, as an advert's banner does: those frames were left out of the watermark and subtitle search.`,
+      );
+    }
+  }
+  const drama = (frames: readonly GrayFrame[]): GrayFrame[] => (adTail ? frames.filter((f) => f.atMs < adTail.fromMs) : [...frames]);
+
+  const found: { segment: (typeof segments)[number]; marks: WatermarkProposal[] }[] = [];
+  const profiles: RowProfile[] = [];
+  for (const [si, segment] of segments.entries()) {
+    const frames = drama(sampled[si] ?? []);
     if (wantMarks) {
       const marks = findStaticMarks(
         frames.map((f) => f.data),
@@ -223,7 +260,6 @@ export async function detectPicture(input: DetectPictureInput, opts: DetectPictu
     if (wantBand) for (const f of frames) profiles.push({ atMs: f.atMs, rows: rowStrokeProfile(f.data, size.width, size.height) });
   }
 
-  const notes: string[] = [];
   const regions = wantMarks ? mergeAcrossSegments(found).sort((a, b) => b.confidence - a.confidence) : [];
   if (wantMarks && regions.length === 0) notes.push('No still mark stood out in the corners of the picture.');
 
@@ -302,5 +338,53 @@ export async function detectPicture(input: DetectPictureInput, opts: DetectPictu
     frameAtMs,
     frames: looked,
     notes,
+    ...(adTail ? { adTail } : {}),
+    ...(lookForTail ? { tailChecked: true } : {}),
   };
+}
+
+/** A video this long at least is looked at for an advert tail (10 min of drama, 10 of tail). */
+export const TAIL_MIN_VIDEO_MS = 20 * 60_000;
+
+const clockOf = (ms: number): string => {
+  const t = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(t / 3600);
+  const m = Math.floor(t / 60) % 60;
+  const s2 = String(t % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s2}` : `${m}:${s2}`;
+};
+
+/**
+ * The second an advert tail starts, between a frame without its banner
+ * (`beforeMs`) and one with it (`afterMs`): halved with one more frame at a
+ * time, to two seconds or the keyframes allow. The frame read is the
+ * keyframe at or before the time asked (frameSample.ts), so a span with no
+ * keyframe inside moves the lower end up. Answers the first time known to
+ * show the banner.
+ */
+export async function refineTailStart(
+  videoPath: string,
+  overlay: Pick<LateOverlay, 'pixels' | 'grid'>,
+  size: { width: number; height: number },
+  beforeMs: number,
+  afterMs: number,
+  run: RunOptions = {},
+): Promise<number> {
+  let lo = beforeMs;
+  let hi = afterMs;
+  for (let step = 0; step < 10 && hi - lo > 2000; step++) {
+    const mid = Math.round((lo + hi) / 2);
+    const [frame] = await sampleGrayFrames(videoPath, [mid], size, run);
+    if (!frame || frame.atMs <= lo) {
+      lo = mid;
+      continue;
+    }
+    if (frame.atMs >= hi) {
+      lo = mid;
+      continue;
+    }
+    if (overlayShown(frame.data, size.width, overlay) >= SHOWN_SHARE) hi = frame.atMs;
+    else lo = frame.atMs;
+  }
+  return hi;
 }

@@ -98,6 +98,24 @@ export interface PictureDetection {
   frames: number;
   /** What to know about the result ("no transcript yet: the band was found from the picture alone"). */
   notes: string[];
+  /**
+   * An ADVERT TAIL (media-worker adTail.ts): from `fromMs` (the input's time)
+   * to the end, the same block stays on the picture, e.g. a banner for the
+   * full version over a still image or moving footage, on "全集免费" uploads
+   * whose drama is only their start. Its frames are left out of the watermark
+   * and band search; speech-to-text and a series stop there unless
+   * `settings.stopAtAdTail` is false. `box`: the block, 0–1 of the frame.
+   */
+  adTail?: AdTailFinding;
+  /** An advert tail was looked for (detections saved before 0.21.0 were not). */
+  tailChecked?: boolean;
+}
+
+/** Where an advert tail starts, and its block (PictureDetection.adTail). */
+export interface AdTailFinding {
+  fromMs: number;
+  box: { x: number; y: number; w: number; h: number };
+  confidence: number;
 }
 
 /**

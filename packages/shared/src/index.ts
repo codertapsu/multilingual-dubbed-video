@@ -220,6 +220,7 @@ export {
 } from './pipeline/seriesNames.js';
 export type { PartNameInput, PartNameTemplateProblem, SeriesCardWords } from './pipeline/seriesNames.js';
 export type {
+  AdTailFinding,
   BlurRegion,
   PictureCorner,
   PictureDetection,

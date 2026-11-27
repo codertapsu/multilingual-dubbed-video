@@ -102,6 +102,7 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   transcriptSpotCheck: 'stt',
   subtitleCoverageCheck: 'stt',
   useBurnedInSubtitles: 'stt',
+  stopAtAdTail: 'stt',
   targetLanguage: 'translation',
   translationProviderId: 'translation',
   refineProviderId: 'refine',
@@ -241,6 +242,11 @@ const editableSettings = z
       .boolean()
       .describe(
         'Spot-check the transcript at the end of speech-to-text: one minute of every half hour is decoded again without context and compared with the lines, and stretches that do not match (a bad join or download) become warnings with their time range. Chinese/Japanese/Korean only; about 3-5 % of the speech-to-text time. Unset = on for videos over 2 hours; false = off; true = also on shorter videos.',
+      ),
+    stopAtAdTail: z
+      .boolean()
+      .describe(
+        'Stop where an advert tail begins (default on): on "全集免费" uploads whose drama is only their start, the same banner for the full version stays on the picture to the end, for hours, over a still image or moving footage. The app looks for it at the start of speech-to-text (videos of 20 minutes or more): speech-to-text and its checks stop there, a series ends there, and an ad-tail warning says where (detect_watermark shows it too). false = dub the whole video (redo from "stt").',
       ),
     minorVoices: z
       .number()

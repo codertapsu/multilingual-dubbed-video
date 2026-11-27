@@ -36,6 +36,7 @@ import {
   writeDummyVideo,
 } from '../test/fixtures.js';
 import { ProjectStore } from '../workspace/projectStore.js';
+import { pictureDirOf } from '../picture/pictureDetection.js';
 import { reuseRecapTranslations } from './recap.js';
 import { SeriesService, type ProjectWork } from './seriesService.js';
 
@@ -322,6 +323,49 @@ describe('planning again, keeping what the user wrote (2.3)', { timeout: 60_000 
     await r.series.analysed(parent.id, { again: true });
     expect((await r.series.view(parent.id)).plan!.parts.map((p) => p.title)).toEqual(['AI 3.1', 'AI 3.2', 'AI 3.3']);
     expect(activity.list({ projectId: parent.id }).some((e) => e.kind === 'series.plan' && e.title.startsWith('Planning again'))).toBe(true);
+  });
+});
+
+describe('a series of a video with an advert tail (claude-dubber, 2026-11-27)', { timeout: 60_000 }, () => {
+  it('ends where the banner begins, says so, and keeps that end when the cuts move', async () => {
+    const r = rig();
+    // An hour, the advert from minute 40 (speech-to-text stopped there).
+    const parent = await analysedParent(r, { minutes: 60, lines: talk(40) });
+    const dir = pictureDirOf(parent);
+    await fsp.mkdir(dir, { recursive: true });
+    const detection = {
+      at: '2026-11-27T10:00:00.000Z',
+      videoWidth: 1920,
+      videoHeight: 1080,
+      regions: [],
+      frameAtMs: 0,
+      frames: 100,
+      notes: [],
+      tailChecked: true,
+      adTail: { fromMs: 40 * MIN, box: { x: 0.1, y: 0.6, w: 0.8, h: 0.35 }, confidence: 0.9 },
+    };
+    await fsp.writeFile(path.join(dir, 'detection.json'), JSON.stringify(detection), 'utf8');
+    await r.series.analysed(parent.id, { again: true });
+
+    const view = await r.series.view(parent.id);
+    expect(view.plan!.endMs).toBe(40 * MIN);
+    expect(view.plan!.parts.at(-1)!.endMs).toBe(40 * MIN);
+    expect(view.plan!.notes[0]).toMatch(/^The series ends at 40:00: from there to the end \(1:00:00\) the same banner stays on the picture/);
+    // Two parts of 15-20 minutes, none of the advert.
+    expect(view.plan!.parts).toHaveLength(2);
+    // Moving the cut keeps the end.
+    const moved = await r.series.revisePlan(parent.id, { cuts: [22 * MIN] });
+    expect(moved.parts.map((p) => [p.startMs, p.endMs])).toEqual([
+      [0, 22 * MIN],
+      [22 * MIN, 40 * MIN],
+    ]);
+
+    // The whole video when told to: planned again to its end.
+    await store.saveProject({ ...(await store.getProject(parent.id)), settings: { ...(await store.getProject(parent.id)).settings, stopAtAdTail: false } });
+    await r.series.analysed(parent.id, { again: true });
+    const whole = await r.series.view(parent.id);
+    expect(whole.plan!.endMs).toBeUndefined();
+    expect(whole.plan!.parts.at(-1)!.endMs).toBe(60 * MIN);
   });
 });
 

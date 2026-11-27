@@ -8,7 +8,7 @@ import { ActivityRegistry } from '../activity/registry.js';
 import { toHttpError } from '../httpErrors.js';
 import { createProjectInput, makeTempDir, writeDummyVideo } from '../test/fixtures.js';
 import { ProjectStore, writeJsonAtomic } from '../workspace/projectStore.js';
-import { detectionSummary, PictureDetectionService, projectDetectInput, type PictureDetectInput, type PictureDetector } from './pictureDetection.js';
+import { detectionSummary, pictureDirOf, PictureDetectionService, projectDetectInput, type PictureDetectInput, type PictureDetector } from './pictureDetection.js';
 import { registerPictureRoutes } from './pictureRoutes.js';
 import { sanitizeBlurRegions, sanitizeCoverFields, withoutClearedCoverFields } from './pictureSanitize.js';
 
@@ -107,6 +107,8 @@ describe('projectDetectInput', () => {
         { startMs: 10_000_000, endMs: 11_000_000, fileName: 'P2.mp4' },
       ],
       lines: [{ startMs: 9_000_000, endMs: 9_001_500 }],
+      // A part is a window of its series, which looked for an advert tail already.
+      adTail: false,
     });
   });
 });
@@ -179,6 +181,24 @@ describe('PictureDetectionService', () => {
     const q = await project();
     detector.fail = new Error('ffmpeg exited with code 1');
     await expect(service.detectNow(q.id)).rejects.toThrow(/ffmpeg exited/);
+  });
+
+  it('looks again, once, at a result saved before advert tails were looked for, when speech-to-text asks (2026-11-27)', async () => {
+    const p = await project();
+    await service.detectNow(p.id);
+    expect(detector.inputs).toHaveLength(1);
+    // The saved one has no tailChecked: a render reuses it, speech-to-text's start does not.
+    await service.detectNow(p.id);
+    expect(detector.inputs).toHaveLength(1);
+    await service.detectNow(p.id, { tail: true });
+    expect(detector.inputs).toHaveLength(2);
+    // Saved again, with the check done: never again.
+    await fsp.writeFile(path.join(pictureDirOf(p), 'detection.json'), JSON.stringify(found({ tailChecked: true })), 'utf8');
+    await service.detectNow(p.id, { tail: true });
+    expect(detector.inputs).toHaveLength(2);
+    // A series part never asks for a tail: it is a window of its series.
+    expect(projectDetectInput({ ...p, sourceRange: { startMs: 60_000, endMs: 120_000 } }, {})).toMatchObject({ adTail: false });
+    expect(projectDetectInput(p, {})).not.toHaveProperty('adTail');
   });
 
   it('an AI check asked for without one set up says so in the notes', async () => {

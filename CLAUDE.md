@@ -162,6 +162,16 @@ window. Burned-in subtitles default to `position: 'auto'`: just above the source
 when the render knows where they are (`coverBand`, else a picture detection already saved; a part
 uses its parent's) and they are not covered. The render never runs a detection for it.
 
+**An advert tail ends the dub, with no review.** "全集免费" uploads are the drama only at their
+start, then hours of a banner for the full version over a still image or moving footage. The
+picture detection finds the banner (media-worker `adTail.ts`: pixels that are edges at the end,
+not in the first ten minutes, always the same way, then the frame from which they stay; a frozen-
+picture test misses the moving kind) and leaves its frames out of the watermark and band search,
+which locked onto it. At the start of STT (`adTailStart`, `stopAtAdTail` not false, 20 min+), STT
+and its checks stop at `adTail.fromMs`, a series plans only up to it (`SeriesPlan.endMs`, kept when
+cuts move), and a cast counts no line past it (`adTailFrom`). A warning says where; nothing waits
+for the user, who is not always there to review.
+
 **The video's own subtitles are evidence of speech.** Where a source burns its subtitles in
 (`subtitleCoverageCheck`, on for zh/ja/ko by `subtitleCheckOn`), the STT step reads the band five
 times a second (media-worker `subtitlePresence.ts`, no OCR), keeps when a subtitle is on screen in

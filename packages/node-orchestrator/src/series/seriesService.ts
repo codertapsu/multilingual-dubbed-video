@@ -50,11 +50,12 @@ import {
 } from '@videodubber/shared';
 
 import { runAsScheduler } from '../activity/context.js';
-import { recordEdit } from '../activity/history.js';
+import { formatClock, recordEdit } from '../activity/history.js';
 import { activity, said, type ActivityHandle } from '../activity/registry.js';
 import { readSpeakerProfiles } from '../pipeline/diarization.js';
 import { languageName } from '../providers/translation/llmTranslationProvider.js';
 import { generateCharacterSheet, type AnalysisChat } from '../providers/translation/translationContext.js';
+import { adTailFrom } from '../picture/pictureDetection.js';
 import { autoBlurRegions, describeMarks, faintMarks } from '../picture/watermarkAuto.js';
 import { sourceNameHints } from './sourceHints.js';
 import { writeJsonAtomic, type ProjectStore } from '../workspace/projectStore.js';
@@ -387,12 +388,22 @@ export class SeriesService {
   ): Promise<SeriesPlan> {
     const lines = await this.lines(parent);
     const settings = parent.series.settings;
-    const durationMs = parent.mediaInfo?.durationMs || lines.at(-1)?.endMs || 0;
+    const videoMs = parent.mediaInfo?.durationMs || lines.at(-1)?.endMs || 0;
+    // An advert tail: the series ends where it starts, at once, with no review
+    // to wait for (2026-11-27: the planner made parts of the advert alone).
+    const tailFrom = await adTailFrom(parent);
+    const durationMs = tailFrom !== undefined && tailFrom < videoMs ? tailFrom : videoMs;
     const chapters = (parent.source?.chapters ?? []).map((c) => c.startMs);
     // A project joined from several files: where one ends and the next begins
     // is a preferred cut (one source video per part where the lengths allow).
     const boundaries = fileBoundaries(parent.inputFiles, durationMs);
     const notes: string[] = [];
+    if (durationMs < videoMs) {
+      notes.push(
+        `The series ends at ${formatClock(durationMs)}: from there to the end (${formatClock(videoMs)}) the same banner stays on the picture, ` +
+          'an advert for the full version, not the story. Speech-to-text stopped there too. To dub it as well, turn off "Stop where an advert tail begins" (stopAtAdTail) and redo the series from speech-to-text.',
+      );
+    }
     const count = partCount(durationMs, settings.minMinutes, settings.maxMinutes);
     let candidates = candidateCuts(lines, { chapters, boundaries });
     let windows = cutWindows(durationMs, count, settings, candidates);
@@ -511,7 +522,14 @@ export class SeriesService {
       for (const part of parts) part.title = fallbackPartTitle(part.index, targetLanguage);
       if (parts.length > 0) notes.push(`No AI named the parts: they are called '${parts[0]!.title}' and so on until they are given titles.`);
     }
-    return { aiProviderId: settings.aiProviderId, parts, candidates, createdAt: new Date().toISOString(), notes };
+    return {
+      aiProviderId: settings.aiProviderId,
+      parts,
+      candidates,
+      createdAt: new Date().toISOString(),
+      notes,
+      ...(durationMs < videoMs ? { endMs: durationMs } : {}),
+    };
   }
 
   /** The names the shared character sheet settled on (cast, and the glossary's renderings). */
@@ -600,7 +618,8 @@ export class SeriesService {
     const plan = await this.readPlan(parent);
     if (!plan) throw new AppErrorException('INVALID_EDIT', 'The video is still being analysed; the plan comes when it is done.');
     const lines = await this.lines(parent);
-    const durationMs = parent.mediaInfo?.durationMs || plan.parts.at(-1)?.endMs || 0;
+    // A series that ends before the video (an advert tail) keeps its end.
+    const durationMs = plan.endMs ?? (parent.mediaInfo?.durationMs || plan.parts.at(-1)?.endMs || 0);
     const current = plan.parts.slice(1).map((p) => p.startMs);
     let cuts = current;
     if (edit.cuts) {

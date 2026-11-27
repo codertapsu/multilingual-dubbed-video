@@ -108,7 +108,7 @@ import { checkWorkersHealth } from './health.js';
 import { toHttpError } from './httpErrors.js';
 import { decideRange } from './httpRange.js';
 import { createFfmpegMediaService } from './mediaAdapter.js';
-import { PictureDetectionService } from './picture/pictureDetection.js';
+import { adTailFrom, PictureDetectionService } from './picture/pictureDetection.js';
 import { registerPictureRoutes } from './picture/pictureRoutes.js';
 import { openPath } from './openPath.js';
 import { describeStorage, clearStorage, dirSize } from './storage.js';
@@ -629,7 +629,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       config,
       warningInbox,
       // "Find the watermark and blur it" at render (picture/watermarkAuto.ts).
-      watermark: { detect: (id: string) => pictures.detectNow(id) },
+      watermark: { detect: (id: string, opts?: { tail?: boolean }) => pictures.detectNow(id, opts ?? {}) },
       // The user's voices kept for one main character (voices/mainOnly.ts).
       mainOnlyVoices: async (projectId: string) =>
         new Map((await voiceProfileStore.list(projectId).catch(() => [])).filter((p) => p.mainOnly).map((p) => [p.id, p.name])),
@@ -3565,7 +3565,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         const body = req.body ?? {};
         const project = await store.getProject(req.params.id);
         const paths = store.paths(req.params.id);
-        const lines = await readSpeakerLines(paths);
+        // No line past an advert tail: its singers and its reader took the
+        // user's clones from the drama's characters (2026-11-27), also in a
+        // project transcribed before the tail was looked for.
+        const tailFrom = await adTailFrom(project);
+        const lines = (await readSpeakerLines(paths)).filter((l) => tailFrom === undefined || l.startMs < tailFrom);
         const detected = await readSpeakerProfiles(paths.diarizationJson);
         // Ranked by the lines that will be voiced: songs earn no voice (castRows).
         const { rows, voiced, singersOnly } = castRows(lines, detected, project.settings);

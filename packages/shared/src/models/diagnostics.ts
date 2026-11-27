@@ -94,6 +94,8 @@ export type ProjectWarningCode =
   | 'lines-without-subtitles'
   /** The video's own subtitles were asked for as the transcript but could not be read: speech-to-text ran. */
   | 'burned-in-fallback'
+  /** An advert tail: from a time to the end the same banner stays on the picture; speech-to-text (and a series) stopped there. */
+  | 'ad-tail'
   /** Anything else worth knowing (the message says what). */
   | 'other';
 

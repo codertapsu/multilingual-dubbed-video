@@ -534,6 +534,20 @@
                   </span>
                 </label>
               }
+              <!-- An advert tail ("全集免费" uploads): speech-to-text and a series
+                   stop where its banner begins (on unless turned off). -->
+              <label class="radio-row">
+                <input
+                  type="checkbox"
+                  name="stopAtAdTail"
+                  [ngModel]="settings().stopAtAdTail !== false"
+                  (ngModelChange)="patchSettings('stopAtAdTail', $event)"
+                />
+                <span class="radio-body">
+                  <span class="radio-title">{{ 'source-checks.ad-tail' | translate }}</span>
+                  <span class="hint">{{ 'source-checks.ad-tail-hint' | translate }}</span>
+                </span>
+              </label>
               <!-- The transcript against the video's own burned-in subtitles
                    (on by default for Chinese, Japanese and Korean video). -->
               <label class="radio-row">

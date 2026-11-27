@@ -2616,7 +2616,9 @@
     "burned-in-no-band": "The video's own subtitles could not be its transcript: no band of subtitles was found in the picture. Speech-to-text transcribed it instead.",
     "burned-in-few": "The video's own subtitles could not be its transcript: only {{count}} subtitle(s) showed in the picture. Speech-to-text transcribed it instead.",
     "burned-in-failed": "The video's own subtitles could not be its transcript: reading them failed ({{reason}}). Speech-to-text transcribed it instead.",
-    "burned-in-unreadable": "The video's own subtitles could not be its transcript: only {{count}} of the {{total}} subtitles could be read. Speech-to-text transcribed it instead."
+    "burned-in-unreadable": "The video's own subtitles could not be its transcript: only {{count}} of the {{total}} subtitles could be read. Speech-to-text transcribed it instead.",
+    "ad-tail": "From {{from}} to the end ({{end}}) the same advert banner stays on the picture: speech-to-text stopped there, so the advert is not dubbed. To dub the whole video, turn off “Stop where an advert tail begins” and redo from speech-to-text.",
+    "ad-tail-series": "From {{from}} to the end ({{end}}) the same advert banner stays on the picture: speech-to-text stopped there and the series ends there, so the advert is not dubbed. To dub the whole video, turn off “Stop where an advert tail begins” and redo the series from speech-to-text."
   },
   "diagnostics": {
     "heading": "Diagnostics",
@@ -2870,7 +2872,9 @@
     "drift-shorter": "The audio ends {{seconds}} s before the picture: silence fills the rest",
     "drift-hint": "Measured from the audio's own samples when the audio is extracted. The extracted audio always follows the picture's clock and ends with it, so the dub stays in sync and the video keeps its length.",
     "subtitle-check": "Check against the video's own subtitles",
-    "subtitle-check-hint": "When the video has subtitles burned into the picture, the app reads where they sit (five times a second, no text recognition) to know when someone speaks. Lines under a subtitle are never removed as silence, and a warning lists subtitles with no line under them (speech that was lost) and lines with no subtitle (maybe made up). Adds a few minutes per hour of video. On by default for Chinese, Japanese and Korean video."
+    "subtitle-check-hint": "When the video has subtitles burned into the picture, the app reads where they sit (five times a second, no text recognition) to know when someone speaks. Lines under a subtitle are never removed as silence, and a warning lists subtitles with no line under them (speech that was lost) and lines with no subtitle (maybe made up). Adds a few minutes per hour of video. On by default for Chinese, Japanese and Korean video.",
+    "ad-tail": "Stop where an advert tail begins",
+    "ad-tail-hint": "Some “whole series free” uploads are the drama only at the start; after it, the same banner for the full version stays on the picture to the end, for hours, over a still image or moving footage. When the app finds it (videos of 20 minutes or more), speech-to-text stops there and a series ends there, so the advert is never dubbed, and a warning says where. Turn this off to dub the whole video."
   },
   "join": {
     "mode-aria": "What to dub",

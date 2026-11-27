@@ -291,6 +291,16 @@ export interface ProjectSettings {
    */
   transcriptSpotCheck?: boolean;
   /**
+   * Stop where an ADVERT TAIL begins (media-worker adTail.ts): on "全集免费"
+   * uploads whose drama is only their start, the same banner for the full
+   * version stays on the picture from a time to the end, over a still image
+   * or moving footage, for hours. Speech-to-text, its checks and a series'
+   * parts end there; a warning says where. Absent = on (videos of 20 minutes
+   * or more, looked at once at the start of speech-to-text); false = dub the
+   * whole video (redo from speech-to-text).
+   */
+  stopAtAdTail?: boolean;
+  /**
    * Check speech-to-text against the video's own burned-in subtitles: read the
    * subtitle band (picture detection's, or the cover band set here) five times
    * a second to know when a subtitle is on screen; lines there are never taken

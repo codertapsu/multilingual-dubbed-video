@@ -221,6 +221,13 @@ export interface SeriesView {
     progressPercent?: number;
     /** Paused or stopped on its own (`Project.pausedByUser`): starting the series leaves it. */
     pausedByUser?: boolean;
+    /**
+     * Its lines come from its own speech-to-text, not the series' transcript:
+     * its speaker ids are its own, so the series' voices and character sheet
+     * do not fit them (rebuild_parts gives it the series' lines back). A part
+     * transcribed itself after a pause through 0.22.1 (claude-dubber, 2026-11-28).
+     */
+    ownTranscript?: boolean;
     /** Its lines to look at, when it has any: still flagged by the checks, voices running over (H7). */
     issues?: ProjectLineIssues;
   }[];

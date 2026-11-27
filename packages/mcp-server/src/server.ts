@@ -90,6 +90,9 @@ const STEP_IDS = [
  * it again an hour later (claude-dubber, 2026-11-27).
  */
 const HELD_PART = 'paused on its own, so starting the series leaves it; start_dubbing on this part continues it';
+/** A part whose lines are its own speech-to-text (get_series ownTranscript). */
+const OWN_TRANSCRIPT =
+  "TRANSCRIBED ITSELF: its lines and speaker ids are its own, not the series', so the series' voices and character sheet do not fit them; rebuild_parts (force=true when translated) gives it the series' lines back";
 
 /** Which step to re-run from after a settings change, earliest wins. */
 const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
@@ -1394,6 +1397,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       progressPercent?: number;
       /** Paused or stopped on its own: starting the series leaves it. */
       pausedByUser?: boolean;
+      /** Its lines come from its own speech-to-text, with speaker ids of its own. */
+      ownTranscript?: boolean;
       /** Its lines to look at (H7), when it has any. */
       issues?: ProjectLineIssues;
     }[];
@@ -1413,8 +1418,12 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       ...(v.plan?.notes ?? []).map((n) => `Note: ${n}`),
       ...v.parts.map((p) => {
         const summary = p.summary ?? v.plan?.parts.find((x) => x.index === p.index)?.summary;
-        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${summary ? ` (${summary})` : ''}${p.projectId ? ` project ${p.projectId}${p.name ? ` "${p.name}"` : ''}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}${p.pausedByUser ? `, ${HELD_PART}` : ''}${lineIssuesBrief(p.issues)}`;
+        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${summary ? ` (${summary})` : ''}${p.projectId ? ` project ${p.projectId}${p.name ? ` "${p.name}"` : ''}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}${p.pausedByUser ? `, ${HELD_PART}` : ''}${p.ownTranscript ? `, ${OWN_TRANSCRIPT}` : ''}${lineIssuesBrief(p.issues)}`;
       }),
+      // A part's lines are in the part's own time; the series' in the whole video's.
+      ...(v.parts.some((p) => p.projectId)
+        ? ["A part's line times (get_transcript on the part) start at 0 at its window's start: add the window's start shown here for the series' time."]
+        : []),
     ];
     if (v.state === 'review') {
       lines.push('Next: set_split_plan to change cuts or titles (replan_series to plan again), or start_series to make and dub the parts.');
@@ -2059,7 +2068,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Transcript and translation',
       description:
-        'The lines of a project: id, time slot, spoken-length budget for the dub language ("≤13 syllables (aim 11)", at the voice\'s measured pace, counting up to a second of the pause after the line), the original text and (=>) the translation with its length in [brackets], and how the dub fits ("fit 1.20x ok", "timing-conflict"). "NEEDS FIX" marks lines the app\'s checks rejected (foreign script, pinyin, "a/b" alternatives, no diacritics). filter="attention" lists only lines that need work: untranslated, flagged, over budget, out of time, or with out-of-date voices. "SONG" marks a line kept as the original song (no voice; mark_song), "SONG?" one the app suggests is sung (never applied by itself); filter="songs" lists both. Pages through long videos with offset/limit.',
+        'The lines of a project: id, time slot (a series part\'s times are its own: 0 is its window\'s start, which get_series shows), spoken-length budget for the dub language ("≤13 syllables (aim 11)", at the voice\'s measured pace, counting up to a second of the pause after the line), the original text and (=>) the translation with its length in [brackets], and how the dub fits ("fit 1.20x ok", "timing-conflict"). "NEEDS FIX" marks lines the app\'s checks rejected (foreign script, pinyin, "a/b" alternatives, no diacritics). filter="attention" lists only lines that need work: untranslated, flagged, over budget, out of time, or with out-of-date voices. "SONG" marks a line kept as the original song (no voice; mark_song), "SONG?" one the app suggests is sung (never applied by itself); filter="songs" lists both. Pages through long videos with offset/limit.',
       inputSchema: z.object({
         projectId: z.string(),
         offset: z.number().int().min(0).default(0),

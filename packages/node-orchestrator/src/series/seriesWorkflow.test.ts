@@ -120,6 +120,7 @@ function rig(opts: { chat?: Chat; workOn?: (id: string) => ProjectWork | undefin
     workOn: (id) => opts.workOn?.(id) ?? orchestrator.workOn(id),
     holdQueue: (fn) => orchestrator.whileQueueHeld(fn),
     renameProject: (id, name) => orchestrator.renameProject(id, name),
+    pause: (id) => orchestrator.pauseJob(id),
   });
   return { orchestrator, series, prefs };
 }
@@ -321,6 +322,34 @@ describe('planning again, keeping what the user wrote (2.3)', { timeout: 60_000 
     await r.series.analysed(parent.id, { again: true });
     expect((await r.series.view(parent.id)).plan!.parts.map((p) => p.title)).toEqual(['AI 3.1', 'AI 3.2', 'AI 3.3']);
     expect(activity.list({ projectId: parent.id }).some((e) => e.kind === 'series.plan' && e.title.startsWith('Planning again'))).toBe(true);
+  });
+});
+
+describe('a part paused on its own (claude-dubber, 2026-11-27)', { timeout: 60_000 }, () => {
+  it('stays out of every start of its series until it is started itself; the series still pauses and continues as a whole', async () => {
+    const r = rig();
+    const parent = await analysedParent(r);
+    const ids = await r.series.createParts(parent.id);
+    expect(ids.length).toBeGreaterThanOrEqual(3);
+    const second = ids[1]!;
+    const answer = async () => (await r.series.startParts(parent.id)).map((p) => (p.held ? 'held' : p.queued ? 'queued' : JSON.stringify(p)));
+    const others = (what: string) => ids.map((id) => (id === second ? 'held' : what));
+    // The series starts (the paused queue holds every part), then part 2 is
+    // paused on its own. An hour later it was back in the queue.
+    expect(await answer()).toEqual(ids.map(() => 'queued'));
+    await r.orchestrator.pauseJob(second, { byUser: true });
+    expect(await answer()).toEqual(others('queued'));
+    expect((await store.getProject(second)).status).toBe('created');
+    expect((await r.series.view(parent.id)).parts.map((p) => p.pausedByUser === true)).toEqual(ids.map((id) => id === second));
+
+    // The whole series paused and continued: it continues as a whole, part 2 still out.
+    expect(await r.series.pauseParts(parent.id)).toEqual(ids.filter((id) => id !== second));
+    expect(await answer()).toEqual(others('queued'));
+
+    // Started itself, part 2 waits its turn again, and the series counts it again.
+    expect(await r.orchestrator.runPipeline(second)).toMatchObject({ queued: true });
+    expect(await answer()).toEqual(ids.map(() => 'queued'));
+    for (const id of ids) await r.orchestrator.cancelJob(id);
   });
 });
 

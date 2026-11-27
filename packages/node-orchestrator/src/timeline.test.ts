@@ -494,7 +494,12 @@ describe('HTTP: /file byte ranges and the timeline routes', () => {
     const { id } = created.json() as { id: string };
     const res = await app.inject({ method: 'POST', url: `/projects/${id}/pause` });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ ok: true });
+    // It says what it found: nothing running or queued (2026-11-27).
+    expect(res.json()).toEqual({ ok: true, was: 'idle' });
+    // Not a part of a series: nothing to hold.
+    const { project } = (await app.inject({ method: 'GET', url: `/projects/${id}` })).json() as { project: { pausedByUser?: unknown } };
+    expect(project.pausedByUser).toBeUndefined();
+    expect((await app.inject({ method: 'POST', url: `/projects/${id}/cancel` })).json()).toEqual({ ok: true, was: 'idle' });
   });
 
   it("accepts the shell's POST /shutdown, and refuses one from a web page", async () => {

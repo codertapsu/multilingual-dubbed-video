@@ -403,6 +403,75 @@ describe('run queue (simultaneous-dub capacity)', () => {
     await sched.cancelJob(a);
   });
 
+  it('marks a series part the user takes out of the queue, says what it found, and clears the mark when the part itself starts', async () => {
+    const [a, b] = await twoProjects();
+    const asPart = async (id: string, index: number) => {
+      const p = await store.getProject(id);
+      await store.saveProject({ ...p, series: { role: 'part', parentId: 'proj_parent', index, count: 2, seriesName: 'S', recapEndMs: 0 } });
+    };
+    await asPart(a, 1);
+    await asPart(b, 2);
+    const sched = queuedOrchestrator(1);
+    await sched.runPipeline(a);
+    await sched.runPipeline(b);
+
+    // The 2026-11-27 case: part 2 paused right after the series started. It
+    // used to come back as plain "created", like a part never started.
+    expect(await sched.pauseJob(b, { byUser: true })).toBe('queued');
+    const held = await store.getProject(b);
+    expect(held.status).toBe('created');
+    expect(held.queue).toBeUndefined();
+    expect(held.pausedByUser?.at).toBeTruthy();
+    // Paused again, it was neither queued nor running: still held.
+    expect(await sched.pauseJob(b, { byUser: true })).toBe('idle');
+    expect((await store.getProject(b)).pausedByUser).toBeTruthy();
+
+    // Started itself, it waits its turn as any other start, and is no longer held.
+    expect((await sched.runPipeline(b)).queued).toBe(true);
+    expect((await store.getProject(b)).pausedByUser).toBeUndefined();
+    // A pause that is not the user's (a retry, the whole series) marks nothing.
+    expect(await sched.pauseJob(b)).toBe('queued');
+    expect((await store.getProject(b)).pausedByUser).toBeUndefined();
+    await sched.cancelJob(a);
+  });
+
+  it('never marks a project that is not a series part', async () => {
+    const [a, b] = await twoProjects();
+    const sched = queuedOrchestrator(1);
+    await sched.runPipeline(a);
+    await sched.runPipeline(b);
+    expect(await sched.cancelJob(b, { byUser: true })).toBe('queued');
+    expect((await store.getProject(b)).pausedByUser).toBeUndefined();
+    await sched.cancelJob(a);
+  });
+
+  it("shows a running dub's step with its own progress and what it does in the queue (2026-11-27)", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const media = new FakeMediaService();
+    const extract = media.extractAudio.bind(media);
+    media.extractAudio = async (...args: Parameters<FakeMediaService['extractAudio']>) => {
+      await held;
+      return extract(...args);
+    };
+    const running = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media,
+      registry: fakeRegistry(new FakeSttProvider(makeSegments([[0, 1000, 'hi']])), new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+    });
+    const p = await running.createProject(createProjectInput(await writeDummyVideo(tmp)));
+    await running.runPipeline(p.id);
+    await vi.waitFor(async () => expect((await store.getPipeline(p.id)).steps.find((s) => s.id === 'extract-audio')?.status).toBe('running'));
+    // As the pipeline reads in the middle of speaker detection.
+    const detail = { key: 'step-detail.speakers', params: { done: 3, total: 20 }, text: 'Detecting speakers 3/20' };
+    await store.savePipeline(setStepStatus(await store.getPipeline(p.id), 'extract-audio', 'running', { progressPercent: 57, detail }));
+    expect((await running.queueState()).running[0]).toMatchObject({ projectId: p.id, step: 'extract-audio', stepPercent: 57, stepDetail: 'Detecting speakers 3/20' });
+    release();
+    await running.cancelJob(p.id);
+  });
+
   it('takes a change to only the mix or render while a dub runs, until it starts mixing; a series being analysed always', async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));

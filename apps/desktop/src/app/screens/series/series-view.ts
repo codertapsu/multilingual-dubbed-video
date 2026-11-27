@@ -99,6 +99,8 @@ export interface PartStart {
   waiting?: boolean;
   /** Already dubbed: left as it is. */
   done?: boolean;
+  /** Paused or stopped on its own (Project.pausedByUser): left as it is until started itself. */
+  held?: boolean;
   /** Why it did not start (the server's English). */
   error?: string;
 }
@@ -138,6 +140,7 @@ export function startReport(starts: readonly PartStart[], indexOf: (projectId: s
     });
     if (s.error) return line('series.start-failed', true, s.error);
     if (s.done) return line('series.start-done');
+    if (s.held) return line('series.start-held');
     if (s.started) return line('series.start-started');
     if (s.waiting) return line('series.start-waiting');
     return line('series.start-queued');

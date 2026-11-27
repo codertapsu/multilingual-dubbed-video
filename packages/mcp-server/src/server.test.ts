@@ -639,6 +639,25 @@ describe('VideoDubber MCP server', () => {
     expect(r.text).toContain('gpu-hold (Waiting: Voice Mask is using the graphics card.)');
   });
 
+  it('get_queue says what the running step does, with its own progress (2026-11-27)', async () => {
+    fake.routes.set('GET /queue', () => ({
+      maxProjects: 2,
+      budgetPoints: 4,
+      usedPoints: 2,
+      paused: false,
+      running: [
+        { projectId: 'proj_1', name: 'Tập 7', heavy: true, step: 'stt', progressPercent: 26, stepPercent: 57, stepDetail: 'Detecting speakers 3/20', etaSec: 2400 },
+        { projectId: 'proj_2', name: 'Tập 8', heavy: false, step: 'render', progressPercent: 90 },
+      ],
+      entries: [],
+    }));
+    await connect();
+    const r = await call('get_queue');
+    // It read "stt, 22%, about 8 min left" for the hour speaker detection took.
+    expect(r.text).toContain('- proj_1 "Tập 7", stt (57%: Detecting speakers 3/20), 26%, about 40 min left (uses the GPU lane)');
+    expect(r.text).toMatch(/^- proj_2 "Tập 8", render, 90%$/m);
+  });
+
   it('pause_dubbing pauses, and get_project says where it stopped and how to continue', async () => {
     let paused = false;
     fake.routes.set('POST /projects/proj_1/pause', () => {
@@ -659,6 +678,48 @@ describe('VideoDubber MCP server', () => {
     const g = await call('get_project', { projectId: 'proj_1' });
     expect(g.text).toContain('PAUSED at "tts" since 2026-11-17T10:00:00Z');
     expect(g.text).toContain('start_dubbing');
+  });
+
+  it("dub_downloads says how a series made from a preset starts: the made project's own choice", async () => {
+    const parent = (autoStart: boolean) => ({
+      role: 'parent' as const,
+      state: 'analysing' as const,
+      settings: { minMinutes: 30, maxMinutes: 40, aiProviderId: 'anthropic-translate', recapSec: 4, autoStart },
+    });
+    let autoStart = false;
+    fake.routes.set('GET /presets/preset_b3644eee88', () => ({ id: 'preset_b3644eee88', name: 'Trung → Việt (series)', targetLanguage: 'vi-VN', settings: {} }));
+    fake.routes.set('GET /presets', () => [{ id: 'preset_b3644eee88', name: 'Trung → Việt (series)', targetLanguage: 'vi-VN', settings: {} }]);
+    fake.routes.set('POST /downloads/dub', () => ({
+      results: [
+        { downloadId: 'dl_1', projectId: 'proj_long', name: 'Long', series: true, queued: true },
+        { downloadId: 'dl_2', projectId: 'proj_short', name: 'Short', queued: true },
+      ],
+    }));
+    fake.routes.set('GET /projects/proj_long', () => ({ project: project({ id: 'proj_long', series: parent(autoStart) }), pipeline: pipeline() }));
+    await connect();
+    // The preset's series block says false: the reply said "autoStart=true" (2026-11-27).
+    const r = await call('dub_downloads', { downloadIds: ['dl_1', 'dl_2'], presetId: 'preset_b3644eee88' });
+    expect(r.text).toContain('Series: autoStart=false. It stops at review after its analysis');
+    autoStart = true;
+    expect((await call('dub_downloads', { downloadIds: ['dl_1', 'dl_2'], presetId: 'preset_b3644eee88' })).text).toContain('Series: autoStart=true.');
+  });
+
+  it('pause_dubbing and cancel_dubbing say a queued part only left the queue, and stays out when its series starts', async () => {
+    const part = { role: 'part' as const, parentId: 'proj_s', index: 2, count: 3, seriesName: 'S', recapEndMs: 0 };
+    fake.routes.set('POST /projects/proj_1/pause', () => ({ ok: true, was: 'queued' }));
+    fake.routes.set('POST /projects/proj_1/cancel', () => ({ ok: true, was: 'waiting' }));
+    fake.routes.set('GET /projects/proj_1', () => ({ project: project({ status: 'created', series: part }), pipeline: pipeline({ status: 'idle' }) }));
+    await connect();
+    // It read "Paused. Everything done so far is kept" about a part that had only left the queue.
+    const r = await call('pause_dubbing', { projectId: 'proj_1' });
+    expect(r.text).toBe(
+      'Taken out of the queue before it started. As a part of a series it is paused on its own, so starting the series leaves it; start_dubbing on this part continues it.',
+    );
+    const c = await call('cancel_dubbing', { projectId: 'proj_1' });
+    expect(c.text).toContain('It was waiting for its models to download: it no longer starts by itself. As a part of a series');
+    // Not a part: just how to bring it back.
+    fake.routes.set('GET /projects/proj_1', () => ({ project: project({ status: 'created' }), pipeline: pipeline({ status: 'idle' }) }));
+    expect((await call('pause_dubbing', { projectId: 'proj_1' })).text).toBe('Taken out of the queue before it started. start_dubbing queues it again.');
   });
 
   it('get_project names every line to look at after the dub, list_projects counts them (H7)', async () => {

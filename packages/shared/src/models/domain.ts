@@ -418,6 +418,15 @@ export interface Project {
   mediaInfo?: MediaInfo;
   /** Set while `status === 'queued'` (waiting for a run slot). */
   queue?: ProjectQueueEntry;
+  /**
+   * A part of a series the user (or the agent) paused or stopped ON ITS OWN:
+   * starting the whole series leaves it as it is, until it is started itself,
+   * which clears this. A pause taken out of the queue left nothing behind,
+   * so the part looked never started and the next start of its series queued
+   * it again (claude-dubber, 2026-11-27). A pause of the whole series sets
+   * nothing: that one continues as a whole.
+   */
+  pausedByUser?: { at: string };
   /** The download it was made from (site, link, uploader), when it was. */
   source?: DownloadSource;
   /** Where the finished dub was posted, newest last (POST /projects/:id/published). */

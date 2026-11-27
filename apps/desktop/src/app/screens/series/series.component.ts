@@ -25,6 +25,8 @@ interface Row {
   progressPercent?: number;
   /** Its lines voiced while still failing the translation checks, not set aside (H7). */
   flagged?: number;
+  /** Paused or stopped on its own: "Start every part" leaves it (Project.pausedByUser). */
+  held?: boolean;
 }
 
 /** A made part being renamed or retitled (one at a time). */
@@ -134,6 +136,9 @@ interface PartEdit {
                       @if (b === 'running' && r.progressPercent !== undefined) {
                         <span class="mono muted">{{ r.progressPercent }}%</span>
                       }
+                    }
+                    @if (r.held) {
+                      <span class="badge badge-pending" [title]="'series.held-title' | translate">{{ 'series.held' | translate }}</span>
                     }
                     <!-- Lines voiced while still failing the checks: there until fixed or kept as they are (H7). -->
                     @if (r.flagged) {
@@ -422,6 +427,7 @@ export class SeriesComponent implements OnInit, OnDestroy {
               ...(p.projectId ? { projectId: p.projectId } : {}),
               ...(p.status ? { status: p.status } : {}),
               ...(p.progressPercent !== undefined ? { progressPercent: p.progressPercent } : {}),
+              ...(p.pausedByUser ? { held: true } : {}),
               ...(p.issues && !p.issues.flaggedDismissed && p.issues.flagged.length > 0 ? { flagged: p.issues.flagged.length } : {}),
             };
           }),

@@ -386,16 +386,23 @@ export interface RunScheduleResult {
   position?: number;
 }
 
+/** What a pause found: a running dub (now paused), a queued one (taken out before it started), or neither. */
+export type JobPauseOutcome = 'queued' | 'running' | 'idle';
+
 /** High-level job orchestration surface (maps to the HTTP API / Tauri cmds). */
 export interface JobOrchestrator {
   /** Create a new project from input + settings. */
   createProject(input: CreateProjectInput): Promise<Project>;
   /** Run (or resume) the full pipeline — starts now, or queues behind others. */
   runPipeline(projectId: string): Promise<RunScheduleResult>;
-  /** Pause a running job. */
-  pauseJob(jobId: string): Promise<void>;
-  /** Cancel a running (or queued) job. */
-  cancelJob(jobId: string): Promise<void>;
+  /**
+   * Pause a running job (a queued one leaves the queue). `byUser`: the user
+   * paused this project itself, so a series part stays paused when its
+   * series is started (`Project.pausedByUser`). Answers what it found.
+   */
+  pauseJob(jobId: string, opts?: { byUser?: boolean }): Promise<JobPauseOutcome>;
+  /** Cancel a running (or queued) job: the same as pausing it. */
+  cancelJob(jobId: string, opts?: { byUser?: boolean }): Promise<JobPauseOutcome>;
   /** Reset a step (and everything downstream) and rerun from there. */
   retryStep(projectId: string, stepId: PipelineStepId): Promise<RunScheduleResult>;
 }

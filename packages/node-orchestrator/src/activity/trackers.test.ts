@@ -93,6 +93,17 @@ describe('dub runs as activity', () => {
     runs.onEvent('p2', state({ status: 'running', currentStep: 'tts', progressPercent: 70 }));
     // 10 points in 100 s: 30 points left take 300 s.
     expect(reg.get(entry!.id)).toMatchObject({ etaSec: 300, messagePhrase: { key: 'opt.step.tts' } });
+    expect(runs.etaOf('p2')).toBe(300);
+    // Nothing moves for 200 s: the time left grows with it, when asked (it
+    // read "about 8 min" for an hour, 2026-11-27), and the list follows at
+    // the next write, as it drifted by more than a minute.
+    now += 200_000;
+    expect(runs.etaOf('p2')).toBe(900);
+    runs.onEvent('p2', state({ status: 'running', currentStep: 'tts', progressPercent: 70 }));
+    expect(reg.get(entry!.id)?.etaSec).toBe(900);
+    now += 10_000;
+    runs.onEvent('p2', state({ status: 'running', currentStep: 'tts', progressPercent: 70 }));
+    expect(reg.get(entry!.id)?.etaSec).toBe(900);
     runs.onEvent('p2', state({ status: 'paused', currentStep: 'tts', pausedStep: 'tts', progressPercent: 70 }));
     expect(reg.get(entry!.id)).toMatchObject({ state: 'cancelled', messagePhrase: { key: 'activity.text.paused-at', params: { stepKey: 'opt.step.tts' } } });
   });

@@ -353,9 +353,11 @@ A sung line (an opening song, a ballad in a funeral scene) is usually better
 left alone. **Keep the original song** (Line tab, or several selected lines):
 the line gets no dub voice and the original plays there. Dialogue between the
 lyrics stays dubbed, so mark lines, not a whole scene. After speech-to-text, the
-Project tab's **Songs** section lists the **Lines that look sung** (lyrics in
-traditional characters, a chorus that repeats unchanged, very slow held
-syllables). Nothing is changed by itself: listen, then choose **Keep the
+Project tab's **Songs** section lists the **Lines that look sung** (a chorus
+that repeats unchanged, very slow held syllables, and lyrics in traditional
+characters next to those; traditional characters alone do not count, as
+speech-to-text sometimes writes plain dialogue that way). Nothing is changed
+by itself: listen, then choose **Keep the
 original song** or **Not a song**. **Subtitles for songs** is off by default,
 so the original song plays untouched; turn it on to subtitle the song lines
 too.
@@ -472,7 +474,9 @@ part's start time (m:ss) or its title, then **Make the parts and start
 dubbing**. **Plan again** asks the AI again.
 
 Once the parts are made, the series screen acts on all of them at once:
-**Pause all parts** and **Start all parts** keep their order; **Apply the series
+**Pause all parts** and **Start every part** keep their order. A part you paused
+or stopped on its own page stays paused: it shows **Paused on its own**, and
+**Start every part** leaves it until you continue it from its own page. **Apply the series
 settings to every part** copies the engines, the voices (per speaker too), the
 subtitles and the mix to each part that is not being dubbed; **Rebuild parts from
 the series transcript** gives each part its share of the series transcript again

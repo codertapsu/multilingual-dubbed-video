@@ -636,11 +636,15 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * off. The runner saves it as `paused` at its step (finished steps and the
    * step's own saved work are reused; runner.ts). Resolves once that is on
    * disk. A QUEUED project just leaves the queue, its previous status restored.
+   * `byUser`: the user paused this project itself (POST /pause, /cancel), not
+   * its whole series or the app closing: a series part then keeps
+   * `pausedByUser`, so starting its series leaves it (seriesService.startParts).
+   * Answers what it found: queued, running, or neither.
    */
-  async pauseJob(jobId: string): Promise<void> {
+  async pauseJob(jobId: string, opts: { byUser?: boolean } = {}): Promise<'queued' | 'running' | 'idle'> {
     if (this.queued.has(jobId)) {
-      await this.dequeue(jobId);
-      return;
+      await this.dequeue(jobId, opts);
+      return 'queued';
     }
     const job = this.running.get(jobId);
     if (!job) {
@@ -648,7 +652,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       // and has not restarted since): Pause settles it.
       const project = await this.deps.store.getProject(jobId).catch(() => undefined);
       if (project) await this.settleStaleRun(project);
-      return;
+      if (opts.byUser) await this.markPausedByUser(jobId);
+      return 'idle';
     }
     job.controller.abort(new AppErrorException('CANCELLED', 'Paused by the user.'));
     try {
@@ -656,11 +661,24 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     } catch {
       /* the run handles its own errors */
     }
+    if (opts.byUser) await this.markPausedByUser(jobId);
+    return 'running';
   }
 
   /** Stopping a dub is pausing it: nothing done is thrown away (POST /cancel, the MCP cancel_dubbing). */
-  async cancelJob(jobId: string): Promise<void> {
-    await this.pauseJob(jobId);
+  async cancelJob(jobId: string, opts: { byUser?: boolean } = {}): Promise<'queued' | 'running' | 'idle'> {
+    return this.pauseJob(jobId, opts);
+  }
+
+  /** Record that the user paused this series part on its own (`Project.pausedByUser`); nothing for any other project. */
+  private async markPausedByUser(projectId: string): Promise<void> {
+    try {
+      const project = await this.deps.store.getProject(projectId);
+      if (project.series?.role !== 'part' || project.status === 'completed') return;
+      await this.deps.store.saveProject({ ...project, pausedByUser: { at: new Date().toISOString() } });
+    } catch {
+      /* project vanished; nothing to hold */
+    }
   }
 
   /**
@@ -2669,9 +2687,13 @@ export class LocalJobOrchestrator implements JobOrchestrator {
    * `running.set`/`queued.add`) so the idempotence guards stay race-free.
    */
   private async scheduleRun(
-    project: Project,
+    asked: Project,
     retryFromStep: PipelineStepId | undefined,
   ): Promise<RunScheduleResult> {
+    // Started itself: a part's hold from being paused on its own ends with
+    // the save below (queued or running). A start of its whole series never
+    // gets here for a held part (seriesService.startParts leaves it).
+    const { pausedByUser: _held, ...project } = asked;
     const gpuFamilies = await this.gpuFamilies();
     const contextEngine = await this.contextEngineOf(project.settings);
     const workload = classifyWorkload(project.settings, this.deps.registry, {
@@ -2943,8 +2965,12 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     this.queue = this.queue.filter((id) => id !== projectId);
   }
 
-  /** Remove a queued project and restore the status it had before queueing. */
-  private async dequeue(projectId: string): Promise<void> {
+  /**
+   * Remove a queued project and restore the status it had before queueing.
+   * `byUser`: a series part taken out by the user keeps `pausedByUser`, in
+   * the same write (pauseJob).
+   */
+  private async dequeue(projectId: string, opts: { byUser?: boolean } = {}): Promise<void> {
     if (!this.queued.has(projectId)) return;
     this.forget(projectId);
     this.workloads.delete(projectId);
@@ -2955,6 +2981,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         ...project,
         status: project.queue?.previousStatus ?? 'created',
         queue: undefined,
+        ...(opts.byUser && project.series?.role === 'part' ? { pausedByUser: { at: new Date().toISOString() } } : {}),
       });
     } catch {
       /* project vanished; nothing to restore */
@@ -3122,12 +3149,17 @@ export class LocalJobOrchestrator implements JobOrchestrator {
           // start belongs to the first run, and a 7-minute re-mix of a part
           // dubbed days ago showed ~8 h left (claude-dubber, 2026-11-24).
           const eta = dubRuns.etaOf(projectId);
+          // The step's own progress and what it does: "stt, 22%" for an hour
+          // said nothing of the speaker detection going on (2026-11-27).
+          const step = pipeline?.steps.find((s) => s.id === pipeline.currentStep && s.status === 'running');
           return {
             projectId,
             name: names.get(projectId) ?? projectId,
             heavy: this.workloads.get(projectId)?.needsHeavyEngine === true,
             ...(pipeline?.currentStep ? { step: pipeline.currentStep } : {}),
             ...(pipeline ? { progressPercent: Math.round(pipeline.progressPercent) } : {}),
+            ...(step?.progressPercent !== undefined ? { stepPercent: Math.round(step.progressPercent) } : {}),
+            ...(step?.detail?.text ? { stepDetail: step.detail.text } : {}),
             ...(eta !== undefined ? { etaSec: eta } : {}),
           };
         }),

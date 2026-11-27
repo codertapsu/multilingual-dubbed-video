@@ -88,6 +88,20 @@ describe('setStepStatus', () => {
     expect(state.progressPercent).toBe(22);
   });
 
+  it("counts the running step's own share, so the overall percent moves inside a long step", () => {
+    let state = createInitialPipelineState('p1', FIXED);
+    state = setStepStatus(state, 'probe-video', 'completed', undefined, FIXED);
+    state = setStepStatus(state, 'extract-audio', 'completed', undefined, FIXED);
+    // Speech-to-text at 45 %: (2 + 0.45) / 9. It read 22 % for the whole step.
+    state = setStepStatus(state, 'stt', 'running', { progressPercent: 45 }, FIXED);
+    expect(state.progressPercent).toBe(27);
+    state = setStepStatus(state, 'stt', 'running', { progressPercent: 100 }, FIXED);
+    expect(state.progressPercent).toBe(33);
+    // Paused, the step waits as pending with its progress: only finished steps count.
+    state = pausePipelineState(state, FIXED);
+    expect(state.progressPercent).toBe(22);
+  });
+
   it('counts skipped steps toward progress', () => {
     let state = createInitialPipelineState('p1', FIXED);
     state = setStepStatus(state, 'probe-video', 'skipped', undefined, FIXED);

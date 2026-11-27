@@ -1234,11 +1234,23 @@ describe('PipelineRunner — speech-to-text timing and fallback', () => {
       },
     });
     const details: string[] = [];
+    const bar: number[] = [];
+    const overall: number[] = [];
     deps.bus.subscribe((e) => {
       if (e.type === 'step' && e.step.id === 'stt' && e.step.detail) details.push(e.step.detail.text);
+      if (e.type === 'step' && e.step.id === 'stt' && e.step.status === 'running') bar.push(e.step.progressPercent ?? 0);
+      if (e.type === 'state' && e.pipeline.currentStep === 'stt' && e.pipeline.status === 'running') overall.push(e.pipeline.progressPercent);
     });
     await new PipelineRunner(deps).run(project, { signal: new AbortController().signal });
     expect(details).toEqual(['Detecting speakers 0/2', 'Detecting speakers 1/2', 'Detecting speakers 2/2']);
+    // The transcript fills the first half of the bar, detection the second:
+    // it restarted at 0 % after the checks had filled it, and the dub sat at
+    // "22%, about 8 min left" for the hour detection took (2026-11-27).
+    expect(bar.length).toBeGreaterThan(3);
+    expect(bar.every((pct, i) => i === 0 || pct >= bar[i - 1]!)).toBe(true);
+    expect(bar.slice(-3)).toEqual([50, 75, 100]);
+    expect(overall.every((pct, i) => i === 0 || pct >= overall[i - 1]!)).toBe(true);
+    expect(Math.max(...overall)).toBe(33);
     const state = await store.getPipeline(project.id);
     expect(state.warnings?.filter((w) => w.step === 'stt')).toEqual([
       expect.objectContaining({ code: 'speakers-low-confidence', step: 'stt', key: 'warning.speakers-low-confidence', params: { count: 1 } }),

@@ -125,17 +125,26 @@ export class DubRunTracker {
     const step = p.currentStep ? pipelineStepLabel(p.currentStep) : undefined;
     const percent = Number.isFinite(p.progressPercent) ? Math.round(p.progressPercent) : null;
     if (!run.since && percent !== null) run.since = { atMs: this.now(), percent };
-    // The bus repeats a state at every write; the list needs only what moved.
-    if (percent === run.percent && step === run.step && this.registry.get(run.handle.id)?.state === 'running') return;
+    const eta = percent !== null && run.since ? runEtaSeconds(run.since, percent, this.now()) : undefined;
+    // The bus repeats a state at every write; the list needs only what moved:
+    // the percent, the step, or a time left that drifted (a minute, and a tenth).
+    const drifted = eta !== undefined && run.eta !== undefined ? Math.abs(eta - run.eta) >= Math.max(60, run.eta * 0.1) : eta !== run.eta;
+    if (percent === run.percent && step === run.step && !drifted && this.registry.get(run.handle.id)?.state === 'running') return;
     run.percent = percent;
     run.step = step;
-    run.eta = percent !== null && run.since ? runEtaSeconds(run.since, percent, this.now()) : undefined;
+    run.eta = eta;
     run.handle.progress(percent, p.currentStep && step ? said(step, `opt.step.${p.currentStep}`) : undefined, run.eta);
   }
 
-  /** A running dub's time left as last estimated from its own pace (seconds), if it can tell yet. */
+  /**
+   * A running dub's time left from its own pace (seconds), if it can tell
+   * yet: worked out when asked, so it counts the time since the last progress
+   * too. The one saved at the last change of percent read "about 8 min left"
+   * for an hour in which nothing moved (claude-dubber, 2026-11-27).
+   */
   etaOf(projectId: string): number | undefined {
-    return this.runs.get(projectId)?.eta;
+    const run = this.runs.get(projectId);
+    return run?.since && run.percent !== null ? runEtaSeconds(run.since, run.percent, this.now()) : undefined;
   }
 
   /**

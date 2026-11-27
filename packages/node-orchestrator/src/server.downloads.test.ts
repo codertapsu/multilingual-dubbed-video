@@ -47,12 +47,25 @@ describe('downloads, presets and batch dubs', () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    await fsp.writeFile(path.join(root(), 'download-queue.json'), JSON.stringify({ version: 1, items: [done] }));
+    // A download whose site says 5:07:58 for a file of ten seconds (BV1oSeb6cE7G
+    // said 5:07:58 for a file of 4:06:21, 2026-11-27).
+    const short = path.join(root(), 'downloads', 'Short.mp4');
+    await fsp.writeFile(short, Buffer.alloc(4096, 5));
+    const wrongSite: DownloadItem = {
+      ...done,
+      id: 'dl_wrongsite1',
+      input: 'https://www.bilibili.com/video/BV1oSeb6cE7G',
+      sourceKey: 'bilibili:BV1oSeb6cE7G:p1',
+      source: { ...done.source!, sourceKey: 'bilibili:BV1oSeb6cE7G:p1', url: 'https://www.bilibili.com/video/BV1oSeb6cE7G', page: 1, partCount: 1, durationSec: 18_478 },
+      filePath: short,
+    };
+    await fsp.writeFile(path.join(root(), 'download-queue.json'), JSON.stringify({ version: 1, items: [done, wrongSite] }));
     longVideo = path.join(tmp, 'Long.mp4');
     await fsp.writeFile(longVideo, Buffer.alloc(1024, 3));
     app = await createServer({
       config: loadConfig({ projectsDir: path.join(root(), 'projects'), configDir: root(), modelsDir: path.join(root(), 'models') }),
-      media: new FakeMediaService({ segmentDurations: new Map([[longVideo, 7_200_000]]) }),
+      // The finished download plays the hour its site says.
+      media: new FakeMediaService({ segmentDurations: new Map([[longVideo, 7_200_000], [video, 3_600_000]]) }),
     });
   });
 
@@ -63,8 +76,8 @@ describe('downloads, presets and batch dubs', () => {
 
   it('lists the queue and turns away what it cannot download', async () => {
     const list = (await app.inject({ method: 'GET', url: '/downloads' })).json() as DownloadItem[];
-    expect(list.map((i) => i.id)).toEqual(['dl_done000001']);
-    expect(list[0]).not.toHaveProperty('outputPath');
+    expect(list.map((i) => i.id).sort()).toEqual(['dl_done000001', 'dl_wrongsite1']);
+    for (const item of list) expect(item).not.toHaveProperty('outputPath');
 
     expect((await app.inject({ method: 'POST', url: '/downloads', payload: { items: [] } })).statusCode).toBe(400);
     const res = await app.inject({ method: 'POST', url: '/downloads', payload: { items: [{ input: 'https://example.com/x' }] } });
@@ -155,6 +168,16 @@ describe('downloads, presets and batch dubs', () => {
     expect(made).toMatchObject({ series: true });
     const { project } = (await app.inject({ method: 'GET', url: `/projects/${made!.projectId}` })).json() as { project: Project };
     expect(project.series).toMatchObject({ role: 'parent', settings: { aiProviderId: 'anthropic-translate', minMinutes: 15, maxMinutes: 20 } });
+
+    // The file's own length decides, never the site's figure.
+    const wrong = await app.inject({
+      method: 'POST',
+      url: '/downloads/dub',
+      payload: { downloadIds: ['dl_wrongsite1'], targetLanguage: 'vi-VN', sourceLanguage: 'zh', series: { aiProviderId: 'anthropic', maxMinutes: 20 } },
+    });
+    const [whole] = (wrong.json() as { results: { projectId?: string; series?: boolean }[] }).results;
+    expect(whole?.projectId).toBeTruthy();
+    expect(whole?.series).toBeFalsy();
   });
 
   it('makes a project from a preset: its settings under the job\'s own, its folder named after the project', async () => {
@@ -183,7 +206,7 @@ describe('downloads, presets and batch dubs', () => {
     // The preset's engines sit on the machine's recommended ones: a whole set of settings.
     expect(project.settings.sttProviderId).toBeTruthy();
     expect(project.outputDir).toBe(path.join(tmp, 'out', 'Tập 1'));
-    // Ten seconds: far shorter than the preset's series asks for, so dubbed whole.
+    // An hour: not longer than the hour the preset's series asks for, so dubbed whole.
     expect(project.series).toBeUndefined();
     expect(res.json()).not.toHaveProperty('presetId');
 

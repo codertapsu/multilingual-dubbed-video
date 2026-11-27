@@ -84,6 +84,13 @@ const STEP_IDS = [
   'render',
 ] as const satisfies readonly PipelineStepId[];
 
+/**
+ * A series part paused or stopped on its own (Project.pausedByUser). Its
+ * pause used to leave nothing behind, so the next start of the series queued
+ * it again an hour later (claude-dubber, 2026-11-27).
+ */
+const HELD_PART = 'paused on its own, so starting the series leaves it; start_dubbing on this part continues it';
+
 /** Which step to re-run from after a settings change, earliest wins. */
 const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   sourceLanguage: 'stt',
@@ -493,10 +500,24 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         paused: boolean;
         laneOwner?: string;
         holds?: { holdId: string; holder: string; name?: string; reason: string; expiresAt: string }[];
-        running: { projectId: string; name: string; heavy: boolean; step?: string; progressPercent?: number; etaSec?: number }[];
+        running: {
+          projectId: string;
+          name: string;
+          heavy: boolean;
+          step?: string;
+          progressPercent?: number;
+          stepPercent?: number;
+          stepDetail?: string;
+          etaSec?: number;
+        }[];
         entries: { projectId: string; name: string; position: number; reason: string; message: string }[];
       };
       const q = await api.get<Q>('/queue', { signal: ctx.mcpReq.signal });
+      // The step's own progress and what it does ("stt (15%: Detecting speakers 3/20)").
+      const stepNow = (r: Q['running'][number]): string => {
+        const said = [r.stepPercent !== undefined ? `${r.stepPercent}%` : '', r.stepDetail ?? ''].filter(Boolean).join(': ');
+        return said ? ` (${said})` : '';
+      };
       const lines = [
         `Dubs at once: ${q.maxProjects} (points ${q.usedPoints}/${q.budgetPoints})${q.paused ? '; the queue is PAUSED (Settings)' : ''}.`,
         `GPU lane: ${q.laneOwner ? `held by ${q.laneOwner}` : 'free'}.`,
@@ -507,7 +528,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         q.running.length > 0 ? 'Dubbing now:' : 'Nothing is dubbing.',
         ...q.running.map(
           (r) =>
-            `- ${r.projectId} "${r.name}"${r.step ? `, ${r.step}` : ''}${r.progressPercent !== undefined ? `, ${r.progressPercent}%` : ''}${r.etaSec !== undefined ? `, about ${duration(r.etaSec)} left` : ''}${r.heavy ? ' (uses the GPU lane)' : ''}`,
+            `- ${r.projectId} "${r.name}"${r.step ? `, ${r.step}${stepNow(r)}` : ''}${r.progressPercent !== undefined ? `, ${r.progressPercent}%` : ''}${r.etaSec !== undefined ? `, about ${duration(r.etaSec)} left` : ''}${r.heavy ? ' (uses the GPU lane)' : ''}`,
         ),
         ...(q.entries.length > 0 ? ['Waiting:'] : []),
         ...q.entries.map((e) => `- ${e.position}. ${e.projectId} "${e.name}": ${e.reason} (${e.message})`),
@@ -1227,7 +1248,15 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           : `- ${r.downloadId}: not made: ${r.error?.message ?? 'unknown error'}`,
       );
       const ids = res.results.flatMap((r) => (r.projectId ? [r.projectId] : []));
-      if (res.results.some((r) => r.series)) lines.push(seriesGateNote(series?.autoStart ?? true));
+      // How the series start, as the app made them: the preset's own choice
+      // when the call names no series block. This said "autoStart=true" for a
+      // preset with false, while the projects were made right (2026-11-27).
+      const madeSeries = res.results.find((r) => r.series && r.projectId);
+      if (madeSeries?.projectId) {
+        const made = await getProject(madeSeries.projectId, ctx.mcpReq.signal).catch(() => undefined);
+        const settings = made?.project.series?.role === 'parent' ? made.project.series.settings : undefined;
+        lines.push(seriesGateNote(settings?.autoStart ?? series?.autoStart ?? true));
+      }
       if (ids.length > 0) lines.push(`Project ids: ${JSON.stringify(ids)}`);
       return text(lines.join('\n'));
     }),
@@ -1345,6 +1374,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       endMs: number;
       status?: string;
       progressPercent?: number;
+      /** Paused or stopped on its own: starting the series leaves it. */
+      pausedByUser?: boolean;
       /** Its lines to look at (H7), when it has any. */
       issues?: ProjectLineIssues;
     }[];
@@ -1364,7 +1395,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       ...(v.plan?.notes ?? []).map((n) => `Note: ${n}`),
       ...v.parts.map((p) => {
         const summary = p.summary ?? v.plan?.parts.find((x) => x.index === p.index)?.summary;
-        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${summary ? ` (${summary})` : ''}${p.projectId ? ` project ${p.projectId}${p.name ? ` "${p.name}"` : ''}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}${lineIssuesBrief(p.issues)}`;
+        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${summary ? ` (${summary})` : ''}${p.projectId ? ` project ${p.projectId}${p.name ? ` "${p.name}"` : ''}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}${p.pausedByUser ? `, ${HELD_PART}` : ''}${lineIssuesBrief(p.issues)}`;
       }),
     ];
     if (v.state === 'review') {
@@ -1481,14 +1512,17 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId }, ctx) => {
-      const res = await api.post<{ parts: { projectId: string; index?: number; error?: string; queued?: boolean; waiting?: boolean }[] }>(
+      const res = await api.post<{ parts: { projectId: string; index?: number; error?: string; queued?: boolean; waiting?: boolean; done?: boolean; held?: boolean }[] }>(
         `/projects/${encodeURIComponent(projectId)}/series/start`,
         {},
         { signal: ctx.mcpReq.signal, timeoutMs: 300_000 },
       );
       return text(
         [
-          ...res.parts.map((p, i) => `- part ${p.index ?? i + 1}: ${p.projectId}${p.error ? ` not started: ${p.error}` : p.waiting ? ' (starts when its models arrive)' : p.queued ? ' queued' : ' dubbing'}`),
+          ...res.parts.map(
+            (p, i) =>
+              `- part ${p.index ?? i + 1}: ${p.projectId}${p.error ? ` not started: ${p.error}` : p.held ? ` left as it is: ${HELD_PART}` : p.done ? ' finished' : p.waiting ? ' (starts when its models arrive)' : p.queued ? ' queued' : ' dubbing'}`,
+          ),
           `Project ids: ${JSON.stringify(res.parts.map((p) => p.projectId))}`,
         ].join('\n'),
       );
@@ -1832,7 +1866,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       ? await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/retry`, { stepId: fromStep }, { signal })
       : await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/run`, {}, { signal });
     const parts = (
-      res as { parts?: { projectId: string; index?: number; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; left?: string; error?: string }[] }
+      res as {
+        parts?: { projectId: string; index?: number; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; held?: boolean; left?: string; error?: string }[];
+      }
     ).parts;
     if (parts) {
       // A series parent continues as a whole: its parts, in order; a redo of
@@ -1841,7 +1877,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         fromStep ? `Redoing "${fromStep}" in the parts that made it, in order:` : 'The series continues: its parts, in order.',
         ...parts.map(
           (p, i) =>
-            `- part ${p.index ?? i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.left ? `left as it is: ${p.left}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`,
+            `- part ${p.index ?? i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.left ? `left as it is: ${p.left}` : p.held ? `left as it is: ${HELD_PART}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`,
         ),
         'Follow them with get_series or get_queue.',
       ].join('\n');
@@ -1887,13 +1923,13 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Pause a dub',
       description:
-        'Pause a running dub. It stops at once and keeps everything done so far, including the part of the current step it saved (translated batches, speech-to-text chunks, voice clips); the user can then close the app or turn off the computer. start_dubbing continues it from there. A queued dub just leaves the queue.',
+        'Pause a running dub. It stops at once and keeps everything done so far, including the part of the current step it saved (translated batches, speech-to-text chunks, voice clips); the user can then close the app or turn off the computer. start_dubbing continues it from there. A queued dub leaves the queue before it starts. A part of a series paused here stays paused when the series is started again (start_series, start_dubbing on the series), until start_dubbing on that part; pausing the series itself pauses every part, and they continue as a whole.',
       inputSchema: z.object({ projectId: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId }, ctx) => {
       const signal = ctx.mcpReq.signal;
-      const res = await api.post<{ pausedParts?: string[] }>(`/projects/${encodeURIComponent(projectId)}/pause`, {}, { signal });
+      const res = await api.post<{ pausedParts?: string[]; was?: string }>(`/projects/${encodeURIComponent(projectId)}/pause`, {}, { signal });
       if (res?.pausedParts) {
         return text(
           res.pausedParts.length > 0
@@ -1901,9 +1937,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
             : 'No part of this series was dubbing or waiting.',
         );
       }
-      const { pipeline } = await getProject(projectId, signal);
-      const where = pipeline.status === 'paused' && pipeline.pausedStep ? ` at "${pipeline.pausedStep}"` : '';
-      return text(`Paused${where}. Everything done so far is kept; start_dubbing continues from there.`);
+      return text(await pausedReply(projectId, res?.was, 'Paused', signal));
     }),
   );
 
@@ -1912,15 +1946,31 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Stop a dub',
       description:
-        'Stop a running dub (the same as pause_dubbing: nothing done is thrown away) or take a queued one out of the queue. start_dubbing continues it.',
+        'Stop a running dub (the same as pause_dubbing: nothing done is thrown away) or take a queued one out of the queue. start_dubbing continues it. A part of a series stopped here stays stopped when the series is started again, until start_dubbing on that part.',
       inputSchema: z.object({ projectId: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId }, ctx) => {
-      await api.post(`/projects/${encodeURIComponent(projectId)}/cancel`, {}, { signal: ctx.mcpReq.signal });
-      return text('Stopped. start_dubbing continues from where it stopped.');
+      const signal = ctx.mcpReq.signal;
+      const res = await api.post<{ was?: string }>(`/projects/${encodeURIComponent(projectId)}/cancel`, {}, { signal });
+      return text(await pausedReply(projectId, res?.was, 'Stopped', signal));
     }),
   );
+
+  /**
+   * What a pause or stop of one project did, from the app's answer (`was`):
+   * a queued dub used to read "Paused. Everything done so far is kept" when
+   * it had only left the queue, and nothing said whether it would stay out.
+   */
+  async function pausedReply(projectId: string, was: string | undefined, verb: 'Paused' | 'Stopped', signal: AbortSignal): Promise<string> {
+    const { project, pipeline } = await getProject(projectId, signal);
+    const part = project.series?.role === 'part' ? ` As a part of a series it is ${HELD_PART}.` : '';
+    if (was === 'queued') return `Taken out of the queue before it started.${part || ' start_dubbing queues it again.'}`;
+    if (was === 'waiting') return `It was waiting for its models to download: it no longer starts by itself.${part || ' start_dubbing starts it.'}`;
+    if (was === 'idle') return `It was not dubbing or waiting${pipeline.status === 'paused' ? ' (it is paused)' : ''}.${part}`;
+    const where = pipeline.status === 'paused' && pipeline.pausedStep ? ` at "${pipeline.pausedStep}"` : '';
+    return `${verb}${where}. Everything done so far is kept; start_dubbing continues from there.${part}`;
+  }
 
   server.registerTool(
     'update_settings',
@@ -2150,7 +2200,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Choose a voice for each speaker',
       description:
-        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones; within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance. The speakers past the distinct voices (minor speakers) share a POOL of voices per gender: 3-6 by how many there are (minorVoices sets it, saved with apply), built-in voices no main speaker has, then the voices of the least-heard cast speakers, never a clone unless the user picks one (minorPool); speakers who answer each other get different pool voices where possible. Built-in voices that sound like one of the user\'s clones are left out of shared use and named. Speakers of unknown gender are listed with their three longest lines and talk time: they keep the project voice until someone sets them (swaps). A cloned voice whose gender the user has not confirmed is left out of the proposal, which then says so first; apply=true is refused while any is left out, unless allowWithoutClones=true (the user agreed to a cast without them). Ask the user to confirm them in Voices → My voices instead when you can: their rule is their clones first. Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
+        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones, to the speakers heard most in the lines that will be voiced (lines kept as the original song count for nothing, and a speaker who only sings gets no voice); within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance. The speakers past the distinct voices (minor speakers) share a POOL of voices per gender: 3-6 by how many there are (minorVoices sets it, saved with apply), built-in voices no main speaker has, then the voices of the least-heard cast speakers, never a clone unless the user picks one (minorPool); speakers who answer each other get different pool voices where possible. Built-in voices that sound like one of the user\'s clones are left out of shared use and named. Speakers of unknown gender are listed with their three longest lines and talk time: they keep the project voice until someone sets them (swaps). A cloned voice whose gender the user has not confirmed is left out of the proposal, which then says so first; apply=true is refused while any is left out, unless allowWithoutClones=true (the user agreed to a cast without them). Ask the user to confirm them in Voices → My voices instead when you can: their rule is their clones first. Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
       inputSchema: z.object({
         projectId: z.string(),
         apply: z.boolean().default(false),

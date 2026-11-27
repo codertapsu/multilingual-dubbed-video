@@ -152,8 +152,11 @@ import { PROFILE_FILES, VoiceProfileStore } from './voices/profileStore.js';
 import {
   castCandidates,
   castChoices,
+  castRows,
   castSettings,
+  mostlySuggestedSongs,
   proposeCast,
+  speakerList,
   speakerRows,
   unknownSpeakers,
   VoiceMeasureCache,
@@ -163,6 +166,7 @@ import {
 } from './voices/speakerCast.js';
 import { dialogueAdjacency } from './voices/casting.js';
 import { registerSongRoutes } from './songs/songRoutes.js';
+import { openSuggestions, readSongSuggestions, songSuggestionsPath } from './songs/songSuggestions.js';
 import { suggestGender } from './voices/casting.js';
 import { libraryItems } from './voices/voiceLibrary.js';
 import { readSpeakerProfiles } from './pipeline/diarization.js';
@@ -1958,7 +1962,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       const index = offset + i + 1;
       const busy = orchestrator.busyProjects().includes(id) ? { work: orchestrator.workOn(id) } : undefined;
       const pipeline = busy ? undefined : await store.getPipeline(id).catch(() => undefined);
-      const action = partRedoAction(stepId, pipeline?.steps.find((s) => s.id === stepId)?.status, busy);
+      const held = busy ? false : Boolean((await store.getProject(id).catch(() => undefined))?.pausedByUser);
+      const action = partRedoAction(stepId, pipeline?.steps.find((s) => s.id === stepId)?.status, busy, held);
       if (!action.redo) {
         out.push({ projectId: id, index, left: action.reason });
         continue;
@@ -2350,6 +2355,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       if (!waitingForModels.has(projectId)) {
         waitingForModels.add(projectId);
         const retry = (): void => {
+          // Paused or stopped meanwhile (POST /pause or /cancel took it off
+          // the list): it starts only when asked again.
+          if (!waitingForModels.has(projectId)) return;
           if (downloadingModels()) {
             setTimeout(retry, 15_000).unref();
             return;
@@ -2546,7 +2554,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           continue;
         }
         try {
-          const series = seriesFor?.(item.source?.durationSec);
+          // The file's own length decides, as for POST /projects: the site's
+          // figure can be wrong (5:07:58 for a file of 4:06:21, BV1oSeb6cE7G,
+          // 2026-11-27). The site's only when the file cannot be read.
+          const fileMs = seriesFor ? (await media.probe(item.filePath).catch(() => undefined))?.durationMs : undefined;
+          const series = seriesFor?.(fileMs !== undefined ? fileMs / 1000 : item.source?.durationSec);
           const project = await orchestrator.createProject({
             name: projectNameFor(item),
             inputVideoPath: item.filePath,
@@ -3214,8 +3226,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   app.post('/projects/:id/cancel', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     try {
-      await orchestrator.cancelJob(req.params.id);
-      return { ok: true };
+      const waiting = waitingForModels.delete(req.params.id);
+      const was = await orchestrator.cancelJob(req.params.id, { byUser: true });
+      return { ok: true, was: waiting && was === 'idle' ? 'waiting' : was };
     } catch (err) {
       return sendError(reply, err);
     }
@@ -3223,7 +3236,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   // Pause a dub: it stops at once, keeps everything done so far, and POST
   // /projects/:id/run continues it later, after a restart too. Answers once
-  // the paused state is saved.
+  // the paused state is saved, with what it found (`was`): running, queued
+  // (taken out before it started), waiting for its models, or idle. A part
+  // paused here stays paused when its series is started (Project.pausedByUser).
   app.post('/projects/:id/pause', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     try {
       // A series parent pauses all its parts too (in order, so they resume in order).
@@ -3232,8 +3247,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         if (orchestrator.busyProjects().includes(req.params.id)) await orchestrator.pauseJob(req.params.id);
         return { ok: true, pausedParts: await series.pauseParts(req.params.id) };
       }
-      await orchestrator.pauseJob(req.params.id);
-      return { ok: true };
+      const waiting = waitingForModels.delete(req.params.id);
+      const was = await orchestrator.pauseJob(req.params.id, { byUser: true });
+      return { ok: true, was: waiting && was === 'idle' ? 'waiting' : was };
     } catch (err) {
       return sendError(reply, err);
     }
@@ -3551,10 +3567,17 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         const paths = store.paths(req.params.id);
         const lines = await readSpeakerLines(paths);
         const detected = await readSpeakerProfiles(paths.diarizationJson);
-        const rows = speakerRows(lines, detected, project.settings);
+        // Ranked by the lines that will be voiced: songs earn no voice (castRows).
+        const { rows, voiced, singersOnly } = castRows(lines, detected, project.settings);
         if (rows.length === 0) {
           return reply.status(400).send({
-            error: { code: 'INVALID_EDIT', message: 'This project has no detected speakers: detect speakers first (detect_speakers, or the editor).' },
+            error: {
+              code: 'INVALID_EDIT',
+              message:
+                singersOnly.length > 0
+                  ? 'Every line with a speaker is kept as the original song: there is no voice to cast.'
+                  : 'This project has no detected speakers: detect speakers first (detect_speakers, or the editor).',
+            },
           });
         }
         const prints = new Map(detected.map((d) => [d.speakerId, d.print]));
@@ -3575,10 +3598,22 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           ...(Array.isArray(body.minorPool?.female) ? { female: body.minorPool.female.filter((v) => typeof v === 'string') } : {}),
         };
         const proposal = withSwaps(
-          proposeCast(speakers, voices, { ...(minorVoices ? { minorVoices } : {}), adjacency: dialogueAdjacency(lines), minorPool }),
+          proposeCast(speakers, voices, { ...(minorVoices ? { minorVoices } : {}), adjacency: dialogueAdjacency(voiced), minorPool }),
           body.swaps,
           voices,
         );
+        if (singersOnly.length > 0) {
+          proposal.notes.push(`${speakerList(singersOnly)}: every line is kept as the original song, so no voice is cast for them.`);
+        }
+        // Lines that look sung but are not kept as songs yet still rank their
+        // singers: say who, so they can be kept as songs and cast again.
+        const suggested = new Set(openSuggestions(await readSongSuggestions(songSuggestionsPath(paths)), lines).map((s) => s.lineId));
+        const singing = mostlySuggestedSongs(voiced, suggested);
+        if (singing.length > 0) {
+          proposal.notes.push(
+            `${speakerList(singing)}: nearly all their lines look sung (song suggestions). Keep those lines as the original song (mark_song, or Songs in the editor) and cast again, so these speakers take no voice from the others.`,
+          );
+        }
         // Speakers of unknown gender keep the project voice: say so when that
         // voice is kept for one main character (they would all speak with it).
         const projectVoice = voices.find((v) => v.voiceId === project.settings.ttsVoiceId);

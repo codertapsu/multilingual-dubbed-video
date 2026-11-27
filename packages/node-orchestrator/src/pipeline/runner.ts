@@ -434,6 +434,23 @@ export type StepProgress = ((fraction: number, detail?: StepDetail) => Promise<v
   warn?: (warning: Omit<ProjectWarning, 'at' | 'step'>) => void;
 };
 
+/** One part of a step reporting onto [from, to] of the step's bar, its warnings kept. */
+export function progressBetween(onProgress: StepProgress, from: number, to: number): StepProgress {
+  return Object.assign(
+    (fraction: number, detail?: StepDetail) => onProgress(from + (to - from) * Math.max(0, Math.min(1, fraction)), detail),
+    onProgress.warn ? { warn: onProgress.warn } : {},
+  );
+}
+
+/**
+ * Where speaker detection's share of the speech-to-text bar begins, when it
+ * runs: the transcript and its checks fill the bar before it. Detection
+ * restarted the bar at 0 after the checks had filled it, and with it the
+ * dub's overall percent and time left (claude-dubber, 2026-11-27: "stt, 22%,
+ * about 8 min left" for the hour detection took on a 4-hour video).
+ */
+const SPEAKERS_FROM = 0.5;
+
 /**
  * Above this time-stretch ratio a fitted line audibly changes delivery (rushed
  * pace ≈ "a different speaker"), so auto-fit prefers shortening its text. (The
@@ -713,10 +730,14 @@ export class PipelineRunner {
         let progressWrite: Promise<unknown> = Promise.resolve();
         let stepReturned = false;
         const stepWarnings: ProjectWarning[] = [];
+        // A step's bar never goes back while it runs: the dub's overall percent
+        // and its time left are made from it (state.ts rollUpProgress).
+        let highPct = 0;
         const onProgress: StepProgress = Object.assign(
           (fraction: number, detail?: StepDetail) => {
             if (options.signal.aborted || stepReturned) return Promise.resolve();
-            const pct = Math.max(0, Math.min(100, Math.round(fraction * 100)));
+            const pct = Math.max(highPct, Math.min(100, Math.round(fraction * 100)));
+            highPct = pct;
             const write = progressWrite.then(async () => {
               if (stepReturned) return;
               state = await transition(this.deps, state, stepId, 'running', {
@@ -1055,9 +1076,13 @@ export class PipelineRunner {
     project: Project,
     paths: WorkspacePaths,
     signal: AbortSignal,
-    onProgress: StepProgress,
+    stepProgress: StepProgress,
   ): Promise<void> {
     throwIfCancelled(signal);
+    // With speaker detection, the transcript and its checks report onto the
+    // bar's first part and detection onto the rest (SPEAKERS_FROM).
+    const diarize = project.settings.diarize === true;
+    const onProgress = diarize ? progressBetween(stepProgress, 0, SPEAKERS_FROM) : stepProgress;
     let provider = this.deps.registry.getStt(project.settings.sttProviderId);
     const model = project.settings.sttModel ?? 'small';
     const explicitLanguage = project.settings.sourceLanguage
@@ -1177,7 +1202,7 @@ export class PipelineRunner {
     // Speaker detection: who says each line, before anchoring so a line it
     // splits keeps its speaker (pipeline/diarization.ts).
     if (project.settings.diarize) {
-      segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal, onProgress);
+      segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal, progressBetween(stepProgress, SPEAKERS_FROM, 1));
       await this.recordSpeakerGenders(project.id, paths);
     }
 

@@ -2969,7 +2969,7 @@
     "dub-line": "Lồng tiếng lại câu này",
     "reason": {
       "traditional": "Chữ phồn thể",
-      "traditional-title": "Viết bằng chữ phồn thể trong khi phần còn lại của bản chép lời là chữ giản thể: lời bài hát hiện trên màn hình thường như vậy.",
+      "traditional-title": "Viết bằng chữ phồn thể trong khi phần còn lại của bản chép lời là chữ giản thể, ngay cạnh những câu nghe như đang hát: lời bài hát hiện trên màn hình thường như vậy. Chỉ riêng chữ phồn thể thì không tính, vì phần chuyển giọng nói thành chữ đôi khi viết cả lời thoại thường bằng chữ phồn thể.",
       "repeats": "Lặp lại",
       "repeats-title": "Cùng một lời trở lại y nguyên khi chuyển âm thanh thành chữ thêm lần nữa: đó là điệp khúc, không phải lỗi lặp khi chép lời.",
       "sung": "Có vẻ đang hát",

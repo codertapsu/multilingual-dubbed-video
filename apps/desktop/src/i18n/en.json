@@ -2969,7 +2969,7 @@
     "dub-line": "Dub this line again",
     "reason": {
       "traditional": "Traditional characters",
-      "traditional-title": "Written in traditional characters while the rest of the transcript is simplified: on-screen song lyrics often are.",
+      "traditional-title": "Written in traditional characters while the rest of the transcript is simplified, next to lines that sound sung: on-screen song lyrics often are. Traditional characters alone do not count: speech-to-text sometimes writes plain dialogue that way.",
       "repeats": "Repeats",
       "repeats-title": "The same words come back unchanged when the audio is transcribed again: a chorus, not a transcription loop.",
       "sung": "Sung",

@@ -39,8 +39,16 @@ export interface SongSuggestion {
 /** subtitles/song_suggestions.json. */
 export interface SongSuggestionsFile {
   checkedAt: string;
+  /**
+   * SONG_RULE when made by the rule of 2026-11-27 (traditional characters only
+   * with something heard); absent in older files, read through heardSuggestions.
+   */
+  rule?: number;
   suggestions: SongSuggestion[];
 }
+
+/** The rule the suggestions are made by (SongSuggestionsFile.rule). */
+export const SONG_RULE = 2;
 
 /** Where a project's suggestions are kept (beside its transcript). */
 export function songSuggestionsPath(paths: { subtitlesDir: string }): string {
@@ -177,26 +185,87 @@ export function sungLines(lines: readonly TranscriptSegment[], language: string,
 
 // ---- together -------------------------------------------------------------------
 
+/** Whether a time is within SUNG_NEAR_OTHER_MS of one of `starts` (sorted). Pure. */
+function nearAny(starts: readonly number[], ms: number): boolean {
+  let lo = 0;
+  let hi = starts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (starts[mid]! < ms - SUNG_NEAR_OTHER_MS) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < starts.length && starts[lo]! <= ms + SUNG_NEAR_OTHER_MS;
+}
+
 /**
  * Every line that looks sung, with why, in timeline order. Lines already kept
  * as a song are not suggested again. Pure.
+ *
+ * Traditional characters back a song only where something HEARD agrees (a
+ * repeat the loop pass kept, or a slow, sustained delivery): the line itself,
+ * or a line of a heard passage within 15 s (a faster lyric between slow
+ * ones). Alone they said nothing: whisper switches script from one window
+ * to the next (pipeline/spotCheck.ts), and 143 lines of plain dialogue it
+ * wrote in traditional characters were offered as songs, each also pulling
+ * in the slow lines near it (claude-dubber, 2026-11-27, 人间斩妖录).
  */
 export function suggestSongLines(
   lines: readonly TranscriptSegment[],
   opts: { language: string; loopRanges?: readonly RepairedRange[] },
 ): SongSuggestion[] {
   const lang = opts.language.split('-')[0]!.toLowerCase();
+  // Characters only say something about a Chinese transcript.
+  const traditional = lang === 'zh' || lang === '' ? traditionalLines(lines) : new Set<string>();
+  const repeats = keptRepeatLines(lines, opts.loopRanges ?? []);
+  // A traditional line starts a passage only when it sounds sung itself.
+  const seeds = new Set([...repeats, ...lines.filter((l) => traditional.has(l.id) && soundsSung(l, lang)).map((l) => l.id)]);
+  const sung = sungLines(lines, lang, seeds);
+  const heardStarts = lines.filter((l) => repeats.has(l.id) || sung.has(l.id)).map((l) => l.startMs).sort((a, b) => a - b);
   const reasons = new Map<string, SongReason[]>();
   const add = (ids: Iterable<string>, reason: SongReason): void => {
     for (const id of ids) reasons.set(id, [...(reasons.get(id) ?? []), reason]);
   };
-  // Characters only say something about a Chinese transcript.
-  if (lang === 'zh' || lang === '') add(traditionalLines(lines), 'traditional');
-  add(keptRepeatLines(lines, opts.loopRanges ?? []), 'repeats');
-  add(sungLines(lines, lang, new Set(reasons.keys())), 'sung');
+  add(lines.filter((l) => traditional.has(l.id) && nearAny(heardStarts, l.startMs)).map((l) => l.id), 'traditional');
+  add(repeats, 'repeats');
+  add(sung, 'sung');
   return lines
     .filter((l) => reasons.has(l.id) && !isSong(l))
     .map((l) => ({ lineId: l.id, startMs: l.startMs, endMs: l.endMs, text: (l.sourceText ?? '').trim().slice(0, 200), reasons: reasons.get(l.id)! }));
+}
+
+/**
+ * Suggestions saved before 2026-11-27, read under the rule suggestSongLines
+ * follows now, from what the file records. Out: a line suggested for
+ * traditional characters alone with nothing heard within 15 s, and a slow
+ * line the older rule offered for being near one (`sung`, in no run of
+ * three, near no repeat or sung traditional line, but near such a line).
+ * Any other lone sung line stays: it may be what is left of a run whose
+ * other lines the user settled. The 143 dialogue lines of that report leave
+ * the list without the video being transcribed again. Pure.
+ */
+export function heardSuggestions(suggestions: readonly SongSuggestion[]): SongSuggestion[] {
+  const has = (s: SongSuggestion, r: SongReason): boolean => s.reasons.includes(r);
+  const charsOnly = (s: SongSuggestion): boolean => s.reasons.length > 0 && s.reasons.every((r) => r === 'traditional');
+  const sorted = [...suggestions].sort((a, b) => a.startMs - b.startMs);
+  const inRun = new Set<SongSuggestion>();
+  let run: SongSuggestion[] = [];
+  const flush = (): void => {
+    if (run.length >= MIN_SUNG_RUN) for (const s of run) inRun.add(s);
+    run = [];
+  };
+  for (const s of sorted.filter((x) => has(x, 'sung'))) {
+    const last = run[run.length - 1];
+    if (last && s.startMs - last.endMs > SUNG_RUN_GAP_MS) flush();
+    run.push(s);
+  }
+  flush();
+  const seeds = sorted.filter((s) => has(s, 'repeats') || (has(s, 'traditional') && has(s, 'sung'))).map((s) => s.startMs);
+  const charsOnlyStarts = sorted.filter(charsOnly).map((s) => s.startMs);
+  const heard = new Set<SongSuggestion>(
+    sorted.filter((s) => has(s, 'repeats') || (has(s, 'sung') && (inRun.has(s) || nearAny(seeds, s.startMs) || !nearAny(charsOnlyStarts, s.startMs)))),
+  );
+  const heardStarts = [...heard].map((s) => s.startMs).sort((a, b) => a - b);
+  return suggestions.filter((s) => heard.has(s) || (charsOnly(s) && nearAny(heardStarts, s.startMs)));
 }
 
 /** The suggestions as passages ("12:03–12:58"), for a warning: lines 30 s apart or less join. Pure. */
@@ -229,7 +298,8 @@ export function songsWarning(suggestions: readonly SongSuggestion[]): Omit<Proje
 export async function readSongSuggestions(file: string): Promise<SongSuggestionsFile | undefined> {
   try {
     const doc = JSON.parse(await fsp.readFile(file, 'utf8')) as Partial<SongSuggestionsFile>;
-    return Array.isArray(doc.suggestions) ? { checkedAt: String(doc.checkedAt ?? ''), suggestions: doc.suggestions } : undefined;
+    if (!Array.isArray(doc.suggestions)) return undefined;
+    return { checkedAt: String(doc.checkedAt ?? ''), ...(typeof doc.rule === 'number' ? { rule: doc.rule } : {}), suggestions: doc.suggestions };
   } catch {
     return undefined;
   }
@@ -266,7 +336,7 @@ export async function recordSongSuggestions(
       await fsp.rm(file, { force: true });
       return [];
     }
-    await writeJsonAtomic(file, { checkedAt: new Date().toISOString(), suggestions } satisfies SongSuggestionsFile);
+    await writeJsonAtomic(file, { checkedAt: new Date().toISOString(), rule: SONG_RULE, suggestions } satisfies SongSuggestionsFile);
     const warning = songsWarning(suggestions);
     deps.log?.(warning.message);
     deps.warn?.(warning);
@@ -289,13 +359,18 @@ function lineOf(s: SongSuggestion, lines: readonly TranscriptSegment[], byId: Re
   return lines.find((l) => Math.min(l.endMs, s.endMs) - Math.max(l.startMs, s.startMs) >= half);
 }
 
+/** A file's suggestions under the rule in force: an older file's go through heardSuggestions. Pure. */
+function currentSuggestions(file: SongSuggestionsFile): SongSuggestion[] {
+  return (file.rule ?? 1) >= SONG_RULE ? file.suggestions : heardSuggestions(file.suggestions);
+}
+
 /** The suggestions still open against the lines as they are now (lines kept as a song drop out). Pure. */
 export function openSuggestions(file: SongSuggestionsFile | undefined, lines: readonly TranscriptSegment[]): SongSuggestion[] {
   if (!file) return [];
   const byId = new Map(lines.map((l) => [l.id, l]));
   const out: SongSuggestion[] = [];
   const seen = new Set<string>();
-  for (const s of file.suggestions) {
+  for (const s of currentSuggestions(file)) {
     const line = lineOf(s, lines, byId);
     if (!line || isSong(line) || seen.has(line.id)) continue;
     seen.add(line.id);
@@ -313,11 +388,14 @@ export async function settleSuggestions(file: string, lineIds: readonly string[]
   if (!doc || lineIds.length === 0) return;
   const settled = new Set(lineIds);
   const byId = new Map(lines.map((l) => [l.id, l]));
-  const remaining = doc.suggestions.filter((s) => {
+  // An older file is brought to the rule in force first, once: settling two
+  // lines of a sung run must not make the third look alone afterwards.
+  const current = currentSuggestions(doc);
+  const remaining = current.filter((s) => {
     const line = lineOf(s, lines, byId);
     return line !== undefined && !isSong(line) && !settled.has(line.id);
   });
   if (remaining.length === doc.suggestions.length) return;
   if (remaining.length === 0) await fsp.rm(file, { force: true });
-  else await writeJsonAtomic(file, { ...doc, suggestions: remaining });
+  else await writeJsonAtomic(file, { ...doc, rule: SONG_RULE, suggestions: remaining });
 }

@@ -6,16 +6,19 @@ import type { TranscriptSegment, TranscriptWord } from '@videodubber/shared';
 
 import { scriptCounts, SIMPLIFIED_ONLY, TRADITIONAL_ONLY } from './chineseScript.js';
 import {
+  heardSuggestions,
   keptRepeatLines,
   openSuggestions,
   readSongSuggestions,
   recordSongSuggestions,
   settleSuggestions,
+  SONG_RULE,
   songsWarning,
   songSuggestionsPath,
   soundsSung,
   suggestSongLines,
   traditionalLines,
+  type SongSuggestion,
 } from './songSuggestions.js';
 
 let n = 0;
@@ -146,6 +149,59 @@ describe('the suggestions together', () => {
     expect(warning).toMatchObject({ code: 'songs-suggested', key: 'warning.songs-suggested', params: { count: 3, ranges: '0:20–0:34' } });
     expect(warning.message).toMatch(/^3 line\(s\) look like a song \(0:20–0:34\)\. Nothing was changed/);
   });
+
+  it('never suggests dialogue whisper wrote in traditional characters, nor the slow lines near it (2026-11-27)', () => {
+    const lines = [
+      ...dialogue(0),
+      ...dialogue(10_000),
+      // Spoken at speech rate, whisper's window in traditional characters.
+      line(20_000, 21_500, '這個時候還說什麼'),
+      line(21_600, 23_000, '對不起我們走吧'),
+      // One slow line nearby: the lines above pulled it in as "sung".
+      sung(25_000, 29_000, '你还好吗'),
+      ...dialogue(40_000),
+      // A song: slow lines, one faster lyric between them, all in traditional characters.
+      sung(60_000, 64_000, '夢裡淚水為誰流'),
+      line(64_500, 66_000, '這一生為了誰'),
+      sung(66_500, 70_500, '風雨中的你'),
+      sung(71_000, 75_000, '還記得當時'),
+      // Enough simplified dialogue for the transcript to read as simplified.
+      ...[80_000, 90_000, 100_000, 110_000].flatMap((ms) => dialogue(ms)),
+    ];
+    const out = suggestSongLines(lines, { language: 'zh' });
+    expect(out.map((s) => [s.text, s.reasons])).toEqual([
+      ['夢裡淚水為誰流', ['traditional', 'sung']],
+      ['這一生為了誰', ['traditional']],
+      ['風雨中的你', ['traditional', 'sung']],
+      ['還記得當時', ['traditional', 'sung']],
+    ]);
+  });
+});
+
+describe('suggestions saved under the older rule', () => {
+  const at = (lineId: string, startMs: number, reasons: SongSuggestion['reasons']): SongSuggestion => ({ lineId, startMs, endMs: startMs + 2000, text: lineId, reasons });
+  const old = [
+    // Dialogue in traditional characters, and a slow line it pulled in.
+    at('d1', 20_000, ['traditional']),
+    at('d2', 21_600, ['traditional']),
+    at('d3', 25_000, ['sung']),
+    // A sung passage, and a faster lyric in it.
+    at('s1', 60_000, ['traditional', 'sung']),
+    at('s2', 64_500, ['traditional']),
+    at('s3', 66_500, ['sung']),
+    at('s4', 71_000, ['sung']),
+    // What is left of a run whose other lines the user settled, and a kept chorus.
+    at('left', 150_000, ['sung']),
+    at('r1', 200_000, ['repeats']),
+  ];
+
+  it('are read under the rule in force: what nothing heard backs leaves the list, a run left over stays', () => {
+    expect(heardSuggestions(old).map((s) => s.lineId)).toEqual(['s1', 's2', 's3', 's4', 'left', 'r1']);
+    const lines = old.map((o, i) => line(o.startMs, o.endMs, o.text, { id: o.lineId, index: i }));
+    expect(openSuggestions({ checkedAt: 'x', suggestions: old }, lines).map((s) => s.lineId)).toEqual(['s1', 's2', 's3', 's4', 'left', 'r1']);
+    // A file of the rule in force is taken as it is.
+    expect(openSuggestions({ checkedAt: 'x', rule: SONG_RULE, suggestions: old }, lines)).toHaveLength(old.length);
+  });
 });
 
 describe('on disk', () => {
@@ -197,5 +253,26 @@ describe('on disk', () => {
     expect((await readSongSuggestions(file))?.suggestions.map((s) => s.text)).toEqual(['我爱你有几分']);
     await settleSuggestions(file, ['seg_0018'], kept);
     expect(await readSongSuggestions(file)).toBeUndefined();
+  });
+
+  it('marks the rule it suggests by, and brings an older file to it once, when a line is settled', async () => {
+    const lines = [...dialogue(0), sung(20_000, 24_000, '月亮代表我的心'), sung(25_000, 29_000, '你问我爱你有多深'), sung(30_000, 34_000, '我爱你有几分')];
+    await recordSongSuggestions(paths, lines, { language: 'zh' });
+    const file = songSuggestionsPath(paths);
+    expect((await readSongSuggestions(file))?.rule).toBe(SONG_RULE);
+
+    // An older file, with dialogue in traditional characters among the songs.
+    const trad = line(60_000, 61_500, '這個時候還說什麼');
+    const all = [...lines, trad];
+    const now = (await readSongSuggestions(file))!;
+    const extra = { lineId: trad.id, startMs: trad.startMs, endMs: trad.endMs, text: trad.sourceText, reasons: ['traditional'] };
+    await fsp.writeFile(file, JSON.stringify({ checkedAt: 'old', suggestions: [...now.suggestions, extra] }));
+    expect(openSuggestions(await readSongSuggestions(file), all).map((s) => s.lineId)).toEqual(['seg_0007', 'seg_0008', 'seg_0009']);
+    // Settling a line writes it under the rule in force: the run's other lines stay.
+    await settleSuggestions(file, ['seg_0007'], all);
+    const after = await readSongSuggestions(file);
+    expect(after).toMatchObject({ rule: SONG_RULE });
+    expect(after?.suggestions.map((s) => s.lineId)).toEqual(['seg_0008', 'seg_0009']);
+    expect(openSuggestions(after, all).map((s) => s.lineId)).toEqual(['seg_0008', 'seg_0009']);
   });
 });

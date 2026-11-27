@@ -22,6 +22,7 @@ import {
 } from '@videodubber/shared';
 
 import type { DetectedSpeaker } from '../pipeline/diarization.js';
+import { isSong } from '../songs/songLines.js';
 import { writeJsonAtomic } from '../workspace/projectStore.js';
 import { proposeCast, type CastGender, type CastProposal, type CastSpeaker, type CastVoice } from './casting.js';
 
@@ -75,6 +76,69 @@ export function speakerRows(
       };
     })
     .sort((a, b) => b.minutes - a.minutes || a.speakerId.localeCompare(b.speakerId));
+}
+
+/**
+ * The speakers a cast gives voices to, by their VOICED lines: a line kept as
+ * the original song gets no voice, so it earns its singer no rank. Detected
+ * talk time (the whole audio, singing included) is scaled to the share of the
+ * speaker's line time that is voiced. A cast on a series whose tail is songs
+ * gave the user's cloned voices to the singers (SPEAKER_51-60) while the
+ * drama's characters got built-in voices or none (claude-dubber,
+ * 2026-11-27). `singersOnly`: speakers every line of whom is a song. Pure.
+ */
+export function castRows(
+  lines: readonly TranscriptSegment[],
+  detected: readonly DetectedSpeaker[],
+  settings: ProjectSettings,
+): { rows: SpeakerRow[]; voiced: TranscriptSegment[]; singersOnly: string[] } {
+  const voiced = lines.filter((l) => !isSong(l));
+  const ms = (list: readonly TranscriptSegment[], id: string): number =>
+    list.reduce((t, l) => t + (l.speakerId === id ? Math.max(0, l.endMs - l.startMs) : 0), 0);
+  const scaled = detected.map((d) => {
+    const all = ms(lines, d.speakerId);
+    return all > 0 && d.sec ? { ...d, sec: (d.sec * ms(voiced, d.speakerId)) / all } : d;
+  });
+  const rows = speakerRows(voiced, scaled, settings);
+  const cast = new Set(rows.map((r) => r.speakerId));
+  const singersOnly = [...new Set(lines.flatMap((l) => (isSpeakerId(l.speakerId) && !cast.has(l.speakerId) ? [l.speakerId] : [])))].sort();
+  return { rows, voiced, singersOnly };
+}
+
+/** Speaker ids for a note, a run of numbers written once: "SPEAKER_51–SPEAKER_60, SPEAKER_63". Pure. */
+export function speakerList(ids: readonly string[]): string {
+  const num = (id: string): number => Number(/([0-9]+)$/.exec(id)?.[1] ?? NaN);
+  const sorted = [...new Set(ids)].sort((a, b) => num(a) - num(b) || a.localeCompare(b));
+  const out: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && num(sorted[j + 1]!) === num(sorted[j]!) + 1) j += 1;
+    out.push(j - i >= 2 ? `${sorted[i]}–${sorted[j]}` : sorted.slice(i, j + 1).join(', '));
+    i = j + 1;
+  }
+  return out.join(', ');
+}
+
+/**
+ * The cast speakers whose voiced lines nearly all look sung (open song
+ * suggestions, not kept as songs yet): 80 % of their line time, over three
+ * lines at least. Kept as songs, they would take no voice from anyone. Pure.
+ */
+export function mostlySuggestedSongs(voiced: readonly TranscriptSegment[], suggested: ReadonlySet<string>): string[] {
+  const totals = new Map<string, { all: number; sung: number; lines: number }>();
+  for (const l of voiced) {
+    if (!isSpeakerId(l.speakerId)) continue;
+    const t = totals.get(l.speakerId) ?? { all: 0, sung: 0, lines: 0 };
+    const ms = Math.max(0, l.endMs - l.startMs);
+    t.all += ms;
+    t.lines += 1;
+    if (suggested.has(l.id)) t.sung += ms;
+    totals.set(l.speakerId, t);
+  }
+  return [...totals]
+    .filter(([, t]) => t.lines >= 3 && t.all > 0 && t.sung / t.all >= 0.8)
+    .map(([id]) => id)
+    .sort();
 }
 
 /** A voice's measured pitch and print (embedding model of speaker detection). */

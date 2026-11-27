@@ -152,8 +152,11 @@ import { PROFILE_FILES, VoiceProfileStore } from './voices/profileStore.js';
 import {
   castCandidates,
   castChoices,
+  castRows,
   castSettings,
+  mostlySuggestedSongs,
   proposeCast,
+  speakerList,
   speakerRows,
   unknownSpeakers,
   VoiceMeasureCache,
@@ -163,6 +166,7 @@ import {
 } from './voices/speakerCast.js';
 import { dialogueAdjacency } from './voices/casting.js';
 import { registerSongRoutes } from './songs/songRoutes.js';
+import { openSuggestions, readSongSuggestions, songSuggestionsPath } from './songs/songSuggestions.js';
 import { suggestGender } from './voices/casting.js';
 import { libraryItems } from './voices/voiceLibrary.js';
 import { readSpeakerProfiles } from './pipeline/diarization.js';
@@ -3559,10 +3563,17 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         const paths = store.paths(req.params.id);
         const lines = await readSpeakerLines(paths);
         const detected = await readSpeakerProfiles(paths.diarizationJson);
-        const rows = speakerRows(lines, detected, project.settings);
+        // Ranked by the lines that will be voiced: songs earn no voice (castRows).
+        const { rows, voiced, singersOnly } = castRows(lines, detected, project.settings);
         if (rows.length === 0) {
           return reply.status(400).send({
-            error: { code: 'INVALID_EDIT', message: 'This project has no detected speakers: detect speakers first (detect_speakers, or the editor).' },
+            error: {
+              code: 'INVALID_EDIT',
+              message:
+                singersOnly.length > 0
+                  ? 'Every line with a speaker is kept as the original song: there is no voice to cast.'
+                  : 'This project has no detected speakers: detect speakers first (detect_speakers, or the editor).',
+            },
           });
         }
         const prints = new Map(detected.map((d) => [d.speakerId, d.print]));
@@ -3583,10 +3594,22 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           ...(Array.isArray(body.minorPool?.female) ? { female: body.minorPool.female.filter((v) => typeof v === 'string') } : {}),
         };
         const proposal = withSwaps(
-          proposeCast(speakers, voices, { ...(minorVoices ? { minorVoices } : {}), adjacency: dialogueAdjacency(lines), minorPool }),
+          proposeCast(speakers, voices, { ...(minorVoices ? { minorVoices } : {}), adjacency: dialogueAdjacency(voiced), minorPool }),
           body.swaps,
           voices,
         );
+        if (singersOnly.length > 0) {
+          proposal.notes.push(`${speakerList(singersOnly)}: every line is kept as the original song, so no voice is cast for them.`);
+        }
+        // Lines that look sung but are not kept as songs yet still rank their
+        // singers: say who, so they can be kept as songs and cast again.
+        const suggested = new Set(openSuggestions(await readSongSuggestions(songSuggestionsPath(paths)), lines).map((s) => s.lineId));
+        const singing = mostlySuggestedSongs(voiced, suggested);
+        if (singing.length > 0) {
+          proposal.notes.push(
+            `${speakerList(singing)}: nearly all their lines look sung (song suggestions). Keep those lines as the original song (mark_song, or Songs in the editor) and cast again, so these speakers take no voice from the others.`,
+          );
+        }
         // Speakers of unknown gender keep the project voice: say so when that
         // voice is kept for one main character (they would all speak with it).
         const projectVoice = voices.find((v) => v.voiceId === project.settings.ttsVoiceId);

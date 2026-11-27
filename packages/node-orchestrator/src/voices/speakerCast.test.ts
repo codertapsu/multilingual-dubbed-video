@@ -20,7 +20,7 @@ import {
   writeDummyVideo,
 } from '../test/fixtures.js';
 import { ProjectStore } from '../workspace/projectStore.js';
-import { castSettings, proposeCast, speakerRows, withSwaps } from './speakerCast.js';
+import { castRows, castSettings, mostlySuggestedSongs, proposeCast, speakerList, speakerRows, withSwaps } from './speakerCast.js';
 
 const lines = (spec: [number, number, string, string?][]): TranscriptSegment[] =>
   makeSegments(spec.map(([a, b, t]) => [a, b, t])).map((s, i) => (spec[i]![3] ? { ...s, speakerId: spec[i]![3] } : s));
@@ -42,6 +42,48 @@ describe('speakerRows', () => {
     // No detection record: the lines' length, the gender from the settings, the default voice of it.
     expect(rows[1]).toMatchObject({ gender: 'male', voiceId: 'm-default' });
     expect(rows[1]!.minutes).toBeCloseTo(1000 / 60_000);
+  });
+});
+
+describe('who a cast gives voices to (2026-11-27)', () => {
+  const detected = (speakerId: string, sec: number) => ({ speakerId, speaker: 0, sec, f0Hz: null, gender: 'female' as const, genderConfidence: 0.9, print: [] });
+  const all = [
+    ...lines([
+      [0, 60_000, 'drama, the heroine', 'SPEAKER_00'],
+      [60_000, 70_000, 'she sings one line', 'SPEAKER_00'],
+      [70_000, 100_000, 'drama, her friend', 'SPEAKER_01'],
+      [100_000, 400_000, 'the advert song', 'SPEAKER_51'],
+    ]),
+  ].map((l) => (l.sourceText === 'she sings one line' || l.sourceText === 'the advert song' ? { ...l, song: true } : l));
+
+  it('ranks speakers by the lines that will be voiced, and leaves out who only sings', () => {
+    // Detected talk time counts the singing: the advert's singer was heard the longest.
+    const { rows, voiced, singersOnly } = castRows(all, [detected('SPEAKER_00', 70), detected('SPEAKER_01', 30), detected('SPEAKER_51', 300)], {} as ProjectSettings);
+    expect(rows.map((r) => r.speakerId)).toEqual(['SPEAKER_00', 'SPEAKER_01']);
+    // Her singing line is a seventh of her line time: her talk time is scaled to the rest.
+    expect(rows[0]!.minutes).toBeCloseTo(1, 5);
+    expect(rows[0]!.lines).toBe(1);
+    expect(voiced.map((l) => l.speakerId)).toEqual(['SPEAKER_00', 'SPEAKER_01']);
+    expect(singersOnly).toEqual(['SPEAKER_51']);
+    // get_speakers still lists everyone, as heard.
+    expect(speakerRows(all, [detected('SPEAKER_51', 300)], {} as ProjectSettings)[0]!.speakerId).toBe('SPEAKER_51');
+  });
+
+  it('names who sings nearly every line without it being kept as a song, and writes runs of ids once', () => {
+    const spoken = lines([
+      [0, 2000, 'a', 'SPEAKER_00'],
+      [2000, 4000, 'b', 'SPEAKER_00'],
+      [4000, 6000, 'c', 'SPEAKER_00'],
+      [10_000, 14_000, 'la', 'SPEAKER_51'],
+      [14_000, 18_000, 'la', 'SPEAKER_51'],
+      [18_000, 22_000, 'la', 'SPEAKER_51'],
+      [22_000, 23_000, 'hey', 'SPEAKER_51'],
+      [30_000, 34_000, 'la', 'SPEAKER_52'],
+    ]);
+    const suggested = new Set(spoken.filter((l) => l.sourceText === 'la').map((l) => l.id));
+    // SPEAKER_52 has one line: too little to say.
+    expect(mostlySuggestedSongs(spoken, suggested)).toEqual(['SPEAKER_51']);
+    expect(speakerList(['SPEAKER_60', 'SPEAKER_51', 'SPEAKER_52', 'SPEAKER_53', 'SPEAKER_55', 'SPEAKER_56'])).toBe('SPEAKER_51–SPEAKER_53, SPEAKER_55, SPEAKER_56, SPEAKER_60');
   });
 });
 

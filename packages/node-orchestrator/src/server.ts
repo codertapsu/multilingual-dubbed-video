@@ -81,7 +81,8 @@ import { probeMotherClaude, testCloudCredential } from './credentials/testConnec
 import { buildSystemResponse, getSystemProfile } from './system/systemProfile.js';
 import { EngineEventBus } from './engines/engineBus.js';
 import { EngineInstaller } from './engines/engineInstaller.js';
-import { EngineManager, isGpuPack } from './engines/engineManager.js';
+import { EngineManager, isGpuPack, type EngineFallback } from './engines/engineManager.js';
+import { fallbackWarning } from './engines/fallbackWarning.js';
 import { systemVcDeps } from './engines/vcRuntime.js';
 import { EnginePackStore } from './engines/enginePackStore.js';
 import { availablePacks, findPack } from './engines/enginePackCatalog.js';
@@ -337,7 +338,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // Warnings raised outside a run (engine fallbacks), kept with the run's step.
   const warningInbox = new WarningInbox();
   /** Engine fallbacks of work outside runs (`editor:<id>`, `preview:<voice>`), newest last. */
-  const laneFallbacks: { ownerId: string; at: number; packId: string; reason: 'busy' | 'failed'; busyWith?: string }[] = [];
+  const laneFallbacks: (EngineFallback & { ownerId: string; at: number })[] = [];
   const fallbacksSince = (ownerId: string, since: number) => laneFallbacks.filter((f) => f.ownerId === ownerId && f.at >= since);
   const config = options.config ?? loadConfig();
   // The app's own logs (diagnostics/logFiles.ts): engines' output, and one
@@ -391,15 +392,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           return;
         }
         if (!f.ownerId || f.ownerId === 'anonymous') return;
-        warningInbox.push(f.ownerId, {
-          code: 'gpu-fallback',
-          message:
-            f.reason === 'busy'
-              ? `The GPU was busy (${f.busyWith ?? 'another job'}), so "${f.packId}" ran on the next installed runtime, usually the CPU build (slower).`
-              : `"${f.packId}" could not start, so the next installed runtime was used (usually the CPU build). If it keeps happening, reinstall it in Settings → Engines.`,
-          key: f.reason === 'busy' ? 'warning.gpu-fallback-busy' : 'warning.gpu-fallback-failed',
-          params: { pack: f.packId },
-        });
+        warningInbox.push(f.ownerId, fallbackWarning(f));
       },
     });
   const engineBus = options.engineBus ?? new EngineEventBus();

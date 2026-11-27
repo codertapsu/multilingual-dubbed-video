@@ -2605,7 +2605,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         if ((done > 0 && Date.now() > deadline) || signal.aborted) {
           return text(`Re-voiced ${done} line(s); ${pending.length} still to do. Call regenerate_voices again to continue.${cpuNote()}`);
         }
-        const res = await api.post<{ engineFallback?: { packId: string; reason: 'busy' | 'failed'; busyWith?: string } }>(
+        const res = await api.post<{ engineFallback?: { packId: string; reason: 'busy' | 'memory' | 'failed'; busyWith?: string } }>(
           `/projects/${encodeURIComponent(projectId)}/segments/${encodeURIComponent(next.id)}/tts`,
           {},
           // How many are left, this one included: the app's activity list shows the batch's progress.
@@ -2614,7 +2614,12 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         if (res?.engineFallback) {
           onCpu++;
           const f = res.engineFallback;
-          cpuWhy = f.reason === 'busy' ? `the GPU was busy with ${f.busyWith ?? 'another job'}` : `${f.packId} could not start; reinstall it in Settings > Engines if this keeps happening`;
+          cpuWhy =
+            f.reason === 'busy'
+              ? `the GPU was busy with ${f.busyWith ?? 'another job'}`
+              : f.reason === 'memory'
+                ? `${f.packId} did not have enough free graphics memory to start (nothing to reinstall: another program on the graphics card took the room)`
+                : `${f.packId} could not start; reinstall it in Settings > Engines if this keeps happening`;
         }
         wanted?.delete(next.id);
         done++;

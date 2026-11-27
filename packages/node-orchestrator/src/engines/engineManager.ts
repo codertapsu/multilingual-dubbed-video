@@ -157,6 +157,18 @@ function omnivoiceEnv(packDir: string): Record<string, string> {
 }
 
 /** A running engine instance. */
+/**
+ * A preferred engine passed over for the next installed one: `busy` (another
+ * owner held the GPU), `memory` (the card had too little free memory to
+ * start it, even with more left free), `failed` (it would not start).
+ */
+export interface EngineFallback {
+  packId: string;
+  ownerId?: string;
+  reason: 'busy' | 'memory' | 'failed';
+  busyWith?: string;
+}
+
 export interface RunningEngine {
   packId: string;
   baseUrl: string;
@@ -179,7 +191,7 @@ export interface EngineLaunchSpec {
    * Build argv given the resolved executable, port, pack dir, and (for the
    * local-llm runtime) the absolute path of the GGUF model to load.
    */
-  args: (ctx: { exe: string; port: number; packDir: string; model?: string; threads?: number }) => string[];
+  args: (ctx: { exe: string; port: number; packDir: string; model?: string; threads?: number; headroomMiB?: number }) => string[];
   /** Extra environment for the child. */
   env?: (ctx: { port: number; packDir: string; packId: string; threads?: number }) => Record<string, string>;
   /** Health URL builder; polled until it resolves ok. */
@@ -187,12 +199,46 @@ export interface EngineLaunchSpec {
   /** Whether this engine is "heavy" (subject to the exclusive unload policy). */
   heavy?: boolean;
   /**
+   * The engine fits its GPU share to the free graphics memory at load, leaving
+   * `headroomMiB` free (llama.cpp's fitter, `-fitt`). One that runs out of
+   * memory starting can be tried again with more left free: fewer layers on
+   * the card (ensureRunningFirstUsable).
+   */
+  fitsFreeMemory?: boolean;
+  /**
    * Env var through which the engine accepts an API key. When set, every
    * launch gets a fresh random key (passed in the ENVIRONMENT, not argv, so it
    * never shows up in `ps`) and callers must send it — see authHeaders().
    */
   apiKeyEnv?: string;
 }
+
+/** Graphics memory llama.cpp's fitter leaves free (`-fitt`; its own default is 1 GiB, see below). */
+const DEFAULT_GPU_HEADROOM_MIB = 512;
+/**
+ * ...and on the one more try after running out of memory at start. On an
+ * 8 GB RTX 3050, TranslateGemma 27B fitted with 512 MiB free, then could
+ * not allocate its 220.83 MiB compute buffers (claude-dubber, 2026-11-27):
+ * a gigabyte more left free is fewer layers on the card, and a start.
+ */
+export const RETRY_GPU_HEADROOM_MIB = 1536;
+/** No more than this is ever left free: past it, the next installed runtime runs instead. */
+const MAX_GPU_HEADROOM_MIB = 4096;
+
+/**
+ * Whether an engine's output says the GRAPHICS card ran out of memory
+ * (CUDA, Vulkan, PyTorch), not the computer: a full card is not a broken
+ * install, and reinstalling cannot help. Pure.
+ */
+export function looksLikeGpuOutOfMemory(output: string): boolean {
+  return (
+    /cudaMalloc[^\n]*out of memory|CUDA (?:error: )?out of memory|CUDA_ERROR_OUT_OF_MEMORY|cudaErrorMemoryAllocation/i.test(output) ||
+    /ErrorOutOfDeviceMemory|Device memory allocation of size \d+ failed|failed to allocate (?:CUDA|Vulkan|Metal|ROCm)\w* buffer/i.test(output)
+  );
+}
+
+/** Start failures that were the graphics card's memory (looksLikeGpuOutOfMemory), for the fallback. */
+const outOfGpuMemory = new WeakSet<object>();
 
 /** Built-in launch specs per provider/pack. */
 export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
@@ -268,7 +314,10 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     // the model with less than 1 GiB to spare gets layers demoted to CPU even
     // though `-ngl 999` used to offload it fully — a silent slowdown for
     // existing users on e.g. a 10 GB card. Our heavy-engine policy unloads other
-    // engines first, so half a gigabyte of headroom is enough.
+    // engines first, so half a gigabyte of headroom is enough. When it is not
+    // (another program on the card, or the fitter's estimate short), a start
+    // that runs out of graphics memory is tried once more with
+    // RETRY_GPU_HEADROOM_MIB left free (ensureRunningFirstUsable).
     // `--no-jinja`: TranslateGemma's embedded Jinja chat template is too complex
     // for llama.cpp's parser, which ABORTS the server at model-load ("chat
     // template parsing error … exiting due to model loading error") before it
@@ -276,7 +325,7 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     // drives the raw `/completion` endpoint with its own Gemma-turn prompt — so
     // we disable Jinja outright (this is exactly what the server's own error
     // message recommends). Without it the engine never becomes healthy.
-    args: ({ port, model }) => [
+    args: ({ port, model, headroomMiB }) => [
       '--host',
       '127.0.0.1',
       '--port',
@@ -284,7 +333,7 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
       '-c',
       '8192',
       '-fitt',
-      '512',
+      String(headroomMiB ?? DEFAULT_GPU_HEADROOM_MIB),
       '--no-jinja',
       // ...but --no-jinja alone is not enough. llama-server still initialises a
       // chat template at startup, and with jinja off it falls back to a LEGACY
@@ -330,6 +379,7 @@ export const ENGINE_LAUNCH_SPECS: Record<string, EngineLaunchSpec> = {
     // ...and requests without the per-launch key are refused (401) before any
     // work happens. /health stays public, so readiness polling is unchanged.
     apiKeyEnv: 'LLAMA_API_KEY',
+    fitsFreeMemory: true,
   },
   // Both VieNeu variants run the same bundled `vd_tts_engine` server; the venv
   // (per pack) supplies the deps, PYTHONPATH supplies our module, HF_HOME points
@@ -513,7 +563,7 @@ export interface EngineManagerDeps {
    * build, usually): because the GPU was busy with another owner, or because it
    * would not start. The owner is the run (project id) or editor action.
    */
-  onFallback?: (info: { packId: string; ownerId?: string; reason: 'busy' | 'failed'; busyWith?: string }) => void;
+  onFallback?: (info: EngineFallback) => void;
   /**
    * `<config>/logs`: each engine's stderr goes to `engines/<pack>.log` there
    * (diagnostics/logFiles.ts), so an engine that fails mid-request leaves its
@@ -544,6 +594,12 @@ export class EngineManager {
   private gatedBy: string | undefined;
   /** Packs that failed to start in this session (see ensureRunningFirstUsable). */
   private readonly unusablePacks = new Set<string>();
+  /**
+   * Graphics memory to leave free (MiB) for packs that ran out of it starting
+   * in this session (fitsFreeMemory): later starts begin there instead of
+   * failing the same way first.
+   */
+  private readonly headroomMiB = new Map<string, number>();
   /** In-flight starts per pack, so concurrent calls share one spawn. */
   private readonly starting = new Map<string, Promise<string>>();
 
@@ -688,11 +744,32 @@ export class EngineManager {
         return await this.ensureRunning(packId, opts);
       } catch (err) {
         lastError = err;
+        // Out of graphics memory, by little: TranslateGemma 27B on an 8 GB card
+        // was 220 MiB short (claude-dubber, 2026-11-27). An engine that fits
+        // itself to the free memory gets one more try with more left free (fewer
+        // layers on the card), and later starts this session begin there.
+        if (outOfGpuMemory.has(err as object) && ENGINE_LAUNCH_SPECS[this.providerOf(packId)]?.fitsFreeMemory) {
+          const used = this.headroomMiB.get(packId) ?? DEFAULT_GPU_HEADROOM_MIB;
+          const room = Math.min(MAX_GPU_HEADROOM_MIB, Math.max(RETRY_GPU_HEADROOM_MIB, used + 1024));
+          if (room > used) {
+            this.headroomMiB.set(packId, room);
+            this.deps.logger?.warn(
+              `Engine pack "${packId}" ran out of graphics memory while starting; trying it once more with ${room} MiB left free (fewer layers on the card).`,
+            );
+            try {
+              return await this.ensureRunning(packId, { ...opts, headroomMiB: room });
+            } catch (again) {
+              lastError = again;
+            }
+          }
+        }
         // Busy is not broken. Another dub holding the heavy lane (the GPU, say)
         // means "not now": fall through to the next pack for THIS call, but do
-        // not write the pack off for the rest of the session.
-        const busy = err instanceof AppErrorException && err.code === 'ENGINE_BUSY';
-        if (!busy) this.unusablePacks.add(packId);
+        // not write the pack off for the rest of the session. Neither is a card
+        // too full to start it: the next step may find the room.
+        const busy = lastError instanceof AppErrorException && lastError.code === 'ENGINE_BUSY';
+        const memory = outOfGpuMemory.has(lastError as object);
+        if (!busy && !memory) this.unusablePacks.add(packId);
         if (order.length > 1) {
           // Busy is not broken: telling the user to reinstall a working GPU
           // engine because llama.cpp held the card (2026-11-21) sent them the
@@ -703,6 +780,11 @@ export class EngineManager {
               `Engine pack "${packId}" is waiting on the GPU, which ${this.heavyOwner ?? this.gatedBy ?? 'another job'} is using; ` +
                 'this step uses the next installed runtime (usually the CPU build, slower). Nothing needs reinstalling.',
             );
+          } else if (memory) {
+            this.deps.logger?.warn(
+              `Engine pack "${packId}" did not have enough free graphics memory to start; falling back to the next installed runtime. ` +
+                'Nothing needs reinstalling: another program on the graphics card, or a model too big for it, took the room.',
+            );
           } else {
             this.deps.logger?.warn(
               `Engine pack "${packId}" could not start; falling back to the next installed runtime. ` +
@@ -712,7 +794,7 @@ export class EngineManager {
           this.deps.onFallback?.({
             packId,
             ...(owner ? { ownerId: owner } : {}),
-            reason: busy ? 'busy' : 'failed',
+            reason: busy ? 'busy' : memory ? 'memory' : 'failed',
             ...(busy && (this.heavyOwner ?? this.gatedBy) ? { busyWith: (this.heavyOwner ?? this.gatedBy)! } : {}),
           });
         }
@@ -723,7 +805,7 @@ export class EngineManager {
 
   async ensureRunning(
     packId: string,
-    opts: { exclusive?: boolean; model?: string; ownerId?: string } = {},
+    opts: { exclusive?: boolean; model?: string; ownerId?: string; headroomMiB?: number } = {},
   ): Promise<string> {
     const spec = ENGINE_LAUNCH_SPECS[this.providerOf(packId)];
     if (!spec) {
@@ -766,7 +848,7 @@ export class EngineManager {
   private async startOrReuse(
     packId: string,
     spec: EngineLaunchSpec,
-    opts: { exclusive?: boolean; model?: string; ownerId?: string },
+    opts: { exclusive?: boolean; model?: string; ownerId?: string; headroomMiB?: number },
     wantsHeavyLane: boolean,
   ): Promise<string> {
     // In-flight dedup: two concurrent calls for the same pack (same owner —
@@ -786,7 +868,7 @@ export class EngineManager {
   private async startOrReuseUnguarded(
     packId: string,
     spec: EngineLaunchSpec,
-    opts: { exclusive?: boolean; model?: string; ownerId?: string },
+    opts: { exclusive?: boolean; model?: string; ownerId?: string; headroomMiB?: number },
     wantsHeavyLane: boolean,
   ): Promise<string> {
 
@@ -826,7 +908,16 @@ export class EngineManager {
     // launched as `python --port <n>`, which Python rejects ("unknown option")
     // and exits instantly, surfacing as "engine did not become healthy in time".
     const threads = await this.deps.cpuThreads?.().catch(() => undefined);
-    const specArgs = spec.args({ exe, port, packDir: rec.path, model: opts.model, ...(threads ? { threads } : {}) });
+    // More graphics memory left free after an out-of-memory start (ensureRunningFirstUsable).
+    const headroomMiB = spec.fitsFreeMemory ? (opts.headroomMiB ?? this.headroomMiB.get(packId)) : undefined;
+    const specArgs = spec.args({
+      exe,
+      port,
+      packDir: rec.path,
+      model: opts.model,
+      ...(threads ? { threads } : {}),
+      ...(headroomMiB ? { headroomMiB } : {}),
+    });
     const args = spec.pythonModule ? ['-m', spec.pythonModule, ...specArgs] : specArgs;
     // Force UTF-8 stdio for the Python worker: on Windows the default console
     // encoding (cp1252) raises UnicodeEncodeError when the worker or its deps
@@ -844,7 +935,7 @@ export class EngineManager {
       ...(spec.apiKeyEnv && apiKey ? { [spec.apiKeyEnv]: apiKey } : {}),
     } as Record<string, string>;
 
-    this.deps.logger?.info(`Starting engine "${packId}" on port ${port}.`);
+    this.deps.logger?.info(`Starting engine "${packId}" on port ${port}${headroomMiB ? `, leaving ${headroomMiB} MiB of graphics memory free` : ''}.`);
     const spawnImpl = this.deps.spawnImpl ?? defaultSpawn;
     const child = spawnImpl(exe, args, env);
 
@@ -945,6 +1036,16 @@ export class EngineManager {
             cause: tail.slice(-600) || exitNote.trim(),
           });
         }
+      }
+      // A graphics card too full to start it is not a broken install: saying
+      // "reinstall" sent the user the wrong way (claude-dubber, 2026-11-27).
+      if (looksLikeGpuOutOfMemory(stderrTail)) {
+        const full = new AppErrorException('ENGINE_UNAVAILABLE', `Engine "${packId}" ran out of graphics memory while starting.${detail}`, {
+          remediation:
+            'The graphics card did not have enough free memory for this engine. Nothing needs reinstalling: close other programs that use the graphics card, or choose a smaller model in Settings → Engines.',
+        });
+        outOfGpuMemory.add(full);
+        throw full;
       }
       throw new AppErrorException(
         'ENGINE_UNAVAILABLE',

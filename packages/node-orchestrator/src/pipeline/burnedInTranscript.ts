@@ -46,31 +46,68 @@ export interface BurnedInLines {
   unreadable: number;
   /** Repeats of the subtitle before joined into its line. */
   merged: number;
+  /** Bilingual subtitles whose rows in another script (the translation) were left out. */
+  translationRows: number;
+}
+
+/** Chinese, Japanese and Korean writing. */
+const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+/**
+ * Whether the subtitles are in Chinese, Japanese or Korean: the project's
+ * source language says so, or, when it is "auto", most of what was read is
+ * in those scripts. Pure.
+ */
+export function cjkSubtitles(reads: readonly ({ text: string } | undefined)[], sourceLanguage?: string): boolean {
+  const lang = (sourceLanguage ?? '').toLowerCase();
+  if (lang && lang !== 'auto') return /^(zh|ja|ko|yue|cmn|wuu)\b/.test(lang);
+  const texts = reads.filter((r): r is { text: string } => !!r?.text.trim());
+  return texts.length > 0 && texts.filter((r) => CJK.test(r.text)).length * 2 > texts.length;
+}
+
+/**
+ * What a subtitle says in the source's own language. A bilingual subtitle is
+ * two rows in two scripts (Chinese above English): read as one line, 3,576
+ * lines of Phong Thủy Thiên Sư said both, "竹子长成这么一大片 Bamboo grows into
+ * such a large area" (claude-dubber, 2026-11-27). For Chinese, Japanese or
+ * Korean subtitles, the rows in those scripts are kept and the others left
+ * out; a row mixing them ("这是 iPhone 15") is kept whole. Pure.
+ */
+export function sourceText(read: { text: string; texts?: readonly string[] }, cjk: boolean): { text: string; dropped: boolean } {
+  const rows = read.texts ?? [];
+  if (!cjk || rows.length < 2) return { text: read.text, dropped: false };
+  const own = rows.filter((r) => CJK.test(r));
+  return own.length > 0 && own.length < rows.length ? { text: own.join(' '), dropped: true } : { text: read.text, dropped: false };
 }
 
 /**
  * The lines the subtitles make: `reads[i]` is what subtitle `events[i]` says
  * (undefined: not read). Unreadable ones are left out; a subtitle saying what
- * the one before it said, right after it, extends that line. Pure.
+ * the one before it said, right after it, extends that line. A bilingual
+ * subtitle keeps the source's rows only ({@link sourceText}). Pure.
  */
 export function linesFromSubtitles(
   events: readonly SubtitleSpan[],
-  reads: readonly ({ text: string; confidence: number } | undefined)[],
-  opts: { minConfidence?: number } = {},
+  reads: readonly ({ text: string; confidence: number; texts?: readonly string[] } | undefined)[],
+  opts: { minConfidence?: number; sourceLanguage?: string } = {},
 ): BurnedInLines {
   const min = opts.minConfidence ?? MIN_READ_CONFIDENCE;
+  const cjk = cjkSubtitles(reads, opts.sourceLanguage);
   const out: { startMs: number; endMs: number; text: string }[] = [];
   let read = 0;
   let unreadable = 0;
   let merged = 0;
+  let translationRows = 0;
   events.forEach((e, i) => {
     const r = reads[i];
-    const text = (r?.text ?? '').replace(/\s+/gu, ' ').trim();
+    const own = r ? sourceText(r, cjk) : { text: '', dropped: false };
+    const text = own.text.replace(/\s+/gu, ' ').trim();
     if (!r || r.confidence < min || comparable(text) === '') {
       unreadable += 1;
       return;
     }
     read += 1;
+    if (own.dropped) translationRows += 1;
     const last = out[out.length - 1];
     if (last && e.startMs - last.endMs <= SAME_LINE_GAP_MS && comparable(last.text) === comparable(text)) {
       last.endMs = Math.max(last.endMs, e.endMs);
@@ -86,7 +123,7 @@ export function linesFromSubtitles(
     endMs: l.endMs,
     sourceText: l.text,
   }));
-  return { lines, read, unreadable, merged };
+  return { lines, read, unreadable, merged, translationRows };
 }
 
 /** Whether what was read is enough to be the transcript (else speech-to-text runs). Pure. */

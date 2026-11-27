@@ -1823,7 +1823,9 @@ export class PipelineRunner {
     if (presence.events.length < MIN_SUBTITLES) {
       return fallback('warning.burned-in-few', `only ${presence.events.length} subtitle(s) showed in the picture.`, { count: presence.events.length });
     }
-    const key = { band: presence.band, window: presence.window, events: presence.events.length, first: presence.events[0], last: presence.events[presence.events.length - 1] };
+    // `rows`: reads saved since each text line of a subtitle is kept apart
+    // (SubtitleRead.texts, for bilingual subtitles); older ones are read again.
+    const key = { rows: 1, band: presence.band, window: presence.window, events: presence.events.length, first: presence.events[0], last: presence.events[presence.events.length - 1] };
     const saved = await fsp
       .readFile(paths.subtitleOcrJson, 'utf8')
       .then((raw) => JSON.parse(raw) as { key?: unknown; reads?: (SubtitleRead | null)[] })
@@ -1872,7 +1874,7 @@ export class PipelineRunner {
         await fsp.rm(framesPath, { force: true }).catch(() => undefined);
       }
     }
-    const built = linesFromSubtitles(presence.events, reads);
+    const built = linesFromSubtitles(presence.events, reads, { sourceLanguage: project.settings.sourceLanguage });
     if (!enoughRead(built, presence.events.length)) {
       return fallback(
         'warning.burned-in-unreadable',
@@ -1882,7 +1884,8 @@ export class PipelineRunner {
     }
     logger.info(
       `Read ${built.lines.length} line(s) from the video's own subtitles (${presence.events.length} on screen` +
-        `${built.unreadable > 0 ? `, ${built.unreadable} unreadable` : ''}${built.merged > 0 ? `, ${built.merged} repeat(s) joined` : ''}).`,
+        `${built.unreadable > 0 ? `, ${built.unreadable} unreadable` : ''}${built.merged > 0 ? `, ${built.merged} repeat(s) joined` : ''}).` +
+        (built.translationRows > 0 ? ` ${built.translationRows} were bilingual: their translation row was left out.` : ''),
     );
     return built.lines;
   }

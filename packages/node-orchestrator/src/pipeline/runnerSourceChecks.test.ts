@@ -386,7 +386,7 @@ describe("stt: the video's own subtitles as the transcript (claude-dubber A3)", 
   };
   const events = Array.from({ length: 12 }, (_, k) => ({ startMs: k * 4000 + 500, endMs: k * 4000 + 2500 }));
 
-  async function reading(opts: { installed?: boolean; readable?: boolean } = {}) {
+  async function reading(opts: { installed?: boolean; readable?: boolean; bilingual?: boolean } = {}) {
     const stt = engine(() => makeSegments([[0, 3000, '我是语音识别']]));
     const b = await build({
       durationMs: 60_000,
@@ -409,9 +409,11 @@ describe("stt: the video's own subtitles as the transcript (claude-dubber A3)", 
         reads += 1;
         return Array.from({ length: frames.count }, (_, i) => ({
           index: i,
-          text: opts.readable === false ? '' : said(i),
+          text: opts.readable === false ? '' : opts.bilingual ? `${said(i)} Line ${i} in English` : said(i),
           confidence: 0.95,
-          lines: 1,
+          lines: opts.bilingual ? 2 : 1,
+          // A bilingual subtitle: the Chinese row above its English translation.
+          ...(opts.bilingual ? { texts: [said(i), `Line ${i} in English`] } : {}),
         }));
       },
     };
@@ -434,6 +436,13 @@ describe("stt: the video's own subtitles as the transcript (claude-dubber A3)", 
     await new PipelineRunner(b.deps).run(await store.getProject(b.project.id), { signal: new AbortController().signal, retryFromStep: 'stt' });
     expect(reads()).toBe(1);
     expect(stt.asked).toEqual([]);
+  });
+
+  it('keeps only the Chinese row of bilingual subtitles, and says how many were (Phong Thủy Thiên Sư, 2026-11-27)', async () => {
+    const { b } = await reading({ bilingual: true });
+    await runToStt(b);
+    expect((await sourceLines(b)).map((l) => l.sourceText)).toEqual(events.map((_, i) => said(i)));
+    expect(await log(b)).toContain('12 were bilingual: their translation row was left out.');
   });
 
   it('without the reader, speech-to-text transcribes, and a warning says why', async () => {

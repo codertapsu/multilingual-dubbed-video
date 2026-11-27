@@ -191,7 +191,9 @@ times a second (media-worker `subtitlePresence.ts`, no OCR), keeps when a subtit
 map alone and dropped ~780 real lines of 《反相之地》. `useBurnedInSubtitles` makes the subtitles the
 transcript instead: one frame per subtitle (`readBandFrames`) read by the `ocr-rapid` pack
 (`vd_ocr`, the PP-OCRv4 recogniser on each text line's box only), falling back to STT with a
-`burned-in-fallback` warning, never silently.
+`burned-in-fallback` warning, never silently. The engine returns each row (`texts`), and a
+CJK source keeps only its own script's rows (`sourceText`): a bilingual stretch, Chinese above
+English, made 3,576 lines that said both.
 
 **Lines that fail the checks get a second try before voicing** (end of the refine step,
 `dubPasses.retryFailingLines`): told the words at fault and the sheet's names, never touching a

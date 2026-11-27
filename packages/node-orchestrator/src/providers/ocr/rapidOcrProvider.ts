@@ -37,6 +37,12 @@ export interface SubtitleRead {
   confidence: number;
   /** Lines of text found in the frame. */
   lines: number;
+  /**
+   * Each line read, top to bottom. A bilingual subtitle is two, one per
+   * script (burnedInTranscript.ts keeps the source's). Absent from reads
+   * saved before 0.22.2.
+   */
+  texts?: string[];
 }
 
 export interface SubtitleOcrService {
@@ -60,7 +66,7 @@ export function cleanReads(raw: unknown, offset: number, count: number): Subtitl
   const byIndex = new Map<number, SubtitleRead>();
   if (Array.isArray(raw)) {
     for (const item of raw) {
-      const r = item as { index?: unknown; text?: unknown; confidence?: unknown; lines?: unknown };
+      const r = item as { index?: unknown; text?: unknown; confidence?: unknown; lines?: unknown; texts?: unknown };
       const index = typeof r.index === 'number' && Number.isInteger(r.index) ? r.index : -1;
       if (index < offset || index >= offset + count) continue;
       byIndex.set(index, {
@@ -68,6 +74,7 @@ export function cleanReads(raw: unknown, offset: number, count: number): Subtitl
         text: typeof r.text === 'string' ? r.text.trim() : '',
         confidence: typeof r.confidence === 'number' && Number.isFinite(r.confidence) ? Math.min(1, Math.max(0, r.confidence)) : 0,
         lines: typeof r.lines === 'number' && Number.isInteger(r.lines) && r.lines >= 0 ? r.lines : 0,
+        ...(Array.isArray(r.texts) ? { texts: r.texts.filter((t): t is string => typeof t === 'string').map((t) => t.trim()).filter(Boolean) } : {}),
       });
     }
   }

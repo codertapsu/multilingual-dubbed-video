@@ -726,7 +726,9 @@ transcribing the speech: each subtitle becomes a line, timed by when it shows.
 It needs the **subtitle reader** (about 250 MB, installed from the same place
 with one click, or from Settings → Engines & models → Speech-to-text). It reads
 Chinese and English subtitles, in a few minutes per hour of video, and nothing
-leaves your computer.
+leaves your computer. Where a subtitle shows two languages at once (Chinese
+above its English translation), only the Chinese row becomes the line; the
+same holds for Japanese and Korean.
 
 The app finds the subtitles' place in the picture by itself (or uses the band
 you set under Picture). If it finds none, or cannot read enough of them, the

@@ -3149,12 +3149,17 @@ export class LocalJobOrchestrator implements JobOrchestrator {
           // start belongs to the first run, and a 7-minute re-mix of a part
           // dubbed days ago showed ~8 h left (claude-dubber, 2026-11-24).
           const eta = dubRuns.etaOf(projectId);
+          // The step's own progress and what it does: "stt, 22%" for an hour
+          // said nothing of the speaker detection going on (2026-11-27).
+          const step = pipeline?.steps.find((s) => s.id === pipeline.currentStep && s.status === 'running');
           return {
             projectId,
             name: names.get(projectId) ?? projectId,
             heavy: this.workloads.get(projectId)?.needsHeavyEngine === true,
             ...(pipeline?.currentStep ? { step: pipeline.currentStep } : {}),
             ...(pipeline ? { progressPercent: Math.round(pipeline.progressPercent) } : {}),
+            ...(step?.progressPercent !== undefined ? { stepPercent: Math.round(step.progressPercent) } : {}),
+            ...(step?.detail?.text ? { stepDetail: step.detail.text } : {}),
             ...(eta !== undefined ? { etaSec: eta } : {}),
           };
         }),

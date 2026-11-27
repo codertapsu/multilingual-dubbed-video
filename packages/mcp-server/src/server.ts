@@ -500,10 +500,24 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         paused: boolean;
         laneOwner?: string;
         holds?: { holdId: string; holder: string; name?: string; reason: string; expiresAt: string }[];
-        running: { projectId: string; name: string; heavy: boolean; step?: string; progressPercent?: number; etaSec?: number }[];
+        running: {
+          projectId: string;
+          name: string;
+          heavy: boolean;
+          step?: string;
+          progressPercent?: number;
+          stepPercent?: number;
+          stepDetail?: string;
+          etaSec?: number;
+        }[];
         entries: { projectId: string; name: string; position: number; reason: string; message: string }[];
       };
       const q = await api.get<Q>('/queue', { signal: ctx.mcpReq.signal });
+      // The step's own progress and what it does ("stt (15%: Detecting speakers 3/20)").
+      const stepNow = (r: Q['running'][number]): string => {
+        const said = [r.stepPercent !== undefined ? `${r.stepPercent}%` : '', r.stepDetail ?? ''].filter(Boolean).join(': ');
+        return said ? ` (${said})` : '';
+      };
       const lines = [
         `Dubs at once: ${q.maxProjects} (points ${q.usedPoints}/${q.budgetPoints})${q.paused ? '; the queue is PAUSED (Settings)' : ''}.`,
         `GPU lane: ${q.laneOwner ? `held by ${q.laneOwner}` : 'free'}.`,
@@ -514,7 +528,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         q.running.length > 0 ? 'Dubbing now:' : 'Nothing is dubbing.',
         ...q.running.map(
           (r) =>
-            `- ${r.projectId} "${r.name}"${r.step ? `, ${r.step}` : ''}${r.progressPercent !== undefined ? `, ${r.progressPercent}%` : ''}${r.etaSec !== undefined ? `, about ${duration(r.etaSec)} left` : ''}${r.heavy ? ' (uses the GPU lane)' : ''}`,
+            `- ${r.projectId} "${r.name}"${r.step ? `, ${r.step}${stepNow(r)}` : ''}${r.progressPercent !== undefined ? `, ${r.progressPercent}%` : ''}${r.etaSec !== undefined ? `, about ${duration(r.etaSec)} left` : ''}${r.heavy ? ' (uses the GPU lane)' : ''}`,
         ),
         ...(q.entries.length > 0 ? ['Waiting:'] : []),
         ...q.entries.map((e) => `- ${e.position}. ${e.projectId} "${e.name}": ${e.reason} (${e.message})`),

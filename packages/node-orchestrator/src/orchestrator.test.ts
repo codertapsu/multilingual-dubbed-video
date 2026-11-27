@@ -445,6 +445,33 @@ describe('run queue (simultaneous-dub capacity)', () => {
     await sched.cancelJob(a);
   });
 
+  it("shows a running dub's step with its own progress and what it does in the queue (2026-11-27)", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const media = new FakeMediaService();
+    const extract = media.extractAudio.bind(media);
+    media.extractAudio = async (...args: Parameters<FakeMediaService['extractAudio']>) => {
+      await held;
+      return extract(...args);
+    };
+    const running = new LocalJobOrchestrator({
+      config: loadConfig({ projectsDir: path.join(tmp, 'projects') }),
+      store,
+      media,
+      registry: fakeRegistry(new FakeSttProvider(makeSegments([[0, 1000, 'hi']])), new FakeTranslationProvider(), new FakeTtsProvider(() => 900)),
+      bus: new EventBusRegistry(),
+    });
+    const p = await running.createProject(createProjectInput(await writeDummyVideo(tmp)));
+    await running.runPipeline(p.id);
+    await vi.waitFor(async () => expect((await store.getPipeline(p.id)).steps.find((s) => s.id === 'extract-audio')?.status).toBe('running'));
+    // As the pipeline reads in the middle of speaker detection.
+    const detail = { key: 'step-detail.speakers', params: { done: 3, total: 20 }, text: 'Detecting speakers 3/20' };
+    await store.savePipeline(setStepStatus(await store.getPipeline(p.id), 'extract-audio', 'running', { progressPercent: 57, detail }));
+    expect((await running.queueState()).running[0]).toMatchObject({ projectId: p.id, step: 'extract-audio', stepPercent: 57, stepDetail: 'Detecting speakers 3/20' });
+    release();
+    await running.cancelJob(p.id);
+  });
+
   it('takes a change to only the mix or render while a dub runs, until it starts mixing; a series being analysed always', async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));

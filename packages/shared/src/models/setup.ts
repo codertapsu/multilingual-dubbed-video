@@ -487,6 +487,9 @@ export interface RunningEntry {
   /** The step it is in, and how far the whole dub is (0..100). */
   step?: string;
   progressPercent?: number;
+  /** How far that step is (0..100), and what it is doing ("Detecting speakers 3/20"). */
+  stepPercent?: number;
+  stepDetail?: string;
   /** Seconds left, estimated from the time so far; absent too early to tell. */
   etaSec?: number;
 }

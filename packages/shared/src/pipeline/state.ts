@@ -87,7 +87,10 @@ function rollUpStatus(steps: PipelineStepState[]): PipelineStatus {
 }
 
 /**
- * Overall progress = (completed + skipped) / total * 100, rounded.
+ * Overall progress = (completed + skipped + the running step's own share) /
+ * total * 100, rounded. Finished steps alone held a dub at "22%" for the whole
+ * of its speech-to-text, and its time left, which comes from this, at "about
+ * 8 min" for the hour speaker detection took (claude-dubber, 2026-11-27).
  */
 function rollUpProgress(steps: PipelineStepState[]): number {
   const total = steps.length;
@@ -95,7 +98,9 @@ function rollUpProgress(steps: PipelineStepState[]): number {
   const done = steps.filter(
     (s) => s.status === 'completed' || s.status === 'skipped',
   ).length;
-  return Math.round((done / total) * 100);
+  const running = steps.find((s) => s.status === 'running');
+  const share = running ? Math.max(0, Math.min(100, running.progressPercent ?? 0)) / 100 : 0;
+  return Math.round(((done + share) / total) * 100);
 }
 
 /**

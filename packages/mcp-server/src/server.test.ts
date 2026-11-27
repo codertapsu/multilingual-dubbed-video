@@ -639,6 +639,25 @@ describe('VideoDubber MCP server', () => {
     expect(r.text).toContain('gpu-hold (Waiting: Voice Mask is using the graphics card.)');
   });
 
+  it('get_queue says what the running step does, with its own progress (2026-11-27)', async () => {
+    fake.routes.set('GET /queue', () => ({
+      maxProjects: 2,
+      budgetPoints: 4,
+      usedPoints: 2,
+      paused: false,
+      running: [
+        { projectId: 'proj_1', name: 'Tập 7', heavy: true, step: 'stt', progressPercent: 26, stepPercent: 57, stepDetail: 'Detecting speakers 3/20', etaSec: 2400 },
+        { projectId: 'proj_2', name: 'Tập 8', heavy: false, step: 'render', progressPercent: 90 },
+      ],
+      entries: [],
+    }));
+    await connect();
+    const r = await call('get_queue');
+    // It read "stt, 22%, about 8 min left" for the hour speaker detection took.
+    expect(r.text).toContain('- proj_1 "Tập 7", stt (57%: Detecting speakers 3/20), 26%, about 40 min left (uses the GPU lane)');
+    expect(r.text).toMatch(/^- proj_2 "Tập 8", render, 90%$/m);
+  });
+
   it('pause_dubbing pauses, and get_project says where it stopped and how to continue', async () => {
     let paused = false;
     fake.routes.set('POST /projects/proj_1/pause', () => {

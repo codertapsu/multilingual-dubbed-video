@@ -1215,7 +1215,7 @@ export class PipelineRunner {
     // Speaker detection: who says each line, before anchoring so a line it
     // splits keeps its speaker (pipeline/diarization.ts).
     if (project.settings.diarize) {
-      segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal, progressBetween(stepProgress, SPEAKERS_FROM, 1));
+      segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal, progressBetween(stepProgress, SPEAKERS_FROM, 1), tailFrom);
       await this.recordSpeakerGenders(project.id, paths);
     }
 
@@ -1430,6 +1430,8 @@ export class PipelineRunner {
     knownCount: number | undefined,
     signal: AbortSignal,
     onProgress: StepProgress,
+    /** An advert tail starts there: no speaker past it is looked for (DiarizeOptions.untilMs). */
+    untilMs?: number,
   ): Promise<TranscriptSegment[]> {
     const service = this.deps.diarization;
     if (!service || !(await service.available().catch(() => false))) {
@@ -1451,6 +1453,7 @@ export class PipelineRunner {
         checkpointDir: paths.diarizationChunksDir,
         segments,
         ...(numSpeakers ? { numSpeakers } : {}),
+        ...(untilMs !== undefined ? { untilMs } : {}),
         onProgress: speakerDetectionProgress(onProgress, (m) => this.deps.logger.info(m)),
         signal,
       });

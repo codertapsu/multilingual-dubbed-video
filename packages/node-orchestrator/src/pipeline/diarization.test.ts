@@ -182,6 +182,26 @@ describe('the speaker detection cache', () => {
     await expect(fsp.stat(path.join(tmp, 'other.json'))).rejects.toThrow();
   });
 
+  it('a detection that went at least as far as asked serves; one that stopped at an advert tail never serves the whole video', async () => {
+    const turns = [{ startMs: 0, endMs: 1000, speaker: 0 }];
+    const diarize = vi.fn(async () => turns);
+    const service: DiarizationService = { diarize, available: async () => true, modelKey: 'm1' };
+    // Detected up to the tail at 51:00 only.
+    await cachedSpeakerTurns(service, audio, cache, { untilMs: 3_060_000 });
+    expect((await readDiarizationCache(cache))?.untilMs).toBe(3_060_000);
+    expect(diarize).toHaveBeenLastCalledWith(audio, { untilMs: 3_060_000 }, undefined);
+    // The same, or less: served.
+    await cachedSpeakerTurns(service, audio, cache, { untilMs: 3_060_000 });
+    await cachedSpeakerTurns(service, audio, cache, { untilMs: 1_000_000 });
+    expect(diarize).toHaveBeenCalledTimes(1);
+    // The whole video (stopAtAdTail turned off): detected again, then it serves any tail.
+    await cachedSpeakerTurns(service, audio, cache, {});
+    expect(diarize).toHaveBeenCalledTimes(2);
+    expect((await readDiarizationCache(cache))?.untilMs).toBeUndefined();
+    await cachedSpeakerTurns(service, audio, cache, { untilMs: 3_060_000 });
+    expect(diarize).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps each speaker's voice, and detects again over a turns-only file of 0.16", async () => {
     const stat = await fsp.stat(audio);
     const turns = [{ startMs: 0, endMs: 1000, speaker: 0 }];

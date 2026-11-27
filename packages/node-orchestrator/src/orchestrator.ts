@@ -145,6 +145,7 @@ import { sanitizeBranding } from './branding/sanitize.js';
 import { sanitizeBlurRegions, sanitizeCoverFields, withoutClearedCoverFields } from './picture/pictureSanitize.js';
 import { sanitizeWatermarkAuto } from './picture/watermarkAuto.js';
 import { assertMainOnly } from './voices/mainOnly.js';
+import { characterOfIds } from './voices/castGroups.js';
 import { rangedMediaInfo } from './series/seriesRange.js';
 import { acceptOutputDir, moveOutputFiles, samePath } from './workspace/outputFolder.js';
 import { clearCueOverridesFor, displayCuesFor, readCueOverrides, songSubtitlesOn } from './workspace/subtitleTiming.js';
@@ -850,7 +851,9 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     const voicesChanged = patch.speakerVoices !== undefined;
     const defaultsChanged = patch.defaultMaleVoiceId !== undefined || patch.defaultFemaleVoiceId !== undefined;
     if ((voicesChanged || defaultsChanged) && this.deps.mainOnlyVoices) {
-      assertMainOnly(next, { speakerVoices: voicesChanged, defaults: defaultsChanged }, await this.deps.mainOnlyVoices(projectId));
+      // The ids of one character (its sheet) may share it: a cast by character gives it to all of them.
+      const characterOf = voicesChanged ? characterOfIds(await this.getTranslationContext(projectId)) : new Map<string, string>();
+      assertMainOnly(next, { speakerVoices: voicesChanged, defaults: defaultsChanged }, await this.deps.mainOnlyVoices(projectId), characterOf);
     }
     if (
       patch.speakerVoices !== undefined ||

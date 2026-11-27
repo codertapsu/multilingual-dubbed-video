@@ -403,21 +403,22 @@ export interface UpdatePreferences {
   localModels?: LocalModelPreferences;
   /** What downloads do while a dub runs (Settings → Downloads). */
   downloads?: DownloadPreferences;
-  /** The user's default voices for men and women (Voices → Default voices). */
-  defaultVoices?: DefaultVoices;
+  /** The user's voices for the leads, in order per gender (Voices → Lead voices). */
+  leadVoices?: LeadVoices;
 }
 
 /**
- * The user's default voices (voice ids: a cloned voice's `vp_…` or a built-in
- * one). A new project takes them for the men and women with no voice of their
- * own, when its preset or job names none (ProjectSettings.defaultMaleVoiceId /
- * defaultFemaleVoiceId), and a voice cast gives them first to the most-heard
- * man and woman. The user's word: "prioritize these two voices when dubbing"
- * (2026-11-27). Only where the project's engine speaks them.
+ * The user's voices for the LEADS (voice ids: a cloned voice's `vp_…` or a
+ * built-in one), in order per gender: a voice cast gives the first to the
+ * man (woman) heard most, the second to the next one, and so on, never to a
+ * narrator or a system voice. Never the voice of the speakers left uncast:
+ * defaults stay built-in. The user's rule, through claude-dubber
+ * (2026-11-27): "leads first"; 0.21.0's `defaultVoices` made them the
+ * fallback of every uncast speaker. Only where the project's engine speaks them.
  */
-export interface DefaultVoices {
-  male?: string;
-  female?: string;
+export interface LeadVoices {
+  male?: string[];
+  female?: string[];
 }
 
 /**

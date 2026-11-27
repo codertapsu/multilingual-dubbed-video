@@ -18,7 +18,7 @@ import path from 'node:path';
 import { renameReplacing } from '../fsRename.js';
 import type {
   ArgosPair,
-  DefaultVoices,
+  LeadVoices,
   DownloadPreferences,
   InstalledModels,
   LocalModelPreferences,
@@ -240,7 +240,10 @@ export class SetupStore {
       // Settings → Downloads ("while a dub runs"). Dropped here and below until
       // 0.17.0's own review: the choice snapped back to Automatic on reload.
       ...(cleanDownloads(stored.downloads) ? { downloads: cleanDownloads(stored.downloads) } : {}),
-      ...(cleanDefaultVoices(stored.defaultVoices) ? { defaultVoices: cleanDefaultVoices(stored.defaultVoices) } : {}),
+      // 0.21.0 saved one "default voice" per gender: read as the first lead.
+      ...(cleanLeadVoices(stored.leadVoices ?? fromDefaultVoices((stored as { defaultVoices?: unknown }).defaultVoices))
+        ? { leadVoices: cleanLeadVoices(stored.leadVoices ?? fromDefaultVoices((stored as { defaultVoices?: unknown }).defaultVoices))! }
+        : {}),
     };
   }
 
@@ -253,23 +256,39 @@ export class SetupStore {
       ...(prefs.concurrency ? { concurrency: prefs.concurrency } : {}),
       ...(localModels ? { localModels } : {}),
       ...(cleanDownloads(prefs.downloads) ? { downloads: cleanDownloads(prefs.downloads) } : {}),
-      ...(cleanDefaultVoices(prefs.defaultVoices) ? { defaultVoices: cleanDefaultVoices(prefs.defaultVoices) } : {}),
+      ...(cleanLeadVoices(prefs.leadVoices) ? { leadVoices: cleanLeadVoices(prefs.leadVoices)! } : {}),
     };
     await writeJsonAtomic(this.preferencesPath, next);
     return next;
   }
 }
 
-/** The default voices with only voice-id-shaped values, or undefined when none. */
-export function cleanDefaultVoices(value: unknown): DefaultVoices | undefined {
+/** Lead voices per gender at most (a cast has few leads). */
+const MAX_LEADS = 6;
+
+/** The lead voices with only voice-id-shaped values, each once, in order; undefined when none. */
+export function cleanLeadVoices(value: unknown): LeadVoices | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const v = value as Record<string, unknown>;
-  const id = (x: unknown): string | undefined => (typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(x) ? x : undefined);
-  const out: DefaultVoices = {
-    ...(id(v.male) ? { male: id(v.male)! } : {}),
-    ...(id(v.female) ? { female: id(v.female)! } : {}),
+  const ids = (x: unknown): string[] => {
+    if (!Array.isArray(x)) return [];
+    const ok = x.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(id));
+    return [...new Set(ok)].slice(0, MAX_LEADS);
   };
+  const male = ids(v.male);
+  const female = ids(v.female);
+  const out: LeadVoices = { ...(male.length > 0 ? { male } : {}), ...(female.length > 0 ? { female } : {}) };
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** 0.21.0's `defaultVoices` ({male, female}, one id each) as lead lists. */
+function fromDefaultVoices(value: unknown): LeadVoices | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as { male?: unknown; female?: unknown };
+  return {
+    ...(typeof v.male === 'string' ? { male: [v.male] } : {}),
+    ...(typeof v.female === 'string' ? { female: [v.female] } : {}),
+  };
 }
 
 /** The downloads-while-dubbing choice, when it is one of the four. */

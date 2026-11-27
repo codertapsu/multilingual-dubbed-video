@@ -149,12 +149,14 @@ describe('SetupStore preferences round-trip', () => {
     expect((await store.getPreferences()).downloads).toBeUndefined();
   });
 
-  it('keeps the default voices; "" goes back to none; junk is dropped (2026-11-27)', async () => {
-    await store.savePreferences({ autoUpdate: true, defaultVoices: { male: 'vp_d54fadbeedb4b84f', female: 'vp_1545a09ba583ad6a' } });
-    expect((await store.getPreferences()).defaultVoices).toEqual({ male: 'vp_d54fadbeedb4b84f', female: 'vp_1545a09ba583ad6a' });
-    await store.savePreferences({ autoUpdate: true, defaultVoices: { male: '', female: 'vieneu38-my-duyen' } });
-    expect((await store.getPreferences()).defaultVoices).toEqual({ female: 'vieneu38-my-duyen' });
-    await store.savePreferences({ autoUpdate: true, defaultVoices: { male: '../x', female: 42 } as never });
-    expect((await store.getPreferences()).defaultVoices).toBeUndefined();
+  it('keeps the lead voices in order, each once; junk is dropped; 0.21.0\'s default voices are read as first leads', async () => {
+    const leads = { male: ['vp_e1c1aa0000000001', 'vp_d54fadbeedb4b84f', 'vp_d54fadbeedb4b84f'], female: ['vp_1545a09ba583ad6a'] };
+    await store.savePreferences({ autoUpdate: true, leadVoices: leads });
+    expect((await store.getPreferences()).leadVoices).toEqual({ male: ['vp_e1c1aa0000000001', 'vp_d54fadbeedb4b84f'], female: ['vp_1545a09ba583ad6a'] });
+    await store.savePreferences({ autoUpdate: true, leadVoices: { male: [], female: ['../x', 42] } as never });
+    expect((await store.getPreferences()).leadVoices).toBeUndefined();
+    // A preferences file written by 0.21.0, which saved one "default voice" per gender.
+    await fsp.writeFile(path.join(tmp, 'config', 'preferences.json'), JSON.stringify({ autoUpdate: true, defaultVoices: { male: 'vp_d54fadbeedb4b84f' } }));
+    expect((await store.getPreferences()).leadVoices).toEqual({ male: ['vp_d54fadbeedb4b84f'] });
   });
 });

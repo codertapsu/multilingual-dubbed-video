@@ -17,7 +17,6 @@ import { ActivityService } from '../../core/activity/activity.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { toAppError } from '../../core/state/project.store';
-import type { DefaultVoices } from '@videodubber/shared';
 import type {
   AppError,
   VoiceEngineId,
@@ -118,19 +117,20 @@ export class VoicesComponent implements OnInit, OnDestroy {
   protected readonly playingProfile = signal<string | null>(null);
 
   /**
-   * The user's default voices (Preferences.defaultVoices): a cast gives them
-   * first to the most-heard man and woman, and every man or woman with no
-   * voice of their own speaks with them ("prioritize these two voices",
-   * 2026-11-27).
+   * The user's lead voices (Preferences.leadVoices), in order per gender: a
+   * cast gives the first to the man (woman) heard most, the second to the
+   * next one, never to a narrator, and never to the uncast, whose voices stay
+   * built-in: the user's rule, "leads first" (2026-11-27).
    */
-  protected readonly defaults = signal<DefaultVoices>({});
-  protected readonly defaultsNotice = signal<string | null>(null);
+  protected readonly leads = signal<Record<'male' | 'female', string[]>>({ male: [], female: [] });
+  protected readonly leadsNotice = signal<string | null>(null);
   protected readonly genders = ['male', 'female'] as const;
-  /** What a default can be: the user's voices whose gender they confirmed, and installed built-ins; never one kept for a main character. */
-  protected readonly defaultOptions = computed(() => {
+  protected readonly slots = [0, 1, 2] as const;
+  /** What a lead voice can be: the user's voices whose gender they confirmed, and installed built-ins. */
+  protected readonly leadOptions = computed(() => {
     const of = (gender: 'male' | 'female'): VoiceLibraryItem[] =>
       this.library()
-        .filter((v) => v.gender === gender && !v.mainOnly && (v.kind === 'profile' ? v.genderConfirmed === true : v.installed))
+        .filter((v) => v.gender === gender && (v.kind === 'profile' ? v.genderConfirmed === true : v.installed))
         .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'profile' ? -1 : 1));
     return { male: of('male'), female: of('female') };
   });
@@ -194,7 +194,7 @@ export class VoicesComponent implements OnInit, OnDestroy {
       this.library.set(lib.voices);
       this.engines.set(engines);
       this.profiles.set(profiles);
-      if (prefs) this.defaults.set(prefs.defaultVoices ?? {});
+      if (prefs) this.leads.set({ male: prefs.leadVoices?.male ?? [], female: prefs.leadVoices?.female ?? [] });
       // Only a failed load's own banner goes: any other message stays until it
       // is dismissed or the user does something else. This ran after every
       // install anywhere in the app and cleared whatever was showing, so an
@@ -518,28 +518,33 @@ export class VoicesComponent implements OnInit, OnDestroy {
     }
   }
 
-  /** A default voice chosen ('' = none: the app chooses), saved at once. */
-  protected async setDefaultVoice(gender: 'male' | 'female', id: string): Promise<void> {
+  /** A lead voice chosen for a place ('' = none), saved at once; the list keeps its order, each voice once. */
+  protected async setLeadVoice(gender: 'male' | 'female', slot: number, id: string): Promise<void> {
     this.error.set(null);
-    this.defaultsNotice.set(null);
+    this.leadsNotice.set(null);
+    const places = [...this.leads()[gender]];
+    while (places.length <= slot) places.push('');
+    places[slot] = id;
+    const list = [...new Set(places.filter(Boolean))];
     try {
-      await this.ipc.saveAppPreferences({ defaultVoices: { [gender]: id } });
-      this.defaults.update((d) => {
-        const next: DefaultVoices = { ...d };
-        if (id) next[gender] = id;
-        else delete next[gender];
-        return next;
-      });
-      this.defaultsNotice.set(this.i18n.instant('voices.defaults-saved'));
+      await this.ipc.saveAppPreferences({ leadVoices: { [gender]: list } });
+      this.leads.update((l) => ({ ...l, [gender]: list }));
+      this.leadsNotice.set(this.i18n.instant('voices.leads-saved'));
     } catch (err) {
       this.error.set(toAppError(err));
     }
   }
 
-  /** A default no longer among the choices (deleted, its engine removed, kept for a main character), to show it as such. */
-  protected missingDefault(gender: 'male' | 'female'): string | undefined {
-    const id = this.defaults()[gender];
-    return id && !this.defaultOptions()[gender].some((v) => v.id === id) ? id : undefined;
+  /** The voices a place can take: not one chosen for another place of the same gender. */
+  protected optionsFor(gender: 'male' | 'female', slot: number): VoiceLibraryItem[] {
+    const others = this.leads()[gender].filter((_, i) => i !== slot);
+    return this.leadOptions()[gender].filter((v) => !others.includes(v.id));
+  }
+
+  /** A lead voice no longer among the choices (deleted, its engine removed, gender changed), to show it as such. */
+  protected missingLead(gender: 'male' | 'female', slot: number): string | undefined {
+    const id = this.leads()[gender][slot];
+    return id && !this.leadOptions()[gender].some((v) => v.id === id) ? id : undefined;
   }
 
   /** Kept for one main character: casting never shares it or makes it a default (voices/mainOnly.ts). */

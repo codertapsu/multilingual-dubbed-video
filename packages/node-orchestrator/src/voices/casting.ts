@@ -40,6 +40,12 @@ export interface CastSpeaker {
   gender?: CastGender | 'unknown';
   f0Hz?: number;
   print?: readonly number[];
+  /**
+   * A narrator or a system voice (castGroups.ts): never given a lead voice or
+   * one of the user's clones, a built-in one instead. MD001's system voice
+   * outranked every woman (claude-dubber, 2026-11-27).
+   */
+  voiceOver?: boolean;
 }
 
 export interface CastVoice {
@@ -61,9 +67,9 @@ export interface CastAssignment {
   voiceName: string;
   /**
    * How it was chosen: `pool` is a minor speaker on one of the shared voices,
-   * `preferred` the user's default voice of the gender on its most-heard speaker.
+   * `lead` one of the user's lead voices, in their order, on the most-heard characters.
    */
-  by: 'pitch-rank' | 'print' | 'order' | 'default' | 'pool' | 'preferred';
+  by: 'pitch-rank' | 'print' | 'order' | 'default' | 'pool' | 'lead';
 }
 
 /** One voice the minor speakers of a gender share. */
@@ -127,11 +133,19 @@ export interface CastOptions {
   /** settings.minorVoices: voices per gender for the minor speakers. */
   minorVoices?: number;
   /**
-   * The user's default voices (Preferences.defaultVoices): each goes first to
-   * the most-heard speaker of its gender, before the other voices are paired
-   * ("prioritize these two voices when dubbing", 2026-11-27).
+   * The user's lead voices (Preferences.leadVoices), in order per gender: the
+   * first goes to the most-heard character of that gender, the second to the
+   * next one, and so on, before the other voices are paired; never to a
+   * narrator or a system voice ("leads first", 2026-11-27).
    */
-  preferred?: Partial<Record<CastGender, string>>;
+  leads?: Partial<Record<CastGender, readonly string[]>>;
+  /**
+   * Voices named for speakers by hand (cast_voices swaps): those speakers are
+   * left to them (withSwaps writes them) and those voices to no one else.
+   * The pairing still gave the female lead clone, pinned to the heroine, to a
+   * fox demon too (claude-dubber, Săn Yêu, 2026-11-27).
+   */
+  pins?: readonly { speakerId: string; voiceId: string }[];
   /** Who answers whom: minor speakers with adjacent turns get different pool voices. */
   adjacency?: DialogueAdjacency;
   /** The pool the user picked per gender (voice ids; clones allowed): replaces the automatic one. */
@@ -310,7 +324,10 @@ function rotate(minors: readonly CastSpeaker[], pool: CastPoolVoice[], adjacency
 export function proposeCast(speakers: readonly CastSpeaker[], voices: readonly CastVoice[], opts: CastOptions = {}): CastProposal {
   const notes: string[] = [];
   const unconfirmed = voices.filter((v) => v.kind === 'profile' && !v.genderConfirmed).map((v) => ({ voiceId: v.voiceId, name: v.name }));
-  const usable = voices.filter((v) => v.gender && (v.kind === 'preset' || v.genderConfirmed));
+  // A voice named for a speaker by hand is that speaker's alone (opts.pins).
+  const pinnedSpeakers = new Set((opts.pins ?? []).map((p) => p.speakerId));
+  const pinnedVoices = new Set((opts.pins ?? []).map((p) => p.voiceId));
+  const usable = voices.filter((v) => v.gender && (v.kind === 'preset' || v.genderConfirmed) && !pinnedVoices.has(v.voiceId));
   const ordered = [...usable].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'profile' ? -1 : 1));
   const soundalikes = findSoundalikes(usable, opts.soundalikeCosine);
   const soundalike = new Set(soundalikes.map((s) => s.voiceId));
@@ -318,49 +335,64 @@ export function proposeCast(speakers: readonly CastSpeaker[], voices: readonly C
   const defaults: Partial<Record<CastGender, string>> = {};
   const pools: Partial<Record<CastGender, CastPool>> = {};
   for (const gender of ['male', 'female'] as const) {
-    const mine = speakers.filter((s) => s.gender === gender).sort((a, b) => b.minutes - a.minutes);
+    const mine = speakers.filter((s) => s.gender === gender && !pinnedSpeakers.has(s.speakerId)).sort((a, b) => b.minutes - a.minutes);
     if (mine.length === 0) continue;
-    // The user's default voice of this gender goes to its most-heard speaker
-    // first; the other voices are paired with the others as before.
-    const wantedId = opts.preferred?.[gender];
-    const pinned = wantedId ? usable.find((v) => v.voiceId === wantedId && v.gender === gender) : undefined;
-    if (wantedId && !pinned) {
-      notes.push(
-        `Your default ${gender} voice is not one this project can use (another engine or language, or its gender is not confirmed): the voices are cast as usual.`,
-      );
+    // The user's lead voices of this gender, in their order, each usable here once.
+    const leadVoices: CastVoice[] = [];
+    for (const id of opts.leads?.[gender] ?? []) {
+      if (pinnedVoices.has(id)) continue;
+      const v = usable.find((u) => u.voiceId === id && u.gender === gender);
+      if (!v) {
+        notes.push(
+          `Lead voice ${id} is not one this project can use (another engine or language, or its gender is not confirmed): left out.`,
+        );
+      } else if (!leadVoices.includes(v)) {
+        leadVoices.push(v);
+      }
     }
-    const clones = ordered.filter((v) => v.gender === gender && v.kind === 'profile' && v.voiceId !== pinned?.voiceId);
+    const isLead = (v: CastVoice): boolean => leadVoices.includes(v);
+    const clones = ordered.filter((v) => v.gender === gender && v.kind === 'profile' && !isLead(v));
     // A built-in that sounds like a clone goes last (stable sort), and only
     // when it lets every speaker have a voice of their own: with a crowd to
     // share a pool anyway, it would only make a main character sound like the
     // one the clone speaks for.
     const presets = ordered
-      .filter((v) => v.gender === gender && v.kind === 'preset' && v.voiceId !== pinned?.voiceId)
+      .filter((v) => v.gender === gender && v.kind === 'preset' && !isLead(v))
       .sort((a, b) => Number(soundalike.has(a.voiceId)) - Number(soundalike.has(b.voiceId)));
-    if (clones.length + presets.length === 0 && !pinned) {
+    if (clones.length + presets.length + leadVoices.length === 0) {
       notes.push(`No ${gender} voice to cast: ${mine.length} ${gender} speaker(s) keep the project voice.`);
       continue;
     }
-    const crowd = mine.length - (pinned ? 1 : 0) > clones.length + presets.length;
+    const crowd = mine.length > leadVoices.length + clones.length + presets.length;
     const mainPresets = crowd ? presets.filter((v) => !soundalike.has(v.voiceId)) : presets;
-    // In tiers: the most-heard speakers get the user's clones, the next ones
-    // the built-in voices; each tier paired by print or pitch rank.
+    // In tiers, each taking the most-heard speakers still without a voice:
+    // the user's lead voices in their order, then their clones, then the
+    // built-in voices (clones and built-ins paired by print or pitch rank). A
+    // narrator or a system voice takes neither a lead voice nor a clone.
+    let rest = [...mine];
+    const take = (count: number, eligible: (s: CastSpeaker) => boolean): CastSpeaker[] => {
+      const taken: CastSpeaker[] = [];
+      for (const s of rest) {
+        if (taken.length >= count) break;
+        if (eligible(s)) taken.push(s);
+      }
+      rest = rest.filter((s) => !taken.includes(s));
+      return taken;
+    };
+    const character = (s: CastSpeaker): boolean => s.voiceOver !== true;
     const mains: CastAssignment[] = [];
-    let next = 0;
-    if (pinned) {
-      const lead = mine[0]!;
-      mains.push({ speakerId: lead.speakerId, voiceId: pinned.voiceId, voiceName: pinned.name, by: 'preferred' });
-      notes.push(`"${pinned.name}", your default ${gender} voice, speaks for ${lead.speakerId}, the most heard ${gender === 'male' ? 'man' : 'woman'}.`);
-      next = 1;
+    const leads = take(leadVoices.length, character);
+    for (const [i, who] of leads.entries()) {
+      const v = leadVoices[i]!;
+      mains.push({ speakerId: who.speakerId, voiceId: v.voiceId, voiceName: v.name, by: 'lead' });
+      notes.push(`"${v.name}", your lead voice ${i + 1} for ${gender === 'male' ? 'men' : 'women'}, speaks for ${who.speakerId}.`);
     }
-    for (const tier of [clones, mainPresets]) {
-      const k = Math.min(tier.length, mine.length - next);
-      if (k <= 0) continue;
-      mains.push(...pair(mine.slice(next, next + k), tier.slice(0, k), notes, gender));
-      next += k;
-    }
+    const cloneTakers = take(clones.length, character);
+    if (cloneTakers.length > 0) mains.push(...pair(cloneTakers, clones.slice(0, cloneTakers.length), notes, gender));
+    const presetTakers = take(mainPresets.length, () => true);
+    if (presetTakers.length > 0) mains.push(...pair(presetTakers, mainPresets.slice(0, presetTakers.length), notes, gender));
     assignments.push(...mains);
-    const minors = mine.slice(next);
+    const minors = rest;
 
     // The pool: the user's pick, else the spare built-ins, then the voices of
     // the least-heard cast speakers. Always at least one voice when there is

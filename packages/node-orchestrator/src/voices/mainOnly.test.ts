@@ -24,6 +24,13 @@ describe('a voice kept for one main character', () => {
     // Only what the change touches is checked: an old table never blocks another edit.
     expect(mainOnlyProblem(two, { speakerVoices: false, defaults: false }, mine)).toBeUndefined();
     expect(mainOnlyProblem(two, { speakerVoices: true, defaults: true }, new Map())).toBeUndefined();
+    // The two ids of one character (the sheet's), as a cast by character gives it to them (2026-11-27).
+    const hero = new Map([
+      ['SPEAKER_00', 'lục trần'],
+      ['SPEAKER_07', 'lục trần'],
+    ]);
+    expect(mainOnlyProblem(two, { speakerVoices: true, defaults: false }, mine, hero)).toBeUndefined();
+    expect(mainOnlyProblem(two, { speakerVoices: true, defaults: false }, mine, new Map([['SPEAKER_00', 'lục trần']]))).toContain('2 speakers would speak with it');
   });
 
   it('is refused as an edit, with the way out', () => {

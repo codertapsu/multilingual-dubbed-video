@@ -2629,6 +2629,7 @@
   "warning": {
     "gpu-fallback-busy": "The graphics card was busy with another job, so a step ran on the slower CPU build ({{pack}}).",
     "gpu-fallback-failed": "A GPU engine ({{pack}}) could not start, so a step ran on the slower CPU build. If it keeps happening, reinstall it in Settings → Engines.",
+    "gpu-fallback-memory": "A GPU engine ({{pack}}) did not have enough free graphics memory to start, so a step used the next installed engine. Nothing needs reinstalling: closing other programs that use the graphics card leaves it more room.",
     "audio-drift": "The audio was {{seconds}} s longer than the picture: it was re-timed to the picture, so the dub stays in sync and the video keeps its length.",
     "stt-no-speech": "Speech-to-text chunk {{chunk}} of {{chunks}} heard no speech at {{from}}–{{to}}, yet wrote {{count}} line(s) there: they were decoded again, and removed where nothing is said.",
     "stt-no-speech-whole": "Speech-to-text wrote {{count}} line(s) at {{from}}–{{to}}, where nobody speaks: they were decoded again, and removed where nothing is said.",

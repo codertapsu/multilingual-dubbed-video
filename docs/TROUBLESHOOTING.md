@@ -273,6 +273,17 @@ preview) held the graphics card, so this step used the slower processor build of
 **Help → Diagnostics** shows who holds the GPU lane; `get_queue` does too. Only *"could not
 start"* means the engine itself failed: reinstall it in Settings → Engines if that repeats.
 
+### "Did not have enough free graphics memory to start"
+
+Not a fault either, and nothing needs reinstalling. A large model (TranslateGemma 27B on an 8 GB
+card, say) only partly fits on the graphics card, and llama.cpp puts as much of it there as the
+free memory allows. When another program takes some of that memory while the model loads, the
+start runs out of room. The app then tries it once more with more memory left free (fewer layers
+on the card), and keeps that margin for the rest of the session. Only when the card is still too
+full does the step use the next installed engine, and the next step tries the GPU build again.
+Closing other programs that use the graphics card (games, video editors, Voice Mask, browsers
+playing video) leaves it more room; a smaller model in Settings → Engines needs less.
+
 ### The transcript repeats one phrase for minutes (a transcription loop)
 
 Whisper can lock onto one phrase over music and repeat it (every second, up to the end of a

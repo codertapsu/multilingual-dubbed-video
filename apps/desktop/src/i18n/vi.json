@@ -2629,6 +2629,7 @@
   "warning": {
     "gpu-fallback-busy": "Card đồ hoạ đang bận việc khác nên một bước đã chạy bằng bản dùng CPU, chậm hơn ({{pack}}).",
     "gpu-fallback-failed": "Không khởi động được engine GPU ({{pack}}) nên một bước đã chạy bằng bản dùng CPU, chậm hơn. Nếu lặp lại, hãy cài lại nó trong Cài đặt → Engine.",
+    "gpu-fallback-memory": "Engine GPU ({{pack}}) không còn đủ bộ nhớ card đồ hoạ trống để khởi động nên một bước đã dùng engine khác đã cài. Không cần cài lại: đóng bớt các chương trình đang dùng card đồ hoạ sẽ giúp card còn nhiều chỗ hơn.",
     "audio-drift": "Âm thanh dài hơn phần hình {{seconds}} giây: âm thanh đã được căn lại theo phần hình, nên lời lồng tiếng vẫn khớp và video giữ nguyên độ dài.",
     "stt-no-speech": "Đoạn nhận dạng giọng nói {{chunk}}/{{chunks}} không nghe thấy ai nói ở {{from}}–{{to}} mà vẫn ghi ra {{count}} câu: các câu đó đã được nhận dạng lại, và bị xoá ở chỗ không ai nói.",
     "stt-no-speech-whole": "Nhận dạng giọng nói đã ghi ra {{count}} câu ở {{from}}–{{to}}, chỗ không có ai nói: các câu đó đã được nhận dạng lại, và bị xoá ở chỗ không ai nói.",

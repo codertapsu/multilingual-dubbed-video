@@ -264,6 +264,14 @@ the build cannot run. Both HF repos it loads with `trust_remote_code` are pinned
 `vd_tts_engine/pinned.py`. Don't load them from `main`: that flag executes the repo's Python.
 GPU packs are heavy at pack level (`isHeavyPack`), so they evict a resident llama.cpp.
 
+**A card too full is not a broken engine.** llama.cpp fits its GPU layers to the free memory at
+load (`-fitt`, 512 MiB left free). On an 8 GB card, TranslateGemma 27B still came up 220 MiB short
+for its compute buffers. The fallback then told the user to reinstall, and it wrote the CUDA build
+off for the whole session. So a start whose output says the GPU ran out of memory
+(`looksLikeGpuOutOfMemory`) is tried once more with `RETRY_GPU_HEADROOM_MIB` left free, and the
+session keeps that margin. It is never added to `unusablePacks`, and its warning
+(`fallbackWarning`, reason `memory`) says nothing needs reinstalling.
+
 **A pin is the content, not the upload.** sherpa-onnx re-exported the speaker-embedding model on
 2026-11-19 (one byte longer, identical embeddings) and every fresh install of speaker detection was
 discarded as corrupt. When an upstream file changes, measure that it is the same content, then add

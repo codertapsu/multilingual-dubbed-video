@@ -443,8 +443,12 @@ describe('a part that transcribed itself (claude-dubber, 2026-11-28)', { timeout
     await fsp.writeFile(own.diarizationJson, JSON.stringify({ format: 2, speakers: [] }), 'utf8');
     const p = await store.getProject(p1!);
     await store.saveProject({ ...p, settings: { ...p.settings, speakerGenders: { SPEAKER_06: 'female', SPEAKER_14: 'male' } } });
+    // Its speech-to-text ran: the series says so (get_series), so it can be found without reading logs.
+    await store.savePipeline(setStepStatus(await store.getPipeline(p1!), 'stt', 'completed'));
+    expect((await r.series.view(parent.id)).parts[0]).toMatchObject({ ownTranscript: true });
 
     const [rebuilt] = await r.series.rebuildParts(parent.id, { parts: [1] });
+    expect((await r.series.view(parent.id)).parts[0]!.ownTranscript).toBeUndefined();
     expect(rebuilt).toMatchObject({ projectId: p1, rebuilt: true, ownSpeakersSetAside: true });
     expect(new Set((await lines(p1!)).map((l) => l.speakerId))).toEqual(new Set(['SPEAKER_18', 'SPEAKER_01']));
     expect((await store.getProject(p1!)).settings.speakerGenders).toEqual({ SPEAKER_18: 'male', SPEAKER_01: 'female' });

@@ -29,6 +29,7 @@ import {
   pipelineStepIndex,
   projectOutputVideoPath,
   sanitizeSpeakerVoices,
+  setStepStatus,
   toAppError,
   type CreateProjectInput,
   type PictureDetection,
@@ -934,6 +935,12 @@ export class SeriesService {
           settings: seriesGenders && Object.keys(seriesGenders).length > 0 ? { ...rest, speakerGenders: { ...seriesGenders } } : rest,
         });
       }
+      // Its lines are the series' again: its speech-to-text counts as skipped
+      // (get_series ownTranscript), as for any part made from the series.
+      const pipeline = await this.deps.store.getPipeline(id);
+      if (pipeline.steps.find((s) => s.id === 'stt')?.status === 'completed') {
+        await this.deps.store.savePipeline(setStepStatus(pipeline, 'stt', 'skipped'));
+      }
       if (translated) {
         // Translated, voiced and rendered again from the new lines on its next
         // run (seriesRedo.ts); a queued one keeps its turn and does the same.
@@ -1216,6 +1223,8 @@ export class SeriesService {
         endMs: p.endMs,
         ...(state ? { status: state.project.status, progressPercent: Math.round(state.pipeline.progressPercent) } : {}),
         ...(state?.project.pausedByUser ? { pausedByUser: true } : {}),
+        // Its speech-to-text ran (completed, not skipped): its lines are its own.
+        ...(state?.pipeline.steps.find((s) => s.id === 'stt')?.status === 'completed' ? { ownTranscript: true } : {}),
         ...(issues && (issues.flagged.length > 0 || issues.overruns.length > 0) ? { issues } : {}),
       });
     }

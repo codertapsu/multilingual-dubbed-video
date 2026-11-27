@@ -426,6 +426,19 @@ describe('series and create tools (0.18.0)', () => {
     );
   });
 
+  it("get_series names a part that transcribed itself, and says a part's times are its own (claude-dubber, 2026-11-28)", async () => {
+    fake.routes.set('GET /projects/proj_s12/series', () =>
+      view({
+        parentId: 'proj_s12',
+        parts: [{ index: 7, projectId: 'proj_p7', name: 'Phần 7', title: 'Tận thế', startMs: 0, endMs: 60_000, status: 'completed', ownTranscript: true }],
+      }),
+    );
+    await connect();
+    const r = await call('get_series', { projectId: 'proj_s12' });
+    expect(r.text).toContain('"Phần 7", completed, TRANSCRIBED ITSELF: its lines and speaker ids are its own');
+    expect(r.text).toContain("A part's line times (get_transcript on the part) start at 0 at its window's start");
+  });
+
   it('get_series and start_series name a part paused on its own, which the series start leaves (2026-11-27)', async () => {
     fake.routes.set('GET /projects/proj_s12/series', () =>
       view({

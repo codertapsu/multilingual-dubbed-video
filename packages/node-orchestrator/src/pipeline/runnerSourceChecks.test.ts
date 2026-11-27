@@ -19,6 +19,7 @@ import {
 } from '@videodubber/shared';
 import { PipelineRunner, type RunnerDeps } from './runner.js';
 import { listEdits } from '../activity/history.js';
+import { adTailFrom, pictureDirOf, savedDetection } from '../picture/pictureDetection.js';
 import { planUndo } from '../activity/undo.js';
 import type { SpeechMapService } from './speechMap.js';
 import { ProjectStore } from '../workspace/projectStore.js';
@@ -597,6 +598,36 @@ describe('stt: an advert tail (claude-dubber, 2026-11-27)', () => {
     const tail = (await warningsOf(b.project.id)).find((w) => w.code === 'ad-tail');
     expect(tail).toMatchObject({ step: 'stt', key: 'warning.ad-tail-series', params: { from: '40:00', end: '1:00:00' } });
     expect(tail?.message).toContain('the series ends there');
+  });
+
+  it("stops where the advert's voice begins, when before its banner, and keeps that for the series (Săn Yêu)", async () => {
+    const voiceFirst: SttProvider = {
+      ...heard,
+      async transcribe(): Promise<SttResult> {
+        return {
+          segments: makeSegments([
+            [5 * MIN, 5 * MIN + 2000, '我们走吧'],
+            [30 * MIN, 30 * MIN + 2000, '你还好吗'],
+            // 8 s before the banner at 40:00, as "个个个点击评论区蓝色链接" was at 50:46.68 for 50:50.75.
+            [40 * MIN - 8000, 40 * MIN - 4000, '个个个点击评论区蓝色链接'],
+            [45 * MIN, 45 * MIN + 2000, '可免费观看完整版'],
+          ]),
+          detectedLanguage: 'zh',
+          durationMs: 60 * MIN,
+        };
+      },
+    };
+    const b = await build({ durationMs: 60 * MIN, stt: voiceFirst, sttChunkThresholdMs: 10 * 60 * MIN, settings: { sourceLanguage: 'zh' } });
+    // The detection as saved beside the project, where the series plan reads it.
+    const dir = pictureDirOf(b.project);
+    await fsp.mkdir(dir, { recursive: true });
+    await fsp.writeFile(path.join(dir, 'detection.json'), JSON.stringify(detection(40 * MIN)));
+    b.deps.watermark = { detect: async () => detection(40 * MIN) };
+    await runToStt(b);
+    expect((await lines(b)).map((l) => l.sourceText)).toEqual(['我们走吧', '你还好吗']);
+    expect((await warningsOf(b.project.id)).find((w) => w.code === 'ad-tail')).toMatchObject({ params: { from: '39:52', end: '1:00:00' } });
+    expect((await savedDetection(b.project))?.adTail?.speechFromMs).toBe(40 * MIN - 8000);
+    expect(await adTailFrom(await store.getProject(b.project.id))).toBe(40 * MIN - 8000);
   });
 
   it('dubs the whole video when told to, or when none was found, or the video is too short to have one', async () => {

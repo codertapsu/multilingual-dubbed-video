@@ -168,9 +168,12 @@ picture detection finds the banner (media-worker `adTail.ts`: pixels that are ed
 not in the first ten minutes, always the same way, then the frame from which they stay; a frozen-
 picture test misses the moving kind) and leaves its frames out of the watermark and band search,
 which locked onto it. At the start of STT (`adTailStart`, `stopAtAdTail` not false, 20 min+), STT
-and its checks stop at `adTail.fromMs`, a series plans only up to it (`SeriesPlan.endMs`, kept when
-cuts move), and a cast counts no line past it (`adTailFrom`). A warning says where; nothing waits
-for the user, who is not always there to review.
+and its checks stop at `adTail.fromMs`, and speaker detection too (`untilMs`). The advert's voice
+can start before its banner (Săn Yêu: 4 s), so the lines just before it that say its words pull
+the end back (`advertVoiceStart`, saved as `speechFromMs`). A series plans only up to that end
+(`SeriesPlan.endMs`, kept when cuts move), and a cast counts no line past it (`adTailFrom`, which
+reads a 0.21.0 transcript for the words). A warning says where; nothing waits for the user, who
+is not always there to review.
 
 **The video's own subtitles are evidence of speech.** Where a source burns its subtitles in
 (`subtitleCoverageCheck`, on for zh/ja/ko by `subtitleCheckOn`), the STT step reads the band five

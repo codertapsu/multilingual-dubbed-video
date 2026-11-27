@@ -391,7 +391,7 @@ export class SeriesService {
     const videoMs = parent.mediaInfo?.durationMs || lines.at(-1)?.endMs || 0;
     // An advert tail: the series ends where it starts, at once, with no review
     // to wait for (2026-11-27: the planner made parts of the advert alone).
-    const tailFrom = await adTailFrom(parent);
+    const tailFrom = await adTailFrom(parent, lines);
     const durationMs = tailFrom !== undefined && tailFrom < videoMs ? tailFrom : videoMs;
     const chapters = (parent.source?.chapters ?? []).map((c) => c.startMs);
     // A project joined from several files: where one ends and the next begins

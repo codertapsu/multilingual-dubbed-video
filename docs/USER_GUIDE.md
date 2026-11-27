@@ -737,9 +737,12 @@ After it, the same banner for the full version ("点击评论区蓝色链接 可
 stays on the picture to the end, for hours, over a still image with songs or
 over moving footage with a voice reading the advert. For a video of 20 minutes
 or more, the app looks for that banner when speech-to-text starts. When it
-finds one, speech-to-text and its checks stop where the banner begins, a series
-ends there (its last part ends where the drama does), and a warning says where.
-The advert is never transcribed or dubbed, and nothing waits for you to
+finds one, speech-to-text, its checks and speaker detection stop where the
+banner begins, a series ends there (its last part ends where the drama does),
+and a warning says where. The advert's voice sometimes starts a few seconds
+before its banner: lines just before it that say the advert's words
+("点击评论区蓝色链接", "免费观看完整版"…) are left out too, and the dub ends where
+that voice begins. The advert is never dubbed, and nothing waits for you to
 confirm it. The banner's frames are also left out when the app looks for a
 watermark and for the video's own subtitles, which it would otherwise find
 in the banner. To dub the whole video anyway, turn off **Stop where an advert

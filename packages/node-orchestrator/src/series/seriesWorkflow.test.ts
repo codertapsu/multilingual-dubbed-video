@@ -367,6 +367,39 @@ describe('a series of a video with an advert tail (claude-dubber, 2026-11-27)', 
     expect(whole.plan!.endMs).toBeUndefined();
     expect(whole.plan!.parts.at(-1)!.endMs).toBe(60 * MIN);
   });
+
+  it("leaves the advert's voice before its banner out of the parts of a series planned on 0.21.0 (Săn Yêu, 2026-11-27)", async () => {
+    const r = rig();
+    const parent = await analysedParent(r, { minutes: 60, lines: talk(40) });
+    const dir = pictureDirOf(parent);
+    await fsp.mkdir(dir, { recursive: true });
+    const tail = { fromMs: 40 * MIN, box: { x: 0, y: 0.83, w: 1, h: 0.07 }, confidence: 0.9 };
+    await fsp.writeFile(
+      path.join(dir, 'detection.json'),
+      JSON.stringify({ at: '2026-11-27T10:00:00.000Z', videoWidth: 1920, videoHeight: 1080, regions: [], frameAtMs: 0, frames: 100, notes: [], tailChecked: true, adTail: tail }),
+      'utf8',
+    );
+    // Planned by 0.21.0: to the banner, the advert's voice not known yet.
+    await r.series.analysed(parent.id, { again: true });
+    expect((await r.series.view(parent.id)).plan!.endMs).toBe(40 * MIN);
+    // Its transcript holds the advert's voice, 4 s before the banner.
+    const sourceJson = store.paths(parent.id).sourceJson;
+    const segments = (JSON.parse(await fsp.readFile(sourceJson, 'utf8')) as { segments: TranscriptSegment[] }).segments;
+    const advert = { id: 'seg_9999', index: segments.length, startMs: 40 * MIN - 4000, endMs: 40 * MIN - 500, sourceText: '个个个点击评论区蓝色链接' };
+    await fsp.writeFile(sourceJson, JSON.stringify({ segments: [...segments, advert] }), 'utf8');
+
+    const lastLines = async (id: string) => (JSON.parse(await fsp.readFile(store.paths(id).sourceJson, 'utf8')) as { segments: TranscriptSegment[] }).segments;
+    const ids = await r.series.createParts(parent.id);
+    const last = await lastLines(ids.at(-1)!);
+    expect(last.length).toBeGreaterThan(100);
+    expect(last.some((l) => l.sourceText.includes('点击评论区'))).toBe(false);
+    // A part made before (with the line) loses it when rebuilt.
+    await fsp.writeFile(store.paths(ids.at(-1)!).sourceJson, JSON.stringify({ segments: [...last, { ...advert, startMs: last.at(-1)!.endMs + 500 }] }), 'utf8');
+    const n = (await r.series.view(parent.id)).plan!.parts.at(-1)!.index;
+    expect((await r.series.rebuildParts(parent.id, { parts: [n] }))[0]).toMatchObject({ rebuilt: true });
+    expect((await lastLines(ids.at(-1)!)).some((l) => l.sourceText.includes('点击评论区'))).toBe(false);
+    for (const id of ids) await r.orchestrator.cancelJob(id);
+  });
 });
 
 describe('a part paused on its own (claude-dubber, 2026-11-27)', { timeout: 60_000 }, () => {

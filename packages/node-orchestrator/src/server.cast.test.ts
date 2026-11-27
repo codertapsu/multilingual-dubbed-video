@@ -49,6 +49,26 @@ describe('casting by character', () => {
     ];
     await fsp.mkdir(path.join(dir, 'subtitles'), { recursive: true });
     await fsp.writeFile(path.join(dir, 'subtitles', 'source.json'), JSON.stringify({ segments: lines }));
+    // Speaker detection could not tell any of their genders.
+    await fsp.mkdir(path.join(dir, 'audio'), { recursive: true });
+    await fsp.writeFile(
+      path.join(dir, 'audio', 'diarization.json'),
+      JSON.stringify({
+        format: 2,
+        audio: { sizeBytes: 1, mtimeMs: 1 },
+        model: 'test',
+        turns: [],
+        speakers: ['SPEAKER_00', 'SPEAKER_15', 'SPEAKER_16', 'SPEAKER_09'].map((speakerId, i) => ({
+          speakerId,
+          speaker: i,
+          sec: 0,
+          f0Hz: null,
+          gender: 'unknown',
+          genderConfidence: 0,
+          print: [],
+        })),
+      }),
+    );
     await fsp.writeFile(
       path.join(dir, 'subtitles', 'translation_context.json'),
       JSON.stringify({
@@ -67,5 +87,14 @@ describe('casting by character', () => {
     expect(cast.notes).toContain('"Hệ thống" is a narrator or a system voice: no lead voice or clone, a built-in voice.');
     // No gender known here: every id of a character is left to the project voice together.
     expect(cast.unassigned.sort()).toEqual(['SPEAKER_00', 'SPEAKER_09', 'SPEAKER_15', 'SPEAKER_16']);
+    const unknownOf = (body: unknown) => ((body as { unknown?: { speakerId: string }[] }).unknown ?? []).map((u) => u.speakerId).sort();
+    expect(unknownOf(cast)).toEqual(['SPEAKER_00', 'SPEAKER_09', 'SPEAKER_15', 'SPEAKER_16']);
+
+    // Genders set in the settings count: they were ignored, and 11 speakers kept the project voice (2026-11-27).
+    const set = await app.inject({ method: 'PUT', url: `/projects/${project.id}/settings`, payload: { speakerGenders: { SPEAKER_00: 'male', SPEAKER_15: 'female' } } });
+    expect(set.statusCode).toBe(200);
+    const again = (await app.inject({ method: 'POST', url: `/projects/${project.id}/speakers/cast`, payload: {} })).json();
+    // Linh Nhi's other id follows her gender (the character's), the hero is a man now: only the system voice is unknown.
+    expect(unknownOf(again)).toEqual(['SPEAKER_09']);
   });
 });

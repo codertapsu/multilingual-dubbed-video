@@ -64,13 +64,20 @@ export function speakerRows(
       const linesMs = own.reduce((t, l) => t + Math.max(0, l.endMs - l.startMs), 0);
       const longest = [...own].sort((a, b) => b.endMs - b.startMs - (a.endMs - a.startMs)).slice(0, samples);
       const voiceId = voiceForLine({ speakerId }, settings);
+      // The project's genders first: detection writes its own there, and the
+      // user or an agent corrects them there (update_settings speakerGenders).
+      // Detection's "unknown" used to win over a gender set by hand: 11
+      // speakers stayed on the project voice after theirs were set
+      // (claude-dubber, 2026-11-27).
+      const set = settings.speakerGenders?.[speakerId];
+      const gender = set ?? d?.gender;
       return {
         speakerId,
         minutes: (d?.sec ? d.sec * 1000 : linesMs) / 60_000,
         lines: own.length,
         ...(d?.f0Hz ? { f0Hz: d.f0Hz } : {}),
-        ...(d?.gender ? { gender: d.gender } : settings.speakerGenders?.[speakerId] ? { gender: settings.speakerGenders[speakerId] } : {}),
-        ...(d && d.gender !== 'unknown' ? { genderConfidence: d.genderConfidence } : {}),
+        ...(gender ? { gender } : {}),
+        ...(d && d.gender !== 'unknown' && gender === d.gender ? { genderConfidence: d.genderConfidence } : {}),
         samples: longest.map((l) => ({ id: l.id, text: (l.sourceText ?? '').trim().slice(0, 120), startMs: l.startMs, endMs: l.endMs })),
         ...(voiceId ? { voiceId } : {}),
       };

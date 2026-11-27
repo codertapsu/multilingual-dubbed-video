@@ -3609,6 +3609,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
             ...(lead.f0Hz ? { f0Hz: lead.f0Hz } : {}),
             ...(prints.get(lead.speakerId)?.length ? { print: prints.get(lead.speakerId)! } : {}),
             ...(g.voiceOver ? { voiceOver: true } : {}),
+            ...(g.name ? { named: true } : {}),
           };
         });
         const items = await castableVoices(project);

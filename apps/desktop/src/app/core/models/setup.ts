@@ -129,6 +129,9 @@ export interface UpdatePreferences {
   leadVoices?: { male?: string[]; female?: string[] };
 }
 
+/** A change to the preferences: only the fields sent change, the queue settings field by field too. */
+export type UpdatePreferencesChange = Partial<Omit<UpdatePreferences, 'concurrency'>> & { concurrency?: Partial<ConcurrencyPreferences> };
+
 // ---------------------------------------------------------------------------
 // Cloud services, credentials, providers, system profile (mirror shared)
 // ---------------------------------------------------------------------------

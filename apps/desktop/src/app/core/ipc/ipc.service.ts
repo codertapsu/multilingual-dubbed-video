@@ -53,6 +53,7 @@ import type {
   UpdateInfo,
   UpdateOutcome,
   UpdatePreferences,
+  UpdatePreferencesChange,
   UpdateStatus,
 } from '../models/setup';
 import type { BrandAsset, GreetingPlacement, GreetingPlan, SeriesAiOption, SeriesView, DownloadsWhileDubbing } from '@videodubber/shared';
@@ -816,7 +817,7 @@ export class IpcService {
   }
 
   /** PUT /preferences — persist the update preference. */
-  setPreferences(body: UpdatePreferences): Promise<{ ok: boolean }> {
+  setPreferences(body: UpdatePreferencesChange): Promise<{ ok: boolean }> {
     // The Rust command's parameter is `prefs` (commands.rs): Tauri matches by name.
     return this.call<{ ok: boolean }>(
       'set_preferences',
@@ -839,7 +840,7 @@ export class IpcService {
   }
 
   /** Convenience: persist just the autoUpdate flag. */
-  async setUpdatePreference(body: UpdatePreferences): Promise<{ ok: boolean }> {
+  async setUpdatePreference(body: UpdatePreferencesChange): Promise<{ ok: boolean }> {
     if (this.tauri) {
       // The Rust command's parameter is `prefs` (commands.rs); Tauri matches
       // args BY NAME, so sending `preferences` fails the invoke outright.

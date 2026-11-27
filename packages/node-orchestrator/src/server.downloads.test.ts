@@ -251,6 +251,21 @@ describe('downloads, presets and batch dubs', () => {
     expect(made?.series).toBeFalsy();
   });
 
+  it('changes the queue settings field by field: saving the limit never undoes a pause (claude-dubber, 2026-11-28)', async () => {
+    const queue = async () => ((await app.inject({ method: 'GET', url: '/preferences' })).json() as { concurrency?: unknown }).concurrency;
+    // An agent pauses the queue to protect an update.
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { concurrency: { paused: true } } });
+    expect(await queue()).toEqual({ mode: 'auto', paused: true });
+    // The Settings screen then saves the limit: the pause stays.
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { concurrency: { mode: 'manual', maxProjects: 2 } } });
+    expect(await queue()).toEqual({ mode: 'manual', maxProjects: 2, paused: true });
+    // Back to automatic forgets the pinned limit; the pause goes only when sent.
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { concurrency: { mode: 'auto' } } });
+    expect(await queue()).toEqual({ mode: 'auto', paused: true });
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { concurrency: { paused: false } } });
+    expect(await queue()).toEqual({ mode: 'auto', paused: false });
+  });
+
   it('keeps the lead voices apart from the other preferences, one gender at a time, and never makes them a project default (2026-11-27)', async () => {
     await app.inject({ method: 'PUT', url: '/preferences', payload: { downloads: { whileDubbing: 'one-task' } } });
     await app.inject({ method: 'PUT', url: '/preferences', payload: { leadVoices: { male: ['vp_e1c1aa0000000001', 'vp_d54fadbeedb4b84f'], female: ['vp_1545a09ba583ad6a'] } } });

@@ -704,10 +704,11 @@ export class SettingsStore implements OnDestroy {
     if (this.prefSaving()) return;
     const previous = this.concurrencyValue();
     this.concurrencyValue.set(value);
+    // Only the limit: the server keeps the rest. Sending this screen's copy of
+    // `paused` undid a pause an agent had set to protect an update
+    // (claude-dubber, 2026-11-28).
     await this.saveConcurrency(
-      value === 'auto'
-        ? { mode: 'auto', paused: this.queuePaused() }
-        : { mode: 'manual', maxProjects: Number(value), paused: this.queuePaused() },
+      value === 'auto' ? { mode: 'auto' } : { mode: 'manual', maxProjects: Number(value) },
       () => this.concurrencyValue.set(previous),
     );
   }
@@ -717,14 +718,11 @@ export class SettingsStore implements OnDestroy {
     if (this.prefSaving()) return;
     const previous = this.queuePaused();
     this.queuePaused.set(paused);
-    const pinned = this.concurrencyValue();
-    await this.saveConcurrency(
-      pinned === 'auto' ? { mode: 'auto', paused } : { mode: 'manual', maxProjects: Number(pinned), paused },
-      () => this.queuePaused.set(previous),
-    );
+    // Only the pause: the server keeps the limit as it is.
+    await this.saveConcurrency({ paused }, () => this.queuePaused.set(previous));
   }
 
-  private async saveConcurrency(concurrency: ConcurrencyPreferences, rollback: () => void): Promise<boolean> {
+  private async saveConcurrency(concurrency: Partial<ConcurrencyPreferences>, rollback: () => void): Promise<boolean> {
     this.prefSaving.set(true);
     this.error.set(null);
     try {

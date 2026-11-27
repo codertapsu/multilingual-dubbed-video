@@ -371,6 +371,7 @@ export {
   pausePipelineState,
   resumePipelineState,
   setStepStatus,
+  withEndsAfter,
 } from './pipeline/state.js';
 export type { StepPatch } from './pipeline/state.js';
 export {

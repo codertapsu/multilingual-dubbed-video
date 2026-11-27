@@ -4,6 +4,7 @@ import {
   pausePipelineState,
   resumePipelineState,
   setStepStatus,
+  withEndsAfter,
 } from './state.js';
 import { PIPELINE_STEP_DEFS } from './steps.js';
 
@@ -100,6 +101,24 @@ describe('setStepStatus', () => {
     // Paused, the step waits as pending with its progress: only finished steps count.
     state = pausePipelineState(state, FIXED);
     expect(state.progressPercent).toBe(22);
+  });
+
+  it('counts only its own steps when it ends early: a series parent transcribes, its parts dub (claude-dubber, 2026-11-27)', () => {
+    let state = withEndsAfter(createInitialPipelineState('p1', FIXED), 'stt');
+    state = setStepStatus(state, 'probe-video', 'completed', undefined, FIXED);
+    state = setStepStatus(state, 'extract-audio', 'completed', undefined, FIXED);
+    // Speaker detection 47/102 of the Phong Thủy Thiên Sư analysis: (2 + 0.73) / 3, not / 9 ("30%").
+    state = setStepStatus(state, 'stt', 'running', { progressPercent: 73 }, FIXED);
+    expect(state.progressPercent).toBe(91);
+    // Paused, then the steps its parts do skipped at the end: done.
+    expect(pausePipelineState(state, FIXED).progressPercent).toBe(67);
+    state = setStepStatus(state, 'stt', 'completed', undefined, FIXED);
+    expect(state.progressPercent).toBe(100);
+    // Set on a pipeline already under way, and taken off again: counted again at once.
+    const whole = withEndsAfter(state, undefined);
+    expect(whole.endsAfter).toBeUndefined();
+    expect(whole.progressPercent).toBe(33);
+    expect(withEndsAfter(whole, 'stt').progressPercent).toBe(100);
   });
 
   it('counts skipped steps toward progress', () => {

@@ -37,6 +37,7 @@ import {
   pausePipelineState,
   resumePipelineState,
   setStepStatus,
+  withEndsAfter,
   toAppError,
   toWhisperLanguage,
   segmentsToSrt,
@@ -641,6 +642,17 @@ export class PipelineRunner {
     this.freshClips = false;
 
     let state = await store.getPipeline(project.id);
+
+    // A series parent ends after speech-to-text (its parts dub the rest, see
+    // the loop): its progress, and so its time left, counts only those steps.
+    // All nine held the analysis of a 17-hour join at "30%, about 20 h 45 min
+    // left" with under two hours to go (claude-dubber, 2026-11-27).
+    const endsAfter = project.series?.role === 'parent' ? 'stt' : undefined;
+    if (state.endsAfter !== endsAfter) {
+      state = withEndsAfter(state, endsAfter);
+      await store.savePipeline(state);
+      bus.emit({ type: 'state', pipeline: state });
+    }
 
     // Continuing a paused dub. The step it stopped in was cut off part-way, so
     // whatever it left on disk is not taken as "already done" (`interrupted`

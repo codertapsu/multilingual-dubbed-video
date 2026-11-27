@@ -109,6 +109,25 @@ async function log(b: Built): Promise<string> {
   return fsp.readFile(b.paths.pipelineLog, 'utf8');
 }
 
+describe('a series parent counts only the steps it runs (claude-dubber, 2026-11-27)', () => {
+  it('reports its progress over probe, extract and speech-to-text, not the nine steps its parts dub', async () => {
+    const b = await build({});
+    // Every overall percent seen while speech-to-text ran.
+    const during: number[] = [];
+    const off = b.deps.bus.subscribe((e) => {
+      if (e.type === 'state' && e.pipeline.steps.find((s) => s.id === 'stt')?.status === 'running') during.push(e.pipeline.progressPercent);
+    });
+    await runToStt(b);
+    off();
+    // Two of its three steps done before speech-to-text: 67 % and up. Over nine
+    // steps it read 22–33 %, and "about 20 h 45 min left" for under two hours.
+    expect(during.length).toBeGreaterThan(0);
+    expect(Math.min(...during)).toBeGreaterThanOrEqual(67);
+    const end = await store.getPipeline(b.project.id);
+    expect(end).toMatchObject({ endsAfter: 'stt', progressPercent: 100, status: 'completed' });
+  });
+});
+
 describe('extract-audio: the audio against the picture (1.1)', () => {
   it('records the drift in the media info and the log, and warns from 0.5 s', async () => {
     const b = await build({});

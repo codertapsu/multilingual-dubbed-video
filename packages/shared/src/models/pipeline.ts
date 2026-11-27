@@ -47,6 +47,15 @@ export interface PipelineState {
   steps: PipelineStepState[];
   /** Overall progress in the range 0..100. */
   progressPercent: number;
+  /**
+   * The last step this pipeline runs, when it stops before the render: a
+   * series parent only transcribes the video, and its parts dub the rest.
+   * Progress (so the time left, from its pace) counts only the steps up to it.
+   * Counting all nine held the Phong Thủy Thiên Sư analysis at "30%" with
+   * "about 20 h 45 min left" for under two hours of work (claude-dubber,
+   * 2026-11-27).
+   */
+  endsAfter?: PipelineStepId;
   /** Rolled-up overall status. */
   status: PipelineStatus;
   /** Overall error message, if the run failed. */

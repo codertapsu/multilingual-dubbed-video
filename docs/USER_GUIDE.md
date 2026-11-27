@@ -343,7 +343,9 @@ finished part, one after another.
 without you: a single video looks for the mark when it is rendered; a series
 looks once in the whole video while it is analysed and makes every part with
 the box (review shows what was found). Only a mark that stands out clearly (50 %
-sure or more) is hidden. What it finds becomes a box you can move or change;
+sure or more) is hidden. In a video joined from several files, each file is
+looked at on its own; a mark found at the same place in most of them is hidden
+in a file where none was found too. What it finds becomes a box you can move or change;
 removing the boxes turns the option off. The picture can change while a dub runs,
 until the dub starts mixing, and always while a series is being analysed.
 

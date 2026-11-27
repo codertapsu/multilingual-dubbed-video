@@ -121,8 +121,25 @@ export function mergeAcrossSegments(
     const inter = ix * iy;
     return inter / (a.w * a.h + b.w * b.h - inter || 1);
   };
+  // A mark found at the same place in most files of a join is the uploader's,
+  // and a file where nothing at all was found missed it: it takes the mark
+  // too. Phong Thủy Thiên Sư's P1 (1920x804, padded into the 1920x822 join)
+  // showed "每天看亿会 bilibili" where P2–P4 did, and was left unblurred
+  // (claude-dubber, 2026-11-27). A file with marks of its own elsewhere keeps
+  // only those: it may come from another uploader.
+  const places: { mark: WatermarkProposal; segments: Set<number> }[] = [];
+  for (const [si, { marks }] of found.entries()) {
+    for (const m of marks) {
+      const place = places.find((p) => p.mark.corner === m.corner && iou(p.mark, m) >= 0.5);
+      if (place) place.segments.add(si);
+      else places.push({ mark: m, segments: new Set([si]) });
+    }
+  }
+  const usual = places.filter((p) => p.segments.size >= 2 && p.segments.size * 2 > found.length).map((p) => p.mark);
+  const filled = found.map((f) => (f.marks.length === 0 && usual.length > 0 ? { ...f, marks: usual } : f));
+
   const open: { region: WatermarkProposal; lastSegment: number; files: string[] }[] = [];
-  for (const [si, { segment, marks }] of found.entries()) {
+  for (const [si, { segment, marks }] of filled.entries()) {
     for (const m of marks) {
       const same = open.find((o) => o.lastSegment === si - 1 && o.region.corner === m.corner && iou(o.region, m) >= 0.5);
       if (same) {

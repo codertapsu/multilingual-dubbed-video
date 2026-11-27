@@ -335,10 +335,12 @@ export interface ConcurrencyPreferences {
   mode: 'auto' | 'manual';
   maxProjects?: number;
   paused?: boolean;
+  /** Dubs take turns on the graphics card (default on). */
+  shareGpu?: boolean;
 }
 
 /** Why a queued project has not started yet. */
-export type QueueReason = 'no-slot' | 'heavy-busy' | 'paused' | 'pressure' | 'gpu-hold';
+export type QueueReason = 'no-slot' | 'heavy-busy' | 'paused' | 'pressure' | 'gpu-hold' | 'gpu-turns';
 
 /** One project waiting for a run slot. */
 export interface QueueEntry {
@@ -365,6 +367,10 @@ export interface RunningEntry {
   projectId: string;
   name: string;
   heavy: boolean;
+  /** The graphics card for this run now: using it, or waiting for its turn (behind `gpuWaitFor`). */
+  gpu?: 'using' | 'waiting';
+  gpuWaitSince?: string;
+  gpuWaitFor?: string;
 }
 
 /** GET /queue — the live scheduler state. */
@@ -378,6 +384,8 @@ export interface QueueState {
   capacity: CapacityRecommendation;
   /** Other apps' live holds on the graphics card: new dubs that need it wait. */
   holds?: GpuHold[];
+  /** Dubs take turns on the graphics card (ConcurrencyPreferences.shareGpu). */
+  shareGpu?: boolean;
 }
 
 /** Result of `check_for_update` (tauri-plugin-updater). */

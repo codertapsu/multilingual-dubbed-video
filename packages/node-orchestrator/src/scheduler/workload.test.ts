@@ -65,6 +65,13 @@ describe('classifyWorkload and the context engine', () => {
     expect(w.heavyFamily).toBe('local-llm');
   });
 
+  it('counts refine as a GPU step when the chat model gives failing lines their second try there', () => {
+    // A dub taking turns on the card keeps it from translation to the voices,
+    // rather than lending it for refine and waiting to get it back.
+    expect(classifyWorkload(lightSettings, lightRegistry, { contextEngine: gemmaChat }).heavySteps).toEqual(['translation', 'refine', 'alignment']);
+    expect(classifyWorkload(lightSettings, lightRegistry).heavySteps).toEqual([]);
+  });
+
   it('keeps the lane free when the run never reaches a step that uses it', () => {
     expect(
       classifyWorkload(lightSettings, lightRegistry, { contextEngine: gemmaChat, fromStep: 'audio-mix' }).needsHeavyEngine,

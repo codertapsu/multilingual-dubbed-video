@@ -163,11 +163,16 @@ export function classifyWorkload(
   if (willRun(PHASE_STEP.translation) && (heavy((registry.getTranslation(settings.translationProviderId) as Traits).requiresEnginePack) || ctxHeavy)) {
     heavySteps.push('translation');
   }
+  // Refine also gives the lines that still fail the checks a second try with
+  // the context engine (dubPasses.retryFailingLines), configured or not: a
+  // dub sharing the card keeps it from translation to the voices rather than
+  // lending it for this step and waiting to get it back.
   if (
-    settings.refineProviderId &&
-    settings.refineProviderId !== 'none' &&
     willRun(PHASE_STEP.refine) &&
-    heavy((registry.getTranslation(settings.refineProviderId) as Traits).requiresEnginePack)
+    ((settings.refineProviderId &&
+      settings.refineProviderId !== 'none' &&
+      heavy((registry.getTranslation(settings.refineProviderId) as Traits).requiresEnginePack)) ||
+      ctxHeavy)
   ) {
     heavySteps.push('refine');
   }

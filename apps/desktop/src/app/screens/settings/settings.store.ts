@@ -157,6 +157,8 @@ export class SettingsStore implements OnDestroy {
   /** 'auto' (follow the hardware recommendation) or a pinned number. */
   readonly concurrencyValue = signal<string>('auto');
   readonly queuePaused = signal(false);
+  /** Dubs take turns on the graphics card (ConcurrencyPreferences.shareGpu, default on). */
+  readonly shareGpu = signal(true);
   readonly downloadsChoice = signal<DownloadsWhileDubbing>('auto');
   readonly downloadsEffective = signal<Exclude<DownloadsWhileDubbing, 'auto'> | null>(null);
 
@@ -676,6 +678,7 @@ export class SettingsStore implements OnDestroy {
       const c = pref.concurrency;
       this.concurrencyValue.set(c?.mode === 'manual' && c.maxProjects ? String(c.maxProjects) : 'auto');
       this.queuePaused.set(c?.paused === true);
+      this.shareGpu.set(c?.shareGpu !== false);
     } catch (err) {
       this.error.set(toAppError(err));
     } finally {
@@ -720,6 +723,14 @@ export class SettingsStore implements OnDestroy {
     this.queuePaused.set(paused);
     // Only the pause: the server keeps the limit as it is.
     await this.saveConcurrency({ paused }, () => this.queuePaused.set(previous));
+  }
+
+  /** Let dubs take turns on the graphics card, or keep one GPU dub at a time. */
+  async setShareGpu(on: boolean): Promise<void> {
+    if (this.prefSaving()) return;
+    const previous = this.shareGpu();
+    this.shareGpu.set(on);
+    await this.saveConcurrency({ shareGpu: on }, () => this.shareGpu.set(previous));
   }
 
   private async saveConcurrency(concurrency: Partial<ConcurrencyPreferences>, rollback: () => void): Promise<boolean> {
@@ -827,12 +838,14 @@ export class SettingsStore implements OnDestroy {
         if (this.downloadsChoice() !== 'auto') await this.setDownloadsChoice('auto');
         return this.downloadsChoice() === 'auto';
       case 'performance': {
-        const previous = { value: this.concurrencyValue(), paused: this.queuePaused() };
+        const previous = { value: this.concurrencyValue(), paused: this.queuePaused(), shareGpu: this.shareGpu() };
         this.concurrencyValue.set('auto');
         this.queuePaused.set(false);
-        return this.saveConcurrency({ mode: 'auto', paused: false }, () => {
+        this.shareGpu.set(true);
+        return this.saveConcurrency({ mode: 'auto', paused: false, shareGpu: true }, () => {
           this.concurrencyValue.set(previous.value);
           this.queuePaused.set(previous.paused);
+          this.shareGpu.set(previous.shareGpu);
         });
       }
     }

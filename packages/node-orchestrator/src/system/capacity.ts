@@ -20,9 +20,12 @@
  * {@link CapacityRecommendation.heavyLanes} is always 1 and is NOT derived from
  * hardware: heavy local engines (llama.cpp, whisper.cpp, LibreTranslate,
  * separation, alignment) unload each other by design (EngineManager's
- * sequential-memory policy), so a second concurrent heavy run is a FAILURE
- * (ENGINE_BUSY / evicted mid-request), not merely slow. No machine, however
- * fast, changes that — which is why no user setting may raise it.
+ * sequential-memory policy), so a second heavy engine beside the first is a
+ * FAILURE (ENGINE_BUSY / evicted mid-request), not merely slow. No machine,
+ * however fast, changes that — which is why no user setting may raise it.
+ * Dubs taking turns on the card (`concurrency.shareGpu`) do not raise it
+ * either: several heavy runs are admitted, and they hold the one lane in
+ * turn, step by step (EngineManager.waitForLane).
  */
 import type { CapacityRecommendation, SystemProfile,
   LocalizedText,

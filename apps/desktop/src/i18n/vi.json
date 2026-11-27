@@ -402,6 +402,8 @@
     "now-dubbing": "Đang lồng tiếng",
     "queue-link": "Đang lồng tiếng {{ running }} · tối đa {{ max }} cùng lúc — đổi",
     "heavy-suffix": " — đang dùng engine cục bộ (chạy riêng)",
+    "gpu-using-suffix": " — đang dùng GPU",
+    "gpu-waiting-suffix": " — đang chờ tới lượt dùng GPU",
     "up-next": "Tiếp theo",
     "queue-entry-no-slot": "#{{ position }} {{ name }} — đang chờ đến lượt",
     "queue-entry-heavy-busy": "#{{ position }} {{ name }} — đang chờ máy rảnh",
@@ -468,6 +470,7 @@
     "published-badge": "Đã đăng",
     "queue-entry-pressure": "#{{ position }} {{ name }} — đang chờ: máy đang thiếu bộ nhớ trong lúc một bản lồng tiếng chạy",
     "queue-entry-gpu-hold": "#{{ position }} {{ name }} — đang chờ: {{ app }} đang dùng card đồ hoạ",
+    "queue-entry-gpu-turns": "#{{ position }} {{ name }} — đang chờ: đã có hai bản đang thay phiên dùng GPU",
     "queue-gpu-hold": "{{ app }} đang dùng card đồ hoạ: các bản lồng tiếng cần card sẽ chờ đến khi xong; việc đang chạy vẫn tiếp tục."
   },
   "settings": {
@@ -1027,6 +1030,10 @@
       "engines-link": "Engine nào hợp với máy này:",
       "pause": "Tạm dừng",
       "paused-now": "Đang tạm dừng: các bản đang chờ sẽ chưa bắt đầu cho tới khi bạn bỏ chọn “Tạm dừng”.",
+      "share-gpu": "Cho các bản lồng tiếng thay phiên dùng GPU",
+      "share-gpu-hint": "Hai bản cần GPU được chạy song song (trong giới hạn ở trên). Mỗi bản chờ tới lượt cho những bước chạy trên GPU, và nhường GPU cho bản kia trong lúc nó làm việc trên CPU (nhận diện người nói, trộn âm thanh, xuất video). Bước nào chạy trên GPU thì vẫn chạy trên GPU, nên bản lồng tiếng vẫn y như cũ; chỉ là GPU ít khi phải để không.",
+      "share-gpu-off": "Tắt: mỗi lần chỉ chạy một bản cần GPU; bản sau bắt đầu khi bản trước đã xong các bước trên GPU.",
+      "share-gpu-on": "Thay phiên",
       "tier-constrained": "Máy cấu hình thấp",
       "tier-balanced": "Máy cấu hình vừa",
       "tier-performance": "Máy cấu hình mạnh",
@@ -1176,7 +1183,8 @@
     "dismiss-warning-hint": "Ẩn cảnh báo này sau khi bạn đã kiểm tra. Nó sẽ xuất hiện lại nếu bước đó chạy lại và vẫn gặp đúng vấn đề này.",
     "held-title": "⚠️ Còn {{count}} câu dịch chưa đạt kiểm tra",
     "held-body": "Quá trình lồng tiếng đã dừng trước khi tạo giọng vì bạn đã bật \"Dừng trước khi tạo giọng nếu còn câu dịch chưa đạt kiểm tra\". Hãy sửa các câu được đánh dấu trong trình chỉnh sửa (mục Vấn đề), rồi tiếp tục lồng tiếng: các câu sẽ được đọc đúng như lúc đó.",
-    "queue-reason-gpu-hold": "{{ app }} đang dùng card đồ hoạ (một phiên trực tiếp), nên bản lồng tiếng này sẽ bắt đầu khi phiên đó xong. Không việc nào đang chạy bị dừng."
+    "queue-reason-gpu-hold": "{{ app }} đang dùng card đồ hoạ (một phiên trực tiếp), nên bản lồng tiếng này sẽ bắt đầu khi phiên đó xong. Không việc nào đang chạy bị dừng.",
+    "queue-reason-gpu-turns": "Đã có hai bản đang thay phiên dùng GPU, nên bản này sẽ bắt đầu ngay khi một trong hai bản xong các bước trên GPU. Chạy thêm cùng lúc cũng chỉ phải chờ GPU, lại làm chậm các bản kia."
   },
   "onboarding": {
     "title": "Chào mừng đến với VideoDubber",
@@ -2010,7 +2018,7 @@
     "cpu-bound": "Số nhân CPU là yếu tố giới hạn trên máy này.",
     "ram-bound": "Dung lượng RAM là yếu tố giới hạn trên máy này.",
     "hard-cap": "Giới hạn ở {{ cap }}: vượt quá mức đó, các dịch vụ nhận dạng/dịch/tổng hợp giọng dùng chung cũng chỉ xử lý từng yêu cầu một.",
-    "heavy-engines": "Dự án dùng engine tải thêm (whisper.cpp, TranslateGemma/Gemma, LibreTranslate, tách giọng, căn thời gian) luôn chạy một dự án mỗi lần trên mọi máy — những engine này chiếm trọn máy và cản nhau khi chạy chồng.",
+    "heavy-engines": "Engine tải thêm (whisper.cpp, TranslateGemma/Gemma, LibreTranslate, tách giọng, căn thời gian) mỗi lúc chỉ chạy một cái trên mọi máy: những engine này chiếm trọn máy và cản nhau khi chạy chồng. Khi bật “Cho các bản lồng tiếng thay phiên dùng GPU”, hai bản dùng chúng chạy song song và thay phiên nhau dùng GPU theo từng bước; khi tắt, mỗi lần chỉ chạy một bản.",
     "manual": "Bạn đã đặt thủ công {{ n }} dự án cùng lúc (mức khuyến nghị cho máy này là {{ recommended }})."
   },
   "help": {
@@ -2712,7 +2720,11 @@
     "loops": "Đang kiểm tra các đoạn lặp do chép lời {{done}}/{{total}}",
     "subtitle-check": "Đang đọc phụ đề có sẵn của video {{percent}}%",
     "subtitle-frames": "Đang cắt phụ đề từ hình {{percent}}%",
-    "subtitle-reading": "Đang đọc phụ đề {{done}}/{{total}}"
+    "subtitle-reading": "Đang đọc phụ đề {{done}}/{{total}}",
+    "gpu-wait": "Đang chờ tới lượt dùng GPU",
+    "gpu-wait-dub": "Đang chờ GPU: “{{name}}” đang dùng",
+    "gpu-wait-edit": "Đang chờ GPU: một thao tác sửa trong “{{name}}” đang dùng",
+    "gpu-wait-app": "Đang chờ GPU: {{name}} đang dùng"
   },
   "activity": {
     "heading": "Việc đang chạy",

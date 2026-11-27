@@ -11,7 +11,11 @@
  *  2. Heavy lane — a run needing an exclusive local engine waits until no other
  *     running job holds the lane. This is a CORRECTNESS rule (those engines
  *     unload each other), so it is checked before, and independently of, the
- *     points budget and can never be overridden.
+ *     points budget and can never be overridden. With the card shared
+ *     (`shareGpu`), the rule moves inside the runs: heavy runs are admitted
+ *     side by side and take turns on the lane, step by step, in the engine
+ *     manager's waiting line (one heavy engine is still loaded at a time);
+ *     only another app's hold on the card keeps them queued.
  *  3. Points budget — local runs cost 2, cloud-only runs 1, against
  *     `maxProjects * 2`.
  *
@@ -53,6 +57,17 @@ export interface RunningRun {
 /** Light-lane runs (mix and render only) that may run at once, besides the budget. */
 export const LIGHT_LANE_SLOTS = 1;
 
+/**
+ * Dubs needing the graphics card that take turns on it at once (`shareGpu`):
+ * one on the card, one doing its processor work (speaker detection, the mix,
+ * the render) meanwhile. A third would mostly wait for the card, and its
+ * processor work would slow the one on it: TranslateGemma 27B runs part of
+ * its layers on the processor on an 8 GB card, and a render beside it once
+ * slowed it to under a token a second (claude-dubber, 2026-11-24). The
+ * points budget allowed four on the PC that dubs the series.
+ */
+export const SHARED_GPU_RUNS = 2;
+
 /** Why an entry was held back, with the copy the UI shows. */
 export interface HeldBack {
   reason: QueueReason;
@@ -93,6 +108,32 @@ export interface AdmissionContext {
    * (claude-dubber, 2026-11-24).
    */
   pressure?: boolean;
+  /**
+   * Dubs take turns on the graphics card (Preferences.concurrency.shareGpu):
+   * a run needing a heavy engine is admitted beside another, as the points
+   * budget allows, and waits inside its run for the card when it reaches a
+   * step that uses it (EngineManager's waiting line). Only another app's hold
+   * on the card keeps it in the queue. Six dubs waited 2.5 h in the queue
+   * while a series' analysis detected speakers on the processor and the card
+   * sat idle (2026-11-27).
+   */
+  shareGpu?: boolean;
+}
+
+/**
+ * Who holds the heavy lane, in words: a dub's name, "an edit in <name>", "a
+ * voice preview", or "other work outside a dub" (EngineManager's anonymous owner).
+ */
+export function laneHolderLabel(owner: string | undefined, nameOf?: (projectId: string) => string | undefined): string {
+  if (!owner) return 'another dub';
+  // An editor action holds the lane under "editor:<projectId>".
+  if (owner.startsWith('editor:')) {
+    const name = nameOf?.(owner.slice('editor:'.length));
+    return name ? `an edit in ${name}` : 'an edit in the editor';
+  }
+  if (owner.startsWith('preview:')) return 'a voice preview';
+  if (owner === 'anonymous') return 'other work outside a dub';
+  return nameOf?.(owner) ?? 'another dub';
 }
 
 /**
@@ -119,22 +160,17 @@ export function decideAdmissions(
 
   let usedPoints = running.filter((r) => !r.lightOnly).reduce((sum, r) => sum + r.points, 0);
   let lightRunning = running.filter((r) => r.lightOnly).length;
-  let heavyHolder: string | undefined =
-    running.find((r) => r.needsHeavyEngine)?.projectId ?? ctx.externalHeavyOwner;
+  // Sharing the card, only another app's hold keeps a heavy run in the queue:
+  // a dub or an edit holding the lane is waited for inside the run.
+  const hold = ctx.externalHeavyOwner?.startsWith(HOLD_OWNER_PREFIX) ? ctx.externalHeavyOwner : undefined;
+  let heavyHolder: string | undefined = ctx.shareGpu
+    ? hold
+    : (running.find((r) => r.needsHeavyEngine)?.projectId ?? ctx.externalHeavyOwner);
+  let heavyRunning = running.filter((r) => r.needsHeavyEngine).length;
   /** Points reserved for the first entry we could not admit (anti-starvation). */
   let reserved = 0;
 
-  const nameFor = (projectId: string | undefined): string => {
-    if (!projectId) return 'another dub';
-    // An editor action holds the lane under "editor:<projectId>".
-    if (projectId.startsWith('editor:')) {
-      const name = ctx.nameOf?.(projectId.slice('editor:'.length));
-      return name ? `an edit in ${name}` : 'an edit in the editor';
-    }
-    if (projectId.startsWith('preview:')) return 'a voice preview';
-    if (projectId === 'anonymous') return 'other work outside a dub';
-    return ctx.nameOf?.(projectId) ?? 'another dub';
-  };
+  const nameFor = (projectId: string | undefined): string => laneHolderLabel(projectId, ctx.nameOf);
 
   for (const c of candidates) {
     // Mix and render only: its own lane, never behind the budget's reservation.
@@ -173,6 +209,25 @@ export function decideAdmissions(
       if (reserved === 0) reserved = c.points;
       continue;
     }
+    // Sharing the card, a second GPU dub would add its processor work and
+    // memory to the first's: not while the computer is short of memory, and
+    // never more than SHARED_GPU_RUNS at once.
+    if (ctx.shareGpu && c.needsHeavyEngine && heavyRunning > 0 && ctx.pressure === true) {
+      held.set(c.projectId, {
+        reason: 'pressure',
+        message: 'Waiting: the computer is short of memory while a dub runs. This dub starts when it has room.',
+      });
+      if (reserved === 0) reserved = c.points;
+      continue;
+    }
+    if (ctx.shareGpu && c.needsHeavyEngine && heavyRunning >= SHARED_GPU_RUNS) {
+      held.set(c.projectId, {
+        reason: 'gpu-turns',
+        message: `Waiting: ${SHARED_GPU_RUNS} dubs already take turns on the graphics card. This one starts when one of them no longer needs it.`,
+      });
+      if (reserved === 0) reserved = c.points;
+      continue;
+    }
     if (usedPoints + c.points > ctx.budgetPoints - reserved) {
       held.set(c.projectId, {
         reason: 'no-slot',
@@ -184,7 +239,10 @@ export function decideAdmissions(
 
     start.push(c.projectId);
     usedPoints += c.points;
-    if (c.needsHeavyEngine) heavyHolder = c.projectId;
+    if (c.needsHeavyEngine) {
+      heavyRunning += 1;
+      if (!ctx.shareGpu) heavyHolder = c.projectId;
+    }
   }
 
   return { start, held };

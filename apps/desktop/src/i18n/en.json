@@ -402,6 +402,8 @@
     "now-dubbing": "Now dubbing",
     "queue-link": "{{ running }} dubbing · limit {{ max }} at a time — change",
     "heavy-suffix": " — using a local engine (runs alone)",
+    "gpu-using-suffix": " — using the graphics card",
+    "gpu-waiting-suffix": " — waiting for its turn on the graphics card",
     "up-next": "Up next",
     "queue-entry-no-slot": "#{{ position }} {{ name }} — waiting for a free slot",
     "queue-entry-heavy-busy": "#{{ position }} {{ name }} — waiting for the computer to be free",
@@ -468,6 +470,7 @@
     "published-badge": "Posted",
     "queue-entry-pressure": "#{{ position }} {{ name }} — waiting: the computer is short of memory while a dub runs",
     "queue-entry-gpu-hold": "#{{ position }} {{ name }} — waiting: {{ app }} is using the graphics card",
+    "queue-entry-gpu-turns": "#{{ position }} {{ name }} — waiting: two dubs already take turns on the graphics card",
     "queue-gpu-hold": "{{ app }} is using the graphics card: dubs that need it wait until it is done; what is running goes on."
   },
   "settings": {
@@ -1027,6 +1030,10 @@
       "engines-link": "Which engines suit this computer:",
       "pause": "Pause",
       "paused-now": "Paused: waiting dubs will not start until you untick “Pause”.",
+      "share-gpu": "Let dubs take turns on the graphics card",
+      "share-gpu-hint": "Two dubs that need the graphics card run side by side (within the limit above). Each one waits its turn for its steps on the card, and lends the card to the other while it works on the processor (speaker detection, the mix, the render). Every step that runs on the card still runs on it, so the dubs come out the same; the card is just idle less often.",
+      "share-gpu-off": "Off: one dub that needs the graphics card runs at a time, and the next one starts when it has finished its steps on the card.",
+      "share-gpu-on": "Take turns",
       "tier-constrained": "Modest computer",
       "tier-balanced": "Mid-range computer",
       "tier-performance": "Powerful computer",
@@ -1176,7 +1183,8 @@
     "dismiss-warning-hint": "Set this warning aside once you have checked it. It comes back if the step runs again and finds the same.",
     "held-title": "⚠️ {{count}} line(s) still fail the translation checks",
     "held-body": "The dub stopped before making any voice, because \"Stop before voicing while lines still fail the translation checks\" is on. Fix the lines marked in the editor (Problems), then continue dubbing: it voices the lines as they are then.",
-    "queue-reason-gpu-hold": "{{ app }} is using the graphics card (a live session), so this dub starts when it is done. Nothing that is already running is stopped."
+    "queue-reason-gpu-hold": "{{ app }} is using the graphics card (a live session), so this dub starts when it is done. Nothing that is already running is stopped.",
+    "queue-reason-gpu-turns": "Two dubs already take turns on the graphics card, so this one starts as soon as one of them has finished its steps on the card. More at once would only wait for the card, and slow the others."
   },
   "onboarding": {
     "title": "Welcome to VideoDubber",
@@ -2010,7 +2018,7 @@
     "cpu-bound": "The CPU core count is the limiting factor on this machine.",
     "ram-bound": "Installed memory is the limiting factor on this machine.",
     "hard-cap": "Capped at {{ cap }}: past that, the shared transcription/translation/speech services process work one request at a time anyway.",
-    "heavy-engines": "Projects that use a downloadable engine (whisper.cpp, TranslateGemma/Gemma, LibreTranslate, vocal separation, forced alignment) always run one at a time, on any computer — those engines take over the machine and stop each other when they overlap.",
+    "heavy-engines": "A downloadable engine (whisper.cpp, TranslateGemma/Gemma, LibreTranslate, vocal separation, forced alignment) runs one at a time on any computer: those engines take over the machine and stop each other when they overlap. With “Let dubs take turns on the graphics card” on, two dubs that use them run side by side and take turns on the card, step by step; off, they run one at a time.",
     "manual": "Set manually to {{ n }} simultaneous dub(s) (this computer's recommendation is {{ recommended }})."
   },
   "help": {
@@ -2712,7 +2720,11 @@
     "loops": "Checking transcription loops {{done}}/{{total}}",
     "subtitle-check": "Reading the video's own subtitles {{percent}}%",
     "subtitle-frames": "Cutting the subtitles from the picture {{percent}}%",
-    "subtitle-reading": "Reading the subtitles {{done}}/{{total}}"
+    "subtitle-reading": "Reading the subtitles {{done}}/{{total}}",
+    "gpu-wait": "Waiting for its turn on the graphics card",
+    "gpu-wait-dub": "Waiting for the graphics card: “{{name}}” is using it",
+    "gpu-wait-edit": "Waiting for the graphics card: an edit in “{{name}}” is using it",
+    "gpu-wait-app": "Waiting for the graphics card: {{name}} is using it"
   },
   "activity": {
     "heading": "Background work",

@@ -658,6 +658,29 @@ describe('VideoDubber MCP server', () => {
     expect(r.text).toMatch(/^- proj_2 "Tập 8", render, 90%$/m);
   });
 
+  it('get_queue says which dub has the GPU and which waits its turn, when dubs take turns on it', async () => {
+    const since = new Date(Date.now() - 125_000).toISOString();
+    fake.routes.set('GET /queue', () => ({
+      maxProjects: 2,
+      budgetPoints: 4,
+      usedPoints: 4,
+      paused: false,
+      shareGpu: true,
+      laneOwner: 'proj_1',
+      running: [
+        { projectId: 'proj_1', name: 'Tập 7', heavy: true, step: 'translation', progressPercent: 40, gpu: 'using' },
+        { projectId: 'proj_2', name: 'Tập 8', heavy: true, step: 'stt', progressPercent: 12, gpu: 'waiting', gpuWaitSince: since, gpuWaitFor: 'Tập 7' },
+      ],
+      entries: [],
+    }));
+    await connect();
+    const r = await call('get_queue');
+    expect(r.text).toContain('Dubs take turns on the GPU');
+    expect(r.text).toMatch(/^- proj_1 "Tập 7", translation, 40% \(using the GPU now\)$/m);
+    expect(r.text).toMatch(/^- proj_2 "Tập 8", stt, 12% \(waiting for its turn on the GPU for 2 min, Tập 7 has it\)$/m);
+    expect(r.text).not.toContain('uses the GPU lane');
+  });
+
   it('pause_dubbing pauses, and get_project says where it stopped and how to continue', async () => {
     let paused = false;
     fake.routes.set('POST /projects/proj_1/pause', () => {

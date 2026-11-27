@@ -339,6 +339,7 @@ export function mergeConcurrency(
 ): ConcurrencyPreferences {
   const next: ConcurrencyPreferences = { mode: 'auto', ...current, ...(change ?? {}) };
   if (next.mode !== 'manual') delete next.maxProjects;
+  if (next.shareGpu !== undefined && typeof next.shareGpu !== 'boolean') delete next.shareGpu;
   return next;
 }
 

@@ -3304,7 +3304,15 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       reply,
     ) => {
       try {
-        const updated = await orchestrator.updateProjectSettings(req.params.id, req.body ?? {});
+        // A dub waiting in the queue takes a change to its mix or render where
+        // it waits, as the parts of a series did with applyToParts: refused on
+        // one part, the taller subtitle band of one stretch had to go to all
+        // 29 parts (claude-dubber, 2026-11-27).
+        const asked = req.body ?? {};
+        const updated =
+          orchestrator.workOn(req.params.id) === 'queued' && changesOnlyMixAndRender(asked)
+            ? await orchestrator.whileQueueHeld(() => orchestrator.updateProjectSettings(req.params.id, asked, { whileQueued: true }))
+            : await orchestrator.updateProjectSettings(req.params.id, asked);
         // `?applyToParts=true` on a series: the same change on every part (speaker voices included).
         // A part waiting in the queue takes a change to its mix or render where it waits.
         if (req.query?.applyToParts === 'true' || req.query?.applyToParts === '1') {

@@ -759,10 +759,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // change underneath would make that classification — and therefore the
     // queue's ordering decisions — silently wrong.
     if (this.queued.has(projectId) && !(opts.whileQueued === true && changesOnlyMixAndRender(patch))) {
-      throw new AppErrorException(
-        'RUN_IN_PROGRESS',
-        'This project is waiting in the dubbing queue. Cancel it to change settings.',
-      );
+      throw new AppErrorException('RUN_IN_PROGRESS', 'This project is waiting in the dubbing queue: only its mix and render settings can change there.', {
+        remediation:
+          'What changes only the mix and the render (subtitles and their band, the picture boxes, the watermark blur, logo and greeting, levels, render quality) is taken where it waits. For anything else, pause it (it keeps its work), change the setting, then start it again.',
+      });
     }
     const project = await this.deps.store.getProject(projectId);
     const next: ProjectSettings = { ...project.settings };

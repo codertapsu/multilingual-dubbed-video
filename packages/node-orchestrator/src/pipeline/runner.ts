@@ -728,8 +728,18 @@ export class PipelineRunner {
         // it are pending because this dub has not reached them, and the files
         // on disk are an earlier run's. A voice re-dub paused mid-synthesis
         // skipped alignment, mix and render on Continue and kept the old dub.
+        //
+        // Except a series part's transcript: it is the series' (made and
+        // rebuilt by rebuild_parts), never an earlier run's leftover, and only
+        // a run asked to start at speech-to-text redoes it (forceRun). Parts
+        // paused at extract-audio for an app update transcribed themselves
+        // again on Continue, with ids of their own, and the series' voices
+        // and forms of address went to the wrong people: a hero voiced by a
+        // woman's built-in voice (claude-dubber, 2026-11-28).
+        const seriesTranscript = stepId === 'stt' && project.series?.role === 'part';
         const interrupted =
-          stepState?.status === 'failed' || stepState?.status === 'running' || pipelineStepIndex(stepId) >= resumeIndex;
+          !seriesTranscript &&
+          (stepState?.status === 'failed' || stepState?.status === 'running' || pipelineStepIndex(stepId) >= resumeIndex);
         if (!forceRun && !interrupted && stepState?.status !== 'completed' && (await this.outputsExist(stepId, paths, project))) {
           logger.info(`Skipping "${pipelineStepLabel(stepId)}" — outputs already present.`);
           state = await transition(this.deps, state, stepId, 'skipped');

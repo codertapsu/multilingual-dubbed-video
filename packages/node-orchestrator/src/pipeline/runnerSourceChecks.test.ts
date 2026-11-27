@@ -9,6 +9,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_SERIES_SETTINGS,
+  pausePipelineState,
+  setStepStatus,
   type PictureDetection,
   type Project,
   type ProjectSettings,
@@ -226,6 +228,36 @@ const regionsOf = (spans: [number, number][]): SpeechMapService => ({
 async function sourceLines(b: Built): Promise<TranscriptSegment[]> {
   return (JSON.parse(await fsp.readFile(b.paths.sourceJson, 'utf8')) as { segments: TranscriptSegment[] }).segments;
 }
+
+describe('a series part paused before speech-to-text (claude-dubber, 2026-11-28)', () => {
+  it("keeps the series' transcript and speaker ids on Continue: no speech-to-text of its own", async () => {
+    const stt = engine(() => makeSegments([[0, 3000, 'its own reading']]));
+    const b = await build({ durationMs: 10_000, stt });
+    // Its transcript is the series': the hero is the series' SPEAKER_18, the female lead SPEAKER_01.
+    const series = makeSegments([
+      [0, 2000, '我是师父'],
+      [3000, 5000, '是，师父'],
+    ]).map((l, i) => ({ ...l, speakerId: i === 0 ? 'SPEAKER_18' : 'SPEAKER_01' }));
+    await fsp.mkdir(path.dirname(b.paths.sourceJson), { recursive: true });
+    await fsp.writeFile(b.paths.sourceJson, JSON.stringify({ segments: series }), 'utf8');
+    const part = { role: 'part' as const, parentId: 'proj_series', index: 1, count: 3, seriesName: 'Ta Thật Không Phải Đại Lão' };
+    await store.saveProject({ ...(await store.getProject(b.project.id)), series: part });
+    // Paused while it extracted its audio (the app closed for an update).
+    let state = setStepStatus(await store.getPipeline(b.project.id), 'probe-video', 'completed');
+    state = setStepStatus(state, 'extract-audio', 'running', { progressPercent: 40 });
+    await store.savePipeline(pausePipelineState(state));
+    expect((await store.getPipeline(b.project.id)).pausedStep).toBe('extract-audio');
+
+    await new PipelineRunner(b.deps).run(await store.getProject(b.project.id), { signal: new AbortController().signal });
+    // Its audio extracted again, its transcript left as the series made it.
+    expect(stt.asked).toEqual([]);
+    expect((await sourceLines(b)).map((l) => l.speakerId)).toEqual(['SPEAKER_18', 'SPEAKER_01']);
+    expect(await log(b)).toMatch(/Skipping "[^"]*Speech-to-Text[^"]*" — outputs already present/);
+    // Asked to start at speech-to-text, it transcribes itself after all.
+    await new PipelineRunner(b.deps).run(await store.getProject(b.project.id), { signal: new AbortController().signal, retryFromStep: 'stt' });
+    expect(stt.asked.length).toBeGreaterThan(0);
+  });
+});
 
 describe('stt: lines written over silence (1.6a)', () => {
   it('a chunk that heard no speech is flagged, and its lines go through the loop pass', async () => {

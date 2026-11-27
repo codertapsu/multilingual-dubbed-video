@@ -430,6 +430,32 @@ describe('a part paused on its own (claude-dubber, 2026-11-27)', { timeout: 60_0
   });
 });
 
+describe('a part that transcribed itself (claude-dubber, 2026-11-28)', { timeout: 60_000 }, () => {
+  it("is repaired by a rebuild: the series' lines, its own speaker detection set aside, the series' genders", async () => {
+    const r = rig();
+    const parent = await analysedParent(r, { lines: talk(60, (i) => (i % 2 === 0 ? 'SPEAKER_18' : 'SPEAKER_01')) });
+    await store.saveProject({ ...(await store.getProject(parent.id)), settings: { ...(await store.getProject(parent.id)).settings, speakerGenders: { SPEAKER_18: 'male', SPEAKER_01: 'female' } } });
+    const [p1] = await r.series.createParts(parent.id);
+    // What the bug left: its own transcript and detection, genders of its own ids.
+    const own = store.paths(p1!);
+    await fsp.writeFile(own.sourceJson, JSON.stringify({ segments: talk(5, () => 'SPEAKER_06') }), 'utf8');
+    await fsp.mkdir(path.dirname(own.diarizationJson), { recursive: true });
+    await fsp.writeFile(own.diarizationJson, JSON.stringify({ format: 2, speakers: [] }), 'utf8');
+    const p = await store.getProject(p1!);
+    await store.saveProject({ ...p, settings: { ...p.settings, speakerGenders: { SPEAKER_06: 'female', SPEAKER_14: 'male' } } });
+
+    const [rebuilt] = await r.series.rebuildParts(parent.id, { parts: [1] });
+    expect(rebuilt).toMatchObject({ projectId: p1, rebuilt: true, ownSpeakersSetAside: true });
+    expect(new Set((await lines(p1!)).map((l) => l.speakerId))).toEqual(new Set(['SPEAKER_18', 'SPEAKER_01']));
+    expect((await store.getProject(p1!)).settings.speakerGenders).toEqual({ SPEAKER_18: 'male', SPEAKER_01: 'female' });
+    await expect(fsp.stat(own.diarizationJson)).rejects.toThrow();
+    expect((await fsp.readdir(path.dirname(own.diarizationJson))).some((f) => /^diarization\.part-own-.*\.json$/.test(f))).toBe(true);
+    // A part without a detection of its own keeps its genders as they are.
+    const again = await r.series.rebuildParts(parent.id, { parts: [1] });
+    expect(again[0]!.ownSpeakersSetAside).toBeUndefined();
+  });
+});
+
 describe('rebuilding some parts while the queue goes on (2.4)', { timeout: 60_000 }, () => {
   it('rebuilds a queued part where it waits, refuses a running one, and redoes a forced one from the translation', async () => {
     let running: string | undefined;

@@ -115,7 +115,10 @@ long, or out of order.
 SIGTERM) and `/cancel` all abort the run's signal, and the runner saves the pipeline `paused` at its
 step (`pausePipelineState`): the step goes back to `pending` keeping its progress, no error event.
 The next run treats that step as interrupted (its leftovers are never "already done") and continues
-there. The long text steps save every finished batch (`pipeline/translationCheckpoint.ts`), keyed by
+there. A series part's transcript is the exception (`seriesTranscript` in the runner): it is the
+series', so a part redoes speech-to-text only when asked to start there. Parts paused at
+extract-audio for an update transcribed themselves on Continue, with part-local speaker ids, and
+the series' voices went to the wrong people; `rebuild_parts` repairs such a part. The long text steps save every finished batch (`pipeline/translationCheckpoint.ts`), keyed by
 everything their result depends on and deleted once the step's result is written, so a finished
 step never gets its old checkpoint back. A dub the app died on is settled `paused` at the next start
 (`reconcileQueue`). The shell posted `/shutdown` long before the route existed: every Windows quit

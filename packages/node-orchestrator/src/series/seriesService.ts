@@ -190,6 +190,8 @@ export interface RebuiltPart {
   queued?: boolean;
   /** Its translation was set aside (force): its next run continues at the translation. */
   translationDiscarded?: boolean;
+  /** It had detected speakers of its own (part-local ids): set aside, its genders the series' again. */
+  ownSpeakersSetAside?: boolean;
   oldLines?: number;
   newLines?: number;
   speakers?: number;
@@ -860,7 +862,7 @@ export class SeriesService {
       const out: RebuiltPart[] = [];
       for (const [k, [i, id]] of chosen.entries()) {
         job.progress((100 * k) / chosen.length, said(`Part ${numberAt(i)}`, 'activity.text.part-n', { n: numberAt(i) }));
-        out.push(await this.rebuildPart(id, plan.parts[i], numberAt(i), lines, sheet, stamp, opts.force === true));
+        out.push(await this.rebuildPart(id, plan.parts[i], numberAt(i), lines, sheet, stamp, opts.force === true, parent.settings.speakerGenders));
       }
       const rebuilt = out.filter((p) => p.rebuilt).length;
       this.deps.logger?.info(`series ${parent.id}: rebuilt ${rebuilt} of ${out.length} part(s) from the series transcript.`);
@@ -881,6 +883,8 @@ export class SeriesService {
     sheet: string | undefined,
     stamp: string,
     force: boolean,
+    /** The series' speakers' genders, keyed by the ids its lines carry. */
+    seriesGenders: Record<string, 'female' | 'male'> | undefined,
   ): Promise<RebuiltPart> {
     return this.hold(async (): Promise<RebuiltPart> => {
       const project = await this.deps.store.getProject(id).catch(() => undefined);
@@ -915,6 +919,21 @@ export class SeriesService {
       if (translated) await moveAside(paths.translatedJson, 'discarded');
       await writeJsonAtomic(paths.sourceJson, { segments: transcript });
       if (sheet) await writeJsonAtomic(paths.translationContextJson, JSON.parse(sheet) as unknown);
+      // A part that detected speakers of its own labels ids the series' lines
+      // do not carry: its detection is set aside, and its speakers' genders
+      // are the series' again. A pause before speech-to-text made parts
+      // transcribe themselves on Continue (fixed in the runner), and their
+      // genders went to part-local ids (claude-dubber, 2026-11-28).
+      const ownSpeakers = await fsp.stat(paths.diarizationJson).then(() => true, () => false);
+      if (ownSpeakers) {
+        await moveAside(paths.diarizationJson, 'part-own');
+        const fresh = await this.deps.store.getProject(id);
+        const { speakerGenders: _own, ...rest } = fresh.settings;
+        await this.deps.store.saveProject({
+          ...fresh,
+          settings: seriesGenders && Object.keys(seriesGenders).length > 0 ? { ...rest, speakerGenders: { ...seriesGenders } } : rest,
+        });
+      }
       if (translated) {
         // Translated, voiced and rendered again from the new lines on its next
         // run (seriesRedo.ts); a queued one keeps its turn and does the same.
@@ -942,6 +961,7 @@ export class SeriesService {
         rebuilt: true,
         ...(queued ? { queued: true } : {}),
         ...(translated ? { translationDiscarded: true } : {}),
+        ...(ownSpeakers ? { ownSpeakersSetAside: true } : {}),
         oldLines: old.length,
         newLines: transcript.length,
         speakers: new Set(transcript.map((l) => l.speakerId).filter(Boolean)).size,

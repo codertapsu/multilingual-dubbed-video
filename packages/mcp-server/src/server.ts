@@ -1432,7 +1432,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Remake the parts from the fixed series transcript',
       description:
-        'After the series transcript was fixed (speakers re-detected, loops repaired, lines replaced on the parent): make each part\'s transcript again from it, copy the series\' character sheet to every part again, and move stale translation checkpoints aside. parts=[23, 24] rebuilds only those (their numbers as get_series shows them); all parts otherwise. A part waiting in the queue is rebuilt where it waits and keeps its place (no need to pause anything); a part being dubbed is never touched, and the answer says why. Parts already translated are left alone unless force=true (their translation is then discarded, kept beside as a file, and the part continues at the translation on its next run). Reports old and new line counts and speakers per part; each rebuild is in the part\'s edit history.',
+        'After the series transcript was fixed (speakers re-detected, loops repaired, lines replaced on the parent): make each part\'s transcript again from it, copy the series\' character sheet to every part again, and move stale translation checkpoints aside. A part that transcribed itself (a speaker detection of its own, with part-local ids) gets the series\' lines and speakers back: its own detection is set aside and its speakers\' genders are the series\' again; force=true then redoes it from the translation. parts=[23, 24] rebuilds only those (their numbers as get_series shows them); all parts otherwise. A part waiting in the queue is rebuilt where it waits and keeps its place (no need to pause anything); a part being dubbed is never touched, and the answer says why. Parts already translated are left alone unless force=true (their translation is then discarded, kept beside as a file, and the part continues at the translation on its next run). Reports old and new line counts and speakers per part; each rebuild is in the part\'s edit history.',
       inputSchema: z.object({
         projectId: z.string().describe('The series (parent) or any part.'),
         parts: z.array(z.number().int().min(1)).max(500).optional().describe('Only these part numbers, e.g. [23, 24].'),
@@ -1449,6 +1449,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         reason?: string;
         queued?: boolean;
         translationDiscarded?: boolean;
+        ownSpeakersSetAside?: boolean;
         oldLines?: number;
         newLines?: number;
         speakers?: number;
@@ -1470,7 +1471,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
           ...res.parts.map((p) =>
             p.rebuilt
               ? `- part ${p.index} (${p.projectId}): ${p.oldLines ?? '?'} -> ${p.newLines ?? '?'} lines, ${p.speakers ?? 0} speaker(s)` +
-                `${p.queued ? ', still waiting in the queue at the same place' : ''}${p.translationDiscarded ? ', translation set aside: it continues at the translation' : ''}`
+                `${p.queued ? ', still waiting in the queue at the same place' : ''}${p.translationDiscarded ? ', translation set aside: it continues at the translation' : ''}` +
+                `${p.ownSpeakersSetAside ? ", its own speaker detection set aside (its lines carry the series' speakers again, with the series' genders)" : ''}`
               : `- part ${p.index} (${p.projectId}): left as it was: ${why(p)}`,
           ),
           'Rebuilt parts translate from their new transcript on their next run (start_dubbing on the series continues them in order).',

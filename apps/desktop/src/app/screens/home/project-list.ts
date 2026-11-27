@@ -8,6 +8,10 @@
  * (deleted) stands on its own. Pure.
  */
 import type { Project, ProjectListItem } from '../../core/models';
+import { fileName, fold } from '../../core/util/list-format';
+
+// Shared with the Download videos list (core/util/list-format.ts); kept importable from here.
+export { clockDuration, fileName, fold, shortDate } from '../../core/util/list-format';
 
 /** What the list shows: everything, what is under way, what needs the user, what is done. */
 export type ProjectFilter = 'all' | 'active' | 'attention' | 'finished';
@@ -50,22 +54,6 @@ export interface ListOptions {
   query: string;
   filter: ProjectFilter;
   sort: ProjectSort;
-}
-
-/** Case- and accent-insensitive text, so "xuyen khong" finds "Xuyên Không". */
-export function fold(text: string): string {
-  return text
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .toLowerCase();
-}
-
-/** The file name of a path (either slash), for a card that has no room for the whole path. */
-export function fileName(filePath: string): string {
-  const parts = filePath.split(/[\\/]/);
-  return parts[parts.length - 1] || filePath;
 }
 
 /** The series' name as its parts carry it (a series that continues another keeps that name). */
@@ -178,17 +166,6 @@ export function projectEntries(projects: readonly ProjectListItem[], opts: ListO
   return entries.sort(sorters[opts.sort]);
 }
 
-/** A video's length the way players show it: "2:30", "48:00", "8:12:00". */
-export function clockDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return '0:00';
-  const total = Math.round(ms / 1000);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor(total / 60) % 60;
-  const s = total % 60;
-  const two = (n: number) => String(n).padStart(2, '0');
-  return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
-}
-
 /** Just a part's number ("Phần 07", "Part 7", "Tập 7", "07"): a row already says that. */
 const BARE_PART_NUMBER = /^(phan|part|tap|ep|episode)?\.?\s*\d+$/;
 
@@ -203,20 +180,4 @@ export function partCaption(part: Project, series: string): string {
   if (!fold(name).startsWith(fold(series))) return name;
   const rest = name.slice(series.length).replace(/^[\s\-–—:|·.]+/, '').trim();
   return BARE_PART_NUMBER.test(fold(rest)) ? '' : rest;
-}
-
-/**
- * A date as short as it can be told apart: the time today, the day this year,
- * the full date before. `locale` is the app's ("vi" writes "25 thg 11").
- */
-export function shortDate(iso: string, locale: string, now: Date = new Date()): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const sameDay = d.toDateString() === now.toDateString();
-  const opts: Intl.DateTimeFormatOptions = sameDay
-    ? { hour: '2-digit', minute: '2-digit' }
-    : d.getFullYear() === now.getFullYear()
-      ? { day: 'numeric', month: 'short' }
-      : { day: 'numeric', month: 'short', year: 'numeric' };
-  return new Intl.DateTimeFormat(locale, opts).format(d);
 }

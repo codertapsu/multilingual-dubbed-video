@@ -109,11 +109,62 @@
   align-self: flex-start;
 }
 
-/* A list link's video: the whole row is the checkbox's label. */
+/* Quality, "all parts" and the buttons on one line under the links. */
+.add-row,
+.dub-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--vd-sp-3) var(--vd-sp-5);
+}
+.add-row .check,
+.dub-options .check {
+  min-height: 36px;
+}
+.inline-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-1);
+  min-width: 220px;
+}
+.add-buttons {
+  margin-left: auto;
+}
+.dub-buttons {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* A list link's videos: the whole row is the checkbox's label. */
+.pick-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-2);
+}
+.pick-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .list-pick {
   margin: 0;
   font-weight: normal;
   cursor: pointer;
+}
+
+/* Closed, the sign-in card is one line: no room left around it. */
+.session-card:not([open]) {
+  padding-top: var(--vd-sp-3);
+  padding-bottom: var(--vd-sp-3);
+}
+
+/* The sign-in card's one line, with each site's state, so it is known closed. */
+.session-summary .badge {
+  margin-left: var(--vd-sp-2);
+  font-weight: 600;
 }
 
 /* "Dub N videos", answered under the button: a line per video. */
@@ -167,28 +218,6 @@
   font-size: 0.8rem;
 }
 
-.dl-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--vd-sp-3);
-}
-
-.dl-item {
-  padding: var(--vd-sp-3);
-  border: 1px solid var(--vd-border);
-  border-radius: var(--vd-radius);
-}
-
-.dl-head {
-  display: flex;
-  align-items: center;
-  gap: var(--vd-sp-2);
-  flex-wrap: wrap;
-}
-
 /* Titles run long and carry CJK text with no spaces to break on. */
 .dl-title {
   font-weight: 600;
@@ -197,9 +226,182 @@
   min-width: 0;
 }
 
-.dl-actions {
+/* ---- the download list ---------------------------------------------- */
+
+.list-toolbar {
+  display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  gap: var(--vd-sp-3);
+}
+.list-search {
+  flex: 1 1 240px;
+  min-width: 200px;
+  max-width: 420px;
+}
+.list-filters .count {
+  margin-left: 5px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--vd-surface-3);
+  font-size: 0.7rem;
+}
+.list-filters .count.problem {
+  background: var(--vd-danger-bg);
+  color: var(--vd-danger);
+}
+
+/* Ticks and "all at once" actions, right above the rows they act on. */
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--vd-sp-2);
+  padding: var(--vd-sp-2) var(--vd-sp-3);
+  border-radius: var(--vd-radius-sm);
+  background: var(--vd-surface-2);
+}
+.bulk-retry {
+  margin-left: auto;
+}
+
+/* A short row per download: tick, what it is, its state and actions. */
+.dl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--vd-border);
+}
+.dl-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: var(--vd-sp-3);
+  align-items: start;
+  padding: var(--vd-sp-3) var(--vd-sp-2);
+  border-bottom: 1px solid var(--vd-border);
+  border-left: 3px solid transparent;
+}
+.dl-row:hover {
+  background: var(--vd-surface-2);
+}
+.dl-row.is-failed {
+  border-left-color: var(--vd-danger);
+}
+.dl-check {
+  padding-top: 2px;
+}
+.dl-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.dl-line {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+  min-width: 0;
+
+  /* As long as it needs, so the part badge sits right after it. */
+  .dl-title {
+    flex: 0 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+.dl-sub {
+  font-size: 0.82rem;
+  color: var(--vd-text-muted);
+  overflow-wrap: anywhere;
+}
+/* One quiet line of facts, dot-separated. */
+.dl-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--vd-sp-2);
+  font-size: 0.8rem;
+  color: var(--vd-text-muted);
+
+  > span + span::before {
+    content: '·';
+    margin-right: var(--vd-sp-2);
+    color: var(--vd-text-subtle);
+  }
+}
+.dl-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--vd-sp-3);
+  font-size: 0.8rem;
+  min-width: 0;
+}
+.file-name {
+  color: var(--vd-text-muted);
+  overflow-wrap: anywhere;
+}
+.dl-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--vd-sp-2);
+
+  .progress {
+    flex: 1;
+    max-width: 360px;
+  }
+}
+.dl-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--vd-sp-2);
+}
+.dl-quiet {
+  display: flex;
+  gap: var(--vd-sp-3);
+}
+
+/* A button that reads as a link: the small, frequent actions of a row. */
+.link-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--vd-primary);
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.link-btn:hover {
+  text-decoration: underline;
+}
+.link-btn:focus-visible {
+  box-shadow: var(--vd-focus-ring);
+  border-radius: 2px;
+}
+.link-btn.mono {
+  font-family: var(--vd-font-mono);
+}
+.muted-link {
+  color: var(--vd-text-muted);
+}
+.danger-link {
+  color: var(--vd-danger);
+}
+
+.no-match {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--vd-sp-2);
+  padding: var(--vd-sp-4);
+}
+.show-more {
+  display: flex;
+  justify-content: center;
 }
 
 .mono {

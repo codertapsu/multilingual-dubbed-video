@@ -62,6 +62,7 @@ import {
   type UpdatePreferences,
   type BackendCrash,
   type BackendHealth,
+  type ConcurrencyPreferences,
   type DownloadPreferences,
 } from '@videodubber/shared';
 import { buildInfo } from './buildInfo.js';
@@ -325,6 +326,20 @@ function contentTypeFor(filePath: string): string {
     default:
       return 'application/octet-stream';
   }
+}
+
+/**
+ * The queue settings after a partial change: only the fields sent change, so
+ * a client saving the limit never undoes a pause it did not see. Back to
+ * `auto` forgets a pinned limit. Pure.
+ */
+export function mergeConcurrency(
+  current: ConcurrencyPreferences | undefined,
+  change: Partial<ConcurrencyPreferences> | undefined,
+): ConcurrencyPreferences {
+  const next: ConcurrencyPreferences = { mode: 'auto', ...current, ...(change ?? {}) };
+  if (next.mode !== 'manual') delete next.maxProjects;
+  return next;
 }
 
 /** Build (but do not start) the Fastify server with all routes wired. */
@@ -1572,11 +1587,12 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           : current.providerDefaults !== undefined
             ? { providerDefaults: current.providerDefaults }
             : {}),
-        ...(body.concurrency !== undefined
-          ? { concurrency: body.concurrency }
-          : current.concurrency !== undefined
-            ? { concurrency: current.concurrency }
-            : {}),
+        // Field by field: a screen opened before an agent paused the queue
+        // sent {mode, paused: false} from its own copy and undid the pause
+        // that was to protect an update (claude-dubber, 2026-11-28).
+        ...(body.concurrency !== undefined || current.concurrency !== undefined
+          ? { concurrency: mergeConcurrency(current.concurrency, body.concurrency) }
+          : {}),
         // Per job: a field sent as "" or null goes back to automatic.
         ...(body.localModels !== undefined || current.localModels !== undefined
           ? { localModels: { ...current.localModels, ...(body.localModels ?? {}) } }

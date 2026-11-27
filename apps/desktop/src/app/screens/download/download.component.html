@@ -46,7 +46,7 @@
       </label>
 
       <label class="check">
-        <input type="checkbox" [ngModel]="allParts()" (ngModelChange)="allParts.set($event)" />
+        <input type="checkbox" [ngModel]="allPartsShown()" (ngModelChange)="setAllParts($event)" />
         <span>{{ 'source-video.all-parts' | translate }}</span>
       </label>
 
@@ -60,7 +60,7 @@
           type="button"
           class="btn btn-primary"
           (click)="add()"
-          [disabled]="adding() || links().length === 0"
+          [disabled]="adding() || links().length === 0 || noPartPicked()"
         >
           {{
             links().length > 1
@@ -120,17 +120,39 @@
         </div>
       </div>
 
-      @if (showPartPicker() && !allParts()) {
-        <label class="stack-sm">
-          <span class="label">{{ 'source-video.part-label' | translate }}</span>
-          <select class="input" [ngModel]="selectedPage()" (ngModelChange)="selectedPage.set(+$event)">
+      <!-- A multi-part video: tick the parts to download, one download each (part-pick.ts). -->
+      @if (showPartPicker()) {
+        <div class="parts-pick stack-sm" role="group" aria-labelledby="parts-pick-label">
+          <div class="row row-between parts-head">
+            <span id="parts-pick-label" class="label">
+              {{ 'source-video.parts-pick-label' | translate: { n: pickedPages().size, total: info.parts.length } }}
+              @if (pickedPages().size > 0) {
+                <span class="muted parts-ranges">{{ partRanges(pickedPages()) }}</span>
+              }
+            </span>
+            <div class="row">
+              <button type="button" class="btn btn-sm" (click)="pickAllParts(true)" [disabled]="pickedPages().size === info.parts.length">
+                {{ 'source-video.parts-pick-all' | translate }}
+              </button>
+              <button type="button" class="btn btn-sm" (click)="pickAllParts(false)" [disabled]="pickedPages().size === 0">
+                {{ 'source-video.parts-pick-none' | translate }}
+              </button>
+            </div>
+          </div>
+          <ul class="pick-list parts-list">
             @for (part of info.parts; track part.id) {
-              <option [value]="part.page">
-                P{{ part.page }} — {{ part.title }} ({{ formatDuration(part.durationSec) }})
-              </option>
+              <li>
+                <label class="row check list-pick">
+                  <input type="checkbox" [checked]="pickedPages().has(part.page)" (click)="togglePart(part.page, $event)" />
+                  <span class="part-no">P{{ part.page }}</span>
+                  <span class="pick-title">{{ part.title }}</span>
+                  <span class="muted small">{{ formatDuration(part.durationSec) }}</span>
+                </label>
+              </li>
             }
-          </select>
-        </label>
+          </ul>
+          <span class="hint muted">{{ 'source-video.parts-pick-hint' | translate }}</span>
+        </div>
       }
 
       @if (resolvedQuality(); as picked) {
@@ -143,8 +165,12 @@
       }
 
       <div class="row">
-        <button type="button" class="btn btn-primary" (click)="add()" [disabled]="adding()">
-          {{ 'source-video.start' | translate }}
+        <button type="button" class="btn btn-primary" (click)="add()" [disabled]="adding() || noPartPicked()">
+          {{
+            showPartPicker() && pickedPages().size > 1
+              ? ('source-video.start-parts' | translate: { n: pickedPages().size })
+              : ('source-video.start' | translate)
+          }}
         </button>
       </div>
     </div>

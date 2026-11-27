@@ -208,10 +208,18 @@ export function createBilibiliProvider(deps: BilibiliProviderDeps): SourceProvid
 
     async prepare(input, page, targetHeightPx): Promise<PreparedDownload> {
       const { ref, info, parts } = await lookup(input);
-      const part = parts.find((p) => p.page === page) ?? parts[0];
-      if (!part) {
+      if (parts.length === 0) {
         throw new AppErrorException('UNSUPPORTED_MEDIA', 'That video has no downloadable parts.', {
           remediation: 'Check the link opens a normal video page in a browser.',
+        });
+      }
+      // A part it does not have is an error, never P1 under another part's
+      // name: parts are asked for by number now (Download → pick the parts,
+      // MCP download_videos pages), and P1 kept the list's key "p9".
+      const part = parts.find((p) => p.page === page) ?? (page <= 1 ? parts[0] : undefined);
+      if (!part) {
+        throw new AppErrorException('UNSUPPORTED_MEDIA', `That video has ${parts.length} part(s): there is no P${page}.`, {
+          remediation: `Ask for a part from P1 to P${parts.length} (Check link lists them).`,
         });
       }
       const cid = Number(part.id);

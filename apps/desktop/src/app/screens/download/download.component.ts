@@ -36,6 +36,7 @@ import type {
 import { bilibiliLoginFrom, MAX_COOKIE_FILE_BYTES, type CookieFileProblem } from './cookie-file';
 import { DOWNLOAD_FILTERS, downloadCounts, filterDownloads, shortUrl, sourcePageOf, type DownloadFilter } from './download-list';
 import { dubResultRows, type DubResultRow } from './dub-results';
+import { linkedPage, partRanges, pickParts } from './part-pick';
 import { sourceErrorKeys } from './source-errors';
 import { PartNameFieldComponent } from '../../shared/series/part-name-field.component';
 
@@ -83,7 +84,11 @@ export class DownloadComponent implements OnInit, OnDestroy {
   /** A list link's videos (a collection, favourites, an uploader's page), to tick. */
   protected readonly list = signal<{ title: string; total: number; videos: { input: string; title: string; durationSec: number }[] } | null>(null);
   protected readonly listPicked = signal<ReadonlySet<string>>(new Set());
-  protected readonly selectedPage = signal(1);
+  /** The checked video's parts to download (part-pick.ts): the linked one at first, any others ticked. */
+  protected readonly pickedPages = signal<ReadonlySet<number>>(new Set());
+  /** The part clicked last, where a Shift-click's range starts. */
+  private lastPart: number | undefined;
+  protected readonly partRanges = partRanges;
   /**
    * Preferred quality, as a pixel height. Undefined means "the best there is".
    * A standing preference rather than a pick from one video's list: the whole
@@ -166,6 +171,15 @@ export class DownloadComponent implements OnInit, OnDestroy {
 
   /** Only multi-part videos need a picker; a single part is implied. */
   protected readonly showPartPicker = computed(() => (this.video()?.parts.length ?? 0) > 1);
+  /**
+   * "All parts", as the box shows it: with a checked multi-part video, whether
+   * every part is ticked (unticking one unticks it); else the choice itself.
+   */
+  protected readonly allPartsShown = computed(() =>
+    this.showPartPicker() ? this.pickedPages().size === this.video()!.parts.length : this.allParts(),
+  );
+  /** A checked multi-part video with no part ticked: nothing to download. */
+  protected readonly noPartPicked = computed(() => this.showPartPicker() && this.pickedPages().size === 0);
 
   /** The checked video's qualities (empty when none was checked, or the probe failed). */
   protected readonly qualities = computed<QualityOption[]>(() => this.video()?.qualities ?? []);
@@ -389,9 +403,9 @@ export class DownloadComponent implements OnInit, OnDestroy {
       }
       const info = await this.ipc.resolveDownload(value);
       this.video.set(info);
-      // Preselect the part the link pointed at, falling back to the first.
-      const wanted = info.parts.find((p) => p.page === info.requestedPage);
-      this.selectedPage.set(wanted?.page ?? info.parts[0]?.page ?? 1);
+      // The part the link pointed at (else the first), or every part when "All parts" is on.
+      this.pickedPages.set(new Set(this.allParts() ? info.parts.map((p) => p.page) : [linkedPage(info)]));
+      this.lastPart = undefined;
     } catch (err) {
       this.error.set(toAppError(err));
     } finally {
@@ -402,17 +416,19 @@ export class DownloadComponent implements OnInit, OnDestroy {
   /** Put the pasted links on the download list. */
   protected async add(): Promise<void> {
     const links = this.links();
-    if (links.length === 0 || this.adding()) return;
-    // A checked single video downloads the part picked in its preview.
-    const page = links.length === 1 && this.video() && !this.allParts() ? this.selectedPage() : undefined;
+    if (links.length === 0 || this.adding() || this.noPartPicked()) return;
+    // A checked multi-part video downloads the parts ticked in its preview, one
+    // download each; other links the part they point at, or all with "All parts".
+    const pages = links.length === 1 && this.showPartPicker() ? [...this.pickedPages()].sort((a, b) => a - b) : undefined;
     const height = this.targetHeight();
+    const quality = height ? { targetHeightPx: height } : {};
     this.adding.set(true);
     this.error.set(null);
     this.notice.set(null);
     try {
       const res = await this.ipc.addDownloads(
-        links.map((input) => ({ input, ...(page ? { page } : {}), ...(height ? { targetHeightPx: height } : {}) })),
-        this.allParts(),
+        pages ? pages.map((page) => ({ input: links[0]!, page, ...quality })) : links.map((input) => ({ input, ...quality })),
+        pages ? false : this.allParts(),
       );
       for (const item of [...res.added, ...res.existing]) this.events.upsert(item);
       const lines = [
@@ -434,6 +450,30 @@ export class DownloadComponent implements OnInit, OnDestroy {
     } finally {
       this.adding.set(false);
     }
+  }
+
+  /** "All parts": with a checked multi-part video, ticks every part (or goes back to the linked one). */
+  protected setAllParts(on: boolean): void {
+    this.allParts.set(on);
+    const info = this.video();
+    if (info && info.parts.length > 1) {
+      this.pickedPages.set(new Set(on ? info.parts.map((p) => p.page) : [linkedPage(info)]));
+      this.lastPart = undefined;
+    }
+  }
+
+  /** A part ticked or unticked; with Shift, every part since the last one clicked too. */
+  protected togglePart(page: number, event: MouseEvent): void {
+    const on = (event.target as HTMLInputElement).checked;
+    const pages = this.video()?.parts.map((p) => p.page) ?? [];
+    this.pickedPages.set(pickParts(this.pickedPages(), pages, page, on, event.shiftKey ? this.lastPart : undefined));
+    this.lastPart = page;
+  }
+
+  /** Every part of the checked video, or none. */
+  protected pickAllParts(on: boolean): void {
+    this.pickedPages.set(new Set(on ? (this.video()?.parts ?? []).map((p) => p.page) : []));
+    this.lastPart = undefined;
   }
 
   protected toggleListItem(input: string, on: boolean): void {

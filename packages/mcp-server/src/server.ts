@@ -963,18 +963,30 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Download many videos',
       description:
-        'Queue many Bilibili/Douyin links (or BV ids) at once; two download at a time, the rest wait, and a rate-limited site is waited out. Returns at once with a download id per video. Asking for a video already in the list returns that download (each has a sourceKey like bilibili:BV…:p2), retrying it when it failed. parts="all" adds every part of a multi-part video. Follow them with follow_jobs_command (best for long batches) or wait_jobs, then dub_downloads.',
+        'Queue many Bilibili/Douyin links (or BV ids) at once; two download at a time, the rest wait, and a rate-limited site is waited out. Returns at once with a download id per video. Asking for a video already in the list returns that download (each has a sourceKey like bilibili:BV…:p2), retrying it when it failed. parts="all" adds every part of a multi-part video; pages=[3,4,5] only those parts of each link (a part a video does not have fails that download, naming how many it has). Follow them with follow_jobs_command (best for long batches) or wait_jobs, then dub_downloads.',
       inputSchema: z.object({
         urls: z.array(z.string().min(1)).min(1).max(200),
-        parts: z.enum(['link', 'all']).default('link').describe('link = the part each link points at; all = every part of multi-part videos.'),
+        parts: z.enum(['link', 'all']).default('link').describe('link = the part each link points at; all = every part of multi-part videos. Ignored with pages.'),
+        pages: z
+          .array(z.number().int().min(1))
+          .min(1)
+          .max(200)
+          .optional()
+          .describe('Only these parts (P numbers, Bilibili "P3" = 3) of each link, one download each: some parts of a multi-part video without all of them. At most 200 downloads per call in all.'),
         maxHeight: z.number().int().optional().describe('Highest video height to fetch, e.g. 720 or 1080; the best the video has when omitted.'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    guarded(async ({ urls, parts, maxHeight }, ctx) => {
+    guarded(async ({ urls, parts, pages, maxHeight }, ctx) => {
+      const quality = maxHeight ? { targetHeightPx: maxHeight } : {};
+      const wanted = pages?.length ? [...new Set(pages)].sort((a, b) => a - b) : undefined;
+      const items = wanted ? urls.flatMap((input) => wanted.map((page) => ({ input, page, ...quality }))) : urls.map((input) => ({ input, ...quality }));
+      if (items.length > 200) {
+        return failure(new Error(`That is ${items.length} downloads (${urls.length} link(s) × ${wanted!.length} part(s)): at most 200 per call. Split the links over several calls.`));
+      }
       const res = await api.post<{ added: DlItem[]; existing: DlItem[]; rejected: { input: string; error: { message?: string } }[] }>(
         '/downloads',
-        { items: urls.map((input) => ({ input, ...(maxHeight ? { targetHeightPx: maxHeight } : {}) })), allParts: parts === 'all' },
+        { items, allParts: !wanted && parts === 'all' },
         { signal: ctx.mcpReq.signal },
       );
       const lines = [

@@ -278,6 +278,21 @@ describe('Bilibili provider', () => {
     expect(prepared.audioUrl).toBe('a');
   });
 
+  it('downloads the part asked for, and refuses one the video does not have instead of P1 (2026-11-27)', async () => {
+    const p = createBilibiliProvider({
+      configDir: dir,
+      fetchImpl: fakeFetch({
+        '/x/web-interface/view': VIEW_OK,
+        '/x/web-interface/nav': NAV_OK,
+        '/x/player/wbi/playurl': DASH_480,
+        '/x/player/playurl': PROG_720,
+      }),
+    });
+    const second = await p.prepare('BV1GJ411x7h7', 2, 480);
+    expect(second.source).toMatchObject({ page: 2, partCount: 2, sourceKey: 'bilibili:BV1GJ411x7h7:p2' });
+    await expect(p.prepare('BV1GJ411x7h7', 9, 480)).rejects.toThrow('That video has 2 part(s): there is no P9.');
+  });
+
   it('surfaces the server’s own message when Bilibili refuses', async () => {
     // Bilibili answers HTTP 200 with a non-zero code for a removed or private
     // video; a plain res.ok check would report success on nothing.

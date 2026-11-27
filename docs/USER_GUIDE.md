@@ -612,10 +612,15 @@ full path.
 
 The **Download** screen (in the top navigation) fetches videos from a supported
 site so you can dub them. Paste one link or many (one per line), choose a quality
-target, and press **Add to downloads**. With a single link you can **Check link**
-first to see its title, uploader, length and parts, and pick the part you want.
-Tick **All parts of a multi-part video** to add every part (P1, P2…) of a Bilibili
-video at once.
+target, and press **Add to downloads**. A link downloads the part it points at
+(the first part, or `?p=3` for P3). Tick **All parts of a multi-part video** to
+add every part (P1, P2…) of a Bilibili video at once.
+
+To download only some of the parts, paste the one link and press **Check link**:
+it shows the video's title, uploader, length and its parts, with the part the
+link points at ticked. Tick the others you want (hold Shift while clicking to
+tick every part between two; **Select all** and **Clear** do the whole list),
+then press **Download N parts**. Each part becomes a download of its own.
 
 A Bilibili **list** link adds the videos in it: a collection (合集) or series
 list, a favourites folder, or an uploader's page (`space.bilibili.com/…`). **Check

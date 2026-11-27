@@ -14,6 +14,8 @@ import { Router, RouterLink } from '@angular/router';
 
 import { DownloadEventsService } from '../../core/ipc/download-events.service';
 import { IpcService } from '../../core/ipc/ipc.service';
+import { ProjectStore } from '../../core/state/project.store';
+import { clockDuration, fileName, shortDate } from '../../core/util/list-format';
 import { defaultSeriesAi, rememberSeriesAi } from '../../shared/series-ai';
 import { LanguageNamePipe, TranslatePipe, TranslateService } from '../../core/i18n';
 import { QUALITY_LADDER, pickClosestHeight } from '@videodubber/shared';
@@ -32,9 +34,13 @@ import type {
   SessionInfo,
 } from '../../core/models/download';
 import { bilibiliLoginFrom, MAX_COOKIE_FILE_BYTES, type CookieFileProblem } from './cookie-file';
+import { DOWNLOAD_FILTERS, downloadCounts, filterDownloads, shortUrl, sourcePageOf, type DownloadFilter } from './download-list';
 import { dubResultRows, type DubResultRow } from './dub-results';
 import { sourceErrorKeys } from './source-errors';
 import { PartNameFieldComponent } from '../../shared/series/part-name-field.component';
+
+/** Rows shown before "Show more". */
+const PAGE = 30;
 
 /**
  * DownloadComponent (route "download") — fetch source videos to dub.
@@ -93,6 +99,37 @@ export class DownloadComponent implements OnInit, OnDestroy {
 
   protected readonly items = this.events.items;
   protected readonly doneItems = computed(() => this.items().filter((i) => i.state === 'done'));
+
+  // ---- the list: search, filters, pages ---------------------------------
+  // A long list (a playlist, a series' parts) used to push the sign-in and dub
+  // cards out of reach below it (2026-11-27): they are above it now, and the
+  // list itself can be searched, narrowed and paged.
+  protected readonly query = signal('');
+  protected readonly filter = signal<DownloadFilter>('all');
+  protected readonly limit = signal(PAGE);
+  protected readonly filters = DOWNLOAD_FILTERS;
+  protected readonly filterKeys: Record<DownloadFilter, string> = {
+    all: 'source-video.filter-all',
+    active: 'source-video.filter-active',
+    done: 'source-video.filter-done',
+    problem: 'source-video.filter-problem',
+  };
+  protected readonly counts = computed(() => downloadCounts(this.items()));
+  protected readonly visible = computed(() => filterDownloads(this.items(), { query: this.query(), filter: this.filter() }));
+  protected readonly shown = computed(() => this.visible().slice(0, this.limit()));
+  /** Failed or cancelled: "Retry all" tries them again. */
+  protected readonly retryable = computed(() => this.items().filter((i) => i.state === 'failed' || i.state === 'cancelled'));
+  /** The download whose link was just copied, for a moment's "Copied". */
+  protected readonly copiedId = signal<string | null>(null);
+  protected readonly shortUrl = shortUrl;
+  protected readonly sourcePageOf = sourcePageOf;
+  protected readonly fileName = fileName;
+  /** The projects made from downloads, by id: "Used in" names them and opens them. */
+  private readonly projectStore = inject(ProjectStore);
+  private readonly projectById = computed(() => new Map(this.projectStore.projects().map((p) => [p.id, p])));
+  /** The checked video's cover could not be shown (the app loads no pictures from other sites). */
+  protected readonly coverBroken = signal(false);
+  private readonly dubCard = viewChild<ElementRef<HTMLElement>>('dubCard');
 
   // ---- dubbing finished downloads with a preset ------------------------
   protected readonly presets = signal<DubPreset[]>([]);
@@ -175,6 +212,8 @@ export class DownloadComponent implements OnInit, OnDestroy {
     void this.loadProviders();
     void this.loadPresets();
     void this.loadSeriesAi();
+    // Names for "Used in": best-effort, the ids show until they come.
+    void this.projectStore.refreshProjects();
   }
 
   private async loadSeriesAi(): Promise<void> {
@@ -339,6 +378,7 @@ export class DownloadComponent implements OnInit, OnDestroy {
     this.notice.set(null);
     this.video.set(null);
     this.list.set(null);
+    this.coverBroken.set(false);
     try {
       // A list link: its videos, all ticked.
       const { list } = await this.ipc.expandDownload(value);
@@ -476,6 +516,88 @@ export class DownloadComponent implements OnInit, OnDestroy {
     this.selected.set(new Set(this.doneItems().map((i) => i.id)));
   }
 
+  protected clearSelection(): void {
+    this.selected.set(new Set());
+  }
+
+  protected setQuery(query: string): void {
+    this.query.set(query);
+    this.limit.set(PAGE);
+  }
+
+  protected setFilter(filter: DownloadFilter): void {
+    this.filter.set(filter);
+    this.limit.set(PAGE);
+  }
+
+  protected clearFilters(): void {
+    this.query.set('');
+    this.filter.set('all');
+    this.limit.set(PAGE);
+  }
+
+  protected showMore(): void {
+    this.limit.update((n) => n + PAGE);
+  }
+
+  /** The video's page on its site, in the default browser. */
+  protected openSource(item: DownloadItem): void {
+    const url = sourcePageOf(item);
+    if (url) void this.ipc.openExternal(url);
+  }
+
+  /** The video's link on the clipboard, with a moment's "Copied". */
+  protected async copyLink(item: DownloadItem): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(sourcePageOf(item) ?? item.input);
+      this.copiedId.set(item.id);
+      setTimeout(() => {
+        if (this.copiedId() === item.id) this.copiedId.set(null);
+      }, 1500);
+    } catch {
+      /* no clipboard here: the link is on screen to copy by hand */
+    }
+  }
+
+  /** Every failed or cancelled download tried again, in the list's order. */
+  protected async retryAll(): Promise<void> {
+    for (const item of this.retryable()) await this.retry(item);
+  }
+
+  /**
+   * "Dub N videos" from the list's own bar, with the choices in the dub card
+   * above it; the card then comes into view, since its answer is shown there.
+   */
+  protected async dubFromList(): Promise<void> {
+    await this.dubSelected();
+    this.dubCard()?.nativeElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /** A project made from a download: its name (its id until the list has come), and the screen it opens on. */
+  protected madeProject(id: string): { name: string; link: string[] } {
+    const p = this.projectById().get(id);
+    if (!p) return { name: id, link: ['/project', id, 'processing'] };
+    const screen = p.series?.role === 'parent' ? 'series' : p.status === 'completed' ? 'editor' : 'processing';
+    return { name: p.name, link: ['/project', id, screen] };
+  }
+
+  /** A date as short as it can be told apart, in the app's language. */
+  protected dateOf(iso: string | undefined): string {
+    return iso ? shortDate(iso, this.translate.locale()) : '';
+  }
+
+  /** The video's length as players write it ("24:05", "1:02:40"). */
+  protected lengthOf(item: DownloadItem): string | undefined {
+    return item.source?.durationSec ? clockDuration(item.source.durationSec * 1000) : undefined;
+  }
+
+  /** The quality it came in, or the ceiling asked for while it is not here yet. */
+  protected qualityOf(item: DownloadItem): string | undefined {
+    if (item.heightPx) return `${item.heightPx}p`;
+    if (item.targetHeightPx) return this.translate.instant('source-video.quality-up-to', { h: item.targetHeightPx });
+    return undefined;
+  }
+
   /**
    * A project per ticked video, from the chosen preset. The result is listed
    * under the button, a line per video with the way to its progress.
@@ -522,9 +644,9 @@ export class DownloadComponent implements OnInit, OnDestroy {
     return item.source?.title ?? item.input;
   }
 
-  /** Clock time of a rate-limit retry. */
+  /** Clock time of a rate-limit retry, in the app's language (the system's wrote "09:51:04 AM" in Vietnamese text). */
   protected timeOf(iso: string): string {
-    return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return new Date(iso).toLocaleTimeString(this.translate.locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   protected formatBytes(n: number | undefined): string {

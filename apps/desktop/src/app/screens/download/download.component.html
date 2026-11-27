@@ -18,7 +18,7 @@
       <span class="label">{{ 'source-video.link-label' | translate }}</span>
       <textarea
         class="input links"
-        rows="4"
+        rows="3"
         [ngModel]="input()"
         (ngModelChange)="input.set($event); video.set(null)"
         [placeholder]="'source-video.link-placeholder' | translate"
@@ -27,47 +27,50 @@
       <span class="hint muted">{{ 'source-video.quality-note' | translate }}</span>
     </label>
 
-    <label class="stack-sm">
-      <span class="label">{{ 'source-video.quality-label' | translate }}</span>
-      <select
-        class="input"
-        [ngModel]="targetHeight() ?? ''"
-        (ngModelChange)="targetHeight.set($event === '' ? undefined : +$event)"
-      >
-        <!-- The whole ladder stays selectable even when a video cannot serve a
-             rung: it is a standing preference, not a claim about one video. -->
-        <option value="">{{ 'source-video.quality-best' | translate }}</option>
-        @for (q of qualityLadder; track q.heightPx) {
-          <option [value]="q.heightPx">{{ qualityLabelFor(q) }}</option>
+    <!-- The choices and the buttons on one line: the card stays short above the list. -->
+    <div class="add-row">
+      <label class="inline-field">
+        <span class="label">{{ 'source-video.quality-label' | translate }}</span>
+        <select
+          class="input"
+          [ngModel]="targetHeight() ?? ''"
+          (ngModelChange)="targetHeight.set($event === '' ? undefined : +$event)"
+        >
+          <!-- The whole ladder stays selectable even when a video cannot serve a
+               rung: it is a standing preference, not a claim about one video. -->
+          <option value="">{{ 'source-video.quality-best' | translate }}</option>
+          @for (q of qualityLadder; track q.heightPx) {
+            <option [value]="q.heightPx">{{ qualityLabelFor(q) }}</option>
+          }
+        </select>
+      </label>
+
+      <label class="check">
+        <input type="checkbox" [ngModel]="allParts()" (ngModelChange)="allParts.set($event)" />
+        <span>{{ 'source-video.all-parts' | translate }}</span>
+      </label>
+
+      <div class="row add-buttons">
+        @if (links().length === 1) {
+          <button type="button" class="btn" (click)="resolve()" [disabled]="resolving() || adding()">
+            {{ (resolving() ? 'source-video.resolving' : 'source-video.resolve') | translate }}
+          </button>
         }
-      </select>
-    </label>
-
-    <label class="check">
-      <input type="checkbox" [ngModel]="allParts()" (ngModelChange)="allParts.set($event)" />
-      <span>{{ 'source-video.all-parts' | translate }}</span>
-    </label>
-    <span class="hint muted">{{ 'source-video.all-parts-hint' | translate }}</span>
-
-    <div class="row">
-      @if (links().length === 1) {
-        <button type="button" class="btn" (click)="resolve()" [disabled]="resolving() || adding()">
-          {{ (resolving() ? 'source-video.resolving' : 'source-video.resolve') | translate }}
+        <button
+          type="button"
+          class="btn btn-primary"
+          (click)="add()"
+          [disabled]="adding() || links().length === 0"
+        >
+          {{
+            links().length > 1
+              ? ('source-video.add-many' | translate: { n: links().length })
+              : ('source-video.add' | translate)
+          }}
         </button>
-      }
-      <button
-        type="button"
-        class="btn btn-primary"
-        (click)="add()"
-        [disabled]="adding() || links().length === 0"
-      >
-        {{
-          links().length > 1
-            ? ('source-video.add-many' | translate: { n: links().length })
-            : ('source-video.add' | translate)
-        }}
-      </button>
+      </div>
     </div>
+    <span class="hint muted">{{ 'source-video.all-parts-hint' | translate }}</span>
     @if (notice(); as n) {
       <p class="notice" role="status">{{ n }}</p>
     }
@@ -78,13 +81,13 @@
     <div class="card stack">
       <h2>{{ l.title || ('source-video.list-heading' | translate) }}</h2>
       <p class="muted">{{ 'source-video.list-count' | translate: { n: l.videos.length, total: l.total } }}</p>
-      <ul class="dl-list">
+      <ul class="pick-list">
         @for (v of l.videos; track v.input) {
           <!-- The row is the checkbox's label: its name for screen readers, and a bigger target. -->
           <li>
             <label class="row check list-pick">
               <input type="checkbox" [ngModel]="listPicked().has(v.input)" (ngModelChange)="toggleListItem(v.input, $event)" />
-              <span class="dl-title">{{ v.title }}</span>
+              <span class="pick-title">{{ v.title }}</span>
               <span class="muted small">{{ formatDuration(v.durationSec) }}</span>
             </label>
           </li>
@@ -103,8 +106,10 @@
     <div class="card stack">
       <h2>{{ 'source-video.preview-heading' | translate }}</h2>
       <div class="preview">
-        @if (info.coverUrl) {
-          <img class="cover" [src]="info.coverUrl" alt="" />
+        <!-- The app shows no pictures from other sites (its security policy):
+             a cover that cannot load leaves no broken box behind. -->
+        @if (info.coverUrl && !coverBroken()) {
+          <img class="cover" [src]="info.coverUrl" alt="" referrerpolicy="no-referrer" (error)="coverBroken.set(true)" />
         }
         <div class="preview-details stack-sm">
           <p class="preview-title">{{ info.title }}</p>
@@ -145,272 +150,23 @@
     </div>
   }
 
-  <!-- The download list -->
-  <div class="card stack">
-    <h2>{{ 'source-video.queue-heading' | translate }}</h2>
-    <p class="muted">{{ 'source-video.queue-intro' | translate }}</p>
-
-    @if (items().length === 0) {
-      <p class="muted">{{ 'source-video.queue-empty' | translate }}</p>
-    } @else {
-      <ul class="dl-list">
-        @for (item of items(); track item.id) {
-          <li class="dl-item stack-sm">
-            <div class="dl-head">
-              @if (item.state === 'done') {
-                <input
-                  type="checkbox"
-                  [attr.aria-label]="'source-video.select' | translate"
-                  [ngModel]="selected().has(item.id)"
-                  (ngModelChange)="toggle(item, $event)"
-                />
-              }
-              <span class="dl-title" [title]="item.input">{{ titleOf(item) }}</span>
-              @if (item.source && item.source.partCount > 1) {
-                <span class="badge">{{ 'source-video.parts' | translate: { page: item.page, count: item.source.partCount } }}</span>
-              }
-              <!-- Literal keys per state: the i18n checker can only verify keys it can see. -->
-              <span
-                class="badge"
-                [class.badge-completed]="item.state === 'done'"
-                [class.badge-failed]="item.state === 'failed'"
-              >
-                @switch (item.state) {
-                  @case ('queued') { {{ 'source-video.state-queued' | translate }} }
-                  @case ('resolving') { {{ 'source-video.state-resolving' | translate }} }
-                  @case ('downloading') { {{ 'source-video.state-downloading' | translate }} }
-                  @case ('merging') { {{ 'source-video.state-merging' | translate }} }
-                  @case ('done') { {{ 'source-video.state-done' | translate }} }
-                  @case ('failed') { {{ 'source-video.state-failed' | translate }} }
-                  @case ('cancelled') { {{ 'source-video.state-cancelled' | translate }} }
-                }
-              </span>
-            </div>
-
-            @if (item.source?.ownerName; as owner) {
-              <span class="muted small">{{ owner }}</span>
-            }
-
-            @if (item.state === 'downloading' || item.state === 'merging' || item.state === 'resolving') {
-              @if (item.percent !== null) {
-                <div
-                  class="progress"
-                  role="progressbar"
-                  [attr.aria-label]="'source-video.progress-aria' | translate"
-                  [attr.aria-valuenow]="item.percent"
-                >
-                  <span [style.width.%]="item.percent"></span>
-                </div>
-                <span class="muted small">
-                  {{ item.percent }}%
-                  @if (item.bytesTotal) {
-                    · {{ 'source-video.bytes' | translate: { done: formatBytes(item.bytesDone), total: formatBytes(item.bytesTotal) } }}
-                  }
-                </span>
-              } @else {
-                <div class="progress indeterminate" role="progressbar" [attr.aria-label]="'source-video.progress-aria' | translate">
-                  <span></span>
-                </div>
-              }
-            }
-
-            @if (item.state === 'queued' && item.retryAt) {
-              <span class="hint">{{ 'source-video.retry-at' | translate: { time: timeOf(item.retryAt) } }}</span>
-            }
-            <!-- Literal keys per reason: the i18n checker can only verify keys it can see. -->
-            @if (item.state === 'queued' && item.heldBy) {
-              <span class="hint">
-                @switch (item.heldBy) {
-                  @case ('gpu-heavy') { {{ 'source-video.held-gpu-heavy' | translate }} }
-                  @case ('dubbing') { {{ 'source-video.held-dubbing' | translate }} }
-                  @case ('pressure') { {{ 'source-video.held-pressure' | translate }} }
-                }
-              </span>
-            }
-            @if (item.state === 'failed' && item.error) {
-              @if (sourceError(item.error); as keys) {
-                <!-- In the user's language, with what to do; the server's own words stay in the tooltip for support. -->
-                <span class="test-fail small" [title]="item.error.message">{{ keys.message | translate }}</span>
-                <span class="hint small">{{ keys.fix | translate }}</span>
-                @if (item.error.code === 'SOURCE_LOGIN_REQUIRED' && sessionProviders().length > 0) {
-                  <button type="button" class="btn btn-sm fix-btn" (click)="openSignIn()">{{ 'source-video.error.open-sign-in' | translate }}</button>
-                }
-              } @else {
-                <span class="test-fail small">{{ item.error.message }}</span>
-                @if (item.error.remediation) {
-                  <span class="hint small">{{ item.error.remediation }}</span>
-                }
-              }
-            }
-            @if (item.state === 'done' && item.filePath) {
-              <span class="mono small">{{ item.filePath }}</span>
-            }
-            @if (item.projectIds?.length; as made) {
-              <span class="muted small">{{ 'source-video.projects-made' | translate: { n: made } }}</span>
-            }
-
-            <div class="row dl-actions">
-              @if (item.state === 'done') {
-                <button type="button" class="btn btn-sm btn-primary" (click)="useAsSource(item)">
-                  {{ 'source-video.use-as-source' | translate }}
-                </button>
-                <button type="button" class="btn btn-sm" (click)="reveal(item)">
-                  {{ 'source-video.reveal' | translate }}
-                </button>
-              }
-              @if (item.state === 'failed' || item.state === 'cancelled') {
-                <button type="button" class="btn btn-sm" (click)="retry(item)">{{ 'source-video.retry' | translate }}</button>
-              }
-              @if (item.state !== 'done' && item.state !== 'failed' && item.state !== 'cancelled') {
-                <button type="button" class="btn btn-sm" (click)="cancel(item)">{{ 'source-video.cancel' | translate }}</button>
-              }
-              <button type="button" class="btn btn-sm btn-ghost" (click)="remove(item)">
-                {{ 'source-video.remove' | translate }}
-              </button>
-              @if (item.state === 'done') {
-                <button type="button" class="btn btn-sm btn-ghost" (click)="deleteFile(item)">
-                  {{ 'source-video.remove-file' | translate }}
-                </button>
-              }
-            </div>
-          </li>
-        }
-      </ul>
-    }
-  </div>
-
-  <!-- Finished downloads, dubbed in one go with a preset -->
-  @if (doneItems().length > 0) {
-    <div class="card stack">
-      <h2>{{ 'source-video.dub-heading' | translate }}</h2>
-      <p class="muted">{{ 'source-video.dub-intro' | translate }}</p>
-      @if (presets().length === 0) {
-        <p class="hint">{{ 'source-video.dub-no-presets' | translate }}</p>
-      } @else {
-        <label class="stack-sm">
-          <span class="label">{{ 'source-video.dub-preset' | translate }}</span>
-          <select class="input" [ngModel]="presetId()" (ngModelChange)="presetId.set($event)">
-            @for (p of presets(); track p.id) {
-              <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage | languageName }})</option>
-            }
-          </select>
-        </label>
-        <label class="check">
-          <input type="checkbox" [ngModel]="dubStart()" (ngModelChange)="dubStart.set($event)" />
-          <span>{{ 'source-video.dub-start' | translate }}</span>
-        </label>
-        <!-- Long videos as series of parts: needs an AI from Settings. -->
-        <label class="check">
-          <input
-            type="checkbox"
-            [ngModel]="dubSplit() && seriesAiReady().length > 0"
-            (ngModelChange)="dubSplit.set($event)"
-            [disabled]="seriesAiReady().length === 0"
-          />
-          <span>{{ 'source-video.dub-split' | translate }}</span>
-        </label>
-        @if (seriesAiReady().length === 0) {
-          <p class="hint muted">{{ 'source-video.dub-split-no-ai' | translate }}</p>
-        } @else if (dubSplit()) {
-          <div class="row">
-            <label class="stack-sm">
-              <span class="label">{{ 'series.length' | translate }}</span>
-              <select class="input" [ngModel]="dubSplitLength()" (ngModelChange)="dubSplitLength.set($event)">
-                <option value="15-20">{{ 'series.length-15' | translate }}</option>
-                <option value="30-40">{{ 'series.length-30' | translate }}</option>
-                <option value="55-65">{{ 'series.length-60' | translate }}</option>
-              </select>
-            </label>
-            <label class="stack-sm">
-              <span class="label">{{ 'series.ai' | translate }}</span>
-              <select class="input" [ngModel]="dubSplitAi()" (ngModelChange)="dubSplitAi.set($event)">
-                @for (o of seriesAiReady(); track o.id) {
-                  <option [value]="o.id">{{ o.label }}{{ o.viaMotherClaude ? ' (Mother Claude)' : '' }}</option>
-                }
-              </select>
-            </label>
-          </div>
-          <p class="hint muted">{{ 'source-video.dub-split-hint' | translate: { min: dubSplitAbove() } }}</p>
-          <vd-part-name-field
-            fieldName="dubSplitTemplate"
-            [value]="dubSplitTemplate()"
-            (valueChange)="dubSplitTemplate.set($event)"
-            [seriesName]="dubExampleName()"
-            [targetLanguage]="dubTargetLanguage()"
-            [disabled]="dubbing()"
-          />
-        }
-        <div class="row">
-          <button type="button" class="btn" (click)="selectAllDone()">{{ 'source-video.select-all-done' | translate }}</button>
-          <button
-            type="button"
-            class="btn btn-primary"
-            (click)="dubSelected()"
-            [disabled]="dubbing() || selectedDone().length === 0 || !presetId()"
-          >
-            {{ (dubbing() ? 'source-video.dub-making' : 'source-video.dub-button') | translate: { n: selectedDone().length } }}
-          </button>
-        </div>
-      }
-
-      <!-- The result, where the button is: a line per video, each with the way to its progress. -->
-      @if (dubError(); as e) {
-        <vd-error-banner [error]="e" (dismiss)="dubError.set(null)" />
-      }
-      @if (dubResults(); as rows) {
-        <div class="dub-results stack-sm" role="status">
-          <strong>
-            @if (dubMade() === 0) {
-              {{ 'source-video.dub-none' | translate }}
-            } @else if (dubParts() > 0) {
-              {{ 'source-video.dub-done-split' | translate: { n: dubMade(), s: dubParts() } }}
-            } @else {
-              {{ 'source-video.dub-done' | translate: { n: dubMade() } }}
-            }
-          </strong>
-          <ul class="dub-rows">
-            @for (r of rows; track r.downloadId) {
-              <li>
-                <span class="dl-title">{{ r.title }}</span>
-                <!-- Literal keys per outcome: the i18n checker can only verify keys it can see. -->
-                <span class="small" [class.test-fail]="r.outcome === 'failed'" [class.muted]="r.outcome !== 'failed'">
-                  @switch (r.outcome) {
-                    @case ('started') { {{ 'source-video.dub-started' | translate }} }
-                    @case ('queued') { {{ 'source-video.dub-queued' | translate }} }
-                    @case ('waiting') { {{ 'source-video.dub-waiting' | translate }} }
-                    @case ('created') { {{ 'source-video.dub-created' | translate }} }
-                    @case ('series') { {{ 'source-video.dub-series' | translate }} }
-                    @case ('failed') {
-                      {{ 'source-video.dub-failed' | translate }}
-                      @if (r.error) {
-                        @if (sourceError(r.error); as keys) {
-                          <span [title]="r.error.message">{{ keys.message | translate }}</span>
-                        } @else {
-                          {{ r.error.message }}
-                        }
-                      }
-                    }
-                  }
-                </span>
-                @if (r.link) {
-                  <a class="btn btn-sm" [routerLink]="r.link">
-                    {{ (r.outcome === 'series' ? 'source-video.dub-open-series' : 'source-video.dub-open') | translate }}
-                  </a>
-                }
-              </li>
-            }
-          </ul>
-        </div>
-      }
-    </div>
-  }
-
   <!-- Optional sign-in, a block per site that takes one. Collapsed by default:
        most people never need it, and it is the one control here that carries
-       real risk. No cookie value is shown here, not even masked. -->
+       real risk. No cookie value is shown here, not even masked. Above the
+       list, so a long list never pushes it out of reach (2026-11-27). -->
   @if (sessionProviders().length > 0) {
-    <details #sessionCard class="card stack" [open]="sessionOpen()" (toggle)="onSessionToggle($event)">
-      <summary class="session-summary">{{ 'source-video.session.heading' | translate }}</summary>
+    <details #sessionCard class="card stack session-card" [open]="sessionOpen()" (toggle)="onSessionToggle($event)">
+      <summary class="session-summary">
+        {{ 'source-video.session.heading' | translate }}
+        @for (p of sessionProviders(); track p.id) {
+          @if (sessionFor(p.id); as sess) {
+            <span class="badge" [class.badge-completed]="sess.configured">
+              {{ providerLabel(p.id) }}:
+              {{ (sess.configured ? 'source-video.session.set' : 'source-video.session.not-configured') | translate }}
+            </span>
+          }
+        }
+      </summary>
       <p class="muted">{{ 'source-video.session.intro' | translate }}</p>
 
       @for (p of sessionProviders(); track p.id) {
@@ -535,6 +291,390 @@
       <p class="muted">{{ 'source-video.session.mother-claude' | translate }}</p>
     </details>
   }
+
+  <!-- Finished downloads, dubbed in one go with a preset. Above the list, so its
+       choices and its answer stay in reach; the list's bar has the same button. -->
+  @if (doneItems().length > 0) {
+    <div #dubCard class="card stack">
+      <h2>{{ 'source-video.dub-heading' | translate }}</h2>
+      <p class="muted">{{ 'source-video.dub-intro' | translate }}</p>
+      @if (presets().length === 0) {
+        <p class="hint">{{ 'source-video.dub-no-presets' | translate }}</p>
+      } @else {
+        <div class="dub-options">
+          <label class="inline-field">
+            <span class="label">{{ 'source-video.dub-preset' | translate }}</span>
+            <select class="input" [ngModel]="presetId()" (ngModelChange)="presetId.set($event)">
+              @for (p of presets(); track p.id) {
+                <option [value]="p.id">{{ p.name }} ({{ p.targetLanguage | languageName }})</option>
+              }
+            </select>
+          </label>
+          <label class="check">
+            <input type="checkbox" [ngModel]="dubStart()" (ngModelChange)="dubStart.set($event)" />
+            <span>{{ 'source-video.dub-start' | translate }}</span>
+          </label>
+          <!-- Long videos as series of parts: needs an AI from Settings. -->
+          <label class="check">
+            <input
+              type="checkbox"
+              [ngModel]="dubSplit() && seriesAiReady().length > 0"
+              (ngModelChange)="dubSplit.set($event)"
+              [disabled]="seriesAiReady().length === 0"
+            />
+            <span>{{ 'source-video.dub-split' | translate }}</span>
+          </label>
+        </div>
+        @if (seriesAiReady().length === 0) {
+          <p class="hint muted">{{ 'source-video.dub-split-no-ai' | translate }}</p>
+        } @else if (dubSplit()) {
+          <div class="row">
+            <label class="stack-sm">
+              <span class="label">{{ 'series.length' | translate }}</span>
+              <select class="input" [ngModel]="dubSplitLength()" (ngModelChange)="dubSplitLength.set($event)">
+                <option value="15-20">{{ 'series.length-15' | translate }}</option>
+                <option value="30-40">{{ 'series.length-30' | translate }}</option>
+                <option value="55-65">{{ 'series.length-60' | translate }}</option>
+              </select>
+            </label>
+            <label class="stack-sm">
+              <span class="label">{{ 'series.ai' | translate }}</span>
+              <select class="input" [ngModel]="dubSplitAi()" (ngModelChange)="dubSplitAi.set($event)">
+                @for (o of seriesAiReady(); track o.id) {
+                  <option [value]="o.id">{{ o.label }}{{ o.viaMotherClaude ? ' (Mother Claude)' : '' }}</option>
+                }
+              </select>
+            </label>
+          </div>
+          <p class="hint muted">{{ 'source-video.dub-split-hint' | translate: { min: dubSplitAbove() } }}</p>
+          <vd-part-name-field
+            fieldName="dubSplitTemplate"
+            [value]="dubSplitTemplate()"
+            (valueChange)="dubSplitTemplate.set($event)"
+            [seriesName]="dubExampleName()"
+            [targetLanguage]="dubTargetLanguage()"
+            [disabled]="dubbing()"
+          />
+        }
+        <div class="row dub-buttons">
+          <span class="muted small">{{ 'source-video.selected-count' | translate: { n: selectedDone().length, total: doneItems().length } }}</span>
+          <button type="button" class="btn" (click)="selectAllDone()">{{ 'source-video.select-all-done' | translate }}</button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            (click)="dubSelected()"
+            [disabled]="dubbing() || selectedDone().length === 0 || !presetId()"
+          >
+            {{ (dubbing() ? 'source-video.dub-making' : 'source-video.dub-button') | translate: { n: selectedDone().length } }}
+          </button>
+        </div>
+      }
+
+      <!-- The result, where the button is: a line per video, each with the way to its progress. -->
+      @if (dubError(); as e) {
+        <vd-error-banner [error]="e" (dismiss)="dubError.set(null)" />
+      }
+      @if (dubResults(); as rows) {
+        <div class="dub-results stack-sm" role="status">
+          <strong>
+            @if (dubMade() === 0) {
+              {{ 'source-video.dub-none' | translate }}
+            } @else if (dubParts() > 0) {
+              {{ 'source-video.dub-done-split' | translate: { n: dubMade(), s: dubParts() } }}
+            } @else {
+              {{ 'source-video.dub-done' | translate: { n: dubMade() } }}
+            }
+          </strong>
+          <ul class="dub-rows">
+            @for (r of rows; track r.downloadId) {
+              <li>
+                <span class="dl-title">{{ r.title }}</span>
+                <!-- Literal keys per outcome: the i18n checker can only verify keys it can see. -->
+                <span class="small" [class.test-fail]="r.outcome === 'failed'" [class.muted]="r.outcome !== 'failed'">
+                  @switch (r.outcome) {
+                    @case ('started') { {{ 'source-video.dub-started' | translate }} }
+                    @case ('queued') { {{ 'source-video.dub-queued' | translate }} }
+                    @case ('waiting') { {{ 'source-video.dub-waiting' | translate }} }
+                    @case ('created') { {{ 'source-video.dub-created' | translate }} }
+                    @case ('series') { {{ 'source-video.dub-series' | translate }} }
+                    @case ('failed') {
+                      {{ 'source-video.dub-failed' | translate }}
+                      @if (r.error) {
+                        @if (sourceError(r.error); as keys) {
+                          <span [title]="r.error.message">{{ keys.message | translate }}</span>
+                        } @else {
+                          {{ r.error.message }}
+                        }
+                      }
+                    }
+                  }
+                </span>
+                @if (r.link) {
+                  <a class="btn btn-sm" [routerLink]="r.link">
+                    {{ (r.outcome === 'series' ? 'source-video.dub-open-series' : 'source-video.dub-open') | translate }}
+                  </a>
+                }
+              </li>
+            }
+          </ul>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- The download list: searched, narrowed and paged, a short row per video. -->
+  <div class="card stack">
+    <h2>{{ 'source-video.queue-heading' | translate }}</h2>
+    <p class="muted small">{{ 'source-video.queue-intro' | translate }}</p>
+
+    @if (items().length === 0) {
+      <p class="muted">{{ 'source-video.queue-empty' | translate }}</p>
+    } @else {
+      <div class="list-toolbar">
+        <input
+          type="search"
+          class="list-search"
+          [value]="query()"
+          (input)="setQuery($any($event.target).value)"
+          [placeholder]="'source-video.search-ph' | translate"
+          [attr.aria-label]="'source-video.search' | translate"
+        />
+        <div class="seg-control list-filters" role="radiogroup" [attr.aria-label]="'source-video.filter-aria' | translate">
+          @for (f of filters; track f) {
+            <button type="button" role="radio" [class.active]="filter() === f" [attr.aria-checked]="filter() === f" (click)="setFilter(f)">
+              {{ filterKeys[f] | translate }}
+              <span class="count" [class.problem]="f === 'problem' && counts().problem > 0">{{ counts()[f] }}</span>
+            </button>
+          }
+        </div>
+      </div>
+
+      <!-- What to do with several at once, where the ticks are. -->
+      @if (doneItems().length > 0 || retryable().length > 0) {
+        <div class="bulk-bar">
+          @if (doneItems().length > 0) {
+            <span class="muted small">{{ 'source-video.selected-count' | translate: { n: selectedDone().length, total: doneItems().length } }}</span>
+            <button type="button" class="btn btn-sm" (click)="selectAllDone()">{{ 'source-video.select-all-done' | translate }}</button>
+            @if (selectedDone().length > 0) {
+              <button type="button" class="btn btn-sm btn-ghost" (click)="clearSelection()">{{ 'source-video.select-none' | translate }}</button>
+              @if (presetId()) {
+                <button type="button" class="btn btn-sm btn-primary" (click)="dubFromList()" [disabled]="dubbing()">
+                  {{ (dubbing() ? 'source-video.dub-making' : 'source-video.dub-button') | translate: { n: selectedDone().length } }}
+                </button>
+              }
+            }
+          }
+          @if (retryable().length > 0) {
+            <button type="button" class="btn btn-sm bulk-retry" (click)="retryAll()">
+              {{ 'source-video.retry-all' | translate: { n: retryable().length } }}
+            </button>
+          }
+        </div>
+      }
+
+      @if (visible().length === 0) {
+        <div class="no-match">
+          <p class="muted">{{ 'source-video.no-match' | translate }}</p>
+          <button type="button" class="btn btn-sm" (click)="clearFilters()">{{ 'source-video.clear-filters' | translate }}</button>
+        </div>
+      } @else {
+        <ul class="dl-list">
+          @for (item of shown(); track item.id) {
+            <li class="dl-row" [class.is-done]="item.state === 'done'" [class.is-failed]="item.state === 'failed'">
+              <div class="dl-check">
+                @if (item.state === 'done') {
+                  <input
+                    type="checkbox"
+                    [attr.aria-label]="'source-video.select' | translate"
+                    [ngModel]="selected().has(item.id)"
+                    (ngModelChange)="toggle(item, $event)"
+                  />
+                }
+              </div>
+
+              <div class="dl-main">
+                <div class="dl-line">
+                  <span class="dl-title" [title]="titleOf(item)">{{ titleOf(item) }}</span>
+                  @if (item.source && item.source.partCount > 1) {
+                    <span class="badge" [title]="'source-video.parts' | translate: { page: item.page, count: item.source.partCount }">P{{ item.page }}/{{ item.source.partCount }}</span>
+                  }
+                </div>
+                @if (item.source?.partTitle; as pt) {
+                  <div class="dl-sub">{{ pt }}</div>
+                }
+
+                <!-- What it is, in one quiet line. -->
+                <div class="dl-meta">
+                  @if (item.source?.providerId; as provider) {
+                    <span>{{ providerLabel(provider) }}</span>
+                  }
+                  @if (item.source?.ownerName; as owner) {
+                    <span>{{ owner }}</span>
+                  }
+                  @if (lengthOf(item); as len) {
+                    <span>{{ len }}</span>
+                  }
+                  @if (qualityOf(item); as q) {
+                    <span>{{ q }}</span>
+                  }
+                  @if (item.state === 'done' && item.bytesTotal) {
+                    <span>{{ formatBytes(item.bytesTotal) }}</span>
+                  }
+                  @if (item.source?.subtitles?.length) {
+                    <span [title]="'source-video.site-subtitles-title' | translate">{{ 'source-video.site-subtitles' | translate }}</span>
+                  }
+                  @if (item.state === 'done' && item.finishedAt) {
+                    <span>{{ 'source-video.finished-at' | translate: { date: dateOf(item.finishedAt) } }}</span>
+                  } @else {
+                    <span>{{ 'source-video.added-at' | translate: { date: dateOf(item.createdAt) } }}</span>
+                  }
+                  @if (item.attempts > 1) {
+                    <span>{{ 'source-video.attempts' | translate: { n: item.attempts } }}</span>
+                  }
+                </div>
+
+                <!-- Where it came from: the page, to open or copy. -->
+                @if (sourcePageOf(item); as url) {
+                  <div class="dl-link">
+                    <button type="button" class="link-btn mono" (click)="openSource(item)" [title]="'source-video.open-source-title' | translate: { url: url }">
+                      {{ shortUrl(url) }}
+                    </button>
+                    <button type="button" class="link-btn" (click)="copyLink(item)">
+                      {{ (copiedId() === item.id ? 'source-video.copied' : 'source-video.copy-link') | translate }}
+                    </button>
+                  </div>
+                } @else {
+                  <div class="dl-link mono">{{ item.input }}</div>
+                }
+
+                <!-- The finished file: its name (the whole path in the tooltip), and its folder. -->
+                @if (item.state === 'done' && item.filePath) {
+                  <div class="dl-link">
+                    <span class="mono file-name" [title]="item.filePath">{{ fileName(item.filePath) }}</span>
+                    <button type="button" class="link-btn" (click)="reveal(item)">{{ 'source-video.reveal' | translate }}</button>
+                  </div>
+                }
+
+                @if (item.state === 'downloading' || item.state === 'merging' || item.state === 'resolving') {
+                  @if (item.percent !== null) {
+                    <div class="dl-progress">
+                      <div
+                        class="progress"
+                        role="progressbar"
+                        [attr.aria-label]="'source-video.progress-aria' | translate"
+                        [attr.aria-valuenow]="item.percent"
+                      >
+                        <span [style.width.%]="item.percent"></span>
+                      </div>
+                      <span class="muted small">
+                        {{ item.percent }}%
+                        @if (item.bytesTotal) {
+                          · {{ 'source-video.bytes' | translate: { done: formatBytes(item.bytesDone), total: formatBytes(item.bytesTotal) } }}
+                        }
+                      </span>
+                    </div>
+                  } @else {
+                    <div class="progress indeterminate" role="progressbar" [attr.aria-label]="'source-video.progress-aria' | translate">
+                      <span></span>
+                    </div>
+                  }
+                }
+
+                @if (item.state === 'queued' && item.retryAt) {
+                  <span class="hint">{{ 'source-video.retry-at' | translate: { time: timeOf(item.retryAt) } }}</span>
+                }
+                <!-- Literal keys per reason: the i18n checker can only verify keys it can see. -->
+                @if (item.state === 'queued' && item.heldBy) {
+                  <span class="hint">
+                    @switch (item.heldBy) {
+                      @case ('gpu-heavy') { {{ 'source-video.held-gpu-heavy' | translate }} }
+                      @case ('dubbing') { {{ 'source-video.held-dubbing' | translate }} }
+                      @case ('pressure') { {{ 'source-video.held-pressure' | translate }} }
+                    }
+                  </span>
+                }
+                @if (item.state === 'failed' && item.error) {
+                  @if (sourceError(item.error); as keys) {
+                    <!-- In the user's language, with what to do; the server's own words stay in the tooltip for support. -->
+                    <span class="test-fail small" [title]="item.error.message">{{ keys.message | translate }}</span>
+                    <span class="hint small">{{ keys.fix | translate }}</span>
+                    @if (item.error.code === 'SOURCE_LOGIN_REQUIRED' && sessionProviders().length > 0) {
+                      <button type="button" class="btn btn-sm fix-btn" (click)="openSignIn()">{{ 'source-video.error.open-sign-in' | translate }}</button>
+                    }
+                  } @else {
+                    <span class="test-fail small">{{ item.error.message }}</span>
+                    @if (item.error.remediation) {
+                      <span class="hint small">{{ item.error.remediation }}</span>
+                    }
+                  }
+                }
+
+                <!-- The projects made from it, by name, each opening where it stands. -->
+                @if (item.projectIds?.length) {
+                  <div class="dl-link">
+                    <span class="muted small">{{ 'source-video.used-in' | translate }}</span>
+                    @for (id of item.projectIds; track id) {
+                      @let made = madeProject(id);
+                      <a class="small" [routerLink]="made.link">{{ made.name }}</a>
+                    }
+                  </div>
+                }
+              </div>
+
+              <!-- Its state, what to do next, and the quieter ways out. -->
+              <div class="dl-side">
+                <!-- Literal keys per state: the i18n checker can only verify keys it can see. -->
+                <span
+                  class="badge"
+                  [class.badge-completed]="item.state === 'done'"
+                  [class.badge-failed]="item.state === 'failed'"
+                  [class.badge-running]="item.state === 'downloading' || item.state === 'merging' || item.state === 'resolving'"
+                >
+                  @switch (item.state) {
+                    @case ('queued') { {{ 'source-video.state-queued' | translate }} }
+                    @case ('resolving') { {{ 'source-video.state-resolving' | translate }} }
+                    @case ('downloading') { {{ 'source-video.state-downloading' | translate }} }
+                    @case ('merging') { {{ 'source-video.state-merging' | translate }} }
+                    @case ('done') { {{ 'source-video.state-done' | translate }} }
+                    @case ('failed') { {{ 'source-video.state-failed' | translate }} }
+                    @case ('cancelled') { {{ 'source-video.state-cancelled' | translate }} }
+                  }
+                </span>
+                @if (item.state === 'done') {
+                  <button type="button" class="btn btn-sm btn-primary" (click)="useAsSource(item)">
+                    {{ 'source-video.use-as-source' | translate }}
+                  </button>
+                }
+                @if (item.state === 'failed' || item.state === 'cancelled') {
+                  <button type="button" class="btn btn-sm" (click)="retry(item)">{{ 'source-video.retry' | translate }}</button>
+                }
+                @if (item.state !== 'done' && item.state !== 'failed' && item.state !== 'cancelled') {
+                  <button type="button" class="btn btn-sm" (click)="cancel(item)">{{ 'source-video.cancel' | translate }}</button>
+                }
+                <div class="dl-quiet">
+                  <button type="button" class="link-btn muted-link" (click)="remove(item)">
+                    {{ 'source-video.remove' | translate }}
+                  </button>
+                  @if (item.state === 'done') {
+                    <button type="button" class="link-btn danger-link" (click)="deleteFile(item)">
+                      {{ 'source-video.remove-file' | translate }}
+                    </button>
+                  }
+                </div>
+              </div>
+            </li>
+          }
+        </ul>
+        @if (visible().length > shown().length) {
+          <div class="show-more">
+            <button type="button" class="btn" (click)="showMore()">
+              {{ 'source-video.show-more' | translate: { count: visible().length - shown().length } }}
+            </button>
+          </div>
+        }
+      }
+    }
+  </div>
 
   <p class="muted fineprint">{{ 'source-video.respect-notice' | translate }}</p>
 </section>

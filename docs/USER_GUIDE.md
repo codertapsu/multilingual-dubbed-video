@@ -601,12 +601,31 @@ press **Add N videos to downloads**. A list gives at most 500 videos.
 
 ### The download list
 
-Every download appears in the list below, with its progress. Two download at a
-time and the others wait their turn. The list is kept: a download the app could
-not finish (it was closed, the connection dropped) continues from where it
-stopped the next time, instead of starting over. A video already in the list is
-not downloaded twice: adding it again points at the one you have.
+The screen goes, from the top: the links you paste, **Sign in to download sharper
+videos** (one line until you open it; it says whether you are signed in), **Dub
+finished downloads**, then the list. So a long list never pushes those two out
+of reach.
 
+Every download appears in the list, newest first, with its progress. Two
+download at a time and the others wait their turn. The list is kept: a download
+the app could not finish (it was closed, the connection dropped) continues from
+where it stopped the next time, instead of starting over. A video already in the
+list is not downloaded twice: adding it again points at the one you have.
+
+Each row is one video: its title and part (P2/4), the site, the uploader, its
+length, quality and size, when it was added or finished, whether the site's own
+subtitles came with it, and the projects made from it (click one to open it).
+Its **link** opens the video's page in your browser, and **Copy link** puts it
+on the clipboard. A finished video shows its file name; point at it for the
+whole path.
+
+- **Search** finds a video by its title, part, uploader, link or file name,
+  with or without Vietnamese accents.
+- **Downloading**, **Finished** and **Failed / cancelled** show only those, with
+  how many there are. After 30 videos, **Show more** shows the next ones.
+- **Tick all finished**, then **Dub N videos** right above the list, makes the
+  projects with the choices in **Dub finished downloads**. **Retry N** tries
+  every failed or cancelled download again.
 - **Retry** tries a failed or cancelled download again.
 - **Cancel** stops one; its partial file is removed.
 - **Remove from list** takes it off the list and keeps the video file;

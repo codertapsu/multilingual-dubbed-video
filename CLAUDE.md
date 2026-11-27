@@ -417,3 +417,14 @@ previous binary. Verify the artifact (`GET /health` reports version + build stam
   `gpu-hold`, a free lane is refused to editor actions and previews, which fall back to the
   CPU build); it never kills, pauses or slows a running dub, and a dub admitted on the lane
   keeps it. Holds are in memory and expire unless renewed: never persist one.
+- **Dubs take turns on the graphics card** (`concurrency.shareGpu`, on by default; `docs/RUN_QUEUE.md`).
+  One heavy engine is still loaded at a time. Two heavy runs are admitted side by side
+  (`SHARED_GPU_RUNS`: a third only waits and slows the one on the card, whose 27B model runs
+  partly on the processor), and a dub that finds the lane busy waits in
+  `EngineManager.waitForLane`, never `ENGINE_BUSY` and the CPU build. The line goes in the order the dubs started (a series' parts in theirs); a waiter
+  whose engine is still loaded may pass the same dub at most twice. The runner's `gpuBreak` says where a run stops using the card. The
+  orchestrator hands the card on for good when no later step uses it (sharing or not: a
+  series' analysis before speaker detection). With sharing, it lends the card for a step
+  without it, or for speaker detection, and keeps it into a GPU step. Through a hold, a dub
+  that has used the card keeps it (`hasHeldLane`); one that has not waits. Editor actions and
+  previews are still refused, and fall back.

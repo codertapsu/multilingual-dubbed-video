@@ -1,6 +1,22 @@
 # Sharing the graphics card between dubs: a proposal (2026-11-28)
 
-Status: proposed, not built. The user asked for a design before anything changes.
+Status: both phases built on 2026-11-28 (branch `feat/gpu-sharing`), not released. The user
+asked for everything, not just Phase 1, with quality first. How it works now: `docs/RUN_QUEUE.md`,
+"Taking turns on the card". Where the build differs from this proposal:
+
+- One setting, not two. Phase 1 (hand the card on when no step left uses it) is always on, as
+  the hand-over after the last heavy step already was. **Let dubs take turns on the graphics
+  card** (`concurrency.shareGpu`) is Phase 2 and is on by default: every GPU step still runs on
+  the card, and a dub waits for it rather than running the step on the CPU build.
+- A dub waiting for the card waits in the engine manager's line, not in the queue. The line goes
+  in the order the dubs started; a warm engine's waiter may pass the same dub at most twice.
+- Two heavy runs at once (`SHARED_GPU_RUNS`), not as many as the budget allows. The budget is 4
+  on the PC. A third would mostly wait for the card, and its processor work would slow the 27B
+  model's layers on the processor. It waits in the queue as `gpu-turns`.
+- Lending is for a step without the card and for speaker detection. It is not for subtitle
+  reading inside speech-to-text: the loop repair and spot check that follow need the card again.
+  Lending there would hold the speaker detection behind another dub's whole GPU chain.
+- Not measured yet on the PC: the numbers listed under Phase 1, and RAM with two heavy dubs alive.
 
 ## What happened
 

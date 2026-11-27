@@ -854,11 +854,65 @@ export interface JoinEncodeSample {
   encoder: string;
 }
 
+/** One test encode: the seconds of video it made, how long that took, and its size. */
+export interface JoinSampleRun {
+  seconds: number;
+  elapsedSec: number;
+  bytes: number;
+}
+
+/** The first test encode's seconds of video, and the most any of them encodes. */
+const SAMPLE_FIRST_SEC = 2;
+const SAMPLE_MAX_SEC = 120;
+/** A longer encode's extra seconds should take about this long at the pace measured so far... */
+const SAMPLE_EXTRA_WALL_SEC = 2;
+/** ...and at least this long to be believed: a few ms of noise must not move the answer. */
+const SAMPLE_TRUSTED_WALL_SEC = 1;
+/** The first encode and at most two longer ones. */
+const SAMPLE_MAX_RUNS = 3;
+
 /**
- * Time a short encode of `file` the way a re-encoding join would do it, to
+ * × real time from two test encodes of one start: the longer one's extra
+ * seconds over its extra time, so what every ffmpeg pays once (starting,
+ * opening the encoder, decoding from the keyframe before the start) cancels
+ * out. Never below the longer encode's own pace with those costs in, which
+ * the difference can only undercut by noise. Pure.
+ */
+export function joinSampleSpeed(first: JoinSampleRun, longer: JoinSampleRun): number {
+  const plain = longer.seconds / Math.max(0.001, longer.elapsedSec);
+  const extraSec = longer.seconds - first.seconds;
+  const extraWall = longer.elapsedSec - first.elapsedSec;
+  if (extraSec <= 0 || extraWall <= 0.05) return plain;
+  return Math.max(plain, extraSec / extraWall);
+}
+
+/**
+ * The next test encode's seconds of video, or undefined when the measure is
+ * good enough (the longest encode's extra seconds took a believable while) or
+ * the window allows no longer. Sized so its extra seconds take about
+ * SAMPLE_EXTRA_WALL_SEC at the pace measured so far, and at least twice the
+ * last one's, so a pace the fixed costs still hide cannot stall it. Pure.
+ */
+export function nextJoinSampleSec(first: JoinSampleRun, longest: JoinSampleRun | undefined, roomSec: number): number | undefined {
+  if (longest && longest.elapsedSec - first.elapsedSec >= SAMPLE_TRUSTED_WALL_SEC) return undefined;
+  const limit = Math.min(SAMPLE_MAX_SEC, roomSec);
+  const done = longest ?? first;
+  if (done.seconds >= limit - 0.01) return undefined;
+  const pace = longest ? joinSampleSpeed(first, longest) : first.seconds / Math.max(0.001, first.elapsedSec);
+  const extra = Math.max(pace * SAMPLE_EXTRA_WALL_SEC, 2 * (done.seconds - first.seconds), 1);
+  return Math.min(limit, first.seconds + extra);
+}
+
+/**
+ * Time test encodes of `file` the way a re-encoding join would do them, to
  * tell the user what the re-encode costs BEFORE they agree to it (a 27.8-hour
- * source at an unknown speed is not a question anyone can answer). Encodes a
- * few seconds from the middle of the file to `scratchPath` and removes it.
+ * source at an unknown speed is not a question anyone can answer). Encodes
+ * from the middle of the file to `scratchPath`, removing each, first 2 s
+ * and then longer stretches from the same start, and takes the speed from
+ * the difference ({@link joinSampleSpeed}). One 4-s encode counted those
+ * fixed costs as encoding: a GPU join of 16:59:13 was announced as "about
+ * 4 h 25 min" and took one hour (2026-11-27, h264_nvenc, 4.4× measured for
+ * 16.9× real). A few seconds more of checking, for an answer about hours.
  */
 export async function measureJoinEncode(
   file: Pick<JoinPlanFile, 'path' | 'spanSec'>,
@@ -866,18 +920,16 @@ export async function measureJoinEncode(
   plan: VideoEncodePlan,
   scratchPath: string,
   opts: RunOptions = {},
-  seconds = 4,
 ): Promise<JoinEncodeSample> {
   assertInputReadable(file.path);
-  const length = Math.min(seconds, Math.max(0.5, file.spanSec));
-  const from = Math.max(0, file.spanSec / 2 - length / 2);
-  const tryOne = async (encoder: VideoEncoderChoice): Promise<JoinEncodeSample> => {
+  const span = Math.max(0.5, file.spanSec);
+  const from = Math.max(0, span / 2 - SAMPLE_MAX_SEC / 2);
+  const room = Math.max(0.5, span - from);
+  const timeOne = async (encoder: VideoEncoderChoice, seconds: number): Promise<JoinSampleRun> => {
     const t0 = performance.now();
     try {
-      await runFfmpeg(buildJoinSampleArgs(file, target, encoder, from, length, scratchPath), { ...opts, timeoutMs: opts.timeoutMs ?? 120_000 });
-      const elapsed = Math.max(0.001, (performance.now() - t0) / 1000);
-      const size = statSync(scratchPath).size;
-      return { speed: length / elapsed, bytesPerSec: size / length, encoder: encoder.codec };
+      await runFfmpeg(buildJoinSampleArgs(file, target, encoder, from, seconds, scratchPath), { ...opts, timeoutMs: opts.timeoutMs ?? 120_000 });
+      return { seconds, elapsedSec: Math.max(0.001, (performance.now() - t0) / 1000), bytes: statSync(scratchPath).size };
     } finally {
       try {
         rmSync(scratchPath, { force: true });
@@ -885,6 +937,21 @@ export async function measureJoinEncode(
         /* scratch */
       }
     }
+  };
+  const tryOne = async (encoder: VideoEncoderChoice): Promise<JoinEncodeSample> => {
+    const first = await timeOne(encoder, Math.min(SAMPLE_FIRST_SEC, room));
+    let longest: JoinSampleRun | undefined;
+    for (let run = 1; run < SAMPLE_MAX_RUNS; run += 1) {
+      const next = nextJoinSampleSec(first, longest, room);
+      if (next === undefined) break;
+      longest = await timeOne(encoder, next);
+    }
+    const last = longest ?? first;
+    return {
+      speed: longest ? joinSampleSpeed(first, longest) : first.seconds / first.elapsedSec,
+      bytesPerSec: last.bytes / last.seconds,
+      encoder: encoder.codec,
+    };
   };
   const { result } = await encodeWithFallback(plan, tryOne, opts.signal);
   return result;

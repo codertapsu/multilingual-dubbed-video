@@ -16,8 +16,10 @@ import {
   joinListPathFor,
   joinOutputExtension,
   joinPosition,
+  joinSampleSpeed,
   joinSpanSec,
   joinTarget,
+  nextJoinSampleSec,
   parseDurationTag,
   parseJoinProbe,
   planJoin,
@@ -357,6 +359,36 @@ describe('the join graph', () => {
     expect(() => buildJoinArgs({ plan: { mode: 'copy', files: [planJoin([file('a', 1)], 'copy').files[0]!] }, listPath: 'l', outputPath: 'o' })).toThrow(/two/);
     expect(() => buildJoinArgs({ plan: planJoin([file('a', 1), file('b', 1)], 'copy'), outputPath: 'o' })).toThrow(/list/);
     expect(() => buildJoinArgs({ plan: { mode: 'reencode', files: planJoin([file('a', 1), file('b', 1)], 'copy').files }, outputPath: 'o' })).toThrow(/target/);
+  });
+
+  it('takes the speed from the extra seconds of a longer test encode, so the fixed costs cancel', () => {
+    // The 2026-11-27 join, h264_nvenc: ~0.7 s every ffmpeg pays once, then 19.4x.
+    const run = (seconds: number) => ({ seconds, elapsedSec: 0.7 + seconds / 19.4, bytes: seconds * 500_000 });
+    const first = run(2);
+    // One 4-s encode alone read 4.4x, the estimate four times too long.
+    expect(4 / run(4).elapsedSec).toBeLessThan(5);
+    const second = nextJoinSampleSec(first, undefined, 120)!;
+    expect(second).toBeCloseTo(2 + 2 * (2 / first.elapsedSec), 5);
+    // Its extra seconds took a quarter of a second: too short to believe, so once more, longer.
+    const third = nextJoinSampleSec(first, run(second), 120)!;
+    expect(third).toBeGreaterThan(30);
+    expect(nextJoinSampleSec(first, run(third), 120)).toBeUndefined();
+    expect(joinSampleSpeed(first, run(third))).toBeCloseTo(19.4, 1);
+  });
+
+  it('stops at the end of the window, and never answers slower than an encode with its fixed costs in', () => {
+    const first = { seconds: 2, elapsedSec: 0.8, bytes: 1 };
+    // A 5-s file: one more encode, to its end (7 s at this pace), then no further.
+    expect(nextJoinSampleSec(first, undefined, 5)).toBe(5);
+    expect(nextJoinSampleSec(first, { seconds: 5, elapsedSec: 1.1, bytes: 1 }, 5)).toBeUndefined();
+    // A slow encoder: the first 1 s more already takes a believable while.
+    const slow = { seconds: 2, elapsedSec: 4.5, bytes: 1 };
+    expect(nextJoinSampleSec(slow, undefined, 120)).toBe(3);
+    expect(nextJoinSampleSec(slow, { seconds: 3, elapsedSec: 6.5, bytes: 1 }, 120)).toBeUndefined();
+    expect(joinSampleSpeed(slow, { seconds: 3, elapsedSec: 6.5, bytes: 1 })).toBeCloseTo(0.5, 5);
+    // Noise: the longer encode took no longer, or far longer. Its own pace then, never a made-up one.
+    expect(joinSampleSpeed(first, { seconds: 6, elapsedSec: 0.8, bytes: 1 })).toBeCloseTo(7.5, 5);
+    expect(joinSampleSpeed(first, { seconds: 6, elapsedSec: 12, bytes: 1 })).toBeCloseTo(0.5, 5);
   });
 
   it('times a test encode the way the join encodes', () => {

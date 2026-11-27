@@ -92,7 +92,10 @@ function rollUpStatus(steps: PipelineStepState[]): PipelineStatus {
  * of its speech-to-text, and its time left, which comes from this, at "about
  * 8 min" for the hour speaker detection took (claude-dubber, 2026-11-27).
  */
-function rollUpProgress(steps: PipelineStepState[]): number {
+function rollUpProgress(all: PipelineStepState[], endsAfter?: PipelineStepId): number {
+  // A pipeline that ends early (PipelineState.endsAfter) counts only its own steps.
+  const last = endsAfter ? all.findIndex((s) => s.id === endsAfter) : -1;
+  const steps = last >= 0 ? all.slice(0, last + 1) : all;
   const total = steps.length;
   if (total === 0) return 0;
   const done = steps.filter(
@@ -101,6 +104,17 @@ function rollUpProgress(steps: PipelineStepState[]): number {
   const running = steps.find((s) => s.status === 'running');
   const share = running ? Math.max(0, Math.min(100, running.progressPercent ?? 0)) / 100 : 0;
   return Math.round(((done + share) / total) * 100);
+}
+
+/**
+ * The pipeline set to end after `stepId` (PipelineState.endsAfter), or to
+ * run to the end when undefined, with its progress counted again. Pure.
+ */
+export function withEndsAfter(state: PipelineState, stepId: PipelineStepId | undefined): PipelineState {
+  if (state.endsAfter === stepId) return state;
+  const { endsAfter: _old, ...rest } = state;
+  const next: PipelineState = stepId ? { ...rest, endsAfter: stepId } : rest;
+  return { ...next, progressPercent: rollUpProgress(next.steps, next.endsAfter) };
 }
 
 /**
@@ -194,7 +208,7 @@ export function setStepStatus(
   return {
     ...state,
     steps,
-    progressPercent: rollUpProgress(steps),
+    progressPercent: rollUpProgress(steps, state.endsAfter),
     currentStep: computeCurrentStep(steps),
     status: overall,
     // Preserve a top-level error only while failed; otherwise clear it.
@@ -224,7 +238,7 @@ export function pausePipelineState(state: PipelineState, now: string = new Date(
   return {
     ...state,
     steps,
-    progressPercent: rollUpProgress(steps),
+    progressPercent: rollUpProgress(steps, state.endsAfter),
     currentStep: pausedStep,
     status: 'paused',
     error: undefined,

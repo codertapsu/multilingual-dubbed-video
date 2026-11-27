@@ -18,6 +18,7 @@ import path from 'node:path';
 import { renameReplacing } from '../fsRename.js';
 import type {
   ArgosPair,
+  DefaultVoices,
   DownloadPreferences,
   InstalledModels,
   LocalModelPreferences,
@@ -239,6 +240,7 @@ export class SetupStore {
       // Settings → Downloads ("while a dub runs"). Dropped here and below until
       // 0.17.0's own review: the choice snapped back to Automatic on reload.
       ...(cleanDownloads(stored.downloads) ? { downloads: cleanDownloads(stored.downloads) } : {}),
+      ...(cleanDefaultVoices(stored.defaultVoices) ? { defaultVoices: cleanDefaultVoices(stored.defaultVoices) } : {}),
     };
   }
 
@@ -251,10 +253,23 @@ export class SetupStore {
       ...(prefs.concurrency ? { concurrency: prefs.concurrency } : {}),
       ...(localModels ? { localModels } : {}),
       ...(cleanDownloads(prefs.downloads) ? { downloads: cleanDownloads(prefs.downloads) } : {}),
+      ...(cleanDefaultVoices(prefs.defaultVoices) ? { defaultVoices: cleanDefaultVoices(prefs.defaultVoices) } : {}),
     };
     await writeJsonAtomic(this.preferencesPath, next);
     return next;
   }
+}
+
+/** The default voices with only voice-id-shaped values, or undefined when none. */
+export function cleanDefaultVoices(value: unknown): DefaultVoices | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const id = (x: unknown): string | undefined => (typeof x === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(x) ? x : undefined);
+  const out: DefaultVoices = {
+    ...(id(v.male) ? { male: id(v.male)! } : {}),
+    ...(id(v.female) ? { female: id(v.female)! } : {}),
+  };
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** The downloads-while-dubbing choice, when it is one of the four. */

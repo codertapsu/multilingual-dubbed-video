@@ -98,6 +98,7 @@ export const SETTING_AFFECTS_STEP: Partial<Record<keyof ProjectSettings, Pipelin
   transcriptSpotCheck: 'stt',
   subtitleCoverageCheck: 'stt',
   useBurnedInSubtitles: 'stt',
+  stopAtAdTail: 'stt',
   targetLanguage: 'translation',
   translationProviderId: 'translation',
   autoFitOverflow: 'translation',

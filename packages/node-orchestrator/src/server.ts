@@ -108,7 +108,7 @@ import { checkWorkersHealth } from './health.js';
 import { toHttpError } from './httpErrors.js';
 import { decideRange } from './httpRange.js';
 import { createFfmpegMediaService } from './mediaAdapter.js';
-import { PictureDetectionService } from './picture/pictureDetection.js';
+import { adTailFrom, PictureDetectionService } from './picture/pictureDetection.js';
 import { registerPictureRoutes } from './picture/pictureRoutes.js';
 import { openPath } from './openPath.js';
 import { describeStorage, clearStorage, dirSize } from './storage.js';
@@ -165,6 +165,7 @@ import {
   type VoiceMeasure,
 } from './voices/speakerCast.js';
 import { dialogueAdjacency } from './voices/casting.js';
+import { defaultVoicesFor } from './voices/defaultVoices.js';
 import { registerSongRoutes } from './songs/songRoutes.js';
 import { openSuggestions, readSongSuggestions, songSuggestionsPath } from './songs/songSuggestions.js';
 import { suggestGender } from './voices/casting.js';
@@ -629,7 +630,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       config,
       warningInbox,
       // "Find the watermark and blur it" at render (picture/watermarkAuto.ts).
-      watermark: { detect: (id: string) => pictures.detectNow(id) },
+      watermark: { detect: (id: string, opts?: { tail?: boolean }) => pictures.detectNow(id, opts ?? {}) },
       // The user's voices kept for one main character (voices/mainOnly.ts).
       mainOnlyVoices: async (projectId: string) =>
         new Map((await voiceProfileStore.list(projectId).catch(() => [])).filter((p) => p.mainOnly).map((p) => [p.id, p.name])),
@@ -1590,6 +1591,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         ...(body.downloads !== undefined || current.downloads !== undefined
           ? { downloads: sanitizeDownloadPrefs({ ...current.downloads, ...(body.downloads ?? {}) }) }
           : {}),
+        // Per gender: a voice sent as "" or null goes back to none (setupStore drops it).
+        ...(body.defaultVoices !== undefined || current.defaultVoices !== undefined
+          ? { defaultVoices: { ...current.defaultVoices, ...(body.defaultVoices ?? {}) } }
+          : {}),
       });
       // Downloads follow a changed "while dubbing" choice at once.
       await refreshDownloadPolicy();
@@ -1721,7 +1726,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     };
     const isLocal = (phase: 'stt' | 'translation' | 'tts', id: string): boolean =>
       (phase === 'stt' ? described.stt : phase === 'tts' ? described.tts : described.translation).find((p) => p.id === id)?.isLocal === true;
-    return recommendProjectSettings(
+    const recommended = await recommendProjectSettings(
       {
         providerDefaults: async () => {
           const saved = (await setupStore.getPreferences()).providerDefaults;
@@ -1740,6 +1745,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       },
       { sourceLanguage: sourceLanguage.trim(), targetLanguage: targetLanguage.trim() || 'vi-VN' },
     );
+    // The user's default voices for men and women, where this engine speaks them.
+    const voices = await preferredVoiceDefaults(recommended.settings);
+    return Object.keys(voices).length > 0 ? { ...recommended, settings: { ...recommended.settings, ...voices } } : recommended;
   };
 
   app.get(
@@ -2440,7 +2448,16 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     const { presetId, ...rest } = body;
     const jobName = (typeof rest.name === 'string' && rest.name.trim()) || fallbackName || '';
     const named = (dir: string | undefined): { outputDir?: string } => (dir?.trim() ? { outputDir: resolveOutputDir(dir.trim(), jobName) } : {});
-    if (!presetId) return { ...(rest as T & { settings: ProjectSettings }), ...named(rest.outputDir) };
+    if (!presetId) {
+      // The user's default voices for the genders the job names none for
+      // (New project sends its own settings, without them).
+      const voices = rest.settings ? await preferredVoiceDefaults(rest.settings) : {};
+      return {
+        ...(rest as T & { settings: ProjectSettings }),
+        ...(rest.settings && Object.keys(voices).length > 0 ? { settings: { ...rest.settings, ...voices } as ProjectSettings } : {}),
+        ...named(rest.outputDir),
+      };
+    }
     const own: Partial<ProjectSettings> = rest.settings ?? {};
     const preset = await presetById(presetId, own);
     const targetLanguage = own.targetLanguage?.trim() || preset.targetLanguage;
@@ -3419,13 +3436,36 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   /** The voices a cast of this project can use: its engine's, installed, speaking its language (clones speak any). */
   async function castableVoices(project: Project): Promise<VoiceLibraryItem[]> {
-    const engine = (Object.keys(VOICE_ENGINE_PROVIDER) as VoiceEngineId[]).find((e) => VOICE_ENGINE_PROVIDER[e] === project.settings.ttsProviderId);
+    return voicesFor(project.settings, project.id);
+  }
+
+  /** The voices a project with these settings speaks with: its engine's, installed, in its language (clones speak any); a project's own clones with its id. */
+  async function voicesFor(settings: Pick<ProjectSettings, 'ttsProviderId' | 'targetLanguage'>, projectId?: string): Promise<VoiceLibraryItem[]> {
+    const engine = (Object.keys(VOICE_ENGINE_PROVIDER) as VoiceEngineId[]).find((e) => VOICE_ENGINE_PROVIDER[e] === settings.ttsProviderId);
     if (!engine) return [];
-    const [base, favorites, profiles] = await Promise.all([voiceLibraryState(), voiceFavorites.list(), voiceProfileStore.list(project.id).catch(() => [])]);
-    const lang = baseLanguage(project.settings.targetLanguage);
+    const [base, favorites, profiles] = await Promise.all([voiceLibraryState(), voiceFavorites.list(), voiceProfileStore.list(projectId).catch(() => [])]);
+    const lang = baseLanguage(settings.targetLanguage);
     return libraryItems(allCatalogVoices(), VOICE_ENGINES, { ...base, favorites, profiles }).filter(
       (v) => v.engine === engine && v.installed && (v.kind === 'profile' || v.languages.some((l) => baseLanguage(l) === lang)),
     );
+  }
+
+  /**
+   * The user's default voices (Preferences.defaultVoices, the Voices screen)
+   * for the genders a new project's `settings` leave without one: only a
+   * voice its engine speaks in its language, and never one kept for one main
+   * character (never a default: voices/mainOnly.ts). The user's word,
+   * 2026-11-27: "prioritize these two voices when dubbing videos".
+   */
+  async function preferredVoiceDefaults(
+    settings: Partial<Pick<ProjectSettings, 'ttsProviderId' | 'targetLanguage' | 'defaultMaleVoiceId' | 'defaultFemaleVoiceId'>>,
+  ): Promise<Pick<ProjectSettings, 'defaultMaleVoiceId' | 'defaultFemaleVoiceId'>> {
+    const wanted = (await setupStore.getPreferences().catch(() => undefined))?.defaultVoices;
+    if (!wanted?.male && !wanted?.female) return {};
+    if (settings.defaultMaleVoiceId && settings.defaultFemaleVoiceId) return {};
+    if (!settings.ttsProviderId || !settings.targetLanguage) return {};
+    const usable = await voicesFor({ ttsProviderId: settings.ttsProviderId, targetLanguage: settings.targetLanguage }).catch(() => [] as VoiceLibraryItem[]);
+    return defaultVoicesFor(wanted, settings, usable);
   }
 
   /** A sentence to measure a built-in voice's pitch and print with. */
@@ -3565,7 +3605,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         const body = req.body ?? {};
         const project = await store.getProject(req.params.id);
         const paths = store.paths(req.params.id);
-        const lines = await readSpeakerLines(paths);
+        // No line past an advert tail: its singers and its reader took the
+        // user's clones from the drama's characters (2026-11-27), also in a
+        // project transcribed before the tail was looked for.
+        const tailFrom = await adTailFrom(project);
+        const lines = (await readSpeakerLines(paths)).filter((l) => tailFrom === undefined || l.startMs < tailFrom);
         const detected = await readSpeakerProfiles(paths.diarizationJson);
         // Ranked by the lines that will be voiced: songs earn no voice (castRows).
         const { rows, voiced, singersOnly } = castRows(lines, detected, project.settings);
@@ -3590,6 +3634,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         }));
         const items = await castableVoices(project);
         const voices = await castCandidates(items, speakers, { measure: measureVoice });
+        const preferred = (await setupStore.getPreferences().catch(() => undefined))?.defaultVoices;
         // null asks for the automatic size again; absent keeps the project's setting.
         const askedSize = typeof body.minorVoices === 'number' && Number.isFinite(body.minorVoices) ? Math.round(body.minorVoices) : undefined;
         const minorVoices = body.minorVoices === null ? undefined : (askedSize ?? project.settings.minorVoices);
@@ -3598,7 +3643,13 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           ...(Array.isArray(body.minorPool?.female) ? { female: body.minorPool.female.filter((v) => typeof v === 'string') } : {}),
         };
         const proposal = withSwaps(
-          proposeCast(speakers, voices, { ...(minorVoices ? { minorVoices } : {}), adjacency: dialogueAdjacency(voiced), minorPool }),
+          proposeCast(speakers, voices, {
+            ...(minorVoices ? { minorVoices } : {}),
+            adjacency: dialogueAdjacency(voiced),
+            minorPool,
+            // The user's default voices go first to the most-heard man and woman.
+            ...(preferred ? { preferred } : {}),
+          }),
           body.swaps,
           voices,
         );

@@ -286,7 +286,11 @@ function markInCorner(
     ) * clamp01(n / 30);
   if (confidence < (opts.minConfidence ?? 0.35)) return undefined;
 
-  // Padded: the mark's glow and soft edges reach past its strongest edges.
+  // Padded: the mark's glow and soft edges reach past its strongest edges,
+  // whose rows start below the mark's top (a fifth of its height left the
+  // top of "VD bilibili" out). The box a third wider than the mark of
+  // 2026-11-27 ("红果山大王 bilibili", 0.32 × 0.18 for 0.18 × 0.06) came from
+  // the advert tail's frames, now left out (adTail.ts): 0.21 × 0.11.
   const bh = best.y1 - best.y0 + 1;
   const pad = Math.max(2, Math.round(0.35 * bh));
   const left = Math.max(0, x0 + best.x0 - pad);

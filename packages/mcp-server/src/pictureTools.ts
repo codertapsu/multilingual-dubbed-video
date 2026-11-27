@@ -52,6 +52,15 @@ export function formatPictureJob(job: PictureDetectionJob, tool = 'detect_waterm
   } else {
     lines.push('Source subtitles: no band of burned-in subtitles was found.');
   }
+  // An advert tail: the watermark and band above were found in the frames before it.
+  if (r.adTail) {
+    const t = Math.round(r.adTail.fromMs / 1000);
+    const at = `${Math.floor(t / 3600)}:${String(Math.floor(t / 60) % 60).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+    lines.push(
+      `Advert tail: from ${at} (${r.adTail.fromMs} ms) to the end the same block stays on the picture (x=${r.adTail.box.x} y=${r.adTail.box.y} w=${r.adTail.box.w} h=${r.adTail.box.h}), confidence ${r.adTail.confidence}. ` +
+        'Speech-to-text and a series stop there unless settings.stopAtAdTail is false.',
+    );
+  }
   if (r.previewPath) lines.push(`Preview (boxes red, band yellow): ${r.previewPath} — look at it before applying.`);
   for (const n of r.notes) lines.push(`Note: ${n}`);
   const regions: BlurRegion[] = r.regions.map((m) => ({

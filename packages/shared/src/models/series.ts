@@ -175,6 +175,12 @@ export interface SeriesPlan {
   createdAt: string;
   /** What did not go as asked ("the AI did not answer for cut 3; the longest pause was used"). */
   notes: string[];
+  /**
+   * Where the series ends, when before the video's end: an advert tail starts
+   * there (PictureDetection.adTail, ProjectSettings.stopAtAdTail). The last
+   * part ends there, also after its cuts are moved.
+   */
+  endMs?: number;
 }
 
 /** An AI the series can use (GET /series/ai-options). */

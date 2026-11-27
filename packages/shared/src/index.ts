@@ -138,6 +138,7 @@ export type {
   SetupInstallRequest,
   SetupEvent,
   UpdatePreferences,
+  DefaultVoices,
   DownloadPreferences,
   DownloadsWhileDubbing,
   ProviderDefaults,
@@ -220,6 +221,7 @@ export {
 } from './pipeline/seriesNames.js';
 export type { PartNameInput, PartNameTemplateProblem, SeriesCardWords } from './pipeline/seriesNames.js';
 export type {
+  AdTailFinding,
   BlurRegion,
   PictureCorner,
   PictureDetection,

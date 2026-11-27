@@ -379,6 +379,15 @@ For your own voice, tick **Only for one main character** under it in Voices →
 My voices: casting then gives it to one main character at most, never to the
 minor speakers and never as the voice of every speaker who has none.
 
+**Default voices** (top of the Voices screen) are the voices you want first:
+one for men, one for women, from your own voices and the installed built-in
+ones. Every new project takes them as the voice of each man or woman who has no
+voice of their own, unless its preset names other default voices, and
+**Choose voices by gender** gives them first to the man and the woman heard
+most. A project uses only voices of the engine it dubs with, so a cloned voice
+is a default only for projects that dub with its engine (VieNeu). A voice kept
+for one main character cannot be a default.
+
 ### Getting the finished file
 
 The **Export** screen shows the finished video, its output path, and an
@@ -720,6 +729,22 @@ a subtitle is never removed as silence, and a warning lists the subtitles with
 no line under them (speech that was lost: transcribe those stretches again in
 the editor) and, where the subtitles follow the dialogue, lines with no
 subtitle at all (maybe made up). It adds a few minutes per hour of video.
+
+### Uploads whose drama is only their start (an advert tail)
+
+Some "whole series free" (全集免费) uploads carry the drama only at the start.
+After it, the same banner for the full version ("点击评论区蓝色链接 可免费观看完整版")
+stays on the picture to the end, for hours, over a still image with songs or
+over moving footage with a voice reading the advert. For a video of 20 minutes
+or more, the app looks for that banner when speech-to-text starts. When it
+finds one, speech-to-text and its checks stop where the banner begins, a series
+ends there (its last part ends where the drama does), and a warning says where.
+The advert is never transcribed or dubbed, and nothing waits for you to
+confirm it. The banner's frames are also left out when the app looks for a
+watermark and for the video's own subtitles, which it would otherwise find
+in the banner. To dub the whole video anyway, turn off **Stop where an advert
+tail begins** (New project → More options, or the project's settings in the
+editor) and redo from speech-to-text.
 
 ### Why the quality is lower than what the site shows
 

@@ -318,6 +318,7 @@ const EDITABLE_SETTING_KEYS = [
   'subtitleCoverageCheck',
   'useBurnedInSubtitles',
   'useSourceSubtitles',
+  'stopAtAdTail',
 ] as const satisfies readonly (keyof ProjectSettings)[];
 
 /**

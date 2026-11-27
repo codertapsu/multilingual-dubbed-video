@@ -2263,6 +2263,14 @@
       "metal": "Chạy trên GPU của chip Apple",
       "vulkan": "Chạy trên GPU (Vulkan)"
     },
+    "defaults-heading": "Giọng mặc định",
+    "defaults-help": "Mọi bản lồng tiếng ưu tiên dùng các giọng này: khi phân vai, giọng nam mặc định dành cho nhân vật nam được nghe nhiều nhất và giọng nữ mặc định dành cho nhân vật nữ được nghe nhiều nhất; mọi nhân vật nam hoặc nữ chưa có giọng riêng cũng nói bằng các giọng này. Mẫu lồng tiếng nào đã chọn giọng mặc định riêng thì vẫn giữ giọng của nó, và mỗi dự án chỉ dùng được giọng của engine lồng tiếng mà dự án đó dùng.",
+    "defaults-male": "Cho nhân vật nam",
+    "defaults-female": "Cho nhân vật nữ",
+    "defaults-none": "Không chọn (để ứng dụng tự chọn)",
+    "defaults-yours": "giọng của bạn",
+    "defaults-missing": "hiện không dùng được",
+    "defaults-saved": "Đã lưu giọng mặc định.",
     "my-heading": "Giọng của tôi",
     "label-cloned": "Giọng nhân bản",
     "label-from-video": "Từ video này",
@@ -2638,7 +2646,9 @@
     "burned-in-no-band": "Không dùng được phụ đề in sẵn của video làm bản chép lời: không tìm thấy vùng phụ đề nào trên hình. Đã chép lời từ giọng nói thay thế.",
     "burned-in-few": "Không dùng được phụ đề in sẵn của video làm bản chép lời: chỉ có {{count}} phụ đề hiện trên hình. Đã chép lời từ giọng nói thay thế.",
     "burned-in-failed": "Không dùng được phụ đề in sẵn của video làm bản chép lời: đọc phụ đề bị lỗi ({{reason}}). Đã chép lời từ giọng nói thay thế.",
-    "burned-in-unreadable": "Không dùng được phụ đề in sẵn của video làm bản chép lời: chỉ đọc được {{count}} trên {{total}} phụ đề. Đã chép lời từ giọng nói thay thế."
+    "burned-in-unreadable": "Không dùng được phụ đề in sẵn của video làm bản chép lời: chỉ đọc được {{count}} trên {{total}} phụ đề. Đã chép lời từ giọng nói thay thế.",
+    "ad-tail": "Từ {{from}} đến hết video ({{end}}), cùng một biểu ngữ quảng cáo nằm yên trên hình: bước nhận dạng lời thoại đã dừng ở đó nên phần quảng cáo không bị lồng tiếng. Muốn lồng tiếng cả video, hãy tắt “Dừng ở chỗ bắt đầu đoạn quảng cáo cuối video” rồi làm lại từ bước nhận dạng lời thoại.",
+    "ad-tail-series": "Từ {{from}} đến hết video ({{end}}), cùng một biểu ngữ quảng cáo nằm yên trên hình: bước nhận dạng lời thoại đã dừng ở đó và loạt phần cũng kết thúc ở đó, nên phần quảng cáo không bị lồng tiếng. Muốn lồng tiếng cả video, hãy tắt “Dừng ở chỗ bắt đầu đoạn quảng cáo cuối video” rồi làm lại loạt phần từ bước nhận dạng lời thoại."
   },
   "diagnostics": {
     "heading": "Chẩn đoán",
@@ -2892,7 +2902,9 @@
     "drift-shorter": "Âm thanh kết thúc sớm hơn phần hình {{seconds}} giây: phần còn lại là khoảng lặng",
     "drift-hint": "Đo từ chính các mẫu âm thanh khi tách âm thanh ra. Âm thanh tách ra luôn theo đồng hồ của phần hình và kết thúc cùng phần hình, nên lời lồng tiếng vẫn khớp và video giữ nguyên độ dài.",
     "subtitle-check": "Đối chiếu với phụ đề có sẵn trong video",
-    "subtitle-check-hint": "Khi video có phụ đề in sẵn trên hình, ứng dụng đọc vùng phụ đề (năm lần mỗi giây, không cần nhận dạng chữ) để biết lúc nào có người nói. Câu nằm dưới một phụ đề sẽ không bao giờ bị xoá vì bị coi là im lặng, và một cảnh báo sẽ liệt kê các phụ đề không có câu nào bên dưới (lời thoại bị mất) cùng các câu không có phụ đề (có thể là câu bịa ra). Mất thêm vài phút cho mỗi giờ video. Mặc định bật cho video tiếng Trung, Nhật và Hàn."
+    "subtitle-check-hint": "Khi video có phụ đề in sẵn trên hình, ứng dụng đọc vùng phụ đề (năm lần mỗi giây, không cần nhận dạng chữ) để biết lúc nào có người nói. Câu nằm dưới một phụ đề sẽ không bao giờ bị xoá vì bị coi là im lặng, và một cảnh báo sẽ liệt kê các phụ đề không có câu nào bên dưới (lời thoại bị mất) cùng các câu không có phụ đề (có thể là câu bịa ra). Mất thêm vài phút cho mỗi giờ video. Mặc định bật cho video tiếng Trung, Nhật và Hàn.",
+    "ad-tail": "Dừng ở chỗ bắt đầu đoạn quảng cáo cuối video",
+    "ad-tail-hint": "Một số video đăng “trọn bộ miễn phí” chỉ có phim ở phần đầu; sau đó, cùng một biểu ngữ quảng cáo bản đầy đủ nằm yên trên hình cho tới hết video, kéo dài hàng giờ, trên nền ảnh tĩnh hoặc cảnh quay chuyển động. Khi ứng dụng nhận ra đoạn này (với video dài từ 20 phút), bước nhận dạng lời thoại sẽ dừng ở đó và loạt phần cũng kết thúc ở đó, nên phần quảng cáo không bao giờ bị lồng tiếng, kèm một cảnh báo cho biết vị trí. Tắt tùy chọn này nếu muốn lồng tiếng cả video."
   },
   "join": {
     "mode-aria": "Lồng tiếng cho gì",

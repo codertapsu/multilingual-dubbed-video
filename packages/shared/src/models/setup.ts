@@ -403,6 +403,21 @@ export interface UpdatePreferences {
   localModels?: LocalModelPreferences;
   /** What downloads do while a dub runs (Settings → Downloads). */
   downloads?: DownloadPreferences;
+  /** The user's default voices for men and women (Voices → Default voices). */
+  defaultVoices?: DefaultVoices;
+}
+
+/**
+ * The user's default voices (voice ids: a cloned voice's `vp_…` or a built-in
+ * one). A new project takes them for the men and women with no voice of their
+ * own, when its preset or job names none (ProjectSettings.defaultMaleVoiceId /
+ * defaultFemaleVoiceId), and a voice cast gives them first to the most-heard
+ * man and woman. The user's word: "prioritize these two voices when dubbing"
+ * (2026-11-27). Only where the project's engine speaks them.
+ */
+export interface DefaultVoices {
+  male?: string;
+  female?: string;
 }
 
 /**

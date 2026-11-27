@@ -102,6 +102,7 @@ const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   transcriptSpotCheck: 'stt',
   subtitleCoverageCheck: 'stt',
   useBurnedInSubtitles: 'stt',
+  stopAtAdTail: 'stt',
   targetLanguage: 'translation',
   translationProviderId: 'translation',
   refineProviderId: 'refine',
@@ -241,6 +242,11 @@ const editableSettings = z
       .boolean()
       .describe(
         'Spot-check the transcript at the end of speech-to-text: one minute of every half hour is decoded again without context and compared with the lines, and stretches that do not match (a bad join or download) become warnings with their time range. Chinese/Japanese/Korean only; about 3-5 % of the speech-to-text time. Unset = on for videos over 2 hours; false = off; true = also on shorter videos.',
+      ),
+    stopAtAdTail: z
+      .boolean()
+      .describe(
+        'Stop where an advert tail begins (default on): on "全集免费" uploads whose drama is only their start, the same banner for the full version stays on the picture to the end, for hours, over a still image or moving footage. The app looks for it at the start of speech-to-text (videos of 20 minutes or more): speech-to-text and its checks stop there, a series ends there, and an ad-tail warning says where (detect_watermark shows it too). false = dub the whole video (redo from "stt").',
       ),
     minorVoices: z
       .number()
@@ -2200,7 +2206,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Choose a voice for each speaker',
       description:
-        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones, to the speakers heard most in the lines that will be voiced (lines kept as the original song count for nothing, and a speaker who only sings gets no voice); within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance. The speakers past the distinct voices (minor speakers) share a POOL of voices per gender: 3-6 by how many there are (minorVoices sets it, saved with apply), built-in voices no main speaker has, then the voices of the least-heard cast speakers, never a clone unless the user picks one (minorPool); speakers who answer each other get different pool voices where possible. Built-in voices that sound like one of the user\'s clones are left out of shared use and named. Speakers of unknown gender are listed with their three longest lines and talk time: they keep the project voice until someone sets them (swaps). A cloned voice whose gender the user has not confirmed is left out of the proposal, which then says so first; apply=true is refused while any is left out, unless allowWithoutClones=true (the user agreed to a cast without them). Ask the user to confirm them in Voices → My voices instead when you can: their rule is their clones first. Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
+        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones, to the speakers heard most in the lines that will be voiced (lines kept as the original song count for nothing, and a speaker who only sings gets no voice); the user\'s default voices (Voices → Default voices, one per gender) go first of all to the most-heard man and woman; within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance. The speakers past the distinct voices (minor speakers) share a POOL of voices per gender: 3-6 by how many there are (minorVoices sets it, saved with apply), built-in voices no main speaker has, then the voices of the least-heard cast speakers, never a clone unless the user picks one (minorPool); speakers who answer each other get different pool voices where possible. Built-in voices that sound like one of the user\'s clones are left out of shared use and named. Speakers of unknown gender are listed with their three longest lines and talk time: they keep the project voice until someone sets them (swaps). A cloned voice whose gender the user has not confirmed is left out of the proposal, which then says so first; apply=true is refused while any is left out, unless allowWithoutClones=true (the user agreed to a cast without them). Ask the user to confirm them in Voices → My voices instead when you can: their rule is their clones first. Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
       inputSchema: z.object({
         projectId: z.string(),
         apply: z.boolean().default(false),

@@ -9,6 +9,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   DEFAULT_SERIES_SETTINGS,
+  type PictureDetection,
   type Project,
   type ProjectSettings,
   type SttInput,
@@ -550,5 +551,83 @@ describe('stt: digital silence (1.6b)', () => {
     await runToStt(b);
     expect((await warningsOf(b.project.id)).map((w) => w.code)).not.toContain('digital-silence');
     expect(await log(b)).toContain('Not flagged: the rest of the video has little talk');
+  });
+});
+
+describe('stt: an advert tail (claude-dubber, 2026-11-27)', () => {
+  const MIN = 60_000;
+  /** Drama at 5 and 30 minutes, the advert's reader at 45 and 55. */
+  const heard: SttProvider = {
+    id: 'faster-whisper',
+    displayName: 'fixed',
+    isLocal: true,
+    async transcribe(): Promise<SttResult> {
+      return {
+        segments: makeSegments([
+          [5 * MIN, 5 * MIN + 2000, '我们走吧'],
+          [30 * MIN, 30 * MIN + 2000, '你还好吗'],
+          [45 * MIN, 45 * MIN + 2000, '可免费观看完整版'],
+          [55 * MIN, 55 * MIN + 2000, '点击评论区蓝色链接'],
+        ]),
+        detectedLanguage: 'zh',
+        durationMs: 60 * MIN,
+      };
+    },
+  };
+  const detection = (fromMs?: number): PictureDetection => ({
+    at: '2026-11-27T10:00:00.000Z',
+    videoWidth: 1920,
+    videoHeight: 1080,
+    regions: [],
+    frameAtMs: 0,
+    frames: 100,
+    notes: [],
+    tailChecked: true,
+    ...(fromMs !== undefined ? { adTail: { fromMs, box: { x: 0.1, y: 0.6, w: 0.8, h: 0.35 }, confidence: 0.9 } } : {}),
+  });
+  const lines = async (b: Built) => (JSON.parse(await fsp.readFile(b.paths.sourceJson, 'utf8')) as { segments: TranscriptSegment[] }).segments;
+
+  it('stops speech-to-text where the banner begins, keeps no line past it, and says where', async () => {
+    const b = await build({ durationMs: 60 * MIN, stt: heard, sttChunkThresholdMs: 10 * 60 * MIN, settings: { sourceLanguage: 'zh' } });
+    const asked: unknown[] = [];
+    b.deps.watermark = { detect: async (_id, opts) => (asked.push(opts), detection(40 * MIN)) };
+    await runToStt(b);
+    expect((await lines(b)).map((l) => l.sourceText)).toEqual(['我们走吧', '你还好吗']);
+    expect(asked[0]).toEqual({ tail: true });
+    const tail = (await warningsOf(b.project.id)).find((w) => w.code === 'ad-tail');
+    expect(tail).toMatchObject({ step: 'stt', key: 'warning.ad-tail-series', params: { from: '40:00', end: '1:00:00' } });
+    expect(tail?.message).toContain('the series ends there');
+  });
+
+  it('dubs the whole video when told to, or when none was found, or the video is too short to have one', async () => {
+    const off = await build({ durationMs: 60 * MIN, stt: heard, sttChunkThresholdMs: 10 * 60 * MIN, settings: { sourceLanguage: 'zh', stopAtAdTail: false } });
+    let looked = 0;
+    off.deps.watermark = { detect: async (_id, opts) => (opts?.tail && looked++, detection(40 * MIN)) };
+    await runToStt(off);
+    expect(await lines(off)).toHaveLength(4);
+    expect(looked).toBe(0);
+
+    const none = await build({ durationMs: 60 * MIN, stt: heard, sttChunkThresholdMs: 10 * 60 * MIN, settings: { sourceLanguage: 'zh' } });
+    none.deps.watermark = { detect: async () => detection() };
+    await runToStt(none);
+    expect(await lines(none)).toHaveLength(4);
+    expect((await warningsOf(none.project.id)).map((w) => w.code)).not.toContain('ad-tail');
+
+    const short = await build({ durationMs: 15 * MIN, settings: { sourceLanguage: 'zh' } });
+    short.deps.watermark = { detect: async (_id, opts) => (opts?.tail && looked++, detection(10 * MIN)) };
+    await runToStt(short);
+    expect(looked).toBe(0);
+  });
+
+  it('transcribes the whole video when the picture cannot be read', async () => {
+    const b = await build({ durationMs: 60 * MIN, stt: heard, sttChunkThresholdMs: 10 * 60 * MIN, settings: { sourceLanguage: 'zh' } });
+    b.deps.watermark = {
+      detect: async () => {
+        throw new Error('no frames');
+      },
+    };
+    await runToStt(b);
+    expect(await lines(b)).toHaveLength(4);
+    expect(await log(b)).toContain('Could not look at the picture for an advert tail (no frames): transcribing the whole video.');
   });
 });

@@ -145,6 +145,17 @@
             </label>
             <p class="hint">{{ 'source-checks.spot-check-hint' | translate }}</p>
           }
+          <!-- An advert tail: speech-to-text and a series stop where its banner begins. -->
+          <label class="setting-row check-row">
+            <input
+              type="checkbox"
+              [ngModel]="s.stopAtAdTail !== false"
+              (ngModelChange)="onSettingChange('stopAtAdTail', $event)"
+              [disabled]="redubbing()"
+            />
+            <span>{{ 'source-checks.ad-tail' | translate }}</span>
+          </label>
+          <p class="hint">{{ 'source-checks.ad-tail-hint' | translate }}</p>
           @if (subtitleCheckOffered() && offeredPacks().has('ocr-rapid')) {
             <label class="setting-row check-row">
               <input

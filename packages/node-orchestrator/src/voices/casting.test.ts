@@ -52,6 +52,33 @@ describe('proposeCast', () => {
     expect(cast.defaults).toEqual({ male: 'builtin-m' });
   });
 
+  it("gives the user's default voices to the most-heard man and woman first, the others paired as before (2026-11-27)", () => {
+    const speakers = [
+      speaker('SPEAKER_00', 120, 'male', 110),
+      speaker('SPEAKER_01', 90, 'male', 160),
+      speaker('SPEAKER_02', 40, 'female', 230),
+      speaker('SPEAKER_03', 30, 'female', 250),
+    ];
+    // By pitch rank alone the lower male clone would go to SPEAKER_00 (110 Hz).
+    const voices = [
+      profile('vp_thien', 'male', 116),
+      profile('vp_dang_quan', 'male', 153),
+      profile('vp_ha_my', 'female', 200),
+      profile('vp_vy', 'female', 240),
+    ];
+    const cast = proposeCast(speakers, voices, { preferred: { male: 'vp_dang_quan', female: 'vp_ha_my' } });
+    const by = Object.fromEntries(cast.assignments.map((a) => [a.speakerId, [a.voiceId, a.by]]));
+    expect(by['SPEAKER_00']).toEqual(['vp_dang_quan', 'preferred']);
+    expect(by['SPEAKER_01']![0]).toBe('vp_thien');
+    expect(by['SPEAKER_02']).toEqual(['vp_ha_my', 'preferred']);
+    expect(by['SPEAKER_03']![0]).toBe('vp_vy');
+    expect(cast.notes).toContain('"vp_dang_quan", your default male voice, speaks for SPEAKER_00, the most heard man.');
+    // A default voice the project cannot use (an unconfirmed clone, another engine): cast as usual, and said.
+    const without = proposeCast(speakers, [profile('vp_thien', 'male', 116)], { preferred: { male: 'vp_other_engine' } });
+    expect(without.assignments.find((a) => a.speakerId === 'SPEAKER_00')?.voiceId).toBe('vp_thien');
+    expect(without.notes.some((n) => n.startsWith('Your default male voice is not one this project can use'))).toBe(true);
+  });
+
   it('never casts a clone whose gender the user has not confirmed, and names it', () => {
     const cast = proposeCast([speaker('SPEAKER_00', 10, 'male', 150)], [profile('vp_bon', 'male', 170, false), preset('builtin-m', 'male', 120)]);
     expect(cast.unconfirmed).toEqual([{ voiceId: 'vp_bon', name: 'vp_bon' }]);

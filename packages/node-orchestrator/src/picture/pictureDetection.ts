@@ -46,6 +46,8 @@ export interface PictureDetectInput {
   band?: boolean;
   frames?: number;
   outputDir?: string;
+  /** Look for an advert tail (media-worker adTail.ts); default: a window from the start, 20 minutes at least. */
+  adTail?: boolean;
 }
 
 /** The media worker's picture functions (loaded when first used). */
@@ -148,6 +150,18 @@ export async function savedDetection(project: Pick<Project, 'workspaceDir'>): Pr
   }
 }
 
+/**
+ * Where a project's video stops being its own: the start of the advert tail
+ * its picture detection found (media-worker adTail.ts), unless the project
+ * dubs the whole video (`stopAtAdTail: false`). Speech-to-text stopped there
+ * (runner adTailStart); a series ends there, and a cast counts no line past it.
+ */
+export async function adTailFrom(project: Pick<Project, 'workspaceDir' | 'settings'>): Promise<number | undefined> {
+  if (project.settings.stopAtAdTail === false) return undefined;
+  const tail = (await savedDetection(project))?.adTail;
+  return tail && tail.fromMs > 0 ? tail.fromMs : undefined;
+}
+
 /** A short sentence of what was found, for the activity list. Pure. */
 export function detectionSummary(d: PictureDetection): string {
   const marks = d.regions.length === 0 ? 'no watermark' : d.regions.length === 1 ? '1 watermark' : `${d.regions.length} watermarks`;
@@ -202,6 +216,8 @@ export function projectDetectInput(
     segments,
     ...(lines.length > 0 ? { lines } : {}),
     ...(opts.outputDir ? { outputDir: opts.outputDir } : {}),
+    // A part is a window of its series, which looked for an advert tail already.
+    ...(project.sourceRange ? { adTail: false } : {}),
   };
 }
 
@@ -247,13 +263,18 @@ export class PictureDetectionService {
    * earlier (also from an earlier run of the app) is used as it is unless
    * `fresh`. Throws what the detection failed with.
    */
-  async detectNow(projectId: string, opts: { fresh?: boolean } = {}): Promise<PictureDetection> {
+  async detectNow(projectId: string, opts: { fresh?: boolean; tail?: boolean } = {}): Promise<PictureDetection> {
     const project = await this.deps.store.getProject(projectId);
-    if (!opts.fresh) {
+    // `tail`: speech-to-text's start needs to know of an advert tail; a
+    // result saved before tails were looked for is looked at again, once.
+    const again = async (saved: PictureDetection): Promise<boolean> => opts.tail === true && !saved.tailChecked && !project.sourceRange;
+    let fresh = opts.fresh === true;
+    if (!fresh) {
       const saved = (await this.savedProjectResult(project)).result;
-      if (saved) return saved;
+      if (saved && !(await again(saved))) return saved;
+      fresh = saved !== undefined;
     }
-    await this.detectProject(projectId, opts.fresh ? { fresh: true } : {});
+    await this.detectProject(projectId, fresh ? { fresh: true } : {});
     const job = this.jobs.get(`project:${project.id}`);
     if (!job) throw new AppErrorException('UNKNOWN', 'The picture detection did not start.');
     await job.promise;

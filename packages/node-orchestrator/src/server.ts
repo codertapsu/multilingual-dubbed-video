@@ -2554,7 +2554,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           continue;
         }
         try {
-          const series = seriesFor?.(item.source?.durationSec);
+          // The file's own length decides, as for POST /projects: the site's
+          // figure can be wrong (5:07:58 for a file of 4:06:21, BV1oSeb6cE7G,
+          // 2026-11-27). The site's only when the file cannot be read.
+          const fileMs = seriesFor ? (await media.probe(item.filePath).catch(() => undefined))?.durationMs : undefined;
+          const series = seriesFor?.(fileMs !== undefined ? fileMs / 1000 : item.source?.durationSec);
           const project = await orchestrator.createProject({
             name: projectNameFor(item),
             inputVideoPath: item.filePath,

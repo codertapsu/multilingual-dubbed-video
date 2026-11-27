@@ -14,6 +14,7 @@ import type { SeriesPlanPart } from '@videodubber/shared';
 
 import type { ChatOptions } from '../providers/translation/llmTranslationProvider.js';
 import type { CutWindow, PlannerLine } from './seriesPlanner.js';
+import { viEstablishedNamesRule } from '../providers/translation/viNames.js';
 
 export interface SeriesChat {
   chatComplete(system: string | undefined, user: string, signal?: AbortSignal, opts?: ChatOptions): Promise<string>;
@@ -99,6 +100,23 @@ export async function aiChooseCut(
   return Number.isInteger(n) && n >= 1 && n <= window.candidates.length ? window.candidates[n - 1]!.ms : undefined;
 }
 
+/** The summary's length asked for; a longer one is cut at a sentence or a word ({@link clipText}). */
+const SUMMARY_ASK = 250;
+
+/**
+ * `text` in at most `max` characters, cut where a sentence ends, else where a
+ * word ends (with "…"), never inside a word: 3 of Phong Thủy Thiên Sư's 29
+ * summaries ended mid-word at 400 characters (claude-dubber, 2026-11-27). Pure.
+ */
+export function clipText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const head = text.slice(0, max);
+  const sentence = Math.max(...['. ', '! ', '? ', '… ', '。', '！', '？'].map((end) => head.lastIndexOf(end)));
+  if (sentence >= max / 2) return head.slice(0, sentence + 1).trim();
+  const space = head.lastIndexOf(' ', max - 1);
+  return `${(space > 0 ? head.slice(0, space) : head.slice(0, max - 1)).replace(/[\s,;:–-]+$/u, '')}…`;
+}
+
 const TITLE_SYSTEM =
   'You name one part of a long video for viewers who will watch the parts in order. Reply with JSON only.';
 
@@ -112,6 +130,9 @@ export async function aiTitlePart(
     seriesName: string;
     sourceLanguageName: string;
     targetLanguageName: string;
+    /** The codes, for rules of one pair (established Vietnamese names for Chinese ones). */
+    targetLanguage?: string;
+    sourceLanguage?: string;
     names?: readonly string[];
     /** Who each speaker id is: the summary names who said what (one named the wrong brother, F3). */
     speakers?: ReadonlyMap<string, string>;
@@ -127,7 +148,8 @@ export async function aiTitlePart(
     `Video: "${context.seriesName}", part ${part.index} of ${count}. What is said in this part (${context.sourceLanguageName}):\n${transcript}\n\n` +
     (names.length > 0 ? `Write names exactly as the dub does: ${names.join('; ')}.\n` : '') +
     (context.speakers && context.speakers.size > 0 ? 'Each line says who speaks it: in the summary, name who says or does what only as the lines show it.\n' : '') +
-    `Write in ${context.targetLanguageName}: a short title for this part (at most 60 characters, no part number) and a one-sentence summary for a post caption. ` +
+    (/^vi\b/i.test(context.targetLanguage ?? '') && /^(zh|yue|cmn|auto)\b/i.test(context.sourceLanguage || 'auto') ? `${viEstablishedNamesRule()}\n` : '') +
+    `Write in ${context.targetLanguageName}: a short title for this part (at most 60 characters, no part number) and a one-sentence summary for a post caption (at most ${SUMMARY_ASK} characters). ` +
     'Reply {"title":"...","summary":"..."}.';
   const reply = await chat.chatComplete(TITLE_SYSTEM, user, signal, {
     jsonSchema: {
@@ -138,7 +160,7 @@ export async function aiTitlePart(
     maxTokens: 300,
   });
   const parsed = parseJsonReply(reply);
-  const title = typeof parsed?.['title'] === 'string' ? parsed['title'].trim().slice(0, 80) : '';
-  const summary = typeof parsed?.['summary'] === 'string' ? parsed['summary'].trim().slice(0, 400) : '';
+  const title = typeof parsed?.['title'] === 'string' ? clipText(parsed['title'].trim(), 80) : '';
+  const summary = typeof parsed?.['summary'] === 'string' ? clipText(parsed['summary'].trim(), 400) : '';
   return title ? { title, summary } : undefined;
 }

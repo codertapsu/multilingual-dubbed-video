@@ -61,3 +61,5 @@ def test_frames_read_line_by_line_and_joined():
     assert asked == [3]  # one batch for every line of every frame
     assert [(r.index, r.text, r.lines) for r in out] == [(10, "快 快跑 别松", 2), (11, "", 0), (12, "这到底是什么地方啊", 1)]
     assert out[0].confidence == 0.945 and out[1].confidence == 0.0
+    # Each line as read, top to bottom: the caller keeps the rows in the source's script.
+    assert [r.texts for r in out] == [["快 快跑", "别松"], [], ["这到底是什么地方啊"]]

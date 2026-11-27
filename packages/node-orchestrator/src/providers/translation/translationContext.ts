@@ -30,6 +30,7 @@ import { AppErrorException, type TranslationDocContext } from '@videodubber/shar
 import { extractJsonObject } from '../cloud/cloudHttp.js';
 import type { ChatOptions, PromptSegment } from './llmTranslationProvider.js';
 import { checkDubLine, wrongScripts } from './lineQuality.js';
+import { viEstablishedNamesRule } from './viNames.js';
 
 /** Kill-switch: VD_TRANSLATION_CONTEXT=off disables analysis + context headers. */
 export function translationContextEnabled(): boolean {
@@ -295,6 +296,7 @@ export function buildAnalysisPrompt(
           '  Vietnamese target from Chinese: write each name in its Hán-Việt (Sino-Vietnamese) reading, character by',
           '  character (山 → Sơn, 王 → Vương, 龙 → Long, 门 → Môn), with full Vietnamese diacritics, each syllable a',
           '  separate capitalized word. NEVER pinyin, never a loose English translation.',
+          `  ${viEstablishedNamesRule()}`,
         ]
       : vi
         ? ['  Vietnamese target: use the established Vietnamese form of each name (Hán-Việt for Chinese names).']

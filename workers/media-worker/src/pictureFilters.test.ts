@@ -294,6 +294,38 @@ describe('mergeAcrossSegments', () => {
     ]);
   });
 
+  it('gives the mark most files of a join show to a file where nothing was found (Phong Thủy Thiên Sư, 2026-11-27)', () => {
+    const topLeft = { ...mark, corner: 'top-left' as const, x: 0.02, confidence: 0.7 };
+    // P1 (padded into the join) missed the mark P2–P4 show: blurred in all four, no time.
+    expect(
+      mergeAcrossSegments([
+        { segment: seg(0, 100, 'P1.mp4'), marks: [] },
+        { segment: seg(100, 200, 'P2.mp4'), marks: [topLeft] },
+        { segment: seg(200, 300, 'P3.mp4'), marks: [topLeft] },
+        { segment: seg(300, 400, 'P4.mp4'), marks: [topLeft] },
+      ]),
+    ).toEqual([topLeft]);
+    // Half the files is not most: the one file with the mark keeps its time.
+    expect(
+      mergeAcrossSegments([
+        { segment: seg(0, 100, 'P1.mp4'), marks: [] },
+        { segment: seg(100, 200, 'P2.mp4'), marks: [topLeft] },
+      ]),
+    ).toEqual([{ ...topLeft, startMs: 100, endMs: 200, fileName: 'P2.mp4' }]);
+    // A file with a mark of its own elsewhere keeps only that one.
+    const own = { ...mark, corner: 'bottom-right' as const, y: 0.9 };
+    expect(
+      mergeAcrossSegments([
+        { segment: seg(0, 100, 'P1.mp4'), marks: [own] },
+        { segment: seg(100, 200, 'P2.mp4'), marks: [topLeft] },
+        { segment: seg(200, 300, 'P3.mp4'), marks: [topLeft] },
+      ]),
+    ).toEqual([
+      { ...own, startMs: 0, endMs: 100, fileName: 'P1.mp4' },
+      { ...topLeft, startMs: 100, endMs: 300, fileName: 'P2.mp4, P3.mp4' },
+    ]);
+  });
+
   it('one window: the marks as found, no time', () => {
     expect(mergeAcrossSegments([{ segment: seg(0, 100, 'a'), marks: [mark] }])).toEqual([mark]);
     expect(mergeAcrossSegments([])).toEqual([]);

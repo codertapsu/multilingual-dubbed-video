@@ -43,6 +43,33 @@ describe('speakerRows', () => {
     expect(rows[1]).toMatchObject({ gender: 'male', voiceId: 'm-default' });
     expect(rows[1]!.minutes).toBeCloseTo(1000 / 60_000);
   });
+
+  it("takes a gender set in the settings over detection's, its \"unknown\" above all (claude-dubber, 2026-11-27)", () => {
+    const detected = [
+      { speakerId: 'SPEAKER_07', speaker: 7, sec: 120, f0Hz: null, gender: 'unknown' as const, genderConfidence: 0, print: [] },
+      { speakerId: 'SPEAKER_08', speaker: 8, sec: 60, f0Hz: 120, gender: 'male' as const, genderConfidence: 0.7, print: [] },
+      { speakerId: 'SPEAKER_09', speaker: 9, sec: 30, f0Hz: 210, gender: 'female' as const, genderConfidence: 0.9, print: [] },
+    ];
+    const settings = { ttsVoiceId: 'project', speakerGenders: { SPEAKER_07: 'female', SPEAKER_08: 'female' } } as ProjectSettings;
+    const rows = speakerRows(
+      lines([
+        [0, 1000, '老公', 'SPEAKER_07'],
+        [1000, 2000, 'b', 'SPEAKER_08'],
+        [2000, 3000, 'c', 'SPEAKER_09'],
+      ]),
+      detected,
+      settings,
+    );
+    const byId = new Map(rows.map((r) => [r.speakerId, r]));
+    // Set by hand after detection said "unknown": she gets a woman's voice now.
+    expect(byId.get('SPEAKER_07')).toMatchObject({ gender: 'female' });
+    expect(byId.get('SPEAKER_07')!.genderConfidence).toBeUndefined();
+    // A correction wins, without detection's confidence for the other gender.
+    expect(byId.get('SPEAKER_08')).toMatchObject({ gender: 'female' });
+    expect(byId.get('SPEAKER_08')!.genderConfidence).toBeUndefined();
+    // Nothing set: detection's, with its confidence.
+    expect(byId.get('SPEAKER_09')).toMatchObject({ gender: 'female', genderConfidence: 0.9 });
+  });
 });
 
 describe('who a cast gives voices to (2026-11-27)', () => {

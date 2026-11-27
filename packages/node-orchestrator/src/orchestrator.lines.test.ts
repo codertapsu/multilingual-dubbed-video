@@ -122,6 +122,29 @@ describe('replacing the lines of a range (replace_lines)', () => {
     ).rejects.toMatchObject({ appError: { code: 'INVALID_EDIT' } });
   });
 
+  it("keeps a best-guess speaker mark on a line rewritten in place, unless the caller says otherwise (claude-dubber, 2026-11-27)", async () => {
+    const { orchestrator, id } = await setup();
+    const sourceJson = store.paths(id).sourceJson;
+    const lines = makeSegments([
+      [0, 2000, '竹子长成这么一大片 Bamboo grows into such a large area'],
+      [3000, 3900, '你好 Hello'],
+      [4000, 4900, '走吧 Go'],
+    ]).map((s, i) => ({ ...s, speakerId: 'SPEAKER_03', ...(i < 2 ? { speakerLowConfidence: true as const } : {}) }));
+    await fsp.writeFile(sourceJson, JSON.stringify({ segments: lines }), 'utf8');
+    // The English stripped, time and speaker kept, the mark not said (an agent cannot see it).
+    await orchestrator.replaceSourceLines(id, 0, 5000, [
+      { startMs: 0, endMs: 2000, text: '竹子长成这么一大片', speakerId: 'SPEAKER_03' },
+      { startMs: 3000, endMs: 3900, text: '你好', speakerId: 'SPEAKER_03', speakerLowConfidence: false },
+      { startMs: 4000, endMs: 4900, text: '走吧', speakerId: 'SPEAKER_03' },
+    ]);
+    const after = (JSON.parse(await fsp.readFile(sourceJson, 'utf8')) as { segments: TranscriptSegment[] }).segments;
+    // Kept where it was; dropped where the caller said so; never added where there was none.
+    expect(after.map((s) => s.speakerLowConfidence === true)).toEqual([true, false, false]);
+    // A line moved or given another speaker is a new decision: no mark carried.
+    await orchestrator.replaceSourceLines(id, 0, 2500, [{ startMs: 500, endMs: 2000, text: '竹子', speakerId: 'SPEAKER_03' }]);
+    expect((JSON.parse(await fsp.readFile(sourceJson, 'utf8')) as { segments: TranscriptSegment[] }).segments[0]!.speakerLowConfidence).toBeUndefined();
+  });
+
   it('refuses a project that does not exist, and writes nothing for it', async () => {
     const { orchestrator } = await setup();
     await expect(orchestrator.replaceSourceLines('proj_missing', 0, 1000, [])).rejects.toThrow(/not found/i);

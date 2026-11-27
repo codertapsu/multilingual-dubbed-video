@@ -62,6 +62,16 @@ describe('the subtitle reader (ocr-rapid)', () => {
     ]);
   });
 
+  it('keeps each line of a frame as read, for bilingual subtitles (2026-11-27)', () => {
+    expect(
+      cleanReads(
+        [{ index: 0, text: '竹子长成这么一大片 Bamboo grows', confidence: 0.9, lines: 2, texts: ['竹子长成这么一大片', ' Bamboo grows ', 7, ''] }],
+        0,
+        1,
+      ),
+    ).toEqual([{ index: 0, text: '竹子长成这么一大片 Bamboo grows', confidence: 0.9, lines: 2, texts: ['竹子长成这么一大片', 'Bamboo grows'] }]);
+  });
+
   it('gives a slice time for the model to load and the machine to be slow', () => {
     expect(sliceTimeoutMs(5)).toBe(120_000);
     expect(sliceTimeoutMs(300)).toBe(600_000);

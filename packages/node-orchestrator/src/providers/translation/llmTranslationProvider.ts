@@ -238,6 +238,7 @@ export function planTranslationBatches(
 // The spoken-length budget moved to @videodubber/shared so the editor and the
 // MCP server count exactly what these prompts count; re-exported for callers.
 import { budgetUnitLabel, speechBudget, type BudgetUnit } from '@videodubber/shared';
+import { viEstablishedNamesRule } from './viNames.js';
 export { budgetUnitLabel, speechBudget };
 export type { BudgetUnit };
 
@@ -318,6 +319,7 @@ export function buildTranslationPrompt(
     `- ${ASR_SOURCE_NOTE}`,
     '- Preserve names, numbers, and the tone of the original.',
     `- EVERY segment must be rendered in ${tName} — never return a line unchanged and never leave source-script characters in the output. Render names with the target language's convention (e.g. Chinese names into Sino-Vietnamese when translating into Vietnamese: 唐三藏 → Đường Tam Tạng — never pinyin like "Tang Sanzang"). When the context lists a name as "target form (source form)", use ONLY the target form in the spoken line — never copy the parenthesized source form.`,
+    ...(/^vi\b/i.test(targetLanguage) ? [`- ${viEstablishedNamesRule()}`] : []),
     '- Keep pronouns and terms of address consistent with the context and across ALL segments: pick the forms the speaker relationships call for (e.g. Vietnamese xưng hô — thầy/cô, anh/chị, em, bạn, con — not a generic default) and never switch mid-conversation.',
     ...(hasSpeakers
       ? [

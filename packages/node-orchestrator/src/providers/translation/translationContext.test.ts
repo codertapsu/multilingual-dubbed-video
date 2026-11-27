@@ -69,6 +69,18 @@ describe('analysis prompt + reply', () => {
     expect(prompt).toContain('"glossary"');
   });
 
+  it('names places and figures as Vietnamese viewers know them, not by a misleading literal reading (2026-11-27)', () => {
+    // The character sheet, the translation and the planner all carry the rule, from Chinese into Vietnamese only.
+    const sheet = buildAnalysisPrompt('zh-CN', 'vi-VN', '东洋人来了');
+    expect(sheet).toContain('东洋 → Nhật Bản (or Đông Doanh), never "Đông Dương" (Indochina)');
+    expect(sheet).toContain('香江 → Hồng Kông, never "Hương Giang"');
+    expect(sheet).toContain('妈祖 → Ma Tổ');
+    expect(buildAnalysisPrompt('zh-CN', 'en', 'sample')).not.toContain('Đông Dương');
+    const lines = [seg('seg_0001', 0, 3000, '去香江')];
+    expect(buildTranslationPrompt('zh', 'vi', lines)).toContain('established Vietnamese name');
+    expect(buildTranslationPrompt('zh', 'en', lines)).not.toContain('established Vietnamese name');
+  });
+
   it('falls back to a generic register plan for other targets', () => {
     const prompt = buildAnalysisPrompt('en', 'de', 'sample');
     expect(prompt).not.toContain('xưng hô');

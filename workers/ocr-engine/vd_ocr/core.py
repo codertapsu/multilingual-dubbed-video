@@ -16,7 +16,7 @@ Pure numpy here; the recogniser is passed in, so the tests run without a model.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
 import numpy as np
@@ -110,6 +110,10 @@ class FrameText:
     text: str
     confidence: float
     lines: int
+    # Each line read, top to bottom. A bilingual subtitle is two lines in two
+    # scripts (Chinese above English); the caller keeps the source's own, as
+    # "text" joined both into 3,576 lines of one 17-hour video (2026-11-27).
+    texts: list[str] = field(default_factory=list)
 
 
 def read_frames(frames: np.ndarray, recognise: Recognise, first_index: int = 0) -> list[FrameText]:
@@ -128,5 +132,13 @@ def read_frames(frames: np.ndarray, recognise: Recognise, first_index: int = 0) 
     for i in range(frames.shape[0]):
         got = texts.get(i, [])
         confidence = sum(s for _, s in got) / len(got) if got else 0.0
-        out.append(FrameText(index=first_index + i, text=" ".join(t for t, _ in got), confidence=round(confidence, 4), lines=len(got)))
+        out.append(
+            FrameText(
+                index=first_index + i,
+                text=" ".join(t for t, _ in got),
+                confidence=round(confidence, 4),
+                lines=len(got),
+                texts=[t for t, _ in got],
+            )
+        )
     return out

@@ -46,6 +46,14 @@ export interface CastSpeaker {
    * outranked every woman (claude-dubber, 2026-11-27).
    */
   voiceOver?: boolean;
+  /**
+   * A character the character sheet names (castGroups.ts). When the sheet
+   * names characters of a gender, the user's lead voices and clones go to
+   * them only: an unnamed id can be many minor voices in one cluster
+   * (Phong Thủy Thiên Sư's SPEAKER_36, 18.4 min of soldiers and commanders,
+   * took lead voice 2 from the named Tổ Sư Gia; claude-dubber, 2026-11-27).
+   */
+  named?: boolean;
 }
 
 export interface CastVoice {
@@ -379,13 +387,23 @@ export function proposeCast(speakers: readonly CastSpeaker[], voices: readonly C
       rest = rest.filter((s) => !taken.includes(s));
       return taken;
     };
-    const character = (s: CastSpeaker): boolean => s.voiceOver !== true;
+    // The user's own voices (leads, clones) go to characters: never a
+    // narrator, and when the sheet names characters of this gender, only them.
+    const sheetNames = mine.some((s) => s.named === true);
+    const character = (s: CastSpeaker): boolean => s.voiceOver !== true && (!sheetNames || s.named === true);
     const mains: CastAssignment[] = [];
     const leads = take(leadVoices.length, character);
+    const men = gender === 'male' ? 'men' : 'women';
     for (const [i, who] of leads.entries()) {
       const v = leadVoices[i]!;
       mains.push({ speakerId: who.speakerId, voiceId: v.voiceId, voiceName: v.name, by: 'lead' });
-      notes.push(`"${v.name}", your lead voice ${i + 1} for ${gender === 'male' ? 'men' : 'women'}, speaks for ${who.speakerId}.`);
+      notes.push(`"${v.name}", your lead voice ${i + 1} for ${men}, speaks for ${who.speakerId}.`);
+    }
+    if (sheetNames && leads.length < leadVoices.length) {
+      const unused = leadVoices.slice(leads.length).map((v) => `"${v.name}"`);
+      notes.push(
+        `${unused.join(', ')}: not used, as the character sheet names no more ${men} to give a lead voice. Speakers it does not name are given built-in voices; name a character in the sheet (one entry per speaker id) to give it one.`,
+      );
     }
     const cloneTakers = take(clones.length, character);
     if (cloneTakers.length > 0) mains.push(...pair(cloneTakers, clones.slice(0, cloneTakers.length), notes, gender));

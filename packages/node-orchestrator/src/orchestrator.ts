@@ -759,10 +759,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // change underneath would make that classification — and therefore the
     // queue's ordering decisions — silently wrong.
     if (this.queued.has(projectId) && !(opts.whileQueued === true && changesOnlyMixAndRender(patch))) {
-      throw new AppErrorException(
-        'RUN_IN_PROGRESS',
-        'This project is waiting in the dubbing queue. Cancel it to change settings.',
-      );
+      throw new AppErrorException('RUN_IN_PROGRESS', 'This project is waiting in the dubbing queue: only its mix and render settings can change there.', {
+        remediation:
+          'What changes only the mix and the render (subtitles and their band, the picture boxes, the watermark blur, logo and greeting, levels, render quality) is taken where it waits. For anything else, pause it (it keeps its work), change the setting, then start it again.',
+      });
     }
     const project = await this.deps.store.getProject(projectId);
     const next: ProjectSettings = { ...project.settings };
@@ -1463,7 +1463,8 @@ export class LocalJobOrchestrator implements JobOrchestrator {
         text: String(l.text ?? '').trim(),
         speakerId: l.speakerId,
         // A re-transcription's marks: a carried best-guess speaker, a loop it could not check.
-        guess: l.speakerLowConfidence === true,
+        // Not said: the line keeps its old one when rewritten in place (below).
+        guess: typeof l.speakerLowConfidence === 'boolean' ? l.speakerLowConfidence : undefined,
         loop: l.loopSuspect === true,
       }))
       .filter((l) => l.text && l.endMs > l.startMs && l.startMs >= fromMs - 1 && l.endMs <= toMs + 1)
@@ -1480,13 +1481,23 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       const before = current.filter((s) => !inside(s) && s.endMs <= fromMs);
       const after = current.filter((s) => !inside(s) && s.startMs >= toMs);
       const replaced = current.length - before.length - after.length;
+      // A line rewritten in place (its time and speaker as they were) keeps
+      // its best-guess speaker mark unless the caller says otherwise: an
+      // agent's text fix over 3,576 lines took 161 of 821 marks away, as it
+      // could not see them (claude-dubber, 2026-11-27).
+      const old = current.filter(inside);
+      const guessed = (l: (typeof fresh)[number]): boolean =>
+        l.guess ??
+        old.some(
+          (s) => s.speakerLowConfidence === true && s.speakerId === l.speakerId && Math.abs(s.startMs - l.startMs) <= 50 && Math.abs(s.endMs - l.endMs) <= 50,
+        );
       const made: TranscriptSegment[] = fresh.map((l) => ({
         id: '',
         index: 0,
         startMs: l.startMs,
         endMs: l.endMs,
         sourceText: l.text,
-        ...(l.speakerId && /^SPEAKER_\d+$/.test(l.speakerId) ? { speakerId: l.speakerId, ...(l.guess ? { speakerLowConfidence: true as const } : {}) } : {}),
+        ...(l.speakerId && /^SPEAKER_\d+$/.test(l.speakerId) ? { speakerId: l.speakerId, ...(guessed(l) ? { speakerLowConfidence: true as const } : {}) } : {}),
         ...(l.loop ? { loopSuspect: true as const } : {}),
       }));
       const all = [...before, ...made, ...after].map((s, i) => ({ ...s, index: i, id: `seg_${String(i + 1).padStart(4, '0')}` }));

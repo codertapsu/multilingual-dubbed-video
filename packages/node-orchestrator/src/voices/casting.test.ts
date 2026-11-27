@@ -86,6 +86,37 @@ describe('proposeCast', () => {
     expect(without.notes.some((n) => n.startsWith('Lead voice vp_other_engine is not one this project can use'))).toBe(true);
   });
 
+  it('gives lead voices and clones to the characters the sheet names, not an unnamed cluster heard more (Phong Thủy Thiên Sư, 2026-11-27)', () => {
+    const speakers = [
+      // The hero: three ids the sheet names, 79.6 min together.
+      { ...speaker('SPEAKER_15', 79.6, 'male', 115), named: true },
+      // A cluster of many soldiers and commanders the sheet does not name.
+      speaker('SPEAKER_36', 18.4, 'male', 125),
+      // Tổ Sư Gia, named: SPEAKER_63 and 13 together.
+      { ...speaker('SPEAKER_63', 13.3, 'male', 105), named: true },
+      speaker('SPEAKER_70', 5, 'male', 140),
+    ];
+    const voices = [profile('vp_my_voice', 'male', 116), profile('vp_dang_quan', 'male', 153), profile('vp_thien', 'male', 140), preset('builtin-m', 'male', 120), preset('builtin-n', 'male', 130)];
+    const cast = proposeCast(speakers, voices, { leads: { male: ['vp_my_voice', 'vp_dang_quan'] } });
+    const by = Object.fromEntries(cast.assignments.map((a) => [a.speakerId, [a.voiceId, a.by]]));
+    expect(by['SPEAKER_15']).toEqual(['vp_my_voice', 'lead']);
+    expect(by['SPEAKER_63']).toEqual(['vp_dang_quan', 'lead']);
+    // Neither the cluster nor the minor speaker takes the user's clone (vp_thien): built-in voices.
+    expect(['builtin-m', 'builtin-n']).toContain(by['SPEAKER_36']![0]);
+    expect(by['SPEAKER_70']![0]).not.toBe('vp_thien');
+    // More lead voices than named men: the rest is not given to unnamed speakers, and said.
+    const more = proposeCast(speakers, [...voices, profile('vp_extra', 'male', 120)], { leads: { male: ['vp_my_voice', 'vp_dang_quan', 'vp_extra'] } });
+    expect(more.assignments.find((a) => a.voiceId === 'vp_extra')).toBeUndefined();
+    expect(more.notes.some((n) => n.startsWith('"vp_extra": not used, as the character sheet names no more men'))).toBe(true);
+    // Without a sheet naming anyone, talk time decides, as before.
+    const unnamed = proposeCast(
+      speakers.map(({ named: _n, ...s }) => s),
+      voices,
+      { leads: { male: ['vp_my_voice', 'vp_dang_quan'] } },
+    );
+    expect(unnamed.assignments.find((a) => a.speakerId === 'SPEAKER_36')).toMatchObject({ voiceId: 'vp_dang_quan', by: 'lead' });
+  });
+
   it('gives a voice named for a speaker by hand to that speaker alone (Săn Yêu, 2026-11-27)', () => {
     const speakers = [speaker('SPEAKER_02', 40, 'female', 230), speaker('SPEAKER_15', 35, 'female', 205)];
     const voices = [profile('vp_ha_my', 'female', 200), profile('vp_vy', 'female', 240)];

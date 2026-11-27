@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { enoughRead, linesFromSubtitles, readingTimeOf } from './burnedInTranscript.js';
+import { cjkSubtitles, enoughRead, linesFromSubtitles, readingTimeOf, sourceText } from './burnedInTranscript.js';
 
 const ev = (startMs: number, endMs: number) => ({ startMs, endMs });
 const said = (text: string, confidence = 0.95) => ({ text, confidence });
@@ -39,5 +39,28 @@ describe('the video\'s own subtitles as its transcript (claude-dubber A3)', () =
     expect(enoughRead(lines(9), 10)).toBe(false); // fewer than ten lines
     expect(enoughRead(lines(29), 100)).toBe(false); // under 30 % of the subtitles
     expect(enoughRead(lines(30), 100)).toBe(true);
+  });
+
+  it("keeps a bilingual subtitle's own rows: Chinese above English read as one line (Phong Thủy Thiên Sư, 2026-11-27)", () => {
+    const both = { text: '竹子长成这么一大片 Bamboo grows into such a large area', confidence: 0.93, texts: ['竹子长成这么一大片', 'Bamboo grows into such a large area'] };
+    const out = linesFromSubtitles([ev(1000, 2500), ev(3000, 4200), ev(5000, 6000)], [both, said('快 快跑'), { ...said('这是 iPhone 15'), texts: ['这是 iPhone 15'] }], {
+      sourceLanguage: 'zh',
+    });
+    expect(out.lines.map((l) => l.sourceText)).toEqual(['竹子长成这么一大片', '快 快跑', '这是 iPhone 15']);
+    expect(out.translationRows).toBe(1);
+    // English above Chinese is the same; two Chinese rows (a two-line subtitle) stay together.
+    expect(sourceText({ text: 'x', texts: ['Go now', '快走'] }, true)).toEqual({ text: '快走', dropped: true });
+    expect(sourceText({ text: '大家小点声 后面有东西', texts: ['大家小点声', '后面有东西'] }, true)).toEqual({ text: '大家小点声 后面有东西', dropped: false });
+    // An English source keeps its rows, and a read saved without them is as it was.
+    expect(sourceText(both, false).text).toBe(both.text);
+    expect(sourceText({ text: both.text }, true).text).toBe(both.text);
+  });
+
+  it('knows Chinese, Japanese and Korean subtitles from the source language, or from what was read when it is "auto"', () => {
+    expect(cjkSubtitles([], 'zh-CN')).toBe(true);
+    expect(cjkSubtitles([], 'ja')).toBe(true);
+    expect(cjkSubtitles([], 'en')).toBe(false);
+    expect(cjkSubtitles([said('快跑'), said('别松'), said('OK')], 'auto')).toBe(true);
+    expect(cjkSubtitles([said('Run'), said('Now'), said('快跑')], undefined)).toBe(false);
   });
 });

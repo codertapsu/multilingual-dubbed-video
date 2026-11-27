@@ -86,6 +86,6 @@ def read(req: ReadRequest) -> dict:
 
     results = read_frames(np.asarray(frames), recognise, first_index=req.offset)
     return {
-        "results": [{"index": r.index, "text": r.text, "confidence": r.confidence, "lines": r.lines} for r in results],
+        "results": [{"index": r.index, "text": r.text, "confidence": r.confidence, "lines": r.lines, "texts": r.texts} for r in results],
         "processMs": round((time.perf_counter() - started) * 1000),
     }

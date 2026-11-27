@@ -62,7 +62,7 @@ export type UndoPlan =
    * clips of those lines (a song line has none), which a patch cannot.
    */
   | { kind: 'patches'; patches: SegmentPatch[]; songs?: { song: boolean; lineIds: string[] }[] }
-  | { kind: 'range'; fromMs: number; toMs: number; lines: { startMs: number; endMs: number; text: string; speakerId?: string }[] }
+  | { kind: 'range'; fromMs: number; toMs: number; lines: RangeLine[] }
   /** The lines already read as before the change: nothing to write. */
   | { kind: 'nothing' }
   | { kind: 'refused'; reason: string; changes: UndoChange[] };
@@ -189,11 +189,15 @@ function planRange(
     kind: 'range',
     fromMs,
     toMs,
+    // Exactly as they were, their marks too: said either way, so the
+    // replacement does not carry a mark over from the lines it replaces.
     lines: [...entry.before].sort(byStart).map((l) => ({
       startMs: l.startMs,
       endMs: l.endMs,
       text: l.sourceText,
       ...(l.speakerId ? { speakerId: l.speakerId } : {}),
+      speakerLowConfidence: l.speakerLowConfidence === true,
+      ...(l.loopSuspect ? { loopSuspect: true } : {}),
     })),
   };
 }
@@ -277,6 +281,16 @@ export class UndoRefusedError extends AppErrorException {
   }
 }
 
+/** A line an undo puts back in a range: its marks said either way (speakerLowConfidence). */
+export interface RangeLine {
+  startMs: number;
+  endMs: number;
+  text: string;
+  speakerId?: string;
+  speakerLowConfidence?: boolean;
+  loopSuspect?: boolean;
+}
+
 /** The writes an undo goes through (the orchestrator's own; tests inject fakes). */
 export interface UndoDeps {
   /** A project's transcript and its translated lines (absent until translated). */
@@ -285,7 +299,7 @@ export interface UndoDeps {
     projectId: string,
     fromMs: number,
     toMs: number,
-    lines: { startMs: number; endMs: number; text: string; speakerId?: string }[],
+    lines: RangeLine[],
     opts: { summary: string; summaryKey?: string; summaryParams?: Record<string, string | number>; undoOf: string; precondition: (current: readonly TranscriptSegment[]) => void },
   ): Promise<unknown>;
   patchSegments(

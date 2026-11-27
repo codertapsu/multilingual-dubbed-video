@@ -37,6 +37,7 @@ def test_read_in_slices(tmp_path, client):
     frames.tofile(path)
     first = c.post("/read", json={"framesPath": str(path), "width": 600, "height": 60, "offset": 0, "count": 2}).json()
     assert [(r["index"], r["text"]) for r in first["results"]] == [(0, "第0句"), (1, "")]
+    assert [r["texts"] for r in first["results"]] == [["第0句"], []]
     rest = c.post("/read", json={"framesPath": str(path), "width": 600, "height": 60, "offset": 2}).json()
     assert [(r["index"], r["text"]) for r in rest["results"]] == [(2, "第0句")]
     assert engine.calls == 2

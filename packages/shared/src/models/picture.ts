@@ -113,9 +113,17 @@ export interface PictureDetection {
 
 /** Where an advert tail starts, and its block (PictureDetection.adTail). */
 export interface AdTailFinding {
+  /** Where its banner appears. */
   fromMs: number;
   box: { x: number; y: number; w: number; h: number };
   confidence: number;
+  /**
+   * Where the advert's VOICE starts, when before its banner: lines saying its
+   * words ("点击评论区蓝色链接") just before it. Săn Yêu's began at 50:46.7, its
+   * banner at 50:50.75, so the last part would have dubbed it (claude-dubber,
+   * 2026-11-27). Set by speech-to-text; the dub stops here.
+   */
+  speechFromMs?: number;
 }
 
 /**

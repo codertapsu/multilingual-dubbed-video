@@ -212,6 +212,8 @@ export interface DiarizationCache {
   /** The linking rules of a long audio's parts (DiarizationService.linkKey); absent: the first ones. */
   link?: string;
   numSpeakers?: number;
+  /** Detected only up to here (DiarizeOptions.untilMs, an advert tail); absent: the whole audio. */
+  untilMs?: number;
   turns: SpeakerTurn[];
   speakers: CachedSpeaker[];
 }
@@ -260,13 +262,18 @@ export async function cachedDiarization(
   const stat = await fsp.stat(audioPath);
   const audio = { sizeBytes: stat.size, mtimeMs: Math.round(stat.mtimeMs) };
   const saved = await readDiarizationCache(cachePath);
+  // A detection that went at least as far as asked serves (the whole audio
+  // serves a dub that stops at an advert tail; one that stopped there never
+  // serves a dub of the whole video).
+  const reaches = (saved?.untilMs ?? Number.POSITIVE_INFINITY) >= (opts.untilMs ?? Number.POSITIVE_INFINITY);
   if (
     saved &&
     saved.audio.sizeBytes === audio.sizeBytes &&
     saved.audio.mtimeMs === audio.mtimeMs &&
     saved.model === service.modelKey &&
     saved.link === service.linkKey &&
-    (saved.numSpeakers ?? 0) === (opts.numSpeakers ?? 0)
+    (saved.numSpeakers ?? 0) === (opts.numSpeakers ?? 0) &&
+    reaches
   ) {
     return { turns: saved.turns, speakers: saved.speakers.map(({ speakerId: _id, ...voice }) => voice) };
   }
@@ -279,6 +286,7 @@ export async function cachedDiarization(
     model: service.modelKey,
     ...(service.linkKey ? { link: service.linkKey } : {}),
     ...(opts.numSpeakers ? { numSpeakers: opts.numSpeakers } : {}),
+    ...(opts.untilMs !== undefined ? { untilMs: opts.untilMs } : {}),
     turns: result.turns,
     speakers: result.speakers,
   } satisfies DiarizationCache);
@@ -326,6 +334,8 @@ export interface SpeakerDetectionInput {
   numSpeakers?: number;
   /** Parts of the audio done, of the total. */
   onProgress?: (done: number, total: number) => void;
+  /** Detect only up to here: an advert tail starts there (DiarizeOptions.untilMs). */
+  untilMs?: number;
   signal?: AbortSignal;
 }
 
@@ -348,6 +358,7 @@ export async function detectLineSpeakers(input: SpeakerDetectionInput): Promise<
     ...(input.numSpeakers ? { numSpeakers: input.numSpeakers } : {}),
     ...(input.onProgress ? { onProgress: input.onProgress } : {}),
     ...(input.checkpointDir ? { checkpointDir: input.checkpointDir } : {}),
+    ...(input.untilMs !== undefined ? { untilMs: input.untilMs } : {}),
   };
   const found = await cachedDiarization(input.service, input.audioPath, input.cachePath, opts, input.signal);
   if (!found) return null;

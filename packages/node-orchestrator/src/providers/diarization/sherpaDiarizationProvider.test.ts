@@ -239,6 +239,20 @@ describe('SherpaDiarizationProvider', () => {
     expect(calls.filter((c) => c.url.endsWith('/diarize-chunk'))).toHaveLength(3);
   });
 
+  it('stops where an advert tail begins, reusing the parts a longer run saved (2026-11-27)', async () => {
+    const calls = fakeEngine();
+    const audio = await wav('long.wav', 25);
+    const parts = path.join(tmp, 'parts');
+    await provider().diarize(audio, { checkpointDir: parts });
+    expect(calls.filter((c) => c.url.endsWith('/diarize-chunk'))).toHaveLength(3);
+    // The dub ends at 12:00: only the parts up to there, the first one saved already.
+    calls.length = 0;
+    const progress: [number, number][] = [];
+    await provider().diarize(audio, { checkpointDir: parts, untilMs: 12 * 60_000, onProgress: (d, t) => progress.push([d, t]) });
+    expect(calls.filter((c) => c.url.endsWith('/diarize-chunk')).map((c) => [c.body.startMs, c.body.endMs])).toEqual([[600_000, 720_000]]);
+    expect(progress.at(-1)).toEqual([2, 2]);
+  });
+
   it('stops between parts when paused, and resumes at the first part not saved', async () => {
     const calls = fakeEngine();
     const audio = await wav('long.wav', 30);

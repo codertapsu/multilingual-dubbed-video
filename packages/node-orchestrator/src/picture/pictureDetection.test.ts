@@ -8,7 +8,16 @@ import { ActivityRegistry } from '../activity/registry.js';
 import { toHttpError } from '../httpErrors.js';
 import { createProjectInput, makeTempDir, writeDummyVideo } from '../test/fixtures.js';
 import { ProjectStore, writeJsonAtomic } from '../workspace/projectStore.js';
-import { detectionSummary, pictureDirOf, PictureDetectionService, projectDetectInput, type PictureDetectInput, type PictureDetector } from './pictureDetection.js';
+import {
+  adTailFrom,
+  advertVoiceStart,
+  detectionSummary,
+  pictureDirOf,
+  PictureDetectionService,
+  projectDetectInput,
+  type PictureDetectInput,
+  type PictureDetector,
+} from './pictureDetection.js';
 import { registerPictureRoutes } from './pictureRoutes.js';
 import { sanitizeBlurRegions, sanitizeCoverFields, withoutClearedCoverFields } from './pictureSanitize.js';
 
@@ -181,6 +190,35 @@ describe('PictureDetectionService', () => {
     const q = await project();
     detector.fail = new Error('ffmpeg exited with code 1');
     await expect(service.detectNow(q.id)).rejects.toThrow(/ffmpeg exited/);
+  });
+
+  it("finds where an advert's voice starts before its banner: the lines just before it that say its words", () => {
+    const line = (startMs: number, sourceText: string) => ({ startMs, sourceText });
+    const banner = 3_050_750;
+    // Săn Yêu: "个个个点击评论区蓝色链接" at 50:46.68, the banner at 50:50.75 (claude-dubber, 2026-11-27).
+    const lines = [line(3_030_000, '你走吧'), line(3_040_000, '我们回家'), line(3_046_680, '个个个点击评论区蓝色链接')];
+    expect(advertVoiceStart(lines, banner)).toBe(3_046_680);
+    // Several advert lines in a row, each within 20 s of the next: from the first; dialogue between them ends the run.
+    expect(advertVoiceStart([lines[0]!, line(3_035_000, '点击解锁0元全集福利'), lines[2]!], banner)).toBe(3_035_000);
+    expect(advertVoiceStart([line(3_035_000, '点击解锁0元全集福利'), lines[1]!, lines[2]!], banner)).toBe(3_046_680);
+    // Dialogue right before the banner, or advert words long before it: nothing moves.
+    expect(advertVoiceStart(lines.slice(0, 2), banner)).toBeUndefined();
+    expect(advertVoiceStart([line(3_000_000, '可免费观看完整版')], banner)).toBeUndefined();
+    // Traditional characters too; lines past the banner are not looked at.
+    expect(advertVoiceStart([line(3_049_000, '點擊評論區藍色鏈接'), line(3_051_000, '点击评论区')], banner)).toBe(3_049_000);
+  });
+
+  it("ends a project transcribed before the advert's voice was recorded where its transcript says it (Săn Yêu on 0.21.0)", async () => {
+    const p = await project();
+    const tail = { fromMs: 3_050_750, box: { x: 0, y: 0.83, w: 1, h: 0.07 }, confidence: 0.9 };
+    await writeJsonAtomic(path.join(pictureDirOf(p), 'detection.json'), found({ adTail: tail, tailChecked: true }));
+    const lines = [{ startMs: 3_040_000, sourceText: '我们回家' }, { startMs: 3_046_680, sourceText: '个个个点击评论区蓝色链接' }];
+    expect(await adTailFrom(p)).toBe(3_050_750);
+    expect(await adTailFrom(p, lines)).toBe(3_046_680);
+    // What speech-to-text recorded wins; a project that dubs the whole video has no end.
+    await writeJsonAtomic(path.join(pictureDirOf(p), 'detection.json'), found({ adTail: { ...tail, speechFromMs: 3_045_000 }, tailChecked: true }));
+    expect(await adTailFrom(p, lines)).toBe(3_045_000);
+    expect(await adTailFrom({ ...p, settings: { ...p.settings, stopAtAdTail: false } }, lines)).toBeUndefined();
   });
 
   it('looks again, once, at a result saved before advert tails were looked for, when speech-to-text asks (2026-11-27)', async () => {

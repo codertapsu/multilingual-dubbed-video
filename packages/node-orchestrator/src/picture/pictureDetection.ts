@@ -155,11 +155,50 @@ export async function savedDetection(project: Pick<Project, 'workspaceDir'>): Pr
  * its picture detection found (media-worker adTail.ts), unless the project
  * dubs the whole video (`stopAtAdTail: false`). Speech-to-text stopped there
  * (runner adTailStart); a series ends there, and a cast counts no line past it.
+ *
+ * Its voice may start before its banner: speech-to-text records where
+ * (speechFromMs); for a project transcribed before it did (0.21.0, Săn Yêu),
+ * `lines` lets the advert's words be found in its transcript.
  */
-export async function adTailFrom(project: Pick<Project, 'workspaceDir' | 'settings'>): Promise<number | undefined> {
+export async function adTailFrom(
+  project: Pick<Project, 'workspaceDir' | 'settings'>,
+  lines?: readonly Pick<TranscriptSegment, 'startMs' | 'sourceText'>[],
+): Promise<number | undefined> {
   if (project.settings.stopAtAdTail === false) return undefined;
   const tail = (await savedDetection(project))?.adTail;
-  return tail && tail.fromMs > 0 ? tail.fromMs : undefined;
+  if (!tail || tail.fromMs <= 0) return undefined;
+  const voice = tail.speechFromMs ?? (lines ? advertVoiceStart(lines, tail.fromMs) : undefined);
+  return voice !== undefined && voice > 0 && voice < tail.fromMs ? voice : tail.fromMs;
+}
+
+/** The advert's own words ("click the blue link in the comments to watch the full version for free"), simplified and traditional. */
+const ADVERT_WORDS = /点击评论区|點擊評論區|评论区.{0,4}链接|評論區.{0,4}鏈接|蓝色链接|藍色鏈接|免费观看完整版|免費觀看完整版|观看完整版|觀看完整版|全集福利|点击解锁|點擊解鎖/;
+/** How far before the banner (or the advert line found last) a line saying its words still belongs to it. */
+const ADVERT_VOICE_LEAD_MS = 20_000;
+
+/**
+ * Where the advert's voice starts, when before its banner at `bannerFromMs`:
+ * the first of the lines just before it (each within 20 s of the next) that
+ * say the advert's words; undefined when none does. Pure.
+ */
+export function advertVoiceStart(lines: readonly Pick<TranscriptSegment, 'startMs' | 'sourceText'>[], bannerFromMs: number): number | undefined {
+  const before = lines.filter((l) => l.startMs < bannerFromMs).sort((a, b) => b.startMs - a.startMs);
+  let edge = bannerFromMs;
+  let found: number | undefined;
+  for (const line of before) {
+    if (edge - line.startMs > ADVERT_VOICE_LEAD_MS) break;
+    if (!ADVERT_WORDS.test(line.sourceText ?? '')) break;
+    found = line.startMs;
+    edge = line.startMs;
+  }
+  return found;
+}
+
+/** Record on the saved detection where the advert's voice starts (AdTailFinding.speechFromMs). */
+export async function recordAdvertVoice(project: Pick<Project, 'workspaceDir'>, speechFromMs: number): Promise<void> {
+  const saved = await savedDetection(project);
+  if (!saved?.adTail || saved.adTail.speechFromMs === speechFromMs) return;
+  await writeJsonAtomic(path.join(pictureDirOf(project), DETECTION_FILE), { ...saved, adTail: { ...saved.adTail, speechFromMs } } satisfies PictureDetection);
 }
 
 /** A short sentence of what was found, for the activity list. Pure. */

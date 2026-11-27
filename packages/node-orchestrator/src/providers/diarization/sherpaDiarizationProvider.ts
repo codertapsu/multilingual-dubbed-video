@@ -76,6 +76,13 @@ export interface DiarizeOptions {
   onProgress?: (done: number, total: number) => void;
   /** Where each finished part of long audio is saved (audio/diarization-chunks). */
   checkpointDir?: string;
+  /**
+   * Detect only up to here (ms): an advert tail starts there, whose lines
+   * speech-to-text never keeps. Săn Yêu's 3:26 went through all 21 ten-minute
+   * parts for a dub of its first 51 minutes (2026-11-27). The parts are the
+   * same windows from the start, so those saved by a longer run are reused.
+   */
+  untilMs?: number;
 }
 
 /** The voice of one short recording (POST /embed). */
@@ -348,7 +355,9 @@ export class SherpaDiarizationProvider implements DiarizationService {
     const stat = await fsp.stat(audioPath).catch(() => undefined);
     const durationMs = wavDurationMs(stat?.size ?? 0);
     if (!stat || durationMs < ONE_PASS_MAX_MS) return this.onePass(engineUrl, audioPath, stat?.size ?? 0, opts, signal);
-    return this.inParts(engineUrl, audioPath, { sizeBytes: stat.size, mtimeMs: Math.round(stat.mtimeMs) }, durationMs, opts, signal);
+    // Long audio is detected in parts, so it can stop where the dub does.
+    const upTo = opts.untilMs !== undefined && opts.untilMs > 0 ? Math.min(durationMs, opts.untilMs) : durationMs;
+    return this.inParts(engineUrl, audioPath, { sizeBytes: stat.size, mtimeMs: Math.round(stat.mtimeMs) }, upTo, opts, signal);
   }
 
   async embed(audioPath: string, opts: { startMs?: number; endMs?: number } = {}, signal?: AbortSignal): Promise<VoiceEmbedding | null> {

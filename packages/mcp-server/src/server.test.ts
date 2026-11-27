@@ -807,6 +807,28 @@ describe('VideoDubber MCP server', () => {
     expect(r.text).toContain('downloadIds ["dl_7"]');
   });
 
+  it('download_videos asks for only the parts named in pages, one download each (2026-11-27)', async () => {
+    const dl = (id: string, page: number) => ({ id, input: 'BV1xx411c7mD', page, state: 'queued', percent: null });
+    fake.routes.set('POST /downloads', (_q, body) => ({
+      added: (body as { items: { page?: number }[] }).items.map((it, i) => dl(`dl_${i}`, it.page ?? 1)),
+      existing: [],
+      rejected: [],
+    }));
+    await connect();
+    const r = await call('download_videos', { urls: ['https://www.bilibili.com/video/BV1xx411c7mD'], pages: [5, 3, 4, 3], parts: 'all', maxHeight: 720 });
+    expect(r.isError).toBe(false);
+    expect(fake.calls.find((c) => c.path === '/downloads')?.body).toEqual({
+      items: [3, 4, 5].map((page) => ({ input: 'https://www.bilibili.com/video/BV1xx411c7mD', page, targetHeightPx: 720 })),
+      allParts: false,
+    });
+    expect(r.text).toContain('Queued 3,');
+    // Over the app's 200 per request: said before anything is queued.
+    const many = await call('download_videos', { urls: Array.from({ length: 41 }, (_, i) => `BV1xx411c7m${i}`), pages: [1, 2, 3, 4, 5] });
+    expect(many.isError).toBe(true);
+    expect(many.text).toContain('205 downloads');
+    expect(fake.calls.filter((c) => c.path === '/downloads')).toHaveLength(1);
+  });
+
   it('get_download says plainly when the app knows no such download', async () => {
     fake.routes.set('GET /downloads/dl_gone', (_q, _b, res) => {
       res.writeHead(404, { 'content-type': 'application/json' });

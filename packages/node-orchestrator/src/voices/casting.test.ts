@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { cosine, proposeCast, type CastSpeaker, type CastVoice } from './casting.js';
+import { withSwaps } from './speakerCast.js';
 
 const speaker = (speakerId: string, minutes: number, gender: CastSpeaker['gender'], f0Hz?: number, print?: number[]): CastSpeaker => ({
   speakerId,
@@ -52,31 +53,55 @@ describe('proposeCast', () => {
     expect(cast.defaults).toEqual({ male: 'builtin-m' });
   });
 
-  it("gives the user's default voices to the most-heard man and woman first, the others paired as before (2026-11-27)", () => {
+  it("gives the user's lead voices, in their order, to the most-heard characters, never to a narrator (2026-11-27)", () => {
+    const narrator = { ...speaker('SPEAKER_09', 100, 'male', 130), voiceOver: true };
     const speakers = [
       speaker('SPEAKER_00', 120, 'male', 110),
+      narrator,
       speaker('SPEAKER_01', 90, 'male', 160),
       speaker('SPEAKER_02', 40, 'female', 230),
       speaker('SPEAKER_03', 30, 'female', 250),
     ];
-    // By pitch rank alone the lower male clone would go to SPEAKER_00 (110 Hz).
     const voices = [
-      profile('vp_thien', 'male', 116),
+      profile('vp_my_voice', 'male', 116),
       profile('vp_dang_quan', 'male', 153),
+      profile('vp_thien', 'male', 140),
       profile('vp_ha_my', 'female', 200),
       profile('vp_vy', 'female', 240),
+      preset('builtin-m', 'male', 120),
     ];
-    const cast = proposeCast(speakers, voices, { preferred: { male: 'vp_dang_quan', female: 'vp_ha_my' } });
+    // The user's word: their own voice for the hero, Đăng Quân for the next man, Duyên Hà My for the first woman.
+    const cast = proposeCast(speakers, voices, { leads: { male: ['vp_my_voice', 'vp_dang_quan'], female: ['vp_ha_my'] } });
     const by = Object.fromEntries(cast.assignments.map((a) => [a.speakerId, [a.voiceId, a.by]]));
-    expect(by['SPEAKER_00']).toEqual(['vp_dang_quan', 'preferred']);
-    expect(by['SPEAKER_01']![0]).toBe('vp_thien');
-    expect(by['SPEAKER_02']).toEqual(['vp_ha_my', 'preferred']);
+    expect(by['SPEAKER_00']).toEqual(['vp_my_voice', 'lead']);
+    // The system voice is heard more than SPEAKER_01, yet takes neither a lead voice nor a clone.
+    expect(by['SPEAKER_01']).toEqual(['vp_dang_quan', 'lead']);
+    expect(by['SPEAKER_09']![0]).toBe('builtin-m');
+    expect(by['SPEAKER_02']).toEqual(['vp_ha_my', 'lead']);
     expect(by['SPEAKER_03']![0]).toBe('vp_vy');
-    expect(cast.notes).toContain('"vp_dang_quan", your default male voice, speaks for SPEAKER_00, the most heard man.');
-    // A default voice the project cannot use (an unconfirmed clone, another engine): cast as usual, and said.
-    const without = proposeCast(speakers, [profile('vp_thien', 'male', 116)], { preferred: { male: 'vp_other_engine' } });
-    expect(without.assignments.find((a) => a.speakerId === 'SPEAKER_00')?.voiceId).toBe('vp_thien');
-    expect(without.notes.some((n) => n.startsWith('Your default male voice is not one this project can use'))).toBe(true);
+    expect(cast.notes).toContain('"vp_my_voice", your lead voice 1 for men, speaks for SPEAKER_00.');
+    // A lead voice the project cannot use (another engine, an unconfirmed clone): left out, and said.
+    const without = proposeCast(speakers.slice(0, 1), [profile('vp_thien', 'male', 116)], { leads: { male: ['vp_other_engine'] } });
+    expect(without.assignments[0]?.voiceId).toBe('vp_thien');
+    expect(without.notes.some((n) => n.startsWith('Lead voice vp_other_engine is not one this project can use'))).toBe(true);
+  });
+
+  it('gives a voice named for a speaker by hand to that speaker alone (Săn Yêu, 2026-11-27)', () => {
+    const speakers = [speaker('SPEAKER_02', 40, 'female', 230), speaker('SPEAKER_15', 35, 'female', 205)];
+    const voices = [profile('vp_ha_my', 'female', 200), profile('vp_vy', 'female', 240)];
+    // Before: the pairing gave vp_ha_my to SPEAKER_15 (the fox demon, closest in pitch), the swap to SPEAKER_02 too.
+    const pinned = withSwaps(proposeCast(speakers, voices, { pins: [{ speakerId: 'SPEAKER_02', voiceId: 'vp_ha_my' }] }), [{ speakerId: 'SPEAKER_02', voiceId: 'vp_ha_my' }], voices);
+    const by = Object.fromEntries(pinned.assignments.map((a) => [a.speakerId, a.voiceId]));
+    expect(by).toEqual({ SPEAKER_02: 'vp_ha_my', SPEAKER_15: 'vp_vy' });
+  });
+
+  it('never gives a narrator one of the clones, though it is heard most', () => {
+    const cast = proposeCast(
+      [{ ...speaker('SPEAKER_09', 100, 'male', 130), voiceOver: true }, speaker('SPEAKER_00', 50, 'male', 110)],
+      [profile('vp_thien', 'male', 116), preset('builtin-m', 'male', 120)],
+    );
+    const by = Object.fromEntries(cast.assignments.map((a) => [a.speakerId, a.voiceId]));
+    expect(by).toEqual({ SPEAKER_00: 'vp_thien', SPEAKER_09: 'builtin-m' });
   });
 
   it('never casts a clone whose gender the user has not confirmed, and names it', () => {

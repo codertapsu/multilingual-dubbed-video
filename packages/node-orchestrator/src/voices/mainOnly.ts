@@ -11,11 +11,17 @@
  */
 import { AppErrorException, type ProjectSettings } from '@videodubber/shared';
 
-/** Why these settings break a one-main-character voice, or undefined. `mainOnly`: id → name. */
+/**
+ * Why these settings break a one-main-character voice, or undefined.
+ * `mainOnly`: id → name. `characterOf`: speaker id → its character in the
+ * character sheet (voices/castGroups.ts): the ids of ONE character may share
+ * the voice, as a cast by character gives it to all of them (2026-11-27).
+ */
 export function mainOnlyProblem(
   next: Pick<ProjectSettings, 'speakerVoices' | 'defaultMaleVoiceId' | 'defaultFemaleVoiceId'>,
   changed: { speakerVoices: boolean; defaults: boolean },
   mainOnly: ReadonlyMap<string, string>,
+  characterOf: ReadonlyMap<string, string> = new Map(),
 ): string | undefined {
   if (mainOnly.size === 0) return undefined;
   if (changed.defaults) {
@@ -36,7 +42,8 @@ export function mainOnlyProblem(
       holders.set(v.voiceId, [...(holders.get(v.voiceId) ?? []), v.speakerId]);
     }
     for (const [id, speakers] of holders) {
-      if (speakers.length > 1) return `"${mainOnly.get(id)}" is kept for one main character, but ${speakers.length} speakers would speak with it (${speakers.join(', ')}).`;
+      const characters = new Set(speakers.map((s) => characterOf.get(s) ?? s));
+      if (characters.size > 1) return `"${mainOnly.get(id)}" is kept for one main character, but ${speakers.length} speakers would speak with it (${speakers.join(', ')}).`;
     }
   }
   return undefined;

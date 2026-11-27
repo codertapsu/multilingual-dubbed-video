@@ -165,7 +165,7 @@ import {
   type VoiceMeasure,
 } from './voices/speakerCast.js';
 import { dialogueAdjacency } from './voices/casting.js';
-import { defaultVoicesFor } from './voices/defaultVoices.js';
+import { castGroups, expandCast, groupGender } from './voices/castGroups.js';
 import { registerSongRoutes } from './songs/songRoutes.js';
 import { openSuggestions, readSongSuggestions, songSuggestionsPath } from './songs/songSuggestions.js';
 import { suggestGender } from './voices/casting.js';
@@ -1591,9 +1591,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         ...(body.downloads !== undefined || current.downloads !== undefined
           ? { downloads: sanitizeDownloadPrefs({ ...current.downloads, ...(body.downloads ?? {}) }) }
           : {}),
-        // Per gender: a voice sent as "" or null goes back to none (setupStore drops it).
-        ...(body.defaultVoices !== undefined || current.defaultVoices !== undefined
-          ? { defaultVoices: { ...current.defaultVoices, ...(body.defaultVoices ?? {}) } }
+        // Per gender: a list sent replaces that gender's ([] = none); the other is kept.
+        ...(body.leadVoices !== undefined || current.leadVoices !== undefined
+          ? { leadVoices: { ...current.leadVoices, ...(body.leadVoices ?? {}) } }
           : {}),
       });
       // Downloads follow a changed "while dubbing" choice at once.
@@ -1726,7 +1726,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     };
     const isLocal = (phase: 'stt' | 'translation' | 'tts', id: string): boolean =>
       (phase === 'stt' ? described.stt : phase === 'tts' ? described.tts : described.translation).find((p) => p.id === id)?.isLocal === true;
-    const recommended = await recommendProjectSettings(
+    return recommendProjectSettings(
       {
         providerDefaults: async () => {
           const saved = (await setupStore.getPreferences()).providerDefaults;
@@ -1745,9 +1745,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       },
       { sourceLanguage: sourceLanguage.trim(), targetLanguage: targetLanguage.trim() || 'vi-VN' },
     );
-    // The user's default voices for men and women, where this engine speaks them.
-    const voices = await preferredVoiceDefaults(recommended.settings);
-    return Object.keys(voices).length > 0 ? { ...recommended, settings: { ...recommended.settings, ...voices } } : recommended;
   };
 
   app.get(
@@ -2448,16 +2445,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     const { presetId, ...rest } = body;
     const jobName = (typeof rest.name === 'string' && rest.name.trim()) || fallbackName || '';
     const named = (dir: string | undefined): { outputDir?: string } => (dir?.trim() ? { outputDir: resolveOutputDir(dir.trim(), jobName) } : {});
-    if (!presetId) {
-      // The user's default voices for the genders the job names none for
-      // (New project sends its own settings, without them).
-      const voices = rest.settings ? await preferredVoiceDefaults(rest.settings) : {};
-      return {
-        ...(rest as T & { settings: ProjectSettings }),
-        ...(rest.settings && Object.keys(voices).length > 0 ? { settings: { ...rest.settings, ...voices } as ProjectSettings } : {}),
-        ...named(rest.outputDir),
-      };
-    }
+    if (!presetId) return { ...(rest as T & { settings: ProjectSettings }), ...named(rest.outputDir) };
     const own: Partial<ProjectSettings> = rest.settings ?? {};
     const preset = await presetById(presetId, own);
     const targetLanguage = own.targetLanguage?.trim() || preset.targetLanguage;
@@ -3450,24 +3438,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     );
   }
 
-  /**
-   * The user's default voices (Preferences.defaultVoices, the Voices screen)
-   * for the genders a new project's `settings` leave without one: only a
-   * voice its engine speaks in its language, and never one kept for one main
-   * character (never a default: voices/mainOnly.ts). The user's word,
-   * 2026-11-27: "prioritize these two voices when dubbing videos".
-   */
-  async function preferredVoiceDefaults(
-    settings: Partial<Pick<ProjectSettings, 'ttsProviderId' | 'targetLanguage' | 'defaultMaleVoiceId' | 'defaultFemaleVoiceId'>>,
-  ): Promise<Pick<ProjectSettings, 'defaultMaleVoiceId' | 'defaultFemaleVoiceId'>> {
-    const wanted = (await setupStore.getPreferences().catch(() => undefined))?.defaultVoices;
-    if (!wanted?.male && !wanted?.female) return {};
-    if (settings.defaultMaleVoiceId && settings.defaultFemaleVoiceId) return {};
-    if (!settings.ttsProviderId || !settings.targetLanguage) return {};
-    const usable = await voicesFor({ ttsProviderId: settings.ttsProviderId, targetLanguage: settings.targetLanguage }).catch(() => [] as VoiceLibraryItem[]);
-    return defaultVoicesFor(wanted, settings, usable);
-  }
-
   /** A sentence to measure a built-in voice's pitch and print with. */
   const MEASURE_SENTENCE: Record<string, string> = {
     vi: 'Xin chào, đây là một câu đọc mẫu để đo độ cao và âm sắc của giọng nói này.',
@@ -3608,8 +3578,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         // No line past an advert tail: its singers and its reader took the
         // user's clones from the drama's characters (2026-11-27), also in a
         // project transcribed before the tail was looked for.
-        const tailFrom = await adTailFrom(project);
-        const lines = (await readSpeakerLines(paths)).filter((l) => tailFrom === undefined || l.startMs < tailFrom);
+        const all = await readSpeakerLines(paths);
+        const tailFrom = await adTailFrom(project, all);
+        const lines = all.filter((l) => tailFrom === undefined || l.startMs < tailFrom);
         const detected = await readSpeakerProfiles(paths.diarizationJson);
         // Ranked by the lines that will be voiced: songs earn no voice (castRows).
         const { rows, voiced, singersOnly } = castRows(lines, detected, project.settings);
@@ -3625,16 +3596,32 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           });
         }
         const prints = new Map(detected.map((d) => [d.speakerId, d.print]));
-        const speakers = rows.map((r) => ({
-          speakerId: r.speakerId,
-          minutes: r.minutes,
-          ...(r.gender ? { gender: r.gender } : {}),
-          ...(r.f0Hz ? { f0Hz: r.f0Hz } : {}),
-          ...(prints.get(r.speakerId)?.length ? { print: prints.get(r.speakerId)! } : {}),
-        }));
+        // Cast by CHARACTER (voices/castGroups.ts): the ids the character
+        // sheet gives one name are ranked by their talk time together and
+        // get one voice; a narrator or a system voice takes no lead voice or
+        // clone. The proposal is made for each character's most-heard id,
+        // then given to all its ids.
+        const minutesById = new Map(rows.map((r) => [r.speakerId, r.minutes]));
+        const rowById = new Map(rows.map((r) => [r.speakerId, r]));
+        const groups = castGroups((await orchestrator.getTranslationContext(project.id)) ?? undefined, minutesById);
+        const leadOf = new Map(groups.flatMap((g) => g.ids.map((id) => [id, g.ids[0]!] as const)));
+        const membersOf = new Map(groups.map((g) => [g.ids[0]!, g.ids]));
+        const speakers = groups.map((g) => {
+          const lead = rowById.get(g.ids[0]!)!;
+          const gender = groupGender(g.ids, (id) => rowById.get(id)?.gender, minutesById);
+          return {
+            speakerId: lead.speakerId,
+            minutes: g.ids.reduce((t, id) => t + (minutesById.get(id) ?? 0), 0),
+            ...(gender ? { gender } : lead.gender ? { gender: lead.gender } : {}),
+            ...(lead.f0Hz ? { f0Hz: lead.f0Hz } : {}),
+            ...(prints.get(lead.speakerId)?.length ? { print: prints.get(lead.speakerId)! } : {}),
+            ...(g.voiceOver ? { voiceOver: true } : {}),
+          };
+        });
         const items = await castableVoices(project);
         const voices = await castCandidates(items, speakers, { measure: measureVoice });
-        const preferred = (await setupStore.getPreferences().catch(() => undefined))?.defaultVoices;
+        // The user's lead voices, in order per gender (Voices → Lead voices).
+        const leads = (await setupStore.getPreferences().catch(() => undefined))?.leadVoices;
         // null asks for the automatic size again; absent keeps the project's setting.
         const askedSize = typeof body.minorVoices === 'number' && Number.isFinite(body.minorVoices) ? Math.round(body.minorVoices) : undefined;
         const minorVoices = body.minorVoices === null ? undefined : (askedSize ?? project.settings.minorVoices);
@@ -3642,17 +3629,32 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
           ...(Array.isArray(body.minorPool?.male) ? { male: body.minorPool.male.filter((v) => typeof v === 'string') } : {}),
           ...(Array.isArray(body.minorPool?.female) ? { female: body.minorPool.female.filter((v) => typeof v === 'string') } : {}),
         };
-        const proposal = withSwaps(
-          proposeCast(speakers, voices, {
-            ...(minorVoices ? { minorVoices } : {}),
-            adjacency: dialogueAdjacency(voiced),
-            minorPool,
-            // The user's default voices go first to the most-heard man and woman.
-            ...(preferred ? { preferred } : {}),
-          }),
-          body.swaps,
-          voices,
+        // Who answers whom, between characters; a swap may name any of a character's ids.
+        const byCharacter = voiced.map((l) => (l.speakerId && leadOf.has(l.speakerId) ? { ...l, speakerId: leadOf.get(l.speakerId)! } : l));
+        const swaps = body.swaps?.map((s) => ({ ...s, speakerId: leadOf.get(s.speakerId) ?? s.speakerId }));
+        const proposal = expandCast(
+          withSwaps(
+            proposeCast(speakers, voices, {
+              ...(minorVoices ? { minorVoices } : {}),
+              adjacency: dialogueAdjacency(byCharacter),
+              minorPool,
+              ...(leads ? { leads } : {}),
+              // A voice swapped onto a speaker is that speaker's alone.
+              ...(swaps?.length ? { pins: swaps } : {}),
+            }),
+            swaps,
+            voices,
+          ),
+          membersOf,
         );
+        for (const g of groups) {
+          const said = g.name ? `"${g.name}"` : g.ids[0]!;
+          if (g.ids.length > 1) {
+            const together = g.ids.reduce((t, id) => t + (minutesById.get(id) ?? 0), 0);
+            proposal.notes.push(`${said}: ${speakerList(g.ids)} speak as one character (${together.toFixed(1)} min together), with one voice.`);
+          }
+          if (g.voiceOver) proposal.notes.push(`${said} is a narrator or a system voice: no lead voice or clone, a built-in voice.`);
+        }
         if (singersOnly.length > 0) {
           proposal.notes.push(`${speakerList(singersOnly)}: every line is kept as the original song, so no voice is cast for them.`);
         }
@@ -3687,8 +3689,10 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
               message: `${proposal.unconfirmed.length} cloned voice(s) would be left out (gender not confirmed): confirm them in Voices → My voices, or apply with allowWithoutClones.`,
             };
           }
+          // Every id of a character, with its character's gender, its own talk time for the order.
+          const castSpeakers = groups.flatMap((g, i) => g.ids.map((id) => ({ ...speakers[i]!, speakerId: id, minutes: minutesById.get(id) ?? 0 })));
           const patch = {
-            ...castSettings(proposal, speakers, project.settings.speakerVoices),
+            ...castSettings(proposal, castSpeakers, project.settings.speakerVoices),
             // The pool size asked for becomes the project's (0 = automatic again).
             ...(body.minorVoices !== undefined ? { minorVoices: askedSize ?? 0 } : {}),
           };

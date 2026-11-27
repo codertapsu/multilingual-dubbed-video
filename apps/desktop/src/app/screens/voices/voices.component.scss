@@ -240,18 +240,28 @@
   color: var(--vd-warning, #92400e);
 }
 
-/* The default voices: one picker for men, one for women, side by side. */
-.defaults-row {
-  display: flex;
-  flex-wrap: wrap;
+/* The lead voices: men and women side by side, three places each, in order. */
+.leads-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: var(--vd-sp-3) var(--vd-sp-5);
 }
-.default-pick {
+.lead-column {
   display: flex;
   flex-direction: column;
-  gap: var(--vd-sp-1);
-  min-width: 260px;
-  flex: 1 1 260px;
-  max-width: 420px;
+  gap: var(--vd-sp-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  /* A legend keeps the browser's side padding: line it up with the places under it. */
+  legend {
+    padding: 0;
+  }
+}
+.lead-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin: 0;
 }

@@ -963,18 +963,30 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Download many videos',
       description:
-        'Queue many Bilibili/Douyin links (or BV ids) at once; two download at a time, the rest wait, and a rate-limited site is waited out. Returns at once with a download id per video. Asking for a video already in the list returns that download (each has a sourceKey like bilibili:BV…:p2), retrying it when it failed. parts="all" adds every part of a multi-part video. Follow them with follow_jobs_command (best for long batches) or wait_jobs, then dub_downloads.',
+        'Queue many Bilibili/Douyin links (or BV ids) at once; two download at a time, the rest wait, and a rate-limited site is waited out. Returns at once with a download id per video. Asking for a video already in the list returns that download (each has a sourceKey like bilibili:BV…:p2), retrying it when it failed. parts="all" adds every part of a multi-part video; pages=[3,4,5] only those parts of each link (a part a video does not have fails that download, naming how many it has). Follow them with follow_jobs_command (best for long batches) or wait_jobs, then dub_downloads.',
       inputSchema: z.object({
         urls: z.array(z.string().min(1)).min(1).max(200),
-        parts: z.enum(['link', 'all']).default('link').describe('link = the part each link points at; all = every part of multi-part videos.'),
+        parts: z.enum(['link', 'all']).default('link').describe('link = the part each link points at; all = every part of multi-part videos. Ignored with pages.'),
+        pages: z
+          .array(z.number().int().min(1))
+          .min(1)
+          .max(200)
+          .optional()
+          .describe('Only these parts (P numbers, Bilibili "P3" = 3) of each link, one download each: some parts of a multi-part video without all of them. At most 200 downloads per call in all.'),
         maxHeight: z.number().int().optional().describe('Highest video height to fetch, e.g. 720 or 1080; the best the video has when omitted.'),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    guarded(async ({ urls, parts, maxHeight }, ctx) => {
+    guarded(async ({ urls, parts, pages, maxHeight }, ctx) => {
+      const quality = maxHeight ? { targetHeightPx: maxHeight } : {};
+      const wanted = pages?.length ? [...new Set(pages)].sort((a, b) => a - b) : undefined;
+      const items = wanted ? urls.flatMap((input) => wanted.map((page) => ({ input, page, ...quality }))) : urls.map((input) => ({ input, ...quality }));
+      if (items.length > 200) {
+        return failure(new Error(`That is ${items.length} downloads (${urls.length} link(s) × ${wanted!.length} part(s)): at most 200 per call. Split the links over several calls.`));
+      }
       const res = await api.post<{ added: DlItem[]; existing: DlItem[]; rejected: { input: string; error: { message?: string } }[] }>(
         '/downloads',
-        { items: urls.map((input) => ({ input, ...(maxHeight ? { targetHeightPx: maxHeight } : {}) })), allParts: parts === 'all' },
+        { items, allParts: !wanted && parts === 'all' },
         { signal: ctx.mcpReq.signal },
       );
       const lines = [
@@ -2206,7 +2218,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Choose a voice for each speaker',
       description:
-        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones, to the speakers heard most in the lines that will be voiced (lines kept as the original song count for nothing, and a speaker who only sings gets no voice); the user\'s default voices (Voices → Default voices, one per gender) go first of all to the most-heard man and woman; within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance. The speakers past the distinct voices (minor speakers) share a POOL of voices per gender: 3-6 by how many there are (minorVoices sets it, saved with apply), built-in voices no main speaker has, then the voices of the least-heard cast speakers, never a clone unless the user picks one (minorPool); speakers who answer each other get different pool voices where possible. Built-in voices that sound like one of the user\'s clones are left out of shared use and named. Speakers of unknown gender are listed with their three longest lines and talk time: they keep the project voice until someone sets them (swaps). A cloned voice whose gender the user has not confirmed is left out of the proposal, which then says so first; apply=true is refused while any is left out, unless allowWithoutClones=true (the user agreed to a cast without them). Ask the user to confirm them in Voices → My voices instead when you can: their rule is their clones first. Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
+        'Propose (and with apply=true, save) a voice for every detected speaker by gender: the user\'s own cloned voices first, then built-in ones, to the speakers heard most in the lines that will be voiced (lines kept as the original song count for nothing, and a speaker who only sings gets no voice). It casts CHARACTERS: the speaker ids the character sheet gives one name (one cast entry per id, set_translation_context) are ranked by their talk time together and get one voice. The user\'s lead voices (Voices → Lead voices, up to 3 per gender, in order) go first of all to the most-heard characters; a narrator or a system voice (its role or name in the sheet says so) takes neither a lead voice nor a clone. Within a gender the voices go by pitch rank (higher speaker, higher voice), by voice print only when that is clearly better than chance. The speakers past the distinct voices (minor speakers) share a POOL of voices per gender: 3-6 by how many there are (minorVoices sets it, saved with apply), built-in voices no main speaker has, then the voices of the least-heard cast speakers, never a clone unless the user picks one (minorPool); speakers who answer each other get different pool voices where possible. Built-in voices that sound like one of the user\'s clones are left out of shared use and named. Speakers of unknown gender are listed with their three longest lines and talk time: they keep the project voice until someone sets them (swaps). A cloned voice whose gender the user has not confirmed is left out of the proposal, which then says so first; apply=true is refused while any is left out, unless allowWithoutClones=true (the user agreed to a cast without them). Ask the user to confirm them in Voices → My voices instead when you can: their rule is their clones first. Show the user the pairing and let them swap before applying. applyToParts=true saves it on every part of a series.',
       inputSchema: z.object({
         projectId: z.string(),
         apply: z.boolean().default(false),
@@ -2218,7 +2230,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         swaps: z
           .array(z.object({ speakerId: z.string(), voiceId: z.string() }))
           .optional()
-          .describe('Changes to the proposal (from the user), applied before saving.'),
+          .describe(
+            'Changes to the proposal (from the user), applied before saving. A swapped voice is that speaker\'s alone: the rest of the cast is proposed without it. Any id of a character changes the whole character.',
+          ),
         minorVoices: z
           .number()
           .int()
@@ -2656,7 +2670,21 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       inputSchema: z.object({
         projectId: z.string(),
         synopsis: z.string().optional(),
-        cast: z.array(z.object({ name: z.string(), role: z.string().optional(), speakerId: z.string().optional().describe('The detected speaker this character is, e.g. "SPEAKER_03".') })).optional(),
+        cast: z
+          .array(
+            z.object({
+              name: z.string(),
+              role: z
+                .string()
+                .optional()
+                .describe('Who they are. A narrator or a system voice says so ("narrator", "người dẫn truyện", "giọng hệ thống"): cast_voices gives it a built-in voice, never a lead voice or a clone.'),
+              speakerId: z
+                .string()
+                .optional()
+                .describe('The detected speaker this character is, e.g. "SPEAKER_03". A character speaker detection split into several ids takes one entry per id, with the same name: cast_voices gives it one voice.'),
+            }),
+          )
+          .optional(),
         glossary: z.array(z.object({ source: z.string(), target: z.string() })).optional(),
         pronounGuide: z.string().optional().describe('Who calls whom what, e.g. "Ngộ Không xưng ta, gọi Bát Giới là ngươi".'),
         corrections: z.array(z.object({ heard: z.string(), is: z.string() })).optional().describe('Source text fixes applied before translating: what was heard -> what is said.'),

@@ -155,6 +155,29 @@
   cursor: pointer;
 }
 
+/* A video's parts to tick: a 48-part upload scrolls inside the card, which
+   keeps its buttons in view. */
+.parts-head {
+  align-items: center;
+  gap: var(--vd-sp-2);
+  flex-wrap: wrap;
+}
+.parts-ranges {
+  margin-left: var(--vd-sp-2);
+  font-weight: normal;
+}
+.parts-list {
+  max-height: 320px;
+  overflow-y: auto;
+  gap: var(--vd-sp-1);
+  padding-right: var(--vd-sp-1);
+}
+.part-no {
+  min-width: 3ch;
+  font-variant-numeric: tabular-nums;
+  color: var(--vd-text-muted);
+}
+
 /* Closed, the sign-in card is one line: no room left around it. */
 .session-card:not([open]) {
   padding-top: var(--vd-sp-3);

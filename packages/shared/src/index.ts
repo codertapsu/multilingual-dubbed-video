@@ -138,7 +138,7 @@ export type {
   SetupInstallRequest,
   SetupEvent,
   UpdatePreferences,
-  DefaultVoices,
+  LeadVoices,
   DownloadPreferences,
   DownloadsWhileDubbing,
   ProviderDefaults,

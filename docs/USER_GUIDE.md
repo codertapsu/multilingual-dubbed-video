@@ -379,14 +379,24 @@ For your own voice, tick **Only for one main character** under it in Voices →
 My voices: casting then gives it to one main character at most, never to the
 minor speakers and never as the voice of every speaker who has none.
 
-**Default voices** (top of the Voices screen) are the voices you want first:
-one for men, one for women, from your own voices and the installed built-in
-ones. Every new project takes them as the voice of each man or woman who has no
-voice of their own, unless its preset names other default voices, and
-**Choose voices by gender** gives them first to the man and the woman heard
-most. A project uses only voices of the engine it dubs with, so a cloned voice
-is a default only for projects that dub with its engine (VieNeu). A voice kept
-for one main character cannot be a default.
+**Lead voices** (top of the Voices screen) are the voices you want for the main
+characters: up to three for men and three for women, in order, from your own
+voices and the installed built-in ones. **Choose voices by gender** gives them,
+in that order, to the characters heard most: your first voice for men to the
+man heard most, the second to the next, and the same for women; your other
+cloned voices come next, then the built-in ones. A lead voice is never the
+voice of everyone who has none: new projects keep their built-in voices. A
+project uses only voices of the engine it dubs with, so a cloned voice is a
+lead only for projects that dub with its engine (VieNeu).
+
+Casting counts **characters**, not speaker numbers. Speaker detection often
+splits one character into several speakers (SPEAKER_15, SPEAKER_16…): when the
+character sheet gives them the same name, they are ranked by their time
+together and get one voice. A narrator or a system voice (its role or name in
+the sheet says so: "narrator", "người dẫn truyện", "giọng hệ thống", "Hệ
+thống", "旁白") gets a built-in voice, never a lead voice or one of your clones,
+even when it is heard more than anyone else. A voice you swap onto a speaker
+before applying is that speaker's alone: casting gives it to nobody else.
 
 ### Getting the finished file
 
@@ -602,10 +612,15 @@ full path.
 
 The **Download** screen (in the top navigation) fetches videos from a supported
 site so you can dub them. Paste one link or many (one per line), choose a quality
-target, and press **Add to downloads**. With a single link you can **Check link**
-first to see its title, uploader, length and parts, and pick the part you want.
-Tick **All parts of a multi-part video** to add every part (P1, P2…) of a Bilibili
-video at once.
+target, and press **Add to downloads**. A link downloads the part it points at
+(the first part, or `?p=3` for P3). Tick **All parts of a multi-part video** to
+add every part (P1, P2…) of a Bilibili video at once.
+
+To download only some of the parts, paste the one link and press **Check link**:
+it shows the video's title, uploader, length and its parts, with the part the
+link points at ticked. Tick the others you want (hold Shift while clicking to
+tick every part between two; **Select all** and **Clear** do the whole list),
+then press **Download N parts**. Each part becomes a download of its own.
 
 A Bilibili **list** link adds the videos in it: a collection (合集) or series
 list, a favourites folder, or an uploader's page (`space.bilibili.com/…`). **Check
@@ -737,9 +752,12 @@ After it, the same banner for the full version ("点击评论区蓝色链接 可
 stays on the picture to the end, for hours, over a still image with songs or
 over moving footage with a voice reading the advert. For a video of 20 minutes
 or more, the app looks for that banner when speech-to-text starts. When it
-finds one, speech-to-text and its checks stop where the banner begins, a series
-ends there (its last part ends where the drama does), and a warning says where.
-The advert is never transcribed or dubbed, and nothing waits for you to
+finds one, speech-to-text, its checks and speaker detection stop where the
+banner begins, a series ends there (its last part ends where the drama does),
+and a warning says where. The advert's voice sometimes starts a few seconds
+before its banner: lines just before it that say the advert's words
+("点击评论区蓝色链接", "免费观看完整版"…) are left out too, and the dub ends where
+that voice begins. The advert is never dubbed, and nothing waits for you to
 confirm it. The banner's frames are also left out when the app looks for a
 watermark and for the video's own subtitles, which it would otherwise find
 in the banner. To dub the whole video anyway, turn off **Stop where an advert

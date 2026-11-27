@@ -13,28 +13,37 @@
 
   <vd-error-banner [error]="error()" (dismiss)="error.set(null)" />
 
-  <!-- ===================== Default voices (Preferences.defaultVoices) ===================== -->
-  <!-- First for the most-heard man and woman of every cast, and for every man or woman with no voice of their own. -->
+  <!-- ===================== Lead voices (Preferences.leadVoices) ===================== -->
+  <!-- In order per gender, to the characters heard most when voices are cast; never to the uncast (defaults stay built-in). -->
   <div class="card stack">
-    <h2>{{ 'voices.defaults-heading' | translate }}</h2>
-    <p class="hint">{{ 'voices.defaults-help' | translate }}</p>
-    <div class="defaults-row">
+    <h2>{{ 'voices.leads-heading' | translate }}</h2>
+    <p class="hint">{{ 'voices.leads-help' | translate }}</p>
+    <div class="leads-grid">
       @for (g of genders; track g) {
-        <label class="default-pick">
-          <span class="label">{{ (g === 'male' ? 'voices.defaults-male' : 'voices.defaults-female') | translate }}</span>
-          <select [ngModel]="defaults()[g] ?? ''" (ngModelChange)="setDefaultVoice(g, $event)">
-            <option value="">{{ 'voices.defaults-none' | translate }}</option>
-            @for (v of defaultOptions()[g]; track v.id) {
-              <option [value]="v.id">{{ v.name }} · {{ v.kind === 'profile' ? ('voices.defaults-yours' | translate) : engineName(v.engine) }}</option>
-            }
-            @if (missingDefault(g); as id) {
-              <option [value]="id" disabled>{{ id }} ({{ 'voices.defaults-missing' | translate }})</option>
-            }
-          </select>
-        </label>
+        <fieldset class="lead-column">
+          <legend class="label">{{ (g === 'male' ? 'voices.leads-men' : 'voices.leads-women') | translate }}</legend>
+          @for (i of slots; track i) {
+            <label class="lead-pick">
+              <span class="muted small">{{ 'voices.leads-rank-' + (i + 1) | translate }}</span>
+              <select
+                [ngModel]="leads()[g][i] ?? ''"
+                (ngModelChange)="setLeadVoice(g, i, $event)"
+                [disabled]="i > 0 && !leads()[g][i - 1]"
+              >
+                <option value="">{{ 'voices.leads-none' | translate }}</option>
+                @for (v of optionsFor(g, i); track v.id) {
+                  <option [value]="v.id">{{ v.name }} · {{ v.kind === 'profile' ? ('voices.leads-yours' | translate) : engineName(v.engine) }}</option>
+                }
+                @if (missingLead(g, i); as id) {
+                  <option [value]="id" disabled>{{ id }} ({{ 'voices.leads-missing' | translate }})</option>
+                }
+              </select>
+            </label>
+          }
+        </fieldset>
       }
     </div>
-    @if (defaultsNotice(); as n) {
+    @if (leadsNotice(); as n) {
       <p class="ok small" role="status">{{ n }}</p>
     }
   </div>

@@ -271,6 +271,19 @@ export class SeriesService {
   }
 
   /**
+   * The series' lines its parts are made from: none from where the advert
+   * begins. A series planned on 0.21.0 ends at the banner, but the advert's
+   * voice can start before it (Săn Yêu: "个个个点击评论区蓝色链接", 4 s early),
+   * so its last part, made or rebuilt now, leaves those lines out
+   * (adTailFrom finds them by their words).
+   */
+  private async partSourceLines(parent: Project): Promise<TranscriptSegment[]> {
+    const lines = await this.lines(parent);
+    const tailFrom = await adTailFrom(parent, lines);
+    return tailFrom === undefined ? lines : lines.filter((l) => l.startMs < tailFrom);
+  }
+
+  /**
    * The parent has transcribed the video: plan the parts (and make and start
    * them when asked to). Also how a plan is made again (POST /series/replan):
    * `keepTitles` keeps the titles and summaries written in review. Followed
@@ -391,7 +404,7 @@ export class SeriesService {
     const videoMs = parent.mediaInfo?.durationMs || lines.at(-1)?.endMs || 0;
     // An advert tail: the series ends where it starts, at once, with no review
     // to wait for (2026-11-27: the planner made parts of the advert alone).
-    const tailFrom = await adTailFrom(parent);
+    const tailFrom = await adTailFrom(parent, lines);
     const durationMs = tailFrom !== undefined && tailFrom < videoMs ? tailFrom : videoMs;
     const chapters = (parent.source?.chapters ?? []).map((c) => c.startMs);
     // A project joined from several files: where one ends and the next begins
@@ -665,7 +678,7 @@ export class SeriesService {
       await writeJsonAtomic(this.planFile(planned), { ...plan, notes });
     }
     const parent = await this.parentOf(projectId);
-    const lines = await this.lines(parent);
+    const lines = await this.partSourceLines(parent);
     const parentPaths = this.deps.store.paths(parent.id);
     const sheet = await fsp.readFile(parentPaths.translationContextJson, 'utf8').catch(() => undefined);
     const seriesName = seriesNameOf(parent);
@@ -833,7 +846,7 @@ export class SeriesService {
       projectId: parent.id,
     });
     try {
-      const lines = await this.lines(parent);
+      const lines = await this.partSourceLines(parent);
       const sheet = await fsp.readFile(this.deps.store.paths(parent.id).translationContextJson, 'utf8').catch(() => undefined);
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const out: RebuiltPart[] = [];

@@ -143,7 +143,7 @@ import { reuseRecapTranslations } from '../series/recap.js';
 import { siteTranscript } from '../providers/download/siteSubtitles.js';
 import { thumbnailMomentMs } from './thumbnailMoment.js';
 import { autoBlurRegions, describeMarks, faintMarks } from '../picture/watermarkAuto.js';
-import { savedDetection } from '../picture/pictureDetection.js';
+import { advertVoiceStart, recordAdvertVoice, savedDetection } from '../picture/pictureDetection.js';
 import type { WarningInbox } from '../diagnostics/warningInbox.js';
 import type { ProjectEventBus } from '../events.js';
 import type { ProjectLogger } from '../logging.js';
@@ -1102,10 +1102,12 @@ export class PipelineRunner {
     const totalDurationMs = (await this.deps.store.getProject(project.id)).mediaInfo?.durationMs ?? 0;
     // An advert tail: speech-to-text and its checks stop where it starts, and
     // keep no line past it, wherever the lines came from (adTailStart).
-    const tailFrom = await this.adTailStart(project, totalDurationMs, signal, onProgress);
-    const endMs = tailFrom ?? totalDurationMs;
+    const bannerFrom = await this.adTailStart(project, totalDurationMs, signal);
+    // Settled once the transcript says where the advert's voice starts (settleAdTail).
+    let tailFrom = bannerFrom;
+    let endMs = tailFrom ?? totalDurationMs;
     const beforeTail = (lines: TranscriptSegment[]): TranscriptSegment[] =>
-      tailFrom === undefined ? lines : lines.filter((l) => l.startMs < tailFrom);
+      tailFrom === undefined ? lines : lines.filter((l) => l.startMs < (tailFrom as number));
     const windowMs = this.deps.sttChunkWindowMs ?? DEFAULT_STT_CHUNK_WINDOW_MS;
     const thresholdMs = this.deps.sttChunkThresholdMs ?? DEFAULT_STT_CHUNK_THRESHOLD_MS;
     const plan = planSttChunks(endMs, windowMs, thresholdMs);
@@ -1158,6 +1160,10 @@ export class PipelineRunner {
       await this.recordSttFallback(project.id, fallback.id);
       provider = fallback;
       transcript = await transcribeWith(provider);
+    }
+    if (bannerFrom !== undefined) {
+      tailFrom = await this.settleAdTail(project, transcript.segments, bannerFrom, totalDurationMs, onProgress);
+      endMs = tailFrom;
     }
     let segments = beforeTail(transcript.segments);
     const { detectedLanguage } = transcript;
@@ -1215,7 +1221,7 @@ export class PipelineRunner {
     // Speaker detection: who says each line, before anchoring so a line it
     // splits keeps its speaker (pipeline/diarization.ts).
     if (project.settings.diarize) {
-      segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal, progressBetween(stepProgress, SPEAKERS_FROM, 1));
+      segments = await this.detectSpeakers(paths, segments, project.settings.diarizeSpeakers, signal, progressBetween(stepProgress, SPEAKERS_FROM, 1), tailFrom);
       await this.recordSpeakerGenders(project.id, paths);
     }
 
@@ -1430,6 +1436,8 @@ export class PipelineRunner {
     knownCount: number | undefined,
     signal: AbortSignal,
     onProgress: StepProgress,
+    /** An advert tail starts there: no speaker past it is looked for (DiarizeOptions.untilMs). */
+    untilMs?: number,
   ): Promise<TranscriptSegment[]> {
     const service = this.deps.diarization;
     if (!service || !(await service.available().catch(() => false))) {
@@ -1451,6 +1459,7 @@ export class PipelineRunner {
         checkpointDir: paths.diarizationChunksDir,
         segments,
         ...(numSpeakers ? { numSpeakers } : {}),
+        ...(untilMs !== undefined ? { untilMs } : {}),
         onProgress: speakerDetectionProgress(onProgress, (m) => this.deps.logger.info(m)),
         signal,
       });
@@ -1637,12 +1646,11 @@ export class PipelineRunner {
    * should stop there: a project of its own (a series part is a window of
    * its series, which stopped already), `stopAtAdTail` not off, long enough
    * to have one, and the picture detection (saved, or run now: one saved
-   * before tails were looked for is run again) found one. Said as a warning
-   * that no review waits for: the user is not always there to review
-   * (2026-11-27). Never fails the step: without the picture, the whole video
-   * is transcribed.
+   * before tails were looked for is run again) found one: where its banner
+   * starts (settleAdTail then finds where its voice does, and warns). Never
+   * fails the step: without the picture, the whole video is transcribed.
    */
-  private async adTailStart(project: Project, totalMs: number, signal: AbortSignal, onProgress: StepProgress): Promise<number | undefined> {
+  private async adTailStart(project: Project, totalMs: number, signal: AbortSignal): Promise<number | undefined> {
     if (project.series?.role === 'part' || project.sourceRange || project.settings.stopAtAdTail === false) return undefined;
     if (!this.deps.watermark || totalMs < AD_TAIL_MIN_VIDEO_MS) return undefined;
     let detection: PictureDetection;
@@ -1655,7 +1663,31 @@ export class PipelineRunner {
     }
     const tail = detection.adTail;
     if (!tail || tail.fromMs <= 0 || tail.fromMs >= totalMs) return undefined;
-    const from = formatClock(tail.fromMs);
+    this.deps.logger.info(`An advert's banner stays on the picture from ${formatClock(tail.fromMs)} to the end: transcribing up to there.`);
+    return tail.fromMs;
+  }
+
+  /**
+   * Where the dub of a video with an advert tail stops, now that its
+   * transcript is known: the banner's start, or before it where the
+   * advert's voice starts (lines saying its words just before the banner:
+   * advertVoiceStart), kept on the detection for the series plan and the
+   * cast. Said as a warning that no review waits for.
+   */
+  private async settleAdTail(
+    project: Project,
+    lines: readonly TranscriptSegment[],
+    bannerFromMs: number,
+    totalMs: number,
+    onProgress: StepProgress,
+  ): Promise<number> {
+    const voiceFrom = advertVoiceStart(lines, bannerFromMs);
+    const cut = voiceFrom ?? bannerFromMs;
+    if (voiceFrom !== undefined) {
+      await recordAdvertVoice(project, voiceFrom).catch((err: unknown) => this.deps.logger.warn(`Could not record where the advert's voice starts (${toAppError(err).message}).`));
+      this.deps.logger.info(`The advert's voice starts at ${formatClock(voiceFrom)}, before its banner (${formatClock(bannerFromMs)}): the dub stops there.`);
+    }
+    const from = formatClock(cut);
     const end = formatClock(totalMs);
     const series = project.series?.role === 'parent';
     const message =
@@ -1664,7 +1696,7 @@ export class PipelineRunner {
       'To dub the whole video, turn off "Stop where an advert tail begins" (stopAtAdTail) and redo from speech-to-text.';
     this.deps.logger.info(message);
     onProgress.warn?.({ code: 'ad-tail', key: series ? 'warning.ad-tail-series' : 'warning.ad-tail', params: { from, end }, message });
-    return tail.fromMs;
+    return cut;
   }
 
   /**

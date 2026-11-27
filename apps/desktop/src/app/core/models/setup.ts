@@ -125,8 +125,8 @@ export interface UpdatePreferences {
   localModels?: { translation?: string; chat?: string };
   /** What downloads do while a dub runs (Settings → Downloads). */
   downloads?: { whileDubbing?: 'auto' | 'pause-heavy' | 'one-task' | 'no-limit' };
-  /** The user's default voices for men and women (Voices → Default voices; '' = none). */
-  defaultVoices?: { male?: string; female?: string };
+  /** The user's voices for the leads, in order per gender (Voices → Lead voices). */
+  leadVoices?: { male?: string[]; female?: string[] };
 }
 
 // ---------------------------------------------------------------------------

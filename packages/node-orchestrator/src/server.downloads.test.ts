@@ -251,16 +251,16 @@ describe('downloads, presets and batch dubs', () => {
     expect(made?.series).toBeFalsy();
   });
 
-  it('keeps the default voices apart from the other preferences, and gives a project none its engine cannot speak (2026-11-27)', async () => {
+  it('keeps the lead voices apart from the other preferences, one gender at a time, and never makes them a project default (2026-11-27)', async () => {
     await app.inject({ method: 'PUT', url: '/preferences', payload: { downloads: { whileDubbing: 'one-task' } } });
-    await app.inject({ method: 'PUT', url: '/preferences', payload: { defaultVoices: { male: 'vp_d54fadbeedb4b84f', female: 'vp_1545a09ba583ad6a' } } });
-    const prefs = (await app.inject({ method: 'GET', url: '/preferences' })).json() as { defaultVoices?: unknown; downloads?: unknown };
-    expect(prefs.defaultVoices).toEqual({ male: 'vp_d54fadbeedb4b84f', female: 'vp_1545a09ba583ad6a' });
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { leadVoices: { male: ['vp_e1c1aa0000000001', 'vp_d54fadbeedb4b84f'], female: ['vp_1545a09ba583ad6a'] } } });
+    const prefs = (await app.inject({ method: 'GET', url: '/preferences' })).json() as { leadVoices?: unknown; downloads?: unknown };
+    expect(prefs.leadVoices).toEqual({ male: ['vp_e1c1aa0000000001', 'vp_d54fadbeedb4b84f'], female: ['vp_1545a09ba583ad6a'] });
     expect(prefs.downloads).toEqual({ whileDubbing: 'one-task' });
-    // One gender cleared, the other kept.
-    await app.inject({ method: 'PUT', url: '/preferences', payload: { defaultVoices: { male: '' } } });
-    expect(((await app.inject({ method: 'GET', url: '/preferences' })).json() as { defaultVoices?: unknown }).defaultVoices).toEqual({ female: 'vp_1545a09ba583ad6a' });
-    // No such cloned voice here: a new project gets no default it could not speak with.
+    // The men's list emptied, the women's kept.
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { leadVoices: { male: [] } } });
+    expect(((await app.inject({ method: 'GET', url: '/preferences' })).json() as { leadVoices?: unknown }).leadVoices).toEqual({ female: ['vp_1545a09ba583ad6a'] });
+    // Defaults stay built-in (the user's rule): a new project takes no lead voice as its default.
     const defaults = (await app.inject({ method: 'GET', url: '/project-defaults?sourceLanguage=zh&targetLanguage=vi-VN' })).json() as { settings: Record<string, unknown> };
     expect(defaults.settings).not.toHaveProperty('defaultFemaleVoiceId');
   });

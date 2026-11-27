@@ -379,6 +379,15 @@ For your own voice, tick **Only for one main character** under it in Voices →
 My voices: casting then gives it to one main character at most, never to the
 minor speakers and never as the voice of every speaker who has none.
 
+**Default voices** (top of the Voices screen) are the voices you want first:
+one for men, one for women, from your own voices and the installed built-in
+ones. Every new project takes them as the voice of each man or woman who has no
+voice of their own, unless its preset names other default voices, and
+**Choose voices by gender** gives them first to the man and the woman heard
+most. A project uses only voices of the engine it dubs with, so a cloned voice
+is a default only for projects that dub with its engine (VieNeu). A voice kept
+for one main character cannot be a default.
+
 ### Getting the finished file
 
 The **Export** screen shows the finished video, its output path, and an

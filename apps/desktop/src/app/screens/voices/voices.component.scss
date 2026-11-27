@@ -239,3 +239,19 @@
   background: var(--vd-warning-bg, #fef3c7);
   color: var(--vd-warning, #92400e);
 }
+
+/* The default voices: one picker for men, one for women, side by side. */
+.defaults-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--vd-sp-3) var(--vd-sp-5);
+}
+.default-pick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vd-sp-1);
+  min-width: 260px;
+  flex: 1 1 260px;
+  max-width: 420px;
+  margin: 0;
+}

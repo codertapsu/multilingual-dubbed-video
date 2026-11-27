@@ -13,6 +13,32 @@
 
   <vd-error-banner [error]="error()" (dismiss)="error.set(null)" />
 
+  <!-- ===================== Default voices (Preferences.defaultVoices) ===================== -->
+  <!-- First for the most-heard man and woman of every cast, and for every man or woman with no voice of their own. -->
+  <div class="card stack">
+    <h2>{{ 'voices.defaults-heading' | translate }}</h2>
+    <p class="hint">{{ 'voices.defaults-help' | translate }}</p>
+    <div class="defaults-row">
+      @for (g of genders; track g) {
+        <label class="default-pick">
+          <span class="label">{{ (g === 'male' ? 'voices.defaults-male' : 'voices.defaults-female') | translate }}</span>
+          <select [ngModel]="defaults()[g] ?? ''" (ngModelChange)="setDefaultVoice(g, $event)">
+            <option value="">{{ 'voices.defaults-none' | translate }}</option>
+            @for (v of defaultOptions()[g]; track v.id) {
+              <option [value]="v.id">{{ v.name }} · {{ v.kind === 'profile' ? ('voices.defaults-yours' | translate) : engineName(v.engine) }}</option>
+            }
+            @if (missingDefault(g); as id) {
+              <option [value]="id" disabled>{{ id }} ({{ 'voices.defaults-missing' | translate }})</option>
+            }
+          </select>
+        </label>
+      }
+    </div>
+    @if (defaultsNotice(); as n) {
+      <p class="ok small" role="status">{{ n }}</p>
+    }
+  </div>
+
   <!-- ===================== My voices (cloning) ===================== -->
   <div class="card stack">
     <div class="row-between">

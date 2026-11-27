@@ -148,4 +148,13 @@ describe('SetupStore preferences round-trip', () => {
     await store.savePreferences({ autoUpdate: true, downloads: { whileDubbing: 'sometimes' } as never });
     expect((await store.getPreferences()).downloads).toBeUndefined();
   });
+
+  it('keeps the default voices; "" goes back to none; junk is dropped (2026-11-27)', async () => {
+    await store.savePreferences({ autoUpdate: true, defaultVoices: { male: 'vp_d54fadbeedb4b84f', female: 'vp_1545a09ba583ad6a' } });
+    expect((await store.getPreferences()).defaultVoices).toEqual({ male: 'vp_d54fadbeedb4b84f', female: 'vp_1545a09ba583ad6a' });
+    await store.savePreferences({ autoUpdate: true, defaultVoices: { male: '', female: 'vieneu38-my-duyen' } });
+    expect((await store.getPreferences()).defaultVoices).toEqual({ female: 'vieneu38-my-duyen' });
+    await store.savePreferences({ autoUpdate: true, defaultVoices: { male: '../x', female: 42 } as never });
+    expect((await store.getPreferences()).defaultVoices).toBeUndefined();
+  });
 });

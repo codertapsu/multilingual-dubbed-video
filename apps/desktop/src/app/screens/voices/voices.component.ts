@@ -17,6 +17,7 @@ import { ActivityService } from '../../core/activity/activity.service';
 import { TranslatePipe, TranslateService } from '../../core/i18n';
 import { IpcService } from '../../core/ipc/ipc.service';
 import { toAppError } from '../../core/state/project.store';
+import type { DefaultVoices } from '@videodubber/shared';
 import type {
   AppError,
   VoiceEngineId,
@@ -116,6 +117,24 @@ export class VoicesComponent implements OnInit, OnDestroy {
   protected readonly editName = signal('');
   protected readonly playingProfile = signal<string | null>(null);
 
+  /**
+   * The user's default voices (Preferences.defaultVoices): a cast gives them
+   * first to the most-heard man and woman, and every man or woman with no
+   * voice of their own speaks with them ("prioritize these two voices",
+   * 2026-11-27).
+   */
+  protected readonly defaults = signal<DefaultVoices>({});
+  protected readonly defaultsNotice = signal<string | null>(null);
+  protected readonly genders = ['male', 'female'] as const;
+  /** What a default can be: the user's voices whose gender they confirmed, and installed built-ins; never one kept for a main character. */
+  protected readonly defaultOptions = computed(() => {
+    const of = (gender: 'male' | 'female'): VoiceLibraryItem[] =>
+      this.library()
+        .filter((v) => v.gender === gender && !v.mainOnly && (v.kind === 'profile' ? v.genderConfirmed === true : v.installed))
+        .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'profile' ? -1 : 1));
+    return { male: of('male'), female: of('female') };
+  });
+
   protected readonly visible = computed(() => filterVoices(this.library(), this.filter()));
   protected readonly shown = computed(() => this.visible().slice(0, this.limit()));
   protected readonly languages = computed(() => languageOptions(this.library(), this.i18n.locale()));
@@ -166,14 +185,16 @@ export class VoicesComponent implements OnInit, OnDestroy {
 
   protected async reload(): Promise<void> {
     try {
-      const [lib, engines, profiles] = await Promise.all([
+      const [lib, engines, profiles, prefs] = await Promise.all([
         this.ipc.voiceLibrary(),
         this.ipc.voiceEngines(),
         this.ipc.voiceProfiles().catch(() => [] as VoiceProfile[]),
+        this.ipc.getAppPreferences().catch(() => null),
       ]);
       this.library.set(lib.voices);
       this.engines.set(engines);
       this.profiles.set(profiles);
+      if (prefs) this.defaults.set(prefs.defaultVoices ?? {});
       // Only a failed load's own banner goes: any other message stays until it
       // is dismissed or the user does something else. This ran after every
       // install anywhere in the app and cleared whatever was showing, so an
@@ -495,6 +516,30 @@ export class VoicesComponent implements OnInit, OnDestroy {
     } catch (err) {
       this.error.set(toAppError(err));
     }
+  }
+
+  /** A default voice chosen ('' = none: the app chooses), saved at once. */
+  protected async setDefaultVoice(gender: 'male' | 'female', id: string): Promise<void> {
+    this.error.set(null);
+    this.defaultsNotice.set(null);
+    try {
+      await this.ipc.saveAppPreferences({ defaultVoices: { [gender]: id } });
+      this.defaults.update((d) => {
+        const next: DefaultVoices = { ...d };
+        if (id) next[gender] = id;
+        else delete next[gender];
+        return next;
+      });
+      this.defaultsNotice.set(this.i18n.instant('voices.defaults-saved'));
+    } catch (err) {
+      this.error.set(toAppError(err));
+    }
+  }
+
+  /** A default no longer among the choices (deleted, its engine removed, kept for a main character), to show it as such. */
+  protected missingDefault(gender: 'male' | 'female'): string | undefined {
+    const id = this.defaults()[gender];
+    return id && !this.defaultOptions()[gender].some((v) => v.id === id) ? id : undefined;
   }
 
   /** Kept for one main character: casting never shares it or makes it a default (voices/mainOnly.ts). */

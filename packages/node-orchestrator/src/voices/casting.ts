@@ -59,8 +59,11 @@ export interface CastAssignment {
   speakerId: string;
   voiceId: string;
   voiceName: string;
-  /** How it was chosen: `pool` is a minor speaker on one of the shared voices. */
-  by: 'pitch-rank' | 'print' | 'order' | 'default' | 'pool';
+  /**
+   * How it was chosen: `pool` is a minor speaker on one of the shared voices,
+   * `preferred` the user's default voice of the gender on its most-heard speaker.
+   */
+  by: 'pitch-rank' | 'print' | 'order' | 'default' | 'pool' | 'preferred';
 }
 
 /** One voice the minor speakers of a gender share. */
@@ -123,6 +126,12 @@ export type DialogueAdjacency = ReadonlyMap<string, ReadonlyMap<string, number>>
 export interface CastOptions {
   /** settings.minorVoices: voices per gender for the minor speakers. */
   minorVoices?: number;
+  /**
+   * The user's default voices (Preferences.defaultVoices): each goes first to
+   * the most-heard speaker of its gender, before the other voices are paired
+   * ("prioritize these two voices when dubbing", 2026-11-27).
+   */
+  preferred?: Partial<Record<CastGender, string>>;
   /** Who answers whom: minor speakers with adjacent turns get different pool voices. */
   adjacency?: DialogueAdjacency;
   /** The pool the user picked per gender (voice ids; clones allowed): replaces the automatic one. */
@@ -311,24 +320,39 @@ export function proposeCast(speakers: readonly CastSpeaker[], voices: readonly C
   for (const gender of ['male', 'female'] as const) {
     const mine = speakers.filter((s) => s.gender === gender).sort((a, b) => b.minutes - a.minutes);
     if (mine.length === 0) continue;
-    const clones = ordered.filter((v) => v.gender === gender && v.kind === 'profile');
+    // The user's default voice of this gender goes to its most-heard speaker
+    // first; the other voices are paired with the others as before.
+    const wantedId = opts.preferred?.[gender];
+    const pinned = wantedId ? usable.find((v) => v.voiceId === wantedId && v.gender === gender) : undefined;
+    if (wantedId && !pinned) {
+      notes.push(
+        `Your default ${gender} voice is not one this project can use (another engine or language, or its gender is not confirmed): the voices are cast as usual.`,
+      );
+    }
+    const clones = ordered.filter((v) => v.gender === gender && v.kind === 'profile' && v.voiceId !== pinned?.voiceId);
     // A built-in that sounds like a clone goes last (stable sort), and only
     // when it lets every speaker have a voice of their own: with a crowd to
     // share a pool anyway, it would only make a main character sound like the
     // one the clone speaks for.
     const presets = ordered
-      .filter((v) => v.gender === gender && v.kind === 'preset')
+      .filter((v) => v.gender === gender && v.kind === 'preset' && v.voiceId !== pinned?.voiceId)
       .sort((a, b) => Number(soundalike.has(a.voiceId)) - Number(soundalike.has(b.voiceId)));
-    if (clones.length + presets.length === 0) {
+    if (clones.length + presets.length === 0 && !pinned) {
       notes.push(`No ${gender} voice to cast: ${mine.length} ${gender} speaker(s) keep the project voice.`);
       continue;
     }
-    const crowd = mine.length > clones.length + presets.length;
+    const crowd = mine.length - (pinned ? 1 : 0) > clones.length + presets.length;
     const mainPresets = crowd ? presets.filter((v) => !soundalike.has(v.voiceId)) : presets;
     // In tiers: the most-heard speakers get the user's clones, the next ones
     // the built-in voices; each tier paired by print or pitch rank.
     const mains: CastAssignment[] = [];
     let next = 0;
+    if (pinned) {
+      const lead = mine[0]!;
+      mains.push({ speakerId: lead.speakerId, voiceId: pinned.voiceId, voiceName: pinned.name, by: 'preferred' });
+      notes.push(`"${pinned.name}", your default ${gender} voice, speaks for ${lead.speakerId}, the most heard ${gender === 'male' ? 'man' : 'woman'}.`);
+      next = 1;
+    }
     for (const tier of [clones, mainPresets]) {
       const k = Math.min(tier.length, mine.length - next);
       if (k <= 0) continue;

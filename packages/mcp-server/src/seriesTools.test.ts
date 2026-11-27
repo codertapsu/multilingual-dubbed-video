@@ -425,4 +425,30 @@ describe('series and create tools (0.18.0)', () => {
       '"Phần 2", completed; 2 line(s) flagged: seg_0012, seg_0040; 1 voice(s) running over by more than 0.3 s: seg_0101 +0.6 s',
     );
   });
+
+  it('get_series and start_series name a part paused on its own, which the series start leaves (2026-11-27)', async () => {
+    fake.routes.set('GET /projects/proj_s12/series', () =>
+      view({
+        parentId: 'proj_s12',
+        parts: [
+          { index: 1, projectId: 'proj_p1', name: 'Phần 1', title: 'Mở đầu', startMs: 0, endMs: 60_000, status: 'queued' },
+          { index: 2, projectId: 'proj_p2', name: 'Phần 2', title: 'Tiếp', startMs: 60_000, endMs: 120_000, status: 'created', pausedByUser: true },
+        ],
+      }),
+    );
+    fake.routes.set('POST /projects/proj_s12/series/start', () => ({
+      parts: [
+        { projectId: 'proj_p1', index: 1, queued: true },
+        { projectId: 'proj_p2', index: 2, held: true },
+      ],
+    }));
+    await connect();
+    const g = await call('get_series', { projectId: 'proj_s12' });
+    expect(g.text).toContain(
+      '"Phần 2", created, paused on its own, so starting the series leaves it; start_dubbing on this part continues it\n',
+    );
+    const s = await call('start_series', { projectId: 'proj_s12' });
+    expect(s.text).toContain('- part 1: proj_p1 queued\n');
+    expect(s.text).toContain('- part 2: proj_p2 left as it is: paused on its own, so starting the series leaves it; start_dubbing on this part continues it\n');
+  });
 });

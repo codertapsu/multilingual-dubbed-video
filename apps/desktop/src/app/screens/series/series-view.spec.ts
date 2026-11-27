@@ -42,10 +42,12 @@ describe('the Start every part report', () => {
       { projectId: 'p3', started: false, queued: true, position: 1 },
       { projectId: 'p4', waiting: true },
       { projectId: 'p5', error: 'The speech-to-text model is not installed.' },
+      // Paused on its own: the series start leaves it (2026-11-27).
+      { projectId: 'p6', held: true },
       { nonsense: true },
     ],
   };
-  const index: Record<string, number> = { p1: 1, p2: 2, p3: 3, p4: 4, p5: 5 };
+  const index: Record<string, number> = { p1: 1, p2: 2, p3: 3, p4: 4, p5: 5, p6: 6 };
 
   it('says what happened to every part, and why one did not start', () => {
     const lines = startReport(partStarts(answer), (id) => index[id]);
@@ -55,6 +57,7 @@ describe('the Start every part report', () => {
       'series.start-queued',
       'series.start-waiting',
       'series.start-failed',
+      'series.start-held',
     ]);
     expect(lines[4]).toEqual({
       key: 'series.start-failed',
@@ -66,7 +69,7 @@ describe('the Start every part report', () => {
   });
 
   it('numbers a part it cannot place by its place in the answer', () => {
-    expect(startReport(partStarts(answer), () => undefined).map((l) => l.params['n'])).toEqual([1, 2, 3, 4, 5]);
+    expect(startReport(partStarts(answer), () => undefined).map((l) => l.params['n'])).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it('reads nothing from an answer without parts', () => {

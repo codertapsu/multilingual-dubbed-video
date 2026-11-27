@@ -38,5 +38,10 @@ describe('a change asked of a whole series', () => {
     expect(partRedoAction('render', undefined, undefined)).toMatchObject({ redo: false });
     expect(partRedoAction('render', 'completed', { work: 'queued' })).toEqual({ redo: false, reason: 'waiting in the queue: it uses the change when it gets there' });
     expect(partRedoAction('render', 'completed', { work: 'running' })).toEqual({ redo: false, reason: 'dubbing now: pause it (or the series), then redo it' });
+    // Paused on its own: no start of the series undoes that, a redo neither.
+    expect(partRedoAction('render', 'completed', undefined, true)).toEqual({
+      redo: false,
+      reason: 'paused on its own: start_dubbing on this part with fromStep "render" redoes it',
+    });
   });
 });

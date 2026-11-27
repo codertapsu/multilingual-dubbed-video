@@ -472,7 +472,9 @@ part's start time (m:ss) or its title, then **Make the parts and start
 dubbing**. **Plan again** asks the AI again.
 
 Once the parts are made, the series screen acts on all of them at once:
-**Pause all parts** and **Start all parts** keep their order; **Apply the series
+**Pause all parts** and **Start every part** keep their order. A part you paused
+or stopped on its own page stays paused: it shows **Paused on its own**, and
+**Start every part** leaves it until you continue it from its own page. **Apply the series
 settings to every part** copies the engines, the voices (per speaker too), the
 subtitles and the mix to each part that is not being dubbed; **Rebuild parts from
 the series transcript** gives each part its share of the series transcript again

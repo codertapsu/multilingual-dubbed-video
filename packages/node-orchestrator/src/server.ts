@@ -1958,7 +1958,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       const index = offset + i + 1;
       const busy = orchestrator.busyProjects().includes(id) ? { work: orchestrator.workOn(id) } : undefined;
       const pipeline = busy ? undefined : await store.getPipeline(id).catch(() => undefined);
-      const action = partRedoAction(stepId, pipeline?.steps.find((s) => s.id === stepId)?.status, busy);
+      const held = busy ? false : Boolean((await store.getProject(id).catch(() => undefined))?.pausedByUser);
+      const action = partRedoAction(stepId, pipeline?.steps.find((s) => s.id === stepId)?.status, busy, held);
       if (!action.redo) {
         out.push({ projectId: id, index, left: action.reason });
         continue;
@@ -2350,6 +2351,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
       if (!waitingForModels.has(projectId)) {
         waitingForModels.add(projectId);
         const retry = (): void => {
+          // Paused or stopped meanwhile (POST /pause or /cancel took it off
+          // the list): it starts only when asked again.
+          if (!waitingForModels.has(projectId)) return;
           if (downloadingModels()) {
             setTimeout(retry, 15_000).unref();
             return;
@@ -3214,8 +3218,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   app.post('/projects/:id/cancel', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     try {
-      await orchestrator.cancelJob(req.params.id);
-      return { ok: true };
+      const waiting = waitingForModels.delete(req.params.id);
+      const was = await orchestrator.cancelJob(req.params.id, { byUser: true });
+      return { ok: true, was: waiting && was === 'idle' ? 'waiting' : was };
     } catch (err) {
       return sendError(reply, err);
     }
@@ -3223,7 +3228,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
 
   // Pause a dub: it stops at once, keeps everything done so far, and POST
   // /projects/:id/run continues it later, after a restart too. Answers once
-  // the paused state is saved.
+  // the paused state is saved, with what it found (`was`): running, queued
+  // (taken out before it started), waiting for its models, or idle. A part
+  // paused here stays paused when its series is started (Project.pausedByUser).
   app.post('/projects/:id/pause', async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
     try {
       // A series parent pauses all its parts too (in order, so they resume in order).
@@ -3232,8 +3239,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
         if (orchestrator.busyProjects().includes(req.params.id)) await orchestrator.pauseJob(req.params.id);
         return { ok: true, pausedParts: await series.pauseParts(req.params.id) };
       }
-      await orchestrator.pauseJob(req.params.id);
-      return { ok: true };
+      const waiting = waitingForModels.delete(req.params.id);
+      const was = await orchestrator.pauseJob(req.params.id, { byUser: true });
+      return { ok: true, was: waiting && was === 'idle' ? 'waiting' : was };
     } catch (err) {
       return sendError(reply, err);
     }

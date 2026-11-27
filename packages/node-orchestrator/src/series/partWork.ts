@@ -106,15 +106,18 @@ export function seriesRedoRefusal(stepId: PipelineStepId, partCount: number): Ap
 /**
  * What a series redo from `stepId` does with one part: redo it where the part
  * made that step, else leave the part and say why. `busy` is what works on
- * the part now, when anything does.
+ * the part now, when anything does; `held`: the part was paused or stopped
+ * on its own (`Project.pausedByUser`), which no start of the series undoes.
  */
 export function partRedoAction(
   stepId: PipelineStepId,
   stepStatus: PipelineStepStatus | undefined,
   busy: { work: PartWork } | undefined,
+  held = false,
 ): { redo: true } | { redo: false; reason: string } {
   if (busy?.work === 'queued') return { redo: false, reason: 'waiting in the queue: it uses the change when it gets there' };
   if (busy) return { redo: false, reason: partSkipReason(busy.work).replace('apply again', 'redo it') };
+  if (held) return { redo: false, reason: `paused on its own: start_dubbing on this part with fromStep "${stepId}" redoes it` };
   if (stepStatus === 'completed') return { redo: true };
   return { redo: false, reason: `has not made "${stepId}" yet: it uses the change when it gets there` };
 }

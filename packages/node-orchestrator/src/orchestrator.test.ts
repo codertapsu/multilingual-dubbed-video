@@ -403,6 +403,48 @@ describe('run queue (simultaneous-dub capacity)', () => {
     await sched.cancelJob(a);
   });
 
+  it('marks a series part the user takes out of the queue, says what it found, and clears the mark when the part itself starts', async () => {
+    const [a, b] = await twoProjects();
+    const asPart = async (id: string, index: number) => {
+      const p = await store.getProject(id);
+      await store.saveProject({ ...p, series: { role: 'part', parentId: 'proj_parent', index, count: 2, seriesName: 'S', recapEndMs: 0 } });
+    };
+    await asPart(a, 1);
+    await asPart(b, 2);
+    const sched = queuedOrchestrator(1);
+    await sched.runPipeline(a);
+    await sched.runPipeline(b);
+
+    // The 2026-11-27 case: part 2 paused right after the series started. It
+    // used to come back as plain "created", like a part never started.
+    expect(await sched.pauseJob(b, { byUser: true })).toBe('queued');
+    const held = await store.getProject(b);
+    expect(held.status).toBe('created');
+    expect(held.queue).toBeUndefined();
+    expect(held.pausedByUser?.at).toBeTruthy();
+    // Paused again, it was neither queued nor running: still held.
+    expect(await sched.pauseJob(b, { byUser: true })).toBe('idle');
+    expect((await store.getProject(b)).pausedByUser).toBeTruthy();
+
+    // Started itself, it waits its turn as any other start, and is no longer held.
+    expect((await sched.runPipeline(b)).queued).toBe(true);
+    expect((await store.getProject(b)).pausedByUser).toBeUndefined();
+    // A pause that is not the user's (a retry, the whole series) marks nothing.
+    expect(await sched.pauseJob(b)).toBe('queued');
+    expect((await store.getProject(b)).pausedByUser).toBeUndefined();
+    await sched.cancelJob(a);
+  });
+
+  it('never marks a project that is not a series part', async () => {
+    const [a, b] = await twoProjects();
+    const sched = queuedOrchestrator(1);
+    await sched.runPipeline(a);
+    await sched.runPipeline(b);
+    expect(await sched.cancelJob(b, { byUser: true })).toBe('queued');
+    expect((await store.getProject(b)).pausedByUser).toBeUndefined();
+    await sched.cancelJob(a);
+  });
+
   it('takes a change to only the mix or render while a dub runs, until it starts mixing; a series being analysed always', async () => {
     let release!: () => void;
     const held = new Promise<void>((r) => (release = r));

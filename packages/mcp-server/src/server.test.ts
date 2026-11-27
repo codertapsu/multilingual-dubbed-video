@@ -685,6 +685,24 @@ describe('VideoDubber MCP server', () => {
     expect((await call('dub_downloads', { downloadIds: ['dl_1', 'dl_2'], presetId: 'preset_b3644eee88' })).text).toContain('Series: autoStart=true.');
   });
 
+  it('pause_dubbing and cancel_dubbing say a queued part only left the queue, and stays out when its series starts', async () => {
+    const part = { role: 'part' as const, parentId: 'proj_s', index: 2, count: 3, seriesName: 'S', recapEndMs: 0 };
+    fake.routes.set('POST /projects/proj_1/pause', () => ({ ok: true, was: 'queued' }));
+    fake.routes.set('POST /projects/proj_1/cancel', () => ({ ok: true, was: 'waiting' }));
+    fake.routes.set('GET /projects/proj_1', () => ({ project: project({ status: 'created', series: part }), pipeline: pipeline({ status: 'idle' }) }));
+    await connect();
+    // It read "Paused. Everything done so far is kept" about a part that had only left the queue.
+    const r = await call('pause_dubbing', { projectId: 'proj_1' });
+    expect(r.text).toBe(
+      'Taken out of the queue before it started. As a part of a series it is paused on its own, so starting the series leaves it; start_dubbing on this part continues it.',
+    );
+    const c = await call('cancel_dubbing', { projectId: 'proj_1' });
+    expect(c.text).toContain('It was waiting for its models to download: it no longer starts by itself. As a part of a series');
+    // Not a part: just how to bring it back.
+    fake.routes.set('GET /projects/proj_1', () => ({ project: project({ status: 'created' }), pipeline: pipeline({ status: 'idle' }) }));
+    expect((await call('pause_dubbing', { projectId: 'proj_1' })).text).toBe('Taken out of the queue before it started. start_dubbing queues it again.');
+  });
+
   it('get_project names every line to look at after the dub, list_projects counts them (H7)', async () => {
     const flagged = Array.from({ length: 7 }, (_, i) => ({ id: `seg_${String(i + 1).padStart(4, '0')}`, flags: i === 0 ? ['pinyin', 'no-diacritics'] : ['wrong-script'] }));
     fake.routes.set('GET /projects/proj_1', () => ({ project: project({ status: 'completed' }), pipeline: pipeline({ status: 'completed', progressPercent: 100 }) }));

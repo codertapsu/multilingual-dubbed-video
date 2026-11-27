@@ -114,7 +114,7 @@ export interface SeriesServiceDeps {
    */
   sceneChanges?: (videoPath: string, spans: { startMs: number; endMs: number }[]) => Promise<number[]>;
   /** Pause a part's dub (Orchestrator.pauseJob): a series parent pauses all its parts. */
-  pause?: (projectId: string) => Promise<void>;
+  pause?: (projectId: string) => Promise<unknown>;
   /** Something is working on this project now (Orchestrator.busyProjects). */
   isBusy?: (projectId: string) => boolean;
   /**
@@ -699,11 +699,15 @@ export class SeriesService {
    * Queue every part in order (the queue runs as many at once as the machine
    * allows). Finished parts are left alone, and a part already dubbing or
    * waiting keeps its place: a series paused as a whole continues as one,
-   * in order (the agent paused and restarted 17 parts one by one, B7).
+   * in order (the agent paused and restarted 17 parts one by one, B7). A
+   * part paused or stopped on its own (`pausedByUser`) is left too
+   * (`held`): only starting that part continues it.
    */
   async startParts(
     projectId: string,
-  ): Promise<{ projectId: string; index: number; started?: boolean; queued?: boolean; waiting?: boolean; done?: boolean; error?: string }[]> {
+  ): Promise<
+    { projectId: string; index: number; started?: boolean; queued?: boolean; waiting?: boolean; done?: boolean; held?: boolean; error?: string }[]
+  > {
     const parent = await this.parentOf(projectId);
     const ids = parent.series.partIds?.length ? parent.series.partIds : await this.createParts(projectId);
     // Each part by the number it is shown with (part 49 of a continued series).
@@ -712,13 +716,18 @@ export class SeriesService {
     for (const [i, id] of ids.entries()) {
       const index = offset + i + 1;
       try {
-        const status = (await this.deps.store.getProject(id).catch(() => undefined))?.status;
+        const part = await this.deps.store.getProject(id).catch(() => undefined);
+        const status = part?.status;
         if (status === 'completed') {
           out.push({ projectId: id, index, done: true });
           continue;
         }
         if (status === 'running' || status === 'queued') {
           out.push({ projectId: id, index, ...(status === 'running' ? { started: true } : { queued: true }) });
+          continue;
+        }
+        if (part?.pausedByUser) {
+          out.push({ projectId: id, index, held: true });
           continue;
         }
         out.push({ projectId: id, index, ...(await this.deps.start(id)) });
@@ -1146,6 +1155,7 @@ export class SeriesService {
         startMs: p.startMs,
         endMs: p.endMs,
         ...(state ? { status: state.project.status, progressPercent: Math.round(state.pipeline.progressPercent) } : {}),
+        ...(state?.project.pausedByUser ? { pausedByUser: true } : {}),
         ...(issues && (issues.flagged.length > 0 || issues.overruns.length > 0) ? { issues } : {}),
       });
     }

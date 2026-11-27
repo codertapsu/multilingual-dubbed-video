@@ -84,6 +84,13 @@ const STEP_IDS = [
   'render',
 ] as const satisfies readonly PipelineStepId[];
 
+/**
+ * A series part paused or stopped on its own (Project.pausedByUser). Its
+ * pause used to leave nothing behind, so the next start of the series queued
+ * it again an hour later (claude-dubber, 2026-11-27).
+ */
+const HELD_PART = 'paused on its own, so starting the series leaves it; start_dubbing on this part continues it';
+
 /** Which step to re-run from after a settings change, earliest wins. */
 const SETTING_STEP: Partial<Record<keyof ProjectSettings, PipelineStepId>> = {
   sourceLanguage: 'stt',
@@ -1353,6 +1360,8 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       endMs: number;
       status?: string;
       progressPercent?: number;
+      /** Paused or stopped on its own: starting the series leaves it. */
+      pausedByUser?: boolean;
       /** Its lines to look at (H7), when it has any. */
       issues?: ProjectLineIssues;
     }[];
@@ -1372,7 +1381,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       ...(v.plan?.notes ?? []).map((n) => `Note: ${n}`),
       ...v.parts.map((p) => {
         const summary = p.summary ?? v.plan?.parts.find((x) => x.index === p.index)?.summary;
-        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${summary ? ` (${summary})` : ''}${p.projectId ? ` project ${p.projectId}${p.name ? ` "${p.name}"` : ''}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}${lineIssuesBrief(p.issues)}`;
+        return `- part ${p.index}: ${clock(p.startMs)}-${clock(p.endMs)} "${p.title}"${summary ? ` (${summary})` : ''}${p.projectId ? ` project ${p.projectId}${p.name ? ` "${p.name}"` : ''}` : ''}${p.status ? `, ${p.status}${p.status === 'running' ? ` ${p.progressPercent ?? 0}%` : ''}` : ''}${p.pausedByUser ? `, ${HELD_PART}` : ''}${lineIssuesBrief(p.issues)}`;
       }),
     ];
     if (v.state === 'review') {
@@ -1489,14 +1498,17 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId }, ctx) => {
-      const res = await api.post<{ parts: { projectId: string; index?: number; error?: string; queued?: boolean; waiting?: boolean }[] }>(
+      const res = await api.post<{ parts: { projectId: string; index?: number; error?: string; queued?: boolean; waiting?: boolean; done?: boolean; held?: boolean }[] }>(
         `/projects/${encodeURIComponent(projectId)}/series/start`,
         {},
         { signal: ctx.mcpReq.signal, timeoutMs: 300_000 },
       );
       return text(
         [
-          ...res.parts.map((p, i) => `- part ${p.index ?? i + 1}: ${p.projectId}${p.error ? ` not started: ${p.error}` : p.waiting ? ' (starts when its models arrive)' : p.queued ? ' queued' : ' dubbing'}`),
+          ...res.parts.map(
+            (p, i) =>
+              `- part ${p.index ?? i + 1}: ${p.projectId}${p.error ? ` not started: ${p.error}` : p.held ? ` left as it is: ${HELD_PART}` : p.done ? ' finished' : p.waiting ? ' (starts when its models arrive)' : p.queued ? ' queued' : ' dubbing'}`,
+          ),
           `Project ids: ${JSON.stringify(res.parts.map((p) => p.projectId))}`,
         ].join('\n'),
       );
@@ -1840,7 +1852,9 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
       ? await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/retry`, { stepId: fromStep }, { signal })
       : await api.post<{ started?: boolean; queued?: boolean; position?: number }>(`/projects/${id}/run`, {}, { signal });
     const parts = (
-      res as { parts?: { projectId: string; index?: number; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; left?: string; error?: string }[] }
+      res as {
+        parts?: { projectId: string; index?: number; started?: boolean; queued?: boolean; done?: boolean; waiting?: boolean; held?: boolean; left?: string; error?: string }[];
+      }
     ).parts;
     if (parts) {
       // A series parent continues as a whole: its parts, in order; a redo of
@@ -1849,7 +1863,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         fromStep ? `Redoing "${fromStep}" in the parts that made it, in order:` : 'The series continues: its parts, in order.',
         ...parts.map(
           (p, i) =>
-            `- part ${p.index ?? i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.left ? `left as it is: ${p.left}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`,
+            `- part ${p.index ?? i + 1} (${p.projectId}): ${p.error ? `not started: ${p.error}` : p.left ? `left as it is: ${p.left}` : p.held ? `left as it is: ${HELD_PART}` : p.done ? 'finished' : p.waiting ? 'starts when its models arrive' : p.queued ? 'queued' : 'dubbing'}`,
         ),
         'Follow them with get_series or get_queue.',
       ].join('\n');
@@ -1895,13 +1909,13 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Pause a dub',
       description:
-        'Pause a running dub. It stops at once and keeps everything done so far, including the part of the current step it saved (translated batches, speech-to-text chunks, voice clips); the user can then close the app or turn off the computer. start_dubbing continues it from there. A queued dub just leaves the queue.',
+        'Pause a running dub. It stops at once and keeps everything done so far, including the part of the current step it saved (translated batches, speech-to-text chunks, voice clips); the user can then close the app or turn off the computer. start_dubbing continues it from there. A queued dub leaves the queue before it starts. A part of a series paused here stays paused when the series is started again (start_series, start_dubbing on the series), until start_dubbing on that part; pausing the series itself pauses every part, and they continue as a whole.',
       inputSchema: z.object({ projectId: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId }, ctx) => {
       const signal = ctx.mcpReq.signal;
-      const res = await api.post<{ pausedParts?: string[] }>(`/projects/${encodeURIComponent(projectId)}/pause`, {}, { signal });
+      const res = await api.post<{ pausedParts?: string[]; was?: string }>(`/projects/${encodeURIComponent(projectId)}/pause`, {}, { signal });
       if (res?.pausedParts) {
         return text(
           res.pausedParts.length > 0
@@ -1909,9 +1923,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
             : 'No part of this series was dubbing or waiting.',
         );
       }
-      const { pipeline } = await getProject(projectId, signal);
-      const where = pipeline.status === 'paused' && pipeline.pausedStep ? ` at "${pipeline.pausedStep}"` : '';
-      return text(`Paused${where}. Everything done so far is kept; start_dubbing continues from there.`);
+      return text(await pausedReply(projectId, res?.was, 'Paused', signal));
     }),
   );
 
@@ -1920,15 +1932,31 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
     {
       title: 'Stop a dub',
       description:
-        'Stop a running dub (the same as pause_dubbing: nothing done is thrown away) or take a queued one out of the queue. start_dubbing continues it.',
+        'Stop a running dub (the same as pause_dubbing: nothing done is thrown away) or take a queued one out of the queue. start_dubbing continues it. A part of a series stopped here stays stopped when the series is started again, until start_dubbing on that part.',
       inputSchema: z.object({ projectId: z.string() }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     guarded(async ({ projectId }, ctx) => {
-      await api.post(`/projects/${encodeURIComponent(projectId)}/cancel`, {}, { signal: ctx.mcpReq.signal });
-      return text('Stopped. start_dubbing continues from where it stopped.');
+      const signal = ctx.mcpReq.signal;
+      const res = await api.post<{ was?: string }>(`/projects/${encodeURIComponent(projectId)}/cancel`, {}, { signal });
+      return text(await pausedReply(projectId, res?.was, 'Stopped', signal));
     }),
   );
+
+  /**
+   * What a pause or stop of one project did, from the app's answer (`was`):
+   * a queued dub used to read "Paused. Everything done so far is kept" when
+   * it had only left the queue, and nothing said whether it would stay out.
+   */
+  async function pausedReply(projectId: string, was: string | undefined, verb: 'Paused' | 'Stopped', signal: AbortSignal): Promise<string> {
+    const { project, pipeline } = await getProject(projectId, signal);
+    const part = project.series?.role === 'part' ? ` As a part of a series it is ${HELD_PART}.` : '';
+    if (was === 'queued') return `Taken out of the queue before it started.${part || ' start_dubbing queues it again.'}`;
+    if (was === 'waiting') return `It was waiting for its models to download: it no longer starts by itself.${part || ' start_dubbing starts it.'}`;
+    if (was === 'idle') return `It was not dubbing or waiting${pipeline.status === 'paused' ? ' (it is paused)' : ''}.${part}`;
+    const where = pipeline.status === 'paused' && pipeline.pausedStep ? ` at "${pipeline.pausedStep}"` : '';
+    return `${verb}${where}. Everything done so far is kept; start_dubbing continues from there.${part}`;
+  }
 
   server.registerTool(
     'update_settings',

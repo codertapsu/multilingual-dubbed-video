@@ -213,6 +213,8 @@ export interface SeriesView {
     endMs: number;
     status?: string;
     progressPercent?: number;
+    /** Paused or stopped on its own (`Project.pausedByUser`): starting the series leaves it. */
+    pausedByUser?: boolean;
     /** Its lines to look at, when it has any: still flagged by the checks, voices running over (H7). */
     issues?: ProjectLineIssues;
   }[];

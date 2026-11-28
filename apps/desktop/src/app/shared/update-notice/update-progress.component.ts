@@ -71,7 +71,14 @@ import { UpdateService, formatMegabytes } from '../../core/update/update.service
       <div class="up" [class.up-failed]="!f.busy" [attr.role]="f.busy ? 'status' : 'alert'">
         <strong>{{ (f.busy ? 'update.progress.busy-title' : 'update.progress.failed-title') | translate }}</strong>
         <span>{{ (f.busy ? 'update.progress.busy' : 'update.progress.failed-hint') | translate }}</span>
-        @if (!f.busy) {
+        @if (f.busy) {
+          <!-- One step for the whole queue: pausing dubs one by one let the next start each time. -->
+          <div class="up-actions">
+            <button type="button" class="btn btn-primary btn-sm" (click)="update.pauseDubsAndInstall()">
+              {{ 'update.progress.pause-and-install' | translate }}
+            </button>
+          </div>
+        } @else {
           <div class="up-actions">
             <button type="button" class="btn btn-primary btn-sm" (click)="update.install()">
               {{ 'update.progress.retry' | translate }}

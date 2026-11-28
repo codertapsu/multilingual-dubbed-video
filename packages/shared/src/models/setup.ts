@@ -459,6 +459,13 @@ export interface ConcurrencyPreferences {
   /** When true, nothing new starts; queued projects stay queued. */
   paused?: boolean;
   /**
+   * The queue is paused for an app update (POST /queue/pause-for-update): the
+   * dubs that were running wait at its head, and once the app is back (the
+   * update installed, or not) the queue goes on by itself, paused again only
+   * if it was before. Cleared when the user sets `paused` themselves.
+   */
+  pausedForUpdate?: { at: string; version?: string; queueWasPaused: boolean };
+  /**
    * Dubs take turns on the graphics card (default on; false = one dub that
    * needs the card runs at a time, the old way). Dubs that need it are started
    * side by side as the limit allows. Each one uses the card for its steps
@@ -542,6 +549,8 @@ export interface QueueState {
   usedPoints: number;
   /** Queue paused by the user. */
   paused: boolean;
+  /** Paused for an app update: it goes on by itself once the app is back (ConcurrencyPreferences.pausedForUpdate). */
+  pausedForUpdate?: boolean;
   running: RunningEntry[];
   entries: QueueEntry[];
   /** The hardware recommendation, so the UI can explain the limit. */

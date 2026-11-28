@@ -558,7 +558,14 @@ fn busy_reason_from_queue(queue: &Value) -> Option<String> {
             .unwrap_or(0)
     };
     let (running, queued) = (count("running"), count("entries"));
-    if running == 0 && queued == 0 {
+    // A PAUSED queue starts nothing: what waits in it is saved on disk and
+    // goes on after the update. Only a queue that may start a dub during the
+    // install blocks it. "Pause the dubs and install" (POST
+    // /queue/pause-for-update) relies on this; before it, a queue paused for
+    // an update still refused, and the only way through was to stop dubs one
+    // by one (2026-11-27). A body without `paused` counts as not paused.
+    let paused = queue.get("paused").and_then(|v| v.as_bool()).unwrap_or(false);
+    if running == 0 && (queued == 0 || paused) {
         return None;
     }
     Some(format!(
@@ -736,6 +743,25 @@ mod update_gate_tests {
         }))
         .expect("a queued dub must block");
         assert!(queued.contains("1 queued"), "got {queued}");
+    }
+
+    /// A paused queue starts nothing during the install, so what waits in it
+    /// does not block: that is how "Pause the dubs and install" gets through.
+    /// A dub still running does.
+    #[test]
+    fn a_paused_queue_lets_the_install_through_unless_a_dub_still_runs() {
+        assert!(busy_reason_from_queue(&json!({
+            "paused": true,
+            "running": [],
+            "entries": [{ "projectId": "p2", "name": "Ep. 2" }],
+        }))
+        .is_none());
+        assert!(busy_reason_from_queue(&json!({
+            "paused": true,
+            "running": [{ "projectId": "p1", "name": "Ep. 1", "heavy": true }],
+            "entries": [],
+        }))
+        .is_some());
     }
 
     /// Documents the deliberate fail-open: a body we cannot read counts as

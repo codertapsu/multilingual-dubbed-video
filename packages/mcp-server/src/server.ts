@@ -507,6 +507,7 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         budgetPoints: number;
         usedPoints: number;
         paused: boolean;
+        pausedForUpdate?: boolean;
         laneOwner?: string;
         holds?: { holdId: string; holder: string; name?: string; reason: string; expiresAt: string }[];
         running: {
@@ -541,7 +542,13 @@ export function createVideoDubberServer(opts: VideoDubberServerOptions): McpServ
         return said ? ` (${said})` : '';
       };
       const lines = [
-        `Dubs at once: ${q.maxProjects} (points ${q.usedPoints}/${q.budgetPoints})${q.paused ? '; the queue is PAUSED (Settings)' : ''}.`,
+        `Dubs at once: ${q.maxProjects} (points ${q.usedPoints}/${q.budgetPoints})${
+          q.paused
+            ? q.pausedForUpdate
+              ? '; the queue is PAUSED for an app update: the dubs that ran wait at its head and go on by themselves once the app is back'
+              : '; the queue is PAUSED (Settings)'
+            : ''
+        }.`,
         `GPU lane: ${q.laneOwner ? `held by ${q.laneOwner}` : 'free'}.`,
         ...(q.shareGpu === undefined
           ? []

@@ -105,7 +105,7 @@
         }
         @if (q.paused) {
           <p class="hint">
-            {{ 'home.queue-paused' | translate }}
+            {{ (q.pausedForUpdate ? 'home.queue-paused-update' : 'home.queue-paused') | translate }}
             <a routerLink="/settings/performance" fragment="opt-pause-queue">{{ 'home.queue-resume' | translate }}</a>
           </p>
         }

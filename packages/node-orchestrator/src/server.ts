@@ -103,6 +103,7 @@ import { WhisperxAlignmentProvider } from './providers/alignment/whisperxProvide
 import { SherpaDiarizationProvider } from './providers/diarization/sherpaDiarizationProvider.js';
 import { RapidOcrProvider } from './providers/ocr/rapidOcrProvider.js';
 import { GpuHolds, parseHoldRequest } from './scheduler/gpuHolds.js';
+import { pauseQueueForUpdate, queueAfterUpdate } from './scheduler/updatePause.js';
 import { installedPackFiles } from './engines/installedFiles.js';
 import { diarizationBudget, registerTranscriptJobRoutes } from './transcriptJobs.js';
 import { EventBusRegistry } from './events.js';
@@ -340,6 +341,9 @@ export function mergeConcurrency(
   const next: ConcurrencyPreferences = { mode: 'auto', ...current, ...(change ?? {}) };
   if (next.mode !== 'manual') delete next.maxProjects;
   if (next.shareGpu !== undefined && typeof next.shareGpu !== 'boolean') delete next.shareGpu;
+  // The user (or an agent) pausing or resuming the queue takes the pause into
+  // their own hands: the app no longer resumes it after an update.
+  if (change?.paused !== undefined && change.pausedForUpdate === undefined) delete next.pausedForUpdate;
   return next;
 }
 
@@ -690,7 +694,23 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
   // `paused` rather than silently resumed. Best-effort; never blocks boot.
   // After a crash the shell restarted the backend for, the dubs it interrupted
   // continue by themselves (the user's call, 2026-11-21); after a quit they wait.
-  void orchestrator.reconcileQueue({ resumeInterrupted: options.recoveredCrash !== undefined });
+  // The queue paused for an app update goes on once the app is back, whether
+  // the update installed or not (POST /queue/pause-for-update).
+  const resumeQueueAfterUpdate = async (): Promise<boolean> => {
+    const current = await setupStore.getPreferences();
+    const next = queueAfterUpdate(current.concurrency);
+    if (!next) return false;
+    await setupStore.savePreferences({ ...current, concurrency: next });
+    void orchestrator.pumpQueue();
+    return true;
+  };
+  void orchestrator
+    .reconcileQueue({ resumeInterrupted: options.recoveredCrash !== undefined })
+    .then(() => resumeQueueAfterUpdate())
+    .then((resumed) => {
+      if (resumed) console.log('[queue] the dubs paused for the app update go on');
+    })
+    .catch(() => undefined);
   if (options.recoveredCrash) {
     // The crash belongs in the same timeline as the run events around it, so
     // the support bundle shows what was running when the backend died.
@@ -1665,6 +1685,40 @@ export async function createServer(options: CreateServerOptions = {}): Promise<F
     if (foreignOrigin(req)) return refuseForeign(reply);
     holds.release(req.params.id);
     return reply.status(204).send();
+  });
+
+  // ---- An app update over a busy queue (scheduler/updatePause.ts) -----------
+  // The update's "Pause the dubs and install": the queue pauses and every
+  // running dub goes back to its head, in one step, so the installer can run
+  // and nothing starts meanwhile. Once the app is back the queue goes on by
+  // itself (resumeQueueAfterUpdate at start); the button calls the resume
+  // route when the install did not happen. Refused from other web pages, as
+  // /shutdown is.
+  app.post('/queue/pause-for-update', async (req: FastifyRequest<{ Body: { version?: unknown } | undefined }>, reply) => {
+    if (foreignOrigin(req)) return refuseForeign(reply);
+    try {
+      const version = typeof req.body?.version === 'string' && req.body.version !== '' ? req.body.version : undefined;
+      const current = await setupStore.getPreferences();
+      // The queue first: a running dub paused while it still went on started the next.
+      await setupStore.savePreferences({
+        ...current,
+        concurrency: pauseQueueForUpdate(current.concurrency, version ? { version } : {}),
+      });
+      const requeued = await orchestrator.requeueRunningForUpdate();
+      const queue = await orchestrator.queueState();
+      return { ok: true, requeued, running: queue.running.length, queued: queue.entries.length };
+    } catch (err) {
+      return sendError(reply, err);
+    }
+  });
+
+  app.post('/queue/resume-after-update', async (req, reply) => {
+    if (foreignOrigin(req)) return refuseForeign(reply);
+    try {
+      return { ok: true, resumed: await resumeQueueAfterUpdate() };
+    } catch (err) {
+      return sendError(reply, err);
+    }
   });
 
   app.post(

@@ -246,6 +246,20 @@ export class IpcService {
     return this.http('GET', '/queue');
   }
 
+  /**
+   * POST /queue/pause-for-update — the queue pauses and every running dub goes
+   * back to its head, in one step, so an update can install; the queue goes on
+   * by itself once the app is back.
+   */
+  pauseQueueForUpdate(version?: string): Promise<{ ok: boolean; requeued: string[]; running: number; queued: number }> {
+    return this.http('POST', '/queue/pause-for-update', version ? { version } : {});
+  }
+
+  /** POST /queue/resume-after-update — the update did not install after all: the queue goes on now. */
+  resumeQueueAfterUpdate(): Promise<{ ok: boolean; resumed: boolean }> {
+    return this.http('POST', '/queue/resume-after-update', {});
+  }
+
   /** POST /projects/:id/run-next — move a queued project to the head. */
   runNext(projectId: string): Promise<{ ok: boolean }> {
     return this.http('POST', `/projects/${encodeURIComponent(projectId)}/run-next`, {});

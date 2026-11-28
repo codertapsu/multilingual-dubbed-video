@@ -98,6 +98,30 @@ export class UpdateService {
     }
   }
 
+  /**
+   * Install over the dubs that run or wait: the queue pauses and the running
+   * dubs go back to its head in one step (POST /queue/pause-for-update), then
+   * the update installs, and the dubs go on by themselves once the app is
+   * back. Pausing dubs one at a time let the queue start the next each time:
+   * 29 parts of a series ended up paused on their own (2026-11-27). When it
+   * does not install after all (cancelled, failed), the queue goes on now;
+   * not while the installer starts, which closes the app.
+   */
+  async pauseDubsAndInstall(): Promise<void> {
+    if (this.busy()) return;
+    this.error.set(null);
+    try {
+      await this.ipc.pauseQueueForUpdate(this.status().version ?? undefined);
+    } catch (err) {
+      this.error.set(toAppError(err));
+      return;
+    }
+    await this.install();
+    if (this.status().phase !== 'installing') {
+      await this.ipc.resumeQueueAfterUpdate().catch(() => undefined);
+    }
+  }
+
   async cancel(): Promise<void> {
     try {
       await this.ipc.cancelUpdate();

@@ -23,6 +23,8 @@ import type { ActivityEntry, ActivityInitiator, ActivityPhrase } from './activit
  */
 export interface QueueView {
   paused: boolean;
+  /** Paused for an app update: the queue goes on by itself once the app is back. */
+  pausedForUpdate?: boolean;
   running: readonly { projectId: string; name: string; step?: string; progressPercent?: number }[];
   entries: readonly { projectId: string; name: string }[];
 }

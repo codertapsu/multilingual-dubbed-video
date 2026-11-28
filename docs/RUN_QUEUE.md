@@ -235,12 +235,15 @@ ones, and what changed:
 
 ## Known gap / follow-ups
 
-- **Auto-resume after a crash is deliberately NOT enabled.** The runner's
-  artifact writes are plain `fsp.writeFile` while resumability only tests
-  `outputsExist()`, so a crash mid-write leaves a truncated artifact that a
-  resume would treat as complete. Make those writes atomic (reuse
-  `writeJsonAtomic`'s tmp+rename from `projectStore.ts`) *before* switching
-  `reconcileQueue()` to auto-resume with a crash-loop guard.
+- **After a backend crash** that the shell restarted it for, the dubs it
+  interrupted continue by themselves, in the order they started
+  (`reconcileQueue({ resumeInterrupted })`, the user's call on 2026-11-21).
+  That is sound because every artifact is written atomically
+  (`writeAtomically`, `writeJsonAtomic`). After a plain quit they wait, paused,
+  for Continue.
+- **An app update over a busy queue** pauses the queue and every running dub in
+  one step: the dubs go back to the head of the queue and go on once the app is
+  back (`docs/AUTOUPDATE.md`, "With dubs running or waiting").
 - Taking turns on the card is not yet measured on the RTX 3050 / i5-13400F
   PC. Still to measure: speaker detection chunk times beside a second dub's
   GPU work, the model loads it saves or adds, and RAM with two heavy dubs
@@ -248,5 +251,7 @@ ones, and what changed:
 - `GET /queue` is polled (3–4 s) rather than pushed; a global SSE channel
   modelled on `setup/setupBus.ts` is the follow-up if more app-level state
   appears.
-- No ETA is shown. Deliberate: inventing a time before there is per-machine
-  history is worse than an honest ordinal ("#2 in the queue").
+- A running dub's time left comes from that run's own pace
+  (`activity/dubRuns.ts` `etaOf`, `etaSec` on `GET /queue`). Queued dubs show
+  their place in line ("#2 in the queue"), not a time: inventing one without
+  this machine's history would be worse than the honest ordinal.

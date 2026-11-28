@@ -98,6 +98,34 @@ Release notes come from the `notes` field in `latest.json` (the GitHub release
 body). The **release notes link** opens in the system browser via
 `open_external(url)` (`tauri-plugin-opener`).
 
+### With dubs running or waiting
+
+Installing stops the backend, so the shell refuses while a dub runs, or while
+one waits in a queue that may start it (`busy_with_a_run_reason`,
+`commands.rs`). The update stays downloaded (`ready`). Since 0.23.0, a queue
+that is paused does not block: whatever waits in it is saved and goes on after
+the update.
+
+The busy message offers **Pause the dubs and install**
+(`UpdateService.pauseDubsAndInstall`):
+
+1. `POST /queue/pause-for-update`: the queue's preference becomes paused, with
+   `pausedForUpdate { at, version, queueWasPaused }`. Every running dub is then
+   paused (not as the user's pause, so no series part is held out of its
+   series) and put back at the head of the queue, in the order the dubs started
+   (`Orchestrator.requeueRunningForUpdate`).
+2. The install runs, reusing the installer already downloaded.
+3. Once the app is back, the orchestrator's start lets the queue go on
+   (`resumeQueueAfterUpdate`, after `reconcileQueue`). It is paused again only
+   if it was before. The window calls `POST /queue/resume-after-update` when the
+   install did not happen (cancelled, failed), never while the installer is
+   starting.
+
+The user setting `paused` themselves clears the marker, so nothing resumes
+behind their back. Before this, the only way through was to pause dubs one at a
+time. The queue then started the next part each time, and on 2026-11-27 all 29
+parts of a series ended up "paused on their own".
+
 ---
 
 ## Rollback / yanking a bad release

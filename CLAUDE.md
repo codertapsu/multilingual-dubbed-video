@@ -334,7 +334,12 @@ say whether it took. The NSIS hooks (`windows/installer-hooks.nsh`, pure ASCII) 
 version's code: they keep killing VideoDubber's background programs (Claude's `--mcp` connections
 run the same orchestrator exe) until none is left, rename a still-busy exe aside (Windows can
 rename a running program, never overwrite it; the app deletes `*.exe.old-*` at its next start),
-and write `logs/installer.log`.
+and write `logs/installer.log`. The shell refuses to install while a dub runs, or while one
+waits in a queue that is not paused (`busy_reason_from_queue`). "Pause the dubs and install"
+(`POST /queue/pause-for-update`) pauses the queue first, then puts every running dub back at its
+head in one step. The queue goes on by itself once the app is back (`pausedForUpdate`). On
+2026-11-27, pausing dubs one at a time let the queue start the next each time, until all 29 parts
+of a series stood "paused on their own".
 
 **Tauri matches command arguments by name.** A Rust parameter `options` never receives the
 webview's `{ request }`: unknown keys are dropped and an `Option` arrives `None`, silently. That

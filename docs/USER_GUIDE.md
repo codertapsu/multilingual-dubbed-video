@@ -1009,6 +1009,20 @@ Open **Settings → Updates** to:
 - **Check for updates** now and see the release notes;
 - see which version you have.
 
+Installing closes VideoDubber for about a minute, so an update waits while dubs
+run or wait in the queue. To install anyway, choose **Pause the dubs and
+install**:
+- The queue pauses, and the running dubs stop where they are and wait at its
+  front, in the order they started. Nothing they did is lost.
+- Once the update is installed and VideoDubber is back, they go on by
+  themselves.
+- If the update does not install after all, they go on right away.
+- A queue you had paused yourself stays paused.
+
+Updates from versions before 0.23.0 do not have this button yet. For those,
+close VideoDubber (its dubs pause and the queue is kept), run the new installer
+from GitHub, and continue the paused dubs once it is installed.
+
 How it works, including how to go back to an older version:
 [`AUTOUPDATE.md`](AUTOUPDATE.md).
 

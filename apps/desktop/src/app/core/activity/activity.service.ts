@@ -474,7 +474,14 @@ export class ActivityService {
         kind: 'queue',
         label: this.i18n.instant('activity.queue-paused'),
         percent: null,
-        message: this.i18n.instant(waiting > 0 ? 'activity.queue-paused-waiting' : 'activity.queue-paused-empty', { n: waiting }),
+        message: this.i18n.instant(
+          queue.pausedForUpdate
+            ? 'activity.queue-paused-update'
+            : waiting > 0
+              ? 'activity.queue-paused-waiting'
+              : 'activity.queue-paused-empty',
+          { n: waiting },
+        ),
         state: 'waiting',
         link: '/settings/performance',
         fragment: 'opt-pause-queue',

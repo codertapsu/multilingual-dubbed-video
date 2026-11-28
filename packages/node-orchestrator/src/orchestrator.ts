@@ -743,6 +743,36 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     return 'running';
   }
 
+  /**
+   * An app update is about to install (POST /queue/pause-for-update, once the
+   * queue itself is paused): pause every running dub and put it back at the
+   * head of the queue, in the order the dubs started. The paused queue keeps
+   * them there until the app is back, and then they go on by themselves.
+   * One step for the whole queue: the updater refused while anything ran,
+   * and pausing dubs one at a time let the next queued part start each time,
+   * until all 29 parts of a series stood "paused on their own" (2026-11-27).
+   * Not the user's pause: no part is held out of its series. A dub that
+   * cannot go back into the queue (deleted meanwhile) stays paused.
+   */
+  async requeueRunningForUpdate(): Promise<string[]> {
+    return this.whileQueueHeld(async () => {
+      const ids = [...this.running.keys()].sort((a, b) => (this.runOrder.get(a) ?? 0) - (this.runOrder.get(b) ?? 0));
+      for (const id of ids) await this.pauseJob(id);
+      const requeued: string[] = [];
+      for (const id of ids) {
+        try {
+          await runAsScheduler(() => this.runPipeline(id));
+          if (this.queued.has(id)) requeued.push(id);
+        } catch {
+          /* stays paused: Continue (start_dubbing) takes it on */
+        }
+      }
+      // Ahead of what already waited, the first one started first.
+      for (const id of [...requeued].reverse()) await this.runNext(id).catch(() => undefined);
+      return requeued;
+    });
+  }
+
   /** Stopping a dub is pausing it: nothing done is thrown away (POST /cancel, the MCP cancel_dubbing). */
   async cancelJob(jobId: string, opts: { byUser?: boolean } = {}): Promise<'queued' | 'running' | 'idle'> {
     return this.pauseJob(jobId, opts);
@@ -2812,8 +2842,10 @@ export class LocalJobOrchestrator implements JobOrchestrator {
     // head-reservation that keeps the queue starvation-free.
     // Quitting (pauseAll): a dub asked for now waits in the queue, which the
     // next start resumes, instead of starting a run nothing would pause.
+    // Held (whileQueueHeld): nothing starts, a dub asked for now included;
+    // the release pumps it.
     const decision =
-      (this.queue.length > 0 && !workload.lightOnly) || this.closing
+      (this.queue.length > 0 && !workload.lightOnly) || this.closing || this.queueHolds > 0
         ? { start: [] as string[] }
         : decideAdmissions(
             [{ projectId: project.id, points: workload.points, needsHeavyEngine: workload.needsHeavyEngine, lightOnly: workload.lightOnly }],
@@ -3247,6 +3279,7 @@ export class LocalJobOrchestrator implements JobOrchestrator {
       budgetPoints: capacity.budgetPoints,
       usedPoints: this.runningRuns().reduce((sum, r) => sum + r.points, 0),
       paused,
+      ...(paused && prefs?.concurrency?.pausedForUpdate ? { pausedForUpdate: true } : {}),
       capacity,
       running: await Promise.all(
         [...this.running.keys()].map(async (projectId) => {

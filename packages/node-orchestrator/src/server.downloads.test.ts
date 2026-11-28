@@ -266,6 +266,34 @@ describe('downloads, presets and batch dubs', () => {
     expect(await queue()).toEqual({ mode: 'auto', paused: false });
   });
 
+  it('pauses the queue for an app update in one step, and lets it go on once the app is back or the install did not happen', async () => {
+    const queue = async () => (await app.inject({ method: 'GET', url: '/queue' })).json() as { paused: boolean; pausedForUpdate?: boolean };
+    const prefs = async () => ((await app.inject({ method: 'GET', url: '/preferences' })).json() as { concurrency?: Record<string, unknown> }).concurrency;
+    const paused = await app.inject({ method: 'POST', url: '/queue/pause-for-update', payload: { version: '0.23.0' } });
+    expect(paused.json()).toEqual({ ok: true, requeued: [], running: 0, queued: 0 });
+    expect(await queue()).toMatchObject({ paused: true, pausedForUpdate: true });
+    expect(await prefs()).toMatchObject({ paused: true, pausedForUpdate: { version: '0.23.0', queueWasPaused: false } });
+    // The install did not happen: the queue goes on, as it was before.
+    expect((await app.inject({ method: 'POST', url: '/queue/resume-after-update', payload: {} })).json()).toEqual({ ok: true, resumed: true });
+    expect(await prefs()).toEqual({ mode: 'auto', paused: false });
+    expect((await app.inject({ method: 'POST', url: '/queue/resume-after-update', payload: {} })).json()).toEqual({ ok: true, resumed: false });
+
+    // A queue the user had paused stays paused after the update.
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { concurrency: { paused: true } } });
+    await app.inject({ method: 'POST', url: '/queue/pause-for-update', payload: {} });
+    await app.inject({ method: 'POST', url: '/queue/resume-after-update', payload: {} });
+    expect(await prefs()).toEqual({ mode: 'auto', paused: true });
+
+    // The user resuming the queue themselves takes the pause into their hands: nothing to resume later.
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { concurrency: { paused: false } } });
+    await app.inject({ method: 'POST', url: '/queue/pause-for-update', payload: {} });
+    await app.inject({ method: 'PUT', url: '/preferences', payload: { concurrency: { paused: false } } });
+    expect(await prefs()).toEqual({ mode: 'auto', paused: false });
+    // Another web page cannot pause the queue.
+    const foreign = await app.inject({ method: 'POST', url: '/queue/pause-for-update', payload: {}, headers: { origin: 'https://example.com' } });
+    expect(foreign.statusCode).toBe(403);
+  });
+
   it('keeps the lead voices apart from the other preferences, one gender at a time, and never makes them a project default (2026-11-27)', async () => {
     await app.inject({ method: 'PUT', url: '/preferences', payload: { downloads: { whileDubbing: 'one-task' } } });
     await app.inject({ method: 'PUT', url: '/preferences', payload: { leadVoices: { male: ['vp_e1c1aa0000000001', 'vp_d54fadbeedb4b84f'], female: ['vp_1545a09ba583ad6a'] } } });

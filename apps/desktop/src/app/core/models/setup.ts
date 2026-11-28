@@ -335,6 +335,8 @@ export interface ConcurrencyPreferences {
   mode: 'auto' | 'manual';
   maxProjects?: number;
   paused?: boolean;
+  /** Paused for an app update: the queue goes on by itself once the app is back. */
+  pausedForUpdate?: { at: string; version?: string; queueWasPaused: boolean };
   /** Dubs take turns on the graphics card (default on). */
   shareGpu?: boolean;
 }
@@ -379,6 +381,8 @@ export interface QueueState {
   budgetPoints: number;
   usedPoints: number;
   paused: boolean;
+  /** Paused for an app update: it goes on by itself once the app is back. */
+  pausedForUpdate?: boolean;
   running: RunningEntry[];
   entries: QueueEntry[];
   capacity: CapacityRecommendation;
